@@ -3,16 +3,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <queries>
-        <intent>
-            <action android:name="android.speech.RecognitionService"/>
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.TTS_SERVICE"/>
-        </intent>
+        <intent><action android:name="android.speech.RecognitionService"/></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
     </queries>
     <application
         android:theme="@style/AppTheme"
         android:label="SpeakMate English"
+        android:icon="@drawable/app_icon"
+        android:roundIcon="@drawable/app_icon"
         android:allowBackup="true"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
