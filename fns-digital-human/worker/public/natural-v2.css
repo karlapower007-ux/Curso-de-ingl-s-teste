@@ -1,0 +1,19 @@
+.avatar-photo{will-change:transform,filter}
+.avatar-thinking.human-avatar{animation:avatarThinkingNatural 3.2s ease-in-out infinite}
+.avatar-speaking.human-avatar{animation:avatarSpeakingNatural 2.2s ease-in-out infinite}
+.avatar-micro-expression .avatar-photo-base{transform:scale(1.019) translateX(.45px) translateY(-.35px)}
+.avatar-micro-expression .avatar-photo-jaw{filter:saturate(1.015) brightness(1.01)}
+.hands-on{background:#1d8f68!important;box-shadow:0 0 0 1px #58d6aa55 inset,0 0 20px #1d8f6833}
+.conversation-hint{margin-top:5px;line-height:1.45}
+#handsBtn{transition:.2s ease}
+.avatar-stage{box-shadow:inset 0 0 60px #0005,0 14px 40px #0004}
+@keyframes avatarThinkingNatural{
+  0%,100%{transform:scale(1.002) rotate(0deg)}
+  45%{transform:scale(1.006) rotate(.16deg) translateY(-1px)}
+  70%{transform:scale(1.004) rotate(-.08deg)}
+}
+@keyframes avatarSpeakingNatural{
+  0%,100%{transform:scale(1.003) translateY(0)}
+  35%{transform:scale(1.007) translateY(-1.2px)}
+  70%{transform:scale(1.005) translateY(.4px)}
+}
