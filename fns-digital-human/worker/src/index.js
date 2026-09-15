@@ -75,6 +75,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
+          version: "2026-09-15.1",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "@cf/myshell-ai/melotts",
           chat: "@cf/openai/gpt-oss-120b"
@@ -92,6 +93,7 @@ export default {
             { status: 400, headers: cors(origin) }
           );
         }
+
         const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
           audio: toBase64(buffer),
           task: "transcribe",
@@ -99,7 +101,9 @@ export default {
           vad_filter: true,
           condition_on_previous_text: false
         });
+
         const text = String(result?.text || result?.transcription_info?.text || "").trim();
+
         return Response.json(
           { ok: true, text },
           { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -124,6 +128,7 @@ export default {
             { status: 400, headers: cors(origin) }
           );
         }
+
         if (text.length > 1600) {
           return Response.json(
             { ok: false, error: "Texto muito grande para uma fala." },
@@ -131,22 +136,51 @@ export default {
           );
         }
 
-        const result = await env.AI.run("@cf/myshell-ai/melotts", {
-          prompt: text,
-          lang
-        });
+        const raw = await env.AI.run(
+          "@cf/myshell-ai/melotts",
+          { prompt: text, lang },
+          { returnRawResponse: true }
+        );
 
-        const audio = result?.audio;
-        if (!audio || typeof audio !== "string") {
-          return Response.json(
-            { ok: false, error: "TTS não retornou áudio." },
-            { status: 502, headers: cors(origin) }
-          );
+        if (raw instanceof Response) {
+          const headers = new Headers(raw.headers);
+          for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
+          headers.set("Cache-Control", "no-store");
+          if (!headers.get("Content-Type")) headers.set("Content-Type", "audio/mpeg");
+
+          return new Response(raw.body, {
+            status: raw.status,
+            headers
+          });
+        }
+
+        if (typeof raw === "string") {
+          return new Response(raw, {
+            headers: {
+              ...cors(origin),
+              "Content-Type": "audio/mpeg",
+              "Cache-Control": "no-store"
+            }
+          });
+        }
+
+        if (raw?.audio && typeof raw.audio === "string") {
+          const binary = atob(raw.audio);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+          return new Response(bytes, {
+            headers: {
+              ...cors(origin),
+              "Content-Type": "audio/mpeg",
+              "Cache-Control": "no-store"
+            }
+          });
         }
 
         return Response.json(
-          { ok: true, audio, content_type: "audio/mpeg" },
-          { headers: { ...cors(origin), "Cache-Control": "no-store" } }
+          { ok: false, error: "TTS não retornou áudio reproduzível." },
+          { status: 502, headers: cors(origin) }
         );
       } catch (error) {
         return Response.json(
@@ -187,6 +221,7 @@ export default {
         });
 
         const reply = extractText(result) || "Could you say that again?";
+
         return Response.json(
           {
             ok: true,
