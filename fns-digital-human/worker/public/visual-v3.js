@@ -1,15 +1,15 @@
-window.FNSVisualV3={blinkTimer:null,gazeTimer:null};
+window.FNSVisualV4={blinkTimer:null};
 
 function installEmmaFaceRig(){
   const face=document.querySelector('#avatarFace');
   if(!face?.classList.contains('human-avatar'))return;
 
-  if(!face.querySelector('.avatar-mouth-cavity')){
-    const mouth=document.createElement('div');
-    mouth.className='avatar-mouth-cavity';
-    mouth.innerHTML='<i></i>';
-    face.appendChild(mouth);
-  }
+  /* Keep the visual locked straight toward the camera. */
+  face.style.setProperty('--gaze-x','0px');
+  face.style.setProperty('--gaze-y','0px');
+
+  /* Remove the old synthetic mouth overlay if an older cached layer created it. */
+  face.querySelectorAll('.avatar-mouth-cavity').forEach(el=>el.remove());
 
   if(!face.querySelector('.avatar-eyelid.left')){
     const left=document.createElement('div');
@@ -20,53 +20,36 @@ function installEmmaFaceRig(){
   }
 
   scheduleEmmaBlink();
-  scheduleEmmaGaze();
 }
 
 function stopEmmaFaceRig(){
-  clearTimeout(FNSVisualV3.blinkTimer);
-  clearTimeout(FNSVisualV3.gazeTimer);
-  FNSVisualV3.blinkTimer=null;
-  FNSVisualV3.gazeTimer=null;
+  clearTimeout(FNSVisualV4.blinkTimer);
+  FNSVisualV4.blinkTimer=null;
 }
 
 function scheduleEmmaBlink(){
-  clearTimeout(FNSVisualV3.blinkTimer);
-  FNSVisualV3.blinkTimer=setTimeout(()=>{
+  clearTimeout(FNSVisualV4.blinkTimer);
+  FNSVisualV4.blinkTimer=setTimeout(()=>{
     const face=document.querySelector('#avatarFace');
     if(face?.classList.contains('human-avatar')){
       face.classList.add('blink-now');
-      setTimeout(()=>face?.classList.remove('blink-now'),180);
+      setTimeout(()=>face?.classList.remove('blink-now'),165);
     }
     scheduleEmmaBlink();
-  },2600+Math.random()*3800);
+  },3000+Math.random()*3400);
 }
 
-function scheduleEmmaGaze(){
-  clearTimeout(FNSVisualV3.gazeTimer);
-  FNSVisualV3.gazeTimer=setTimeout(()=>{
-    const face=document.querySelector('#avatarFace');
-    if(face?.classList.contains('human-avatar')){
-      const x=(Math.random()-.5)*1.8;
-      const y=(Math.random()-.5)*1.1;
-      face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
-      face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
-    }
-    scheduleEmmaGaze();
-  },1900+Math.random()*2500);
-}
-
-const FNS_v3Open=openLiteTeacher;
+const FNS_v4Open=openLiteTeacher;
 openLiteTeacher=function(...args){
-  const out=FNS_v3Open(...args);
-  setTimeout(installEmmaFaceRig,30);
+  const out=FNS_v4Open(...args);
+  setTimeout(installEmmaFaceRig,40);
   return out;
 };
 
-const FNS_v3End=typeof endNaturalSession==='function'?endNaturalSession:null;
-if(FNS_v3End){
+if(typeof endNaturalSession==='function'){
+  const FNS_v4End=endNaturalSession;
   endNaturalSession=function(){
     stopEmmaFaceRig();
-    return FNS_v3End();
+    return FNS_v4End();
   };
 }
