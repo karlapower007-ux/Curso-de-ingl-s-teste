@@ -284,6 +284,7 @@ async function remoteSpeak(text){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         text,
+        teacher:activeTeacher?.name||'Emma',
         lang:'en'
       })
     });
@@ -322,7 +323,7 @@ async function remoteSpeak(text){
     audio.onended=finish;
     audio.onerror=()=>{
       finish();
-      addMsg('system','FNS VOICE: o navegador não conseguiu reproduzir o áudio recebido.');
+      addMsg('system','FNS VOICE: não foi possível reproduzir o áudio neural recebido.');
     };
 
     await audio.play();
