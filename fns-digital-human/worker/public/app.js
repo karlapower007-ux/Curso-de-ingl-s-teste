@@ -4,7 +4,7 @@ const FNS_CHAT_URL=FNS_API_BASE+'/chat';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
-{name:'Emma',accent:'British',gender:'female',provider:'FNS Lite'},
+{name:'Emma',accent:'British',gender:'female',provider:'FNS Lite',portrait:'https://images.unsplash.com/photo-1672527838035-90ae2ad2e813?auto=format&fit=crop&w=900&q=78',photoCredit:'Philip White / Unsplash'},
 {name:'Olivia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Sophia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Charlotte',accent:'British',gender:'female',provider:'FNS Lite'},
@@ -35,9 +35,20 @@ function course(){layout(`<h1>Curso completo A1–C2</h1><p class="muted">72 uni
 function openUnit(level,index){const title=levelData[level].units[index];document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="lessonModal"><div class="room lesson-modal"><button class="close" onclick="lessonModal.remove()">Fechar</button><h2>${level} • ${title}</h2><p class="muted">Plano de aula FNS original</p><div class="lesson-list"><div><b>Objetivo:</b> usar o tema em comunicação real.</div><div><b>Vocabulário:</b> 12–20 itens em contexto.</div><div><b>Gramática:</b> estrutura adequada ao nível ${level}.</div><div><b>Pronúncia:</b> repetição, ritmo e entonação.</div><div><b>Drill:</b> perguntas e respostas rápidas.</div><div><b>Produção:</b> conversa guiada sobre “${title}”.</div></div><br><button class="primary" onclick="lessonModal.remove();openLiteTeacher(1,'${level}','lesson','${title.replace(/'/g,"\\'")}')">Praticar agora com Emma</button></div></div>`)}
 function live(){layout(`<h1>Prática ao vivo</h1><p>Katya usa LiveAvatar. Os outros nove professores usam FNS Lite: microfone, Whisper remoto, IA conversacional e voz neural pelo gateway FNS.</p><div class="grid">${teachers.map((t,i)=>`<div class="card teacher"><span class="tag">${t.provider}${t.premium?' • PREMIUM':' • GRATUITO'}</span><h3>${t.name}</h3><div>${t.accent} English</div><p class="small muted">${t.premium?'Avatar premium em tempo real.':'Conversa por voz e texto, com correção pedagógica local.'}</p><button class="primary" onclick="openTeacher(${i})">Abrir professor</button></div>`).join('')}</div>`)}
 function openTeacher(i){let t=teachers[i]; if(t.embed){document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="room"><button class="close" onclick="modal.remove()">Encerrar</button><h2>${t.name} • ${t.accent}</h2><iframe src="${t.embed}" allow="microphone; autoplay"></iframe></div></div>`)}else openLiteTeacher(i,'A1','conversation','General conversation')}
+function avatarVisualMarkup(t){
+  if(t?.portrait){
+    return `<div id="avatarFace" class="avatar-face human-avatar" style="--mouth-open:0">
+      <img class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" referrerpolicy="no-referrer">
+      <img class="avatar-photo avatar-photo-jaw" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
+      <div class="avatar-camera-vignette"></div>
+      <div class="avatar-live-badge">● LIVE</div>
+    </div>`;
+  }
+  return `<div id="avatarFace" class="avatar-face avatar-initials">${t.name.slice(0,2).toUpperCase()}</div>`;
+}
 let activeTeacher=null,recognizing=false;
 let mediaStream=null,mediaRecorder=null,audioChunks=[],recordingTimer=null;
-function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage"><div id="avatarFace" class="avatar-face">${activeTeacher.name.slice(0,2).toUpperCase()}</div><div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span></div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
+function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
 function addMsg(role,text){const t=document.querySelector('#transcript');if(!t)return;t.insertAdjacentHTML('beforeend',`<div class="msg ${role}">${escapeHtml(text)}</div>`);t.scrollTop=t.scrollHeight}
@@ -251,8 +262,65 @@ let lastSpoken='';
 let voiceUnlocked=false;
 let currentVoiceAudio=null;
 let currentVoiceUrl='';
+let avatarAudioContext=null;
+let avatarAnalyser=null;
+let avatarLipRAF=null;
+let avatarMediaSource=null;
+
+function stopAvatarLipSync(){
+  if(avatarLipRAF){cancelAnimationFrame(avatarLipRAF);avatarLipRAF=null;}
+  const face=document.querySelector('#avatarFace');
+  if(face){
+    face.style.setProperty('--mouth-open','0');
+    face.classList.remove('avatar-talking');
+  }
+  avatarAnalyser=null;
+  avatarMediaSource=null;
+  if(avatarAudioContext){
+    try{avatarAudioContext.close()}catch(e){}
+    avatarAudioContext=null;
+  }
+}
+
+function startAvatarLipSync(audio){
+  const face=document.querySelector('#avatarFace');
+  if(!face?.classList.contains('human-avatar'))return;
+  stopAvatarLipSync();
+  try{
+    const AudioCtx=window.AudioContext||window.webkitAudioContext;
+    if(!AudioCtx)return;
+    avatarAudioContext=new AudioCtx();
+    avatarMediaSource=avatarAudioContext.createMediaElementSource(audio);
+    avatarAnalyser=avatarAudioContext.createAnalyser();
+    avatarAnalyser.fftSize=256;
+    avatarAnalyser.smoothingTimeConstant=.55;
+    avatarMediaSource.connect(avatarAnalyser);
+    avatarAnalyser.connect(avatarAudioContext.destination);
+    const bins=new Uint8Array(avatarAnalyser.frequencyBinCount);
+    face.classList.add('avatar-talking');
+
+    const tick=()=>{
+      if(!avatarAnalyser||!currentVoiceAudio||currentVoiceAudio.paused){
+        if(face)face.style.setProperty('--mouth-open','0');
+        return;
+      }
+      avatarAnalyser.getByteFrequencyData(bins);
+      let sum=0;
+      const limit=Math.min(36,bins.length);
+      for(let i=2;i<limit;i++)sum+=bins[i];
+      const avg=sum/Math.max(1,limit-2);
+      const open=Math.max(0,Math.min(1,(avg-12)/72));
+      face.style.setProperty('--mouth-open',open.toFixed(3));
+      avatarLipRAF=requestAnimationFrame(tick);
+    };
+    tick();
+  }catch(e){
+    stopAvatarLipSync();
+  }
+}
 
 function stopRemoteVoice(){
+  stopAvatarLipSync();
   if(currentVoiceAudio){
     try{currentVoiceAudio.pause(); currentVoiceAudio.currentTime=0}catch(e){}
     currentVoiceAudio=null;
@@ -304,12 +372,14 @@ async function remoteSpeak(text){
     currentVoiceUrl=url;
 
     audio.onplay=()=>{
+      startAvatarLipSync(audio);
       setStatus('Speaking','busy');
       const face=document.querySelector('#avatarFace');
       if(face)face.className='avatar-face avatar-speaking';
     };
 
     const finish=()=>{
+      stopAvatarLipSync();
       if(currentVoiceAudio===audio)currentVoiceAudio=null;
       if(currentVoiceUrl===url){
         try{URL.revokeObjectURL(url)}catch(e){}
