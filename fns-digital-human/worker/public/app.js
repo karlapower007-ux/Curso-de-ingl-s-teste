@@ -4,7 +4,7 @@ const FNS_CHAT_URL=FNS_API_BASE+'/chat';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
-{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'https://images.unsplash.com/photo-1752330161605-d78e7a048e2c?auto=format&fit=crop&w=1400&q=86',photoCredit:'Dmitry Reshetnikov / Unsplash'},
+{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'emma.jpg'},
 {name:'Olivia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Sophia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Charlotte',accent:'British',gender:'female',provider:'FNS Lite'},
