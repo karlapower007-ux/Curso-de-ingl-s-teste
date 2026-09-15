@@ -75,9 +75,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-15.1",
+          version: "2026-09-15.2",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "@cf/myshell-ai/melotts",
+          tts: "@cf/deepgram/aura-1",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -120,7 +120,7 @@ export default {
       try {
         const body = await request.json().catch(() => ({}));
         const text = String(body?.text || body?.prompt || "").trim();
-        const lang = String(body?.lang || "en").trim() || "en";
+        const teacher = String(body?.teacher || "Emma");
 
         if (!text) {
           return Response.json(
@@ -129,59 +129,65 @@ export default {
           );
         }
 
-        if (text.length > 1600) {
+        if (text.length > 1200) {
           return Response.json(
             { ok: false, error: "Texto muito grande para uma fala." },
             { status: 413, headers: cors(origin) }
           );
         }
 
+        const speakerByTeacher = {
+          Emma: "asteria",
+          Olivia: "luna",
+          Sophia: "athena",
+          Charlotte: "hera",
+          James: "orion",
+          Daniel: "perseus",
+          William: "helios",
+          Ethan: "arcas",
+          Noah: "zeus"
+        };
+
+        const speaker = speakerByTeacher[teacher] || "asteria";
+
         const raw = await env.AI.run(
-          "@cf/myshell-ai/melotts",
-          { prompt: text, lang },
-          { returnRawResponse: true }
+          "@cf/deepgram/aura-1",
+          {
+            text,
+            speaker,
+            encoding: "mp3"
+          },
+          {
+            returnRawResponse: true
+          }
         );
 
-        if (raw instanceof Response) {
-          const headers = new Headers(raw.headers);
-          for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
-          headers.set("Cache-Control", "no-store");
-          if (!headers.get("Content-Type")) headers.set("Content-Type", "audio/mpeg");
-
-          return new Response(raw.body, {
-            status: raw.status,
-            headers
-          });
+        if (!(raw instanceof Response)) {
+          return Response.json(
+            { ok: false, error: "O mecanismo de voz não retornou uma resposta de áudio." },
+            { status: 502, headers: cors(origin) }
+          );
         }
 
-        if (typeof raw === "string") {
-          return new Response(raw, {
-            headers: {
-              ...cors(origin),
-              "Content-Type": "audio/mpeg",
-              "Cache-Control": "no-store"
-            }
-          });
+        if (!raw.ok) {
+          const detail = await raw.text().catch(() => "");
+          return Response.json(
+            { ok: false, error: "Aura TTS falhou: HTTP " + raw.status + (detail ? " - " + detail.slice(0, 220) : "") },
+            { status: 502, headers: cors(origin) }
+          );
         }
 
-        if (raw?.audio && typeof raw.audio === "string") {
-          const binary = atob(raw.audio);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const headers = new Headers(raw.headers);
+        for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
+        headers.set("Content-Type", "audio/mpeg");
+        headers.set("Cache-Control", "no-store");
+        headers.set("X-FNS-Voice-Engine", "aura-1");
+        headers.set("X-FNS-Voice-Speaker", speaker);
 
-          return new Response(bytes, {
-            headers: {
-              ...cors(origin),
-              "Content-Type": "audio/mpeg",
-              "Cache-Control": "no-store"
-            }
-          });
-        }
-
-        return Response.json(
-          { ok: false, error: "TTS não retornou áudio reproduzível." },
-          { status: 502, headers: cors(origin) }
-        );
+        return new Response(raw.body, {
+          status: 200,
+          headers
+        });
       } catch (error) {
         return Response.json(
           { ok: false, error: String(error?.message || error) },
