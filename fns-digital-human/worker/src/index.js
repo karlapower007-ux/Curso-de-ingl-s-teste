@@ -19,6 +19,175 @@ function toBase64(buffer) {
   return btoa(binary);
 }
 
+
+function detectLanguage(text) {
+  const sample = String(text || "").toLowerCase();
+  let pt = 0, es = 0, en = 0;
+
+  if (/[ãõçáâêô]/u.test(sample)) pt += 4;
+  if (/[ñ¿¡]/u.test(sample)) es += 4;
+
+  const words = sample.match(/\p{L}+/gu) || [];
+  const ptWords = new Set(["não","nao","você","voce","português","portugues","obrigado","obrigada","também","tambem","quero","gostaria","estou","como","porque","para","com","uma","meu","minha","hoje","agora","explique","diferença","diferenca"]);
+  const esWords = new Set(["no","usted","tú","tu","español","espanol","gracias","también","tambien","quiero","gustaría","gustaria","estoy","cómo","como","porque","para","con","una","hoy","ahora","hablar","contigo"]);
+  const enWords = new Set(["the","you","your","english","thanks","thank","want","would","like","am","are","is","how","what","why","today","now","with","continue","correct"]);
+
+  for (const word of words) {
+    if (ptWords.has(word)) pt++;
+    if (esWords.has(word)) es++;
+    if (enWords.has(word)) en++;
+  }
+
+  if (pt > es && pt >= en && pt >= 2) return "pt-BR";
+  if (es > pt && es >= en && es >= 2) return "es";
+  return "en";
+}
+
+function corsAudioHeaders(origin, extra={}) {
+  return {
+    ...cors(origin),
+    "Cache-Control": "no-store",
+    ...extra
+  };
+}
+
+async function auraEmergencyEnglish(env, origin) {
+  const emergencyText = "Sorry, my Portuguese voice server is currently busy. Let's practice in English for now.";
+  const raw = await env.AI.run(
+    "@cf/deepgram/aura-1",
+    { text: emergencyText, speaker: "asteria", encoding: "mp3" },
+    { returnRawResponse: true }
+  );
+
+  if (!(raw instanceof Response) || !raw.ok) {
+    const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+    return Response.json(
+      { ok:false, error:"Emergency Aura fallback failed"+(detail?": "+detail.slice(0,180):"") },
+      { status:502, headers:cors(origin) }
+    );
+  }
+
+  const headers = new Headers(raw.headers);
+  for (const [k,v] of Object.entries(corsAudioHeaders(origin, {
+    "Content-Type":"audio/mpeg",
+    "X-FNS-Voice-Engine":"aura-1-emergency",
+    "X-FNS-Voice-Language":"en"
+  }))) headers.set(k,v);
+
+  return new Response(raw.body,{status:200,headers});
+}
+
+function parseSseData(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  let last = null;
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload) continue;
+    try { last = JSON.parse(payload); } catch {}
+  }
+  return last;
+}
+
+async function hfKokoroPortuguese(env, text, origin) {
+  const base = "https://wmr-tts-ptbr.hf.space";
+  const candidates = ["KOKORO_TTS_API","kokoro_tts_api","predict"];
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort("hf-timeout"),8000);
+
+  try {
+    let submit = null;
+    let endpoint = null;
+
+    const data = [
+      text,
+      "Brazilian Portuguese",
+      "pf_dora",
+      1,
+      false,
+      false,
+      false,
+      1.0,
+      "Natural (Padrão)",
+      true
+    ];
+
+    for (const name of candidates) {
+      try {
+        const r = await fetch(base + "/gradio_api/call/" + encodeURIComponent(name), {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({data}),
+          signal:controller.signal
+        });
+        if (!r.ok) continue;
+        const j = await r.json().catch(()=>null);
+        if (j?.event_id) {
+          submit = j;
+          endpoint = name;
+          break;
+        }
+      } catch (e) {
+        if (controller.signal.aborted) throw e;
+      }
+    }
+
+    if (!submit?.event_id || !endpoint) throw new Error("Hugging Face Kokoro endpoint unavailable.");
+
+    const eventResponse = await fetch(
+      base + "/gradio_api/call/" + encodeURIComponent(endpoint) + "/" + encodeURIComponent(submit.event_id),
+      { signal:controller.signal }
+    );
+    if (!eventResponse.ok) throw new Error("Hugging Face event fetch failed: HTTP " + eventResponse.status);
+
+    const sse = await eventResponse.text();
+    const payload = parseSseData(sse);
+    if (!payload) throw new Error("Hugging Face returned no audio payload.");
+
+    const outputs = Array.isArray(payload) ? payload : [payload];
+    let audioRef = null;
+
+    for (const out of outputs) {
+      if (typeof out === "string" && /audio|wav|mp3|flac|ogg/i.test(out)) {
+        audioRef = out;
+        break;
+      }
+      if (out && typeof out === "object") {
+        if (typeof out.url === "string") { audioRef = out.url; break; }
+        if (typeof out.path === "string") { audioRef = out.path; break; }
+      }
+    }
+
+    if (!audioRef) throw new Error("Hugging Face response contained no downloadable audio.");
+
+    let audioUrl = audioRef;
+    if (audioUrl.startsWith("/")) audioUrl = base + audioUrl;
+    else if (!/^https?:\/\//i.test(audioUrl)) {
+      audioUrl = base + "/gradio_api/file=" + encodeURIComponent(audioUrl);
+    }
+
+    const audio = await fetch(audioUrl,{signal:controller.signal});
+    if (!audio.ok) throw new Error("Hugging Face audio download failed: HTTP " + audio.status);
+
+    const ct = audio.headers.get("content-type") || "";
+    if (!ct.startsWith("audio/") && !/octet-stream/i.test(ct)) {
+      throw new Error("Hugging Face returned non-audio content: " + ct);
+    }
+
+    const headers = new Headers(audio.headers);
+    for (const [k,v] of Object.entries(corsAudioHeaders(origin, {
+      "X-FNS-Voice-Engine":"hf-kokoro-ptbr",
+      "X-FNS-Voice-Language":"pt-BR",
+      "X-FNS-HF-Space":"wmr/tts_PTBR"
+    }))) headers.set(k,v);
+
+    return new Response(audio.body,{status:200,headers});
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -44,23 +213,17 @@ function extractText(result) {
   return "";
 }
 
-function systemPrompt({ teacher="Emma", level="A1", accent="British" } = {}) {
-  return `You are ${teacher}, a warm, natural English teacher for Estudos Profundos FNS Idiomas.
-Accent/profile: ${accent} English.
-Student CEFR level: ${level}.
+function systemPrompt({ teacher="Emma", level="A1", accent="American" } = {}) {
+  return `Você é Emma, uma professora e amiga brilhante. Você é fluente em Inglês, Português e Espanhol. Adapte-se instantaneamente ao idioma que o usuário falar. Mantenha conversas profundas sobre qualquer assunto. Quando solicitado, atue como professora e corrija os erros gramaticais ou de pronúncia do usuário com didática e clareza.
 
-Rules:
-- Speak mainly in English.
-- Adapt vocabulary and sentence length to the CEFR level.
-- Be conversational, not robotic.
-- Usually respond in 1-4 sentences.
-- Ask at most one main follow-up question at a time.
-- Correct only useful mistakes, briefly and gently.
-- First respond to meaning, then correct if needed.
-- Keep the conversation moving naturally.
-- Do not mention being an AI unless directly asked.
-- Avoid markdown-heavy formatting in spoken replies.
-- If the user asks for Portuguese explanation, you may briefly explain in Brazilian Portuguese.`;
+Regras:
+- Responda no idioma predominante do usuário, salvo se ele pedir outro idioma.
+- Em prática de inglês, permaneça em inglês e explique em português somente quando solicitado.
+- Seja natural, clara, inteligente, didática e concisa o suficiente para conversa por voz.
+- Adapte vocabulário e complexidade ao nível CEFR do aluno.
+- Não invente fatos quando não tiver certeza.
+- Evite Markdown pesado em respostas faladas.
+- Nome: ${teacher}. Perfil de sotaque inglês: ${accent}. Nível CEFR: ${level}.`;
 }
 
 export default {
@@ -77,9 +240,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-15.2",
+          version: "2026-09-16.5-resilient-dual-tts",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "@cf/deepgram/aura-1",
+          tts: "Aura-1 EN + Aura-2-es ES + HF Kokoro PT-BR with Aura emergency fallback",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -99,7 +262,6 @@ export default {
         const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
           audio: toBase64(buffer),
           task: "transcribe",
-          language: "en",
           vad_filter: true,
           condition_on_previous_text: false
         });
@@ -125,75 +287,80 @@ export default {
         const teacher = String(body?.teacher || "Emma");
 
         if (!text) {
-          return Response.json(
-            { ok: false, error: "Texto vazio." },
-            { status: 400, headers: cors(origin) }
-          );
+          return Response.json({ ok:false, error:"Texto vazio." }, { status:400, headers:cors(origin) });
+        }
+        if (text.length > 1200) {
+          return Response.json({ ok:false, error:"Texto muito grande para uma fala." }, { status:413, headers:cors(origin) });
         }
 
-        if (text.length > 1200) {
-          return Response.json(
-            { ok: false, error: "Texto muito grande para uma fala." },
-            { status: 413, headers: cors(origin) }
+        const language = detectLanguage(text);
+
+        if (language === "pt-BR") {
+          try {
+            return await hfKokoroPortuguese(env,text,origin);
+          } catch (error) {
+            return await auraEmergencyEnglish(env,origin);
+          }
+        }
+
+        if (language === "es") {
+          const raw = await env.AI.run(
+            "@cf/deepgram/aura-2-es",
+            { text, speaker:"celeste", encoding:"mp3" },
+            { returnRawResponse:true }
           );
+
+          if (!(raw instanceof Response) || !raw.ok) {
+            const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+            return Response.json(
+              { ok:false, error:"Aura Spanish TTS falhou"+(detail?": "+detail.slice(0,180):"") },
+              { status:502, headers:cors(origin) }
+            );
+          }
+
+          const headers = new Headers(raw.headers);
+          for (const [k,v] of Object.entries(corsAudioHeaders(origin,{
+            "Content-Type":"audio/mpeg",
+            "X-FNS-Voice-Engine":"aura-2-es",
+            "X-FNS-Voice-Language":"es"
+          }))) headers.set(k,v);
+
+          return new Response(raw.body,{status:200,headers});
         }
 
         const speakerByTeacher = {
-          Emma: "asteria",
-          Olivia: "luna",
-          Sophia: "athena",
-          Charlotte: "hera",
-          James: "orion",
-          Daniel: "perseus",
-          William: "helios",
-          Ethan: "arcas",
-          Noah: "zeus"
+          Emma:"asteria", Olivia:"luna", Sophia:"athena", Charlotte:"hera",
+          James:"orion", Daniel:"perseus", William:"helios", Ethan:"arcas", Noah:"zeus"
         };
-
         const speaker = speakerByTeacher[teacher] || "asteria";
 
         const raw = await env.AI.run(
           "@cf/deepgram/aura-1",
-          {
-            text,
-            speaker,
-            encoding: "mp3"
-          },
-          {
-            returnRawResponse: true
-          }
+          { text, speaker, encoding:"mp3" },
+          { returnRawResponse:true }
         );
 
-        if (!(raw instanceof Response)) {
+        if (!(raw instanceof Response) || !raw.ok) {
+          const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
           return Response.json(
-            { ok: false, error: "O mecanismo de voz não retornou uma resposta de áudio." },
-            { status: 502, headers: cors(origin) }
-          );
-        }
-
-        if (!raw.ok) {
-          const detail = await raw.text().catch(() => "");
-          return Response.json(
-            { ok: false, error: "Aura TTS falhou: HTTP " + raw.status + (detail ? " - " + detail.slice(0, 220) : "") },
-            { status: 502, headers: cors(origin) }
+            { ok:false, error:"Aura TTS falhou"+(detail?": "+detail.slice(0,180):"") },
+            { status:502, headers:cors(origin) }
           );
         }
 
         const headers = new Headers(raw.headers);
-        for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
-        headers.set("Content-Type", "audio/mpeg");
-        headers.set("Cache-Control", "no-store");
-        headers.set("X-FNS-Voice-Engine", "aura-1");
-        headers.set("X-FNS-Voice-Speaker", speaker);
+        for (const [k,v] of Object.entries(corsAudioHeaders(origin,{
+          "Content-Type":"audio/mpeg",
+          "X-FNS-Voice-Engine":"aura-1",
+          "X-FNS-Voice-Speaker":speaker,
+          "X-FNS-Voice-Language":"en"
+        }))) headers.set(k,v);
 
-        return new Response(raw.body, {
-          status: 200,
-          headers
-        });
+        return new Response(raw.body,{status:200,headers});
       } catch (error) {
         return Response.json(
-          { ok: false, error: String(error?.message || error) },
-          { status: 500, headers: cors(origin) }
+          { ok:false, error:String(error?.message || error) },
+          { status:500, headers:cors(origin) }
         );
       }
     }
@@ -204,7 +371,7 @@ export default {
         const message = String(body?.message || "").trim();
         const teacher = String(body?.teacher || "Emma");
         const level = String(body?.level || "A1");
-        const accent = String(body?.accent || "British");
+        const accent = String(body?.accent || "American");
         const history = Array.isArray(body?.history) ? body.history.slice(-8) : [];
 
         if (!message) {
