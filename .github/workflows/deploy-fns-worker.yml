@@ -154,14 +154,23 @@ jobs:
             if(extractFunction(app,name)!==extractFunction(stable,name)) fail('Protected microphone/turn function changed: '+name);
           }
 
-          // startBrowserOnlySTT/startRecording may differ only in the two approved timing parameters.
-          const normalizeListening=s=>s
-            .replace('r.continuous=true;','r.continuous=false;')
-            .replace('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);','recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);');
-
-          if(normalizeListening(extractFunction(app,'startBrowserOnlySTT'))!==extractFunction(stable,'startBrowserOnlySTT')){
-            fail('Browser LISTENING function changed beyond approved timing');
-          }
+          // Browser STT may now change only for the requested multilingual transcription hardening.
+          // The protected audio capture/turn machine remains guarded separately below.
+          const browserStt=extractFunction(app,'startBrowserOnlySTT');
+          for(const token of [
+            "if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return false;",
+            "const Ctor=browserSpeechCtor();",
+            "listeningEngine='browser';",
+            "r.continuous=true;",
+            "r.interimResults=true;",
+            "r.maxAlternatives=3;",
+            "r.lang=inferBrowserSttLanguage();",
+            "bestSpeechAlternative",
+            "normalizeTranscriptText",
+            "transcriptLooksCorrupt",
+            "await handleUser(text,{stateOwned:true});"
+          ]) if(!browserStt.includes(token)) fail('Browser STT invariant missing: '+token);
+          if(browserStt.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
 
           const recording=extractFunction(app,'startRecording');
           for(const token of [
