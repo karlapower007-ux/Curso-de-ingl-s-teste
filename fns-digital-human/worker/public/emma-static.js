@@ -1,10 +1,11 @@
-/* Emma Phase 2 procedural face rig. No browser TTS; visual animation only. */
+/* Emma Phase 2.1: stable procedural face rig after portrait preload. */
 window.FNS_EMMA_VISUAL_RIG=true;
 
 (()=>{
   let blinkTimer=null;
   let gazeTimer=null;
   let rigFace=null;
+  let installToken=0;
 
   function clearRigTimers(){
     if(blinkTimer){clearTimeout(blinkTimer);blinkTimer=null;}
@@ -12,77 +13,102 @@ window.FNS_EMMA_VISUAL_RIG=true;
   }
 
   function setBlink(face,amount){
+    if(!face||face.dataset.avatarReady!=='true')return;
     face.querySelectorAll('.avatar-eyelid').forEach(el=>{
       el.style.opacity=String(Math.max(0,Math.min(1,amount)));
-      el.style.transform='scaleY('+Math.max(.08,amount)+')';
+      el.style.transform='scaleY('+Math.max(.06,amount)+')';
     });
   }
 
-  function scheduleBlink(face){
-    const next=1800+Math.random()*4200;
+  function scheduleBlink(face,token){
+    const next=2200+Math.random()*4200;
     blinkTimer=setTimeout(async()=>{
-      if(!face.isConnected)return;
-      setBlink(face,.9);
-      await new Promise(r=>setTimeout(r,72));
+      if(token!==installToken||!face.isConnected||face.dataset.avatarReady!=='true')return;
+      setBlink(face,.78);
+      await new Promise(r=>setTimeout(r,62));
       setBlink(face,1);
-      await new Promise(r=>setTimeout(r,58));
-      setBlink(face,.38);
-      await new Promise(r=>setTimeout(r,58));
+      await new Promise(r=>setTimeout(r,54));
+      setBlink(face,.28);
+      await new Promise(r=>setTimeout(r,50));
       setBlink(face,0);
-
-      if(Math.random()<.16){
-        await new Promise(r=>setTimeout(r,120));
-        setBlink(face,.82);
-        await new Promise(r=>setTimeout(r,80));
-        setBlink(face,0);
-      }
-      scheduleBlink(face);
+      scheduleBlink(face,token);
     },next);
   }
 
-  function scheduleGaze(face){
-    const next=900+Math.random()*2300;
+  function scheduleGaze(face,token){
+    const next=1300+Math.random()*2400;
     gazeTimer=setTimeout(()=>{
-      if(!face.isConnected)return;
+      if(token!==installToken||!face.isConnected||face.dataset.avatarReady!=='true')return;
       const speaking=face.classList.contains('avatar-speaking');
       const listening=face.classList.contains('avatar-listening');
-      const span=speaking?1.15:listening?1.4:.85;
+      const span=speaking?.8:listening?1.0:.55;
       const x=((Math.random()*2)-1)*span;
-      const y=((Math.random()*2)-1)*span*.58;
+      const y=((Math.random()*2)-1)*span*.45;
       face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
       face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
-      scheduleGaze(face);
+      scheduleGaze(face,token);
     },next);
   }
 
-  function install(face){
-    if(!face||!face.classList.contains('human-avatar'))return;
-    if(rigFace===face)return;
+  function activate(face){
+    if(!face||!face.isConnected)return;
+    const portrait=face.querySelector('#emmaPortrait');
+    if(!portrait)return;
+
+    if(!(portrait.complete&&portrait.naturalWidth>0)){
+      const token=++installToken;
+      const onLoad=()=>{
+        if(token!==installToken)return;
+        face.dataset.avatarReady='true';
+        activate(face);
+      };
+      const onError=()=>{
+        if(token!==installToken)return;
+        face.dataset.avatarReady='error';
+        clearRigTimers();
+      };
+      portrait.addEventListener('load',onLoad,{once:true});
+      portrait.addEventListener('error',onError,{once:true});
+      return;
+    }
+
+    if(rigFace===face && face.dataset.fnsRig==='active')return;
+
     clearRigTimers();
     rigFace=face;
+    const token=++installToken;
+    face.dataset.avatarReady='true';
     face.dataset.fnsRig='active';
     face.style.setProperty('--mouth-open','0');
+    face.style.setProperty('--mouth-wide','0');
     face.style.setProperty('--gaze-x','0px');
     face.style.setProperty('--gaze-y','0px');
     setBlink(face,0);
-    scheduleBlink(face);
-    scheduleGaze(face);
+    scheduleBlink(face,token);
+    scheduleGaze(face,token);
   }
 
   function scan(){
     const face=document.querySelector('#avatarFace.human-avatar');
-    if(face)install(face);
+    if(face)activate(face);
     else if(rigFace&&!rigFace.isConnected){
       clearRigTimers();
       rigFace=null;
+      installToken++;
     }
   }
 
   const observer=new MutationObserver(scan);
   observer.observe(document.documentElement,{childList:true,subtree:true});
+
   document.addEventListener('visibilitychange',()=>{
-    if(document.hidden)clearRigTimers();
-    else {rigFace=null;scan();}
+    clearRigTimers();
+    installToken++;
+    if(!document.hidden){
+      rigFace=null;
+      scan();
+    }
   });
+
   scan();
 })();
