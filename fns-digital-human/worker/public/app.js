@@ -37,14 +37,19 @@ function live(){layout(`<h1>Prática ao vivo</h1><p>Katya usa LiveAvatar. Os out
 function openTeacher(i){let t=teachers[i]; if(t.embed){document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="room"><button class="close" onclick="modal.remove()">Encerrar</button><h2>${t.name} • ${t.accent}</h2><iframe src="${t.embed}" allow="microphone; autoplay"></iframe></div></div>`)}else openLiteTeacher(i,'A1','conversation','General conversation')}
 function avatarVisualMarkup(t){
   if(t?.portrait){
-    return `<div id="avatarFace" class="avatar-face human-avatar" style="--mouth-open:0;--gaze-x:0px;--gaze-y:0px">
-      <img class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" referrerpolicy="no-referrer">
-      <img class="avatar-photo avatar-photo-jaw" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
-      <img class="avatar-photo avatar-eye-layer avatar-eye-left" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
-      <img class="avatar-photo avatar-eye-layer avatar-eye-right" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
-      <div class="avatar-eyelid avatar-eyelid-left" aria-hidden="true"></div>
-      <div class="avatar-eyelid avatar-eyelid-right" aria-hidden="true"></div>
-      <div class="avatar-mouth-cavity" aria-hidden="true"></div>
+    return `<div id="avatarFace" class="avatar-face human-avatar" data-avatar-ready="false" style="--mouth-open:0;--mouth-wide:0;--gaze-x:0px;--gaze-y:0px">
+      <img id="emmaPortrait" class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" decoding="sync"
+        onload="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','true')"
+        onerror="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','error')">
+      <div class="avatar-fx-layer" aria-hidden="true">
+        <div class="avatar-gaze avatar-gaze-left"></div>
+        <div class="avatar-gaze avatar-gaze-right"></div>
+        <div class="avatar-eyelid avatar-eyelid-left"></div>
+        <div class="avatar-eyelid avatar-eyelid-right"></div>
+        <div class="avatar-mouth-cavity"></div>
+        <div class="avatar-lip avatar-lip-top"></div>
+        <div class="avatar-lip avatar-lip-bottom"></div>
+      </div>
       <div class="avatar-camera-vignette"></div>
       <div class="avatar-live-badge">● LIVE</div>
     </div>`;
@@ -311,6 +316,12 @@ function stopAvatarLipSync(){
 function startAvatarLipSync(audio){
   const face=document.querySelector('#avatarFace');
   if(!face?.classList.contains('human-avatar'))return;
+  const portrait=face.querySelector('#emmaPortrait');
+  if(portrait && (!portrait.complete || !portrait.naturalWidth || face.dataset.avatarReady!=='true')){
+    const resume=()=>{ if(currentVoiceAudio===audio && !audio.paused) startAvatarLipSync(audio); };
+    portrait?.addEventListener('load',resume,{once:true});
+    return;
+  }
   stopAvatarLipSync();
   try{
     const AudioCtx=window.AudioContext||window.webkitAudioContext;
@@ -371,7 +382,7 @@ function stopRemoteVoice(){
     currentVoiceUrl='';
   }
   const face=document.querySelector('#avatarFace');
-  if(face)face.className='avatar-face human-avatar';
+  if(face)face.className=face.querySelector('#emmaPortrait')?'avatar-face human-avatar':'avatar-face';
 }
 
 async function remoteSpeak(text){
