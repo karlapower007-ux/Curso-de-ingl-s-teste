@@ -42,6 +42,44 @@ function extractText(result) {
   return "";
 }
 
+
+function sanitizeForSpeech(input) {
+  let text = String(input || "");
+
+  // Preserve the visible label of Markdown links, drop the URL.
+  text = text.replace(/!?[([^]]*)]((?:[^()]+|([^)]*))*)/g, "$1");
+
+  // Remove fenced and inline-code markers while preserving human-readable words.
+  text = text.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/`([^\`]*)`/g, "$1");
+
+  // Remove common Markdown / formatting characters.
+  text = text.replace(/[*_~^#>|]/g, " ");
+
+  // Remove bracket/brace delimiters but keep any natural words inside.
+  text = text.replace(/[\[\]{}<>]/g, " ");
+
+  // Remove emoji / pictographic symbols, flags, dingbats and variation selectors.
+  text = text.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
+
+  // Keep letters/numbers from any language, whitespace, apostrophes and normal speech punctuation.
+  text = text.replace(/[^\p{L}\p{M}\p{N}\s.,!?;:'"()\-—–]/gu, " ");
+
+  // Normalize punctuation/spacing so Aura receives clean natural language.
+  text = text
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .replace(/([.,!?;:])(?=[\p{L}\p{N}])/gu, "$1 ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
+  return text;
+}
+
+function latencyHeaders(startedAt) {
+  return { "X-FNS-Latency-Ms": String(Math.max(0, Math.round(performance.now() - startedAt))) };
+}
+
 function systemPrompt({ teacher="Emma", level="A1", accent="British" } = {}) {
   return `You are ${teacher}, a warm, natural English teacher for Estudos Profundos FNS Idiomas.
 Accent/profile: ${accent} English.
@@ -75,7 +113,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-15.2",
+          version: "2026-09-15.3-turbine",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "@cf/deepgram/aura-1",
           chat: "@cf/openai/gpt-oss-120b"
@@ -85,6 +123,7 @@ export default {
     }
 
     if (url.pathname === "/stt" && request.method === "POST") {
+      const startedAt = performance.now();
       try {
         const buffer = await request.arrayBuffer();
         if (!buffer.byteLength) {
@@ -106,7 +145,7 @@ export default {
 
         return Response.json(
           { ok: true, text },
-          { headers: { ...cors(origin), "Cache-Control": "no-store" } }
+          { headers: { ...cors(origin), "Cache-Control": "no-store", ...latencyHeaders(startedAt) } }
         );
       } catch (error) {
         return Response.json(
@@ -117,9 +156,11 @@ export default {
     }
 
     if (url.pathname === "/tts" && request.method === "POST") {
+      const startedAt = performance.now();
       try {
         const body = await request.json().catch(() => ({}));
-        const text = String(body?.text || body?.prompt || "").trim();
+        const sourceText = String(body?.text || body?.prompt || "");
+        const text = sanitizeForSpeech(sourceText);
         const teacher = String(body?.teacher || "Emma");
 
         if (!text) {
@@ -183,6 +224,8 @@ export default {
         headers.set("Cache-Control", "no-store");
         headers.set("X-FNS-Voice-Engine", "aura-1");
         headers.set("X-FNS-Voice-Speaker", speaker);
+        headers.set("X-FNS-Text-Sanitized", sourceText === text ? "0" : "1");
+        headers.set("X-FNS-Latency-Ms", String(Math.max(0, Math.round(performance.now() - startedAt))));
 
         return new Response(raw.body, {
           status: 200,
@@ -197,13 +240,14 @@ export default {
     }
 
     if (url.pathname === "/chat" && request.method === "POST") {
+      const startedAt = performance.now();
       try {
         const body = await request.json().catch(() => ({}));
         const message = String(body?.message || "").trim();
         const teacher = String(body?.teacher || "Emma");
         const level = String(body?.level || "A1");
         const accent = String(body?.accent || "British");
-        const history = Array.isArray(body?.history) ? body.history.slice(-8) : [];
+        const history = Array.isArray(body?.history) ? body.history.slice(-6) : [];
 
         if (!message) {
           return Response.json(
@@ -222,20 +266,22 @@ export default {
 
         const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
           messages,
-          max_tokens: 220,
-          temperature: 0.55
+          max_tokens: 180,
+          temperature: 0.5
         });
 
         const reply = extractText(result) || "Could you say that again?";
+        const speech = sanitizeForSpeech(reply) || "Could you say that again?";
 
         return Response.json(
           {
             ok: true,
             teacher,
             model: "@cf/openai/gpt-oss-120b",
-            reply
+            reply,
+            speech
           },
-          { headers: { ...cors(origin), "Cache-Control": "no-store" } }
+          { headers: { ...cors(origin), "Cache-Control": "no-store", ...latencyHeaders(startedAt) } }
         );
       } catch (error) {
         return Response.json(
