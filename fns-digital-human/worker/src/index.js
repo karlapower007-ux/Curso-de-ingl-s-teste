@@ -106,6 +106,97 @@ function parseSseData(text) {
   return last;
 }
 
+async function gradioAudioFromSpace(opts) {
+  const {base, endpointCandidates, dataVariants, engine, spaceName, origin, timeoutMs=7000} = opts;
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort("tts-timeout"), timeoutMs);
+  try {
+    let chosen = null;
+    let eventId = "";
+    for (const endpoint of endpointCandidates) {
+      for (const data of dataVariants) {
+        try {
+          const submit = await fetch(base + "/gradio_api/call/" + encodeURIComponent(endpoint), {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({data}),
+            signal:controller.signal
+          });
+          if (!submit.ok) continue;
+          const json = await submit.json().catch(()=>null);
+          if (json?.event_id) { chosen = endpoint; eventId = json.event_id; break; }
+        } catch (error) { if (controller.signal.aborted) throw error; }
+      }
+      if (chosen) break;
+    }
+    if (!chosen || !eventId) throw new Error(spaceName + " did not accept API candidates.");
+    const ev = await fetch(base + "/gradio_api/call/" + encodeURIComponent(chosen) + "/" + encodeURIComponent(eventId), {signal:controller.signal});
+    if (!ev.ok) throw new Error(spaceName + " event failed: HTTP " + ev.status);
+    const payload = parseSseData(await ev.text());
+    if (!payload) throw new Error(spaceName + " returned no payload.");
+    const list = Array.isArray(payload) ? payload : [payload];
+    let ref = null;
+    for (const out of list) {
+      if (typeof out === "string" && /audio|wav|mp3|flac|ogg|file=/i.test(out)) { ref = out; break; }
+      if (out && typeof out === "object") {
+        if (typeof out.url === "string") { ref = out.url; break; }
+        if (typeof out.path === "string") { ref = out.path; break; }
+      }
+    }
+    if (!ref) throw new Error(spaceName + " returned no audio reference.");
+    let audioUrl = ref;
+    if (audioUrl.startsWith("/")) audioUrl = base + audioUrl;
+    else if (!/^https?:\/\//i.test(audioUrl)) audioUrl = base + "/gradio_api/file=" + encodeURIComponent(audioUrl);
+    const audio = await fetch(audioUrl,{signal:controller.signal});
+    if (!audio.ok) throw new Error(spaceName + " audio download failed: HTTP " + audio.status);
+    const ct = audio.headers.get("content-type") || "";
+    if (!ct.startsWith("audio/") && !/octet-stream/i.test(ct)) throw new Error(spaceName + " returned non-audio content: " + ct);
+    const headers = new Headers(audio.headers);
+    for (const [k,v] of Object.entries(corsAudioHeaders(origin,{
+      "X-FNS-Voice-Engine":engine,
+      "X-FNS-Voice-Language":"pt-BR",
+      "X-FNS-HF-Space":spaceName
+    }))) headers.set(k,v);
+    return new Response(audio.body,{status:200,headers});
+  } finally { clearTimeout(timeout); }
+}
+
+function splitTtsChunks(text,maxLen=180) {
+  const words=String(text||"").split(/\s+/).filter(Boolean);
+  const chunks=[]; let current="";
+  for (const word of words) {
+    const next=current?current+" "+word:word;
+    if (next.length>maxLen && current) { chunks.push(current); current=word; } else current=next;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+async function googleTranslateTtsPortuguese(text,origin) {
+  const buffers=[];
+  for (const chunk of splitTtsChunks(text,180)) {
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort("google-tts-timeout"),4500);
+    try {
+      const url="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q="+encodeURIComponent(chunk);
+      const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0","Accept":"audio/mpeg,*/*"},signal:controller.signal});
+      if (!r.ok) throw new Error("Google TTS HTTP "+r.status);
+      const ct=r.headers.get("content-type")||"";
+      if (!ct.includes("audio") && !ct.includes("mpeg")) throw new Error("Google TTS non-audio response: "+ct);
+      buffers.push(new Uint8Array(await r.arrayBuffer()));
+    } finally { clearTimeout(timeout); }
+  }
+  const size=buffers.reduce((n,b)=>n+b.byteLength,0);
+  if (!size) throw new Error("Google TTS returned empty audio.");
+  const merged=new Uint8Array(size); let offset=0;
+  for (const b of buffers) { merged.set(b,offset); offset+=b.byteLength; }
+  return new Response(merged,{status:200,headers:corsAudioHeaders(origin,{
+    "Content-Type":"audio/mpeg",
+    "X-FNS-Voice-Engine":"google-translate-tts-ptbr",
+    "X-FNS-Voice-Language":"pt-BR"
+  })});
+}
+
 async function hfKokoroPortuguese(env, text, origin) {
   const base = "https://wmr-tts-ptbr.hf.space";
   const candidates = ["KOKORO_TTS_API","kokoro_tts_api","predict"];
