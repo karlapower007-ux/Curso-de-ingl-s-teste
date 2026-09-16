@@ -26,36 +26,49 @@ function fromBase64(base64) {
 }
 
 async function portugueseTtsResponse(env, text) {
-  const response = await env.AI.run(
-    "@cf/myshell-ai/melotts",
-    { prompt: text, lang: "pt" },
-    { returnRawResponse: true }
-  );
+  let lastError = null;
 
-  if (!(response instanceof Response)) {
-    throw new Error("PT-BR MeloTTS did not return a Response.");
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await env.AI.run(
+        "@cf/myshell-ai/melotts",
+        { prompt: text, lang: "pt" },
+        { returnRawResponse: true }
+      );
+
+      if (!(response instanceof Response)) {
+        throw new Error("PT-BR MeloTTS did not return a Response.");
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error("PT-BR MeloTTS failed: HTTP " + response.status + (detail ? " - " + detail.slice(0, 220) : ""));
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("audio/")) return response;
+
+      const payload = await response.json().catch(() => null);
+      const encoded = payload?.audio || payload?.result?.audio || "";
+      if (!encoded) throw new Error("PT-BR MeloTTS returned no audio payload.");
+
+      const bytes = fromBase64(encoded);
+      const isWav = bytes.length >= 4 &&
+        bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+
+      return new Response(bytes, {
+        status: 200,
+        headers: { "Content-Type": isWav ? "audio/wav" : "audio/mpeg" }
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 180 * attempt));
+      }
+    }
   }
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error("PT-BR MeloTTS failed: HTTP " + response.status + (detail ? " - " + detail.slice(0, 220) : ""));
-  }
-
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("audio/")) return response;
-
-  const payload = await response.json().catch(() => null);
-  const encoded = payload?.audio || payload?.result?.audio || "";
-  if (!encoded) throw new Error("PT-BR MeloTTS returned no audio payload.");
-
-  const bytes = fromBase64(encoded);
-  const isWav = bytes.length >= 4 &&
-    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
-
-  return new Response(bytes, {
-    status: 200,
-    headers: { "Content-Type": isWav ? "audio/wav" : "audio/mpeg" }
-  });
+  throw lastError || new Error("PT-BR TTS failed after retries.");
 }
 
 function extractText(result) {
@@ -358,7 +371,9 @@ export default {
 
         const headers = new Headers(raw.headers);
         for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
-        headers.set("Content-Type", "audio/mpeg");
+        if (!(headers.get("Content-Type") || "").startsWith("audio/")) {
+          headers.set("Content-Type", "audio/mpeg");
+        }
         headers.set("Cache-Control", "no-store");
         headers.set("X-FNS-Voice-Engine", voiceModel);
         headers.set("X-FNS-Voice-Speaker", speaker);
