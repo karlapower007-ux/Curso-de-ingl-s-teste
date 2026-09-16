@@ -653,57 +653,41 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
-async function pollinationsTextFallback(messages,timeoutMs=6500) {
+async function pollinationsTextFallback(messages,timeoutMs=5500) {
   const compact=messages
-    .slice(-7)
-    .map(m=>({role:String(m?.role||"user"),content:String(m?.content||"").slice(0,m?.role==="system"?900:700)}));
+    .slice(-6)
+    .map(m=>({role:String(m?.role||"user"),content:String(m?.content||"").slice(0,m?.role==="system"?500:420)}));
 
-  const rejectBadReply=(reply)=>{
-    const text=String(reply||"").trim();
-    if(!text)throw new Error("Pollinations returned an empty reply.");
-    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(text)){
-      throw new Error("Pollinations returned an auth/quota response.");
-    }
-    if(/^\s*</.test(text))throw new Error("Pollinations returned HTML instead of model text.");
-    return text;
-  };
-
-  {
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort("pollinations-post-timeout"),Math.min(timeoutMs,3600));
-    try{
-      const r=await fetch("https://text.pollinations.ai/openai",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Accept":"application/json,text/plain"},
-        body:JSON.stringify({model:"openai-fast",messages:compact,stream:false,temperature:.55,max_tokens:220}),
-        signal:controller.signal
-      });
-      if(r.ok){
-        const ct=r.headers.get("content-type")||"";
-        if(ct.includes("json")){
-          const data=await r.json();
-          return rejectBadReply(data?.choices?.[0]?.message?.content||data?.choices?.[0]?.text||data?.response||"");
-        }
-        return rejectBadReply(await r.text());
-      }
-    }catch(e){} finally{clearTimeout(timeout);}
-  }
-
-  const system=String(compact.find(x=>x.role==="system")?.content||"").slice(0,600);
+  const system=String(compact.find(x=>x.role==="system")?.content||"").slice(0,420);
   const convo=compact
     .filter(x=>x.role!=="system")
     .map(x=>(x.role==="assistant"?"Emma: ":"User: ")+x.content)
     .join("\n")
-    .slice(-2600);
-  const prompt=(system+"\n\n"+convo+"\nEmma:").trim();
+    .slice(-1500);
 
+  const prompt=(system+"\n"+convo+"\nEmma:").trim();
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort("pollinations-get-timeout"),timeoutMs);
+
   try{
-    const url="https://text.pollinations.ai/"+encodeURIComponent(prompt)+"?model=openai-fast";
-    const r=await fetch(url,{headers:{"Accept":"text/plain"},signal:controller.signal});
+    const url="https://text.pollinations.ai/"+encodeURIComponent(prompt);
+    const r=await fetch(url,{
+      method:"GET",
+      headers:{
+        "Accept":"text/plain",
+        "User-Agent":"Mozilla/5.0 FNS-Digital-Human/1.0"
+      },
+      signal:controller.signal
+    });
     if(!r.ok)throw new Error("Pollinations GET HTTP "+r.status);
-    return rejectBadReply(await r.text());
+
+    const reply=String(await r.text()).trim();
+    if(!reply)throw new Error("Pollinations returned an empty reply.");
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(reply)){
+      throw new Error("Pollinations returned an auth/quota response.");
+    }
+    if(/^\s*</.test(reply))throw new Error("Pollinations returned HTML instead of model text.");
+    return reply;
   }finally{
     clearTimeout(timeout);
   }
@@ -781,10 +765,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.14-mobile-mouth-fast-fallbacks",
+          version: "2026-09-16.15-pollinations-fast-get",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + Pollinations openai-fast no-key primary fallback + HF last resort"
+          chat: "Cloudflare GPT-OSS + Pollinations legacy text GET no-key primary fallback + HF last resort"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
