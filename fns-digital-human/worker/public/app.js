@@ -259,7 +259,7 @@ function isQuotaPayload(data,status=0){
 function isSttBackendFailure(data,status=0){
   return isQuotaPayload(data,status) || status===502 || status===503 || status===504;
 }
-function enterQuotaRestMode(){
+function enterQuotaRestMode({preserveFlow=false}={}){
   neuralQuotaExhausted=true;
   browserSttPreferred=true;
 
@@ -269,8 +269,10 @@ function enterQuotaRestMode(){
     transcript.scrollTop=transcript.scrollHeight;
   }
 
-  if(flowState!==FLOW_STATES.SPEAKING){
+  if(!preserveFlow && flowState!==FLOW_STATES.SPEAKING){
     setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
+  }else if(preserveFlow){
+    refreshFlowControls('Cérebro rápido de emergência');
   }
 
   if(quotaResetTimer)clearTimeout(quotaResetTimer);
@@ -554,6 +556,61 @@ function sendTyped(){
   handleUser(text,{stateOwned:true});
 }
 
+async function pollinationsBrowserReply(text){
+  const userText=String(text||'').trim().slice(0,700);
+  if(!userText)throw new Error('Mensagem vazia.');
+
+  const level=document.querySelector('#levelSel')?.value||activeTeacher?.level||'A1';
+  const mode=document.querySelector('#modeSel')?.value||activeTeacher?.mode||'conversation';
+  const lang=/[áéíóúãõç]|\b(você|não|uma|para|porque)\b/i.test(userText)
+    ?'Responda em português brasileiro.'
+    :/[¿¡ñ]|\b(hola|usted|gracias|porque)\b/i.test(userText)
+      ?'Responde en español.'
+      :'Reply in natural English.';
+
+  const prompt=[
+    'You are Emma, a friendly concise language tutor.',
+    lang,
+    'CEFR '+level+'. Mode: '+mode+'.',
+    'Correct language mistakes gently when useful.',
+    'User: '+userText,
+    'Emma:'
+  ].join('\n');
+
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort('pollinations-browser-timeout'),8500);
+
+  try{
+    const response=await fetch('https://text.pollinations.ai/'+encodeURIComponent(prompt),{
+      method:'GET',
+      mode:'cors',
+      credentials:'omit',
+      cache:'no-store',
+      referrerPolicy:'strict-origin-when-cross-origin',
+      headers:{'Accept':'text/plain,*/*'},
+      signal:controller.signal
+    });
+    if(!response.ok)throw new Error('Pollinations HTTP '+response.status);
+    const reply=String(await response.text()).trim();
+    if(!reply||/^\s*</.test(reply))throw new Error('Resposta pública inválida.');
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(reply)){
+      throw new Error('Serviço público temporariamente limitado.');
+    }
+    return reply;
+  }finally{
+    clearTimeout(timeout);
+  }
+}
+
+async function emergencyBrainReply(text){
+  enterQuotaRestMode({preserveFlow:true});
+  try{
+    return await pollinationsBrowserReply(text);
+  }catch(error){
+    return teacherReply(text);
+  }
+}
+
 async function handleUser(text,{stateOwned=false}={}){
   text=String(text||'').trim();
   if(!text)return;
@@ -570,6 +627,8 @@ async function handleUser(text,{stateOwned=false}={}){
   addMsg('user',text);
   addPracticeMessage();
 
+  let reply='';
+
   try{
     const response=await fetch(FNS_CHAT_URL,{
       method:'POST',
@@ -585,27 +644,24 @@ async function handleUser(text,{stateOwned=false}={}){
     const data=await response.json().catch(()=>({}));
     if(turn!==conversationTurnSeq)return;
 
-    if(isQuotaPayload(data,response.status)){
-      enterQuotaRestMode();
-      return;
-    }
-    if(!response.ok||!data.ok)throw new Error(data?.message||data?.error||'A Emma está temporariamente indisponível.');
-
-    const reply=String(data.reply||'Could you say that again?').trim();
-    addMsg('teacher',reply);
-
-    // Keep PROCESSING locked until TTS either begins SPEAKING or finishes/fails.
-    const spoken=await speak(reply,{fromProcessing:true});
-    if(turn===conversationTurnSeq && !spoken && flowState===FLOW_STATES.PROCESSING){
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    if(isQuotaPayload(data,response.status) || data?.browser_fallback===true || data?.code==='FNS_BROWSER_POLLINATIONS'){
+      reply=await emergencyBrainReply(text);
+    }else if(!response.ok||!data.ok){
+      reply=await emergencyBrainReply(text);
+    }else{
+      reply=String(data.reply||'Could you say that again?').trim();
     }
   }catch(error){
     if(turn!==conversationTurnSeq)return;
-    if(isQuotaPayload(error,0)){
-      enterQuotaRestMode();
-      return;
-    }
-    addMsg('system','A Emma está temporariamente indisponível. Tente novamente em alguns minutos.');
+    reply=await emergencyBrainReply(text);
+  }
+
+  if(turn!==conversationTurnSeq)return;
+  reply=String(reply||teacherReply(text)).trim();
+  addMsg('teacher',reply);
+
+  const spoken=await speak(reply,{fromProcessing:true});
+  if(turn===conversationTurnSeq && !spoken && flowState===FLOW_STATES.PROCESSING){
     setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
   }
 }

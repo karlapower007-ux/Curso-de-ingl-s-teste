@@ -60,6 +60,9 @@ jobs:
           if(app.includes('useBrowserSttFallback(')) fail('STT fallback must not auto-open Web Speech');
           if(app.includes('startShadowBrowserSTT();')) fail('MediaRecorder still starts browser STT');
           if(!app.includes("if(isSpeaking||isProcessing)return;")) fail('Mic has no speaking/processing guard');
+          if(!app.includes('pollinationsBrowserReply')) fail('Direct browser Pollinations fallback missing');
+          if(!app.includes("'https://text.pollinations.ai/'")) fail('Pollinations browser endpoint missing');
+          if(!app.includes("enterQuotaRestMode({preserveFlow:true})")) fail('Emergency brain can still unlock microphone early');
 
           const remote=app.slice(app.indexOf('async function remoteSpeak'),app.indexOf('async function unlockVoice'));
           if(remote.includes('stopRemoteVoice();')) fail('remoteSpeak must not destroy an active audio element before playback');
@@ -223,7 +226,7 @@ jobs:
             -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
-            --data '{"message":"Hello Emma. Reply in one short sentence and ask me one simple question.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
+            --data '{"message":"Hello Emma.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
             "https://fns-stt.karlapower007.workers.dev/chat")
           cat chat.json
           export CHAT_CODE
@@ -231,14 +234,26 @@ jobs:
           const fs=require('fs');
           const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
           const code=process.env.CHAT_CODE;
-          if(code!=='200') throw new Error('Chat fallback not available; HTTP '+code+' '+JSON.stringify(r));
-          const reply=String(r.reply||'').trim();
-          if(!r.ok || !reply) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
-          if(r.fallback!==true || r.forced_public!==true) throw new Error('Public brain route was not actually exercised: '+JSON.stringify(r));
-          if(String(r.model||'').startsWith('@cf/')) throw new Error('Forced public QA unexpectedly used Cloudflare AI: '+JSON.stringify(r));
-          if(!String(r.model||'').startsWith('pollinations-')) throw new Error('Fast Pollinations brain was not used: '+JSON.stringify(r));
-          if(/api key.*(budget|limit)|raise the key budget|rate.?limit|quota exceeded|insufficient (credits|balance)|unauthorized|forbidden/i.test(reply)){
-            throw new Error('Chat provider returned a quota/auth message instead of a real reply: '+reply);
-          }
-          console.log('QA BRAIN PASS model='+r.model+' fallback='+Boolean(r.fallback));
+          if(code!=='503') throw new Error('Forced public handoff must be immediate HTTP 503, got '+code+' '+JSON.stringify(r));
+          if(r.code!=='FNS_BROWSER_POLLINATIONS'||r.browser_fallback!==true) throw new Error('Browser Pollinations handoff missing: '+JSON.stringify(r));
+          console.log('QA BRAIN HANDOFF PASS: backend exits immediately to browser Pollinations');
           NODE
+
+          POLL_CODE=$(curl --silent --show-error --max-time 15 \
+            -D poll.headers \
+            -o poll.txt \
+            -w "%{http_code}" \
+            -H "Referer: https://fns-stt.karlapower007.workers.dev/" \
+            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
+            -H "Accept: text/plain,*/*" \
+            "https://text.pollinations.ai/Reply%20with%20exactly%20these%20two%20words%3A%20Emma%20ready")
+          echo "Pollinations http=$POLL_CODE"
+          head -c 300 poll.txt || true
+          test "$POLL_CODE" = "200"
+          POLL_SIZE=$(wc -c < poll.txt)
+          test "$POLL_SIZE" -gt 2
+          if grep -Eqi 'api key|unauthorized|forbidden|quota exceeded|rate.?limit' poll.txt; then
+            echo "Pollinations returned auth/quota text instead of a reply"
+            exit 1
+          fi
+          echo "QA POLLINATIONS DIRECT PASS bytes=$POLL_SIZE"

@@ -779,10 +779,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.16-pollinations-compact-get",
+          version: "2026-09-16.17-browser-pollinations",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + parallel Pollinations text GET primary fallback + HF last resort"
+          chat: "Cloudflare GPT-OSS + immediate browser Pollinations anonymous fallback; no HF on critical path"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -904,16 +904,24 @@ export default {
         }
 
         if(!reply){
-          try{
-            const fallback=await publicChatFallback(messages);
-            reply=fallback.reply;
-            model=fallback.model;
-          }catch(fallbackError){
-            if(isWorkersAIQuotaError(cloudError) || isWorkersAIQuotaError(fallbackError)){
-              return quotaResponse(origin,"chat");
+          return Response.json(
+            {
+              ok:false,
+              code:"FNS_BROWSER_POLLINATIONS",
+              browser_fallback:true,
+              quota_exhausted:isWorkersAIQuotaError(cloudError),
+              forced_public:forcePublic,
+              message:"Use the browser Pollinations fallback immediately."
+            },
+            {
+              status:503,
+              headers:{
+                ...cors(origin),
+                "Cache-Control":"no-store",
+                "X-FNS-Chat-Engine":"browser-pollinations"
+              }
             }
-            throw fallbackError;
-          }
+          );
         }
 
         return Response.json(
