@@ -249,6 +249,32 @@ jobs:
           test "$WORKER_HASH" = "e9fc92b68dde633a9b82273fba77943064f7e767"
           echo "QA VISUAL-ONLY PASS: audio, microphone, STT, TTS, memory, fallbacks and turn logic unchanged"
 
+      - name: QA Emma JPEG integrity
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const b=fs.readFileSync('public/emma.jpg');
+          const fail=m=>{throw new Error(m)};
+          if(b.length<80000)fail('Emma JPEG unexpectedly small: '+b.length);
+          if(b[0]!==0xff||b[1]!==0xd8)fail('Emma JPEG missing SOI');
+          if(b[b.length-2]!==0xff||b[b.length-1]!==0xd9)fail('Emma JPEG missing EOI');
+          let i=2,w=0,h=0;
+          const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
+          while(i+9<b.length){
+            if(b[i]!==0xff){i++;continue}
+            while(i<b.length&&b[i]===0xff)i++;
+            const marker=b[i++];
+            if(marker===0xd8||marker===0xd9)continue;
+            if(i+1>=b.length)break;
+            const len=(b[i]<<8)|b[i+1];
+            if(len<2||i+len>b.length)break;
+            if(sof.has(marker)){h=(b[i+3]<<8)|b[i+4];w=(b[i+5]<<8)|b[i+6];break}
+            i+=len;
+          }
+          if(w!==700||h!==700)fail('Emma JPEG dimensions invalid: '+w+'x'+h);
+          console.log('QA EMMA JPEG PASS: valid 700x700 JPEG bytes='+b.length);
+          NODE
+
       - name: Deploy Worker
         run: npx wrangler deploy
         env:
@@ -441,7 +467,29 @@ jobs:
           EMMA_SIZE=$(wc -c < emma.jpg)
           EMMA_TYPE=$(tr -d '\r' < emma.headers | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
           echo "emma.jpg type=$EMMA_TYPE bytes=$EMMA_SIZE"
-          test "$EMMA_SIZE" -gt 10000
+          test "$EMMA_SIZE" -gt 80000
+          node - <<'NODE'
+          const fs=require('fs');
+          const b=fs.readFileSync('emma.jpg');
+          const fail=m=>{throw new Error(m)};
+          if(b[0]!==0xff||b[1]!==0xd8)fail('Production Emma JPEG missing SOI');
+          if(b[b.length-2]!==0xff||b[b.length-1]!==0xd9)fail('Production Emma JPEG missing EOI');
+          let i=2,w=0,h=0;
+          const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
+          while(i+9<b.length){
+            if(b[i]!==0xff){i++;continue}
+            while(i<b.length&&b[i]===0xff)i++;
+            const marker=b[i++];
+            if(marker===0xd8||marker===0xd9)continue;
+            if(i+1>=b.length)break;
+            const len=(b[i]<<8)|b[i+1];
+            if(len<2||i+len>b.length)break;
+            if(sof.has(marker)){h=(b[i+3]<<8)|b[i+4];w=(b[i+5]<<8)|b[i+6];break}
+            i+=len;
+          }
+          if(w!==700||h!==700)fail('Production Emma JPEG dimensions invalid: '+w+'x'+h);
+          console.log('QA EMMA JPEG PRODUCTION PASS: '+w+'x'+h+' bytes='+b.length);
+          NODE
           case "$EMMA_TYPE" in
             image/jpeg*|image/jpg*) ;;
             *) echo "Invalid Emma content type: $EMMA_TYPE"; exit 1 ;;

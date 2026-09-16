@@ -240,7 +240,7 @@
 .human-avatar .avatar-photo-base,
 .human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base,
 .human-avatar[data-avatar-visual-mode="fallback-2d"] .avatar-photo-base{
-  content:url('/emma.jpg?v=hd2')!important;
+  content:url('/emma.jpg?v=valid4')!important;
   display:block!important;
   opacity:1!important;
   visibility:visible!important;
@@ -303,7 +303,7 @@
 .human-avatar[data-avatar-ready="error"] .avatar-photo-base,
 .human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base,
 .human-avatar[data-avatar-visual-mode="fallback-2d"] .avatar-photo-base{
-  content:url('/emma.jpg?v=visible3')!important;
+  content:url('/emma.jpg?v=valid4')!important;
   position:absolute!important;
   inset:0!important;
   display:block!important;
