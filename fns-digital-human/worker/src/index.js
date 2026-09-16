@@ -180,7 +180,13 @@ export default {
 
         const audioResponse = ttsResponse;
         if (!audioResponse.ok) throw new Error("PT-BR audio fetch failed: HTTP " + audioResponse.status);
+        const contentType = audioResponse.headers.get("content-type") || "";
         const audioBuffer = await audioResponse.arrayBuffer();
+
+        if (!contentType.includes("audio/")) {
+          const sample = new TextDecoder().decode(audioBuffer.slice(0, 500));
+          throw new Error("PT-BR TTS returned non-audio content-type " + contentType + ": " + sample);
+        }
 
         const stt = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
           audio: toBase64(audioBuffer),
