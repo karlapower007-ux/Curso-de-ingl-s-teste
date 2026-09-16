@@ -46,9 +46,7 @@ function avatarVisualMarkup(t){
         <div class="avatar-gaze avatar-gaze-right"></div>
         <div class="avatar-eyelid avatar-eyelid-left"></div>
         <div class="avatar-eyelid avatar-eyelid-right"></div>
-        <div class="avatar-mouth-cavity"></div>
-        <div class="avatar-lip avatar-lip-top"></div>
-        <div class="avatar-lip avatar-lip-bottom"></div>
+        <div class="avatar-mouth-motion"></div>
       </div>
       <div class="avatar-camera-vignette"></div>
       <div class="avatar-live-badge">● LIVE</div>
@@ -63,7 +61,8 @@ let quotaResetTimer=null;
 let browserFallbackRecognition=null;
 let browserFallbackTranscript='';
 let browserFallbackActive=false;
-const QUOTA_NOTICE_TEXT='Aviso: O limite diário de processamento neural gratuito foi atingido. A Emma descansará até a meia-noite (UTC). Volte amanhã!';
+let browserSttPreferred=false;
+const QUOTA_NOTICE_TEXT='Modo de emergência ativo: o microfone do navegador continua ouvindo e o cérebro público de reserva continua respondendo enquanto a cota neural principal estiver indisponível.';
 
 function browserSpeechCtor(){
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -108,48 +107,107 @@ function stopShadowBrowserSTT(){
   browserFallbackActive=false;
 }
 
-function useBrowserSttFallback(){
-  const cached=(browserFallbackTranscript||'').trim();
-  if(cached){
-    setStatus('Ouvido alternativo','on');
-    handleUser(cached);
-    return true;
+function activateBrowserSttMode(reason=''){
+  browserSttPreferred=true;
+  const mic=document.querySelector('#micBtn');
+  if(mic){
+    mic.disabled=false;
+    mic.textContent='🎤 Falar (navegador)';
   }
+  setStatus(reason?'Ouvido do navegador • '+reason:'Ouvido do navegador ativo','on');
+}
 
+function startBrowserOnlySTT(){
   const Ctor=browserSpeechCtor();
   if(!Ctor){
-    addMsg('system','O reconhecimento neural atingiu o limite diário e este navegador não oferece reconhecimento de voz alternativo. Você ainda pode digitar normalmente.');
+    addMsg('system','Este navegador não oferece SpeechRecognition. Você ainda pode digitar sua mensagem normalmente.');
     setStatus('Digite sua mensagem','busy');
     return false;
   }
 
   try{
+    if(browserFallbackRecognition){
+      try{browserFallbackRecognition.abort()}catch(e){}
+    }
+
+    browserFallbackTranscript='';
     const r=new Ctor();
+    browserFallbackRecognition=r;
     r.continuous=false;
-    r.interimResults=false;
+    r.interimResults=true;
     r.maxAlternatives=1;
     r.lang=navigator.language || 'pt-BR';
-    setStatus('Ouvido alternativo • fale novamente','on');
+
+    let finalText='';
+    let interimText='';
+
+    r.onstart=()=>{
+      browserFallbackActive=true;
+      recognizing=true;
+      const mic=document.querySelector('#micBtn');
+      if(mic)mic.textContent='⏹ Parar';
+      const face=document.querySelector('#avatarFace');
+      if(face)face.classList.add('avatar-listening');
+      setStatus('Listening • browser STT','on');
+    };
 
     r.onresult=(event)=>{
-      const text=String(event.results?.[0]?.[0]?.transcript||'').trim();
+      finalText='';
+      interimText='';
+      for(let i=event.resultIndex;i<event.results.length;i++){
+        const piece=String(event.results[i]?.[0]?.transcript||'');
+        if(event.results[i].isFinal)finalText+=piece;
+        else interimText+=piece;
+      }
+      const combined=(finalText||interimText).trim();
+      if(combined)browserFallbackTranscript=combined;
+    };
+
+    r.onerror=(event)=>{
+      const code=String(event?.error||'');
+      if(code && code!=='aborted' && code!=='no-speech'){
+        addMsg('system','O reconhecimento de voz do navegador falhou ('+code+'). Você pode tentar novamente ou digitar.');
+      }
+      setStatus('Ready','on');
+    };
+
+    r.onend=()=>{
+      browserFallbackActive=false;
+      recognizing=false;
+      const mic=document.querySelector('#micBtn');
+      if(mic)mic.textContent=browserSttPreferred?'🎤 Falar (navegador)':'🎤 Falar';
+      const face=document.querySelector('#avatarFace');
+      if(face)face.classList.remove('avatar-listening');
+      const text=(finalText||browserFallbackTranscript||'').trim();
+      browserFallbackRecognition=null;
       if(text){
-        browserFallbackTranscript=text;
+        browserFallbackTranscript='';
         handleUser(text);
       }else{
         setStatus('Ready','on');
       }
     };
-    r.onerror=()=>setStatus('Digite sua mensagem','busy');
-    r.onend=()=>{browserFallbackActive=false;};
-    browserFallbackRecognition=r;
-    browserFallbackActive=true;
+
     r.start();
     return true;
   }catch(e){
+    recognizing=false;
+    browserFallbackActive=false;
     setStatus('Digite sua mensagem','busy');
     return false;
   }
+}
+
+function useBrowserSttFallback(reason='fallback'){
+  activateBrowserSttMode(reason);
+  const cached=(browserFallbackTranscript||'').trim();
+  if(cached){
+    browserFallbackTranscript='';
+    setStatus('Ouvido alternativo','on');
+    handleUser(cached);
+    return true;
+  }
+  return startBrowserOnlySTT();
 }
 
 function nextUtcMidnightMs(){
@@ -161,28 +219,36 @@ function isQuotaPayload(data,status=0){
   return status===429 || data?.quota_exhausted===true || data?.code==='FNS_DAILY_NEURON_QUOTA' ||
     /4006|daily free allocation|10\s*,?\s*000\s+neurons|neurons.*(quota|limit|allocation)/i.test(raw);
 }
+function isSttBackendFailure(data,status=0){
+  return isQuotaPayload(data,status) || status===502 || status===503 || status===504;
+}
 function enterQuotaRestMode(){
   neuralQuotaExhausted=true;
   cleanupRecorder();
   stopRemoteVoice();
+  activateBrowserSttMode('modo emergência');
   const mic=document.querySelector('#micBtn');
-  if(mic){mic.disabled=true;mic.textContent='🎤 Limite diário atingido';}
+  if(mic){
+    mic.disabled=false;
+    mic.textContent='🎤 Falar (navegador)';
+  }
   const transcript=document.querySelector('#transcript');
   if(transcript && !transcript.querySelector('.quota-notice')){
     transcript.insertAdjacentHTML('beforeend','<div class="msg system quota-notice">'+escapeHtml(QUOTA_NOTICE_TEXT)+'</div>');
     transcript.scrollTop=transcript.scrollHeight;
   }
-  setStatus('Descansando até 00:00 UTC','busy');
+  setStatus('Modo emergência • ouvido local + cérebro público','on');
   if(quotaResetTimer)clearTimeout(quotaResetTimer);
   quotaResetTimer=setTimeout(()=>{
     neuralQuotaExhausted=false;
+    browserSttPreferred=false;
     const m=document.querySelector('#micBtn');
     if(m){m.disabled=false;m.textContent='🎤 Falar';}
     setStatus('Ready','on');
   },Math.max(1000,nextUtcMidnightMs()+1500));
 }
 
-function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;if(neuralQuotaExhausted)enterQuotaRestMode();else speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
+function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;if(neuralQuotaExhausted)enterQuotaRestMode();speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
 function sanitizeChatText(input){
@@ -207,9 +273,24 @@ function addMsg(role,text){
   t.scrollTop=t.scrollHeight;
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function toggleRecognition(){if(neuralQuotaExhausted){enterQuotaRestMode();return;}recognizing?stopRecordingAndSend():startRecording()}
+function toggleRecognition(){
+  if(recognizing){
+    stopRecognition();
+    return;
+  }
+  if(browserSttPreferred||neuralQuotaExhausted){
+    activateBrowserSttMode('modo emergência');
+    startBrowserOnlySTT();
+    return;
+  }
+  startRecording();
+}
 async function startRecording(){
-  if(neuralQuotaExhausted){enterQuotaRestMode();return;}
+  if(neuralQuotaExhausted||browserSttPreferred){
+    activateBrowserSttMode('modo emergência');
+    startBrowserOnlySTT();
+    return;
+  }
   if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
     addMsg('system','Este navegador não oferece gravação de áudio compatível. Você pode digitar sua frase.');
     return;
@@ -332,8 +413,8 @@ async function transcribeWithFNS(blob){
       body:blob
     });
     const data=await res.json().catch(()=>({}));
-    if(isQuotaPayload(data,res.status)){
-      useBrowserSttFallback();
+    if(isSttBackendFailure(data,res.status)){
+      useBrowserSttFallback('HTTP '+res.status);
       return;
     }
     if(!res.ok){
@@ -347,12 +428,21 @@ async function transcribeWithFNS(blob){
     }
     handleUser(text);
   }catch(err){
-    addMsg('system','Não foi possível usar o reconhecimento neural agora. Tentando o reconhecimento de voz do navegador.');
-    useBrowserSttFallback();
-    setStatus('Ready','on');
+    addMsg('system','Não foi possível usar o reconhecimento neural agora. Ativando o reconhecimento de voz do navegador.');
+    useBrowserSttFallback('rede indisponível');
   }
 }
-function stopRecognition(){stopRecordingAndSend()}
+function stopRecognition(){
+  if(mediaRecorder && mediaRecorder.state==='recording'){
+    stopRecordingAndSend();
+    return;
+  }
+  if(browserFallbackRecognition){
+    try{browserFallbackRecognition.stop()}catch(e){}
+    return;
+  }
+  recognizing=false;
+}
 function sendTyped(){const el=document.querySelector('#chatInput');if(!el||!el.value.trim())return;const text=el.value.trim();el.value='';handleUser(text)}
 async function handleUser(text){
   addMsg('user',text);
@@ -453,50 +543,54 @@ function startAvatarLipSync(audio){
     portrait?.addEventListener('load',resume,{once:true});
     return;
   }
+
   stopAvatarLipSync();
+
   try{
     const AudioCtx=window.AudioContext||window.webkitAudioContext;
     if(!AudioCtx)return;
     avatarAudioContext=new AudioCtx();
     avatarMediaSource=avatarAudioContext.createMediaElementSource(audio);
     avatarAnalyser=avatarAudioContext.createAnalyser();
-    avatarAnalyser.fftSize=512;
-    avatarAnalyser.smoothingTimeConstant=.42;
+    avatarAnalyser.fftSize=1024;
+    avatarAnalyser.smoothingTimeConstant=.68;
     avatarMediaSource.connect(avatarAnalyser);
     avatarAnalyser.connect(avatarAudioContext.destination);
-    const bins=new Uint8Array(avatarAnalyser.frequencyBinCount);
+
+    const samples=new Uint8Array(avatarAnalyser.fftSize);
     face.classList.add('avatar-talking');
     let smoothOpen=0;
+    let lastTs=0;
 
-    const bandAverage=(from,to)=>{
-      let sum=0,count=0;
-      for(let i=from;i<Math.min(to,bins.length);i++){sum+=bins[i];count++;}
-      return count?sum/count:0;
-    };
-
-    const tick=()=>{
+    const tick=(ts=0)=>{
       if(!avatarAnalyser||!currentVoiceAudio||currentVoiceAudio.paused){
-        if(face){
-          face.style.setProperty('--mouth-open','0');
-          face.style.setProperty('--mouth-wide','0');
-        }
+        face.style.setProperty('--mouth-open','0');
+        face.style.setProperty('--mouth-wide','0');
         return;
       }
 
-      avatarAnalyser.getByteFrequencyData(bins);
-      const low=bandAverage(2,18);
-      const mid=bandAverage(18,52);
-      const high=bandAverage(52,96);
-      const energy=low*.56+mid*.34+high*.10;
-      const target=Math.max(0,Math.min(1,Math.pow(Math.max(0,(energy-8)/68),.82)));
-      smoothOpen=smoothOpen*.62+target*.38;
-      const wide=Math.max(0,Math.min(1,(mid-high*.18)/92));
+      // RMS amplitude only: no Canvas, no image rewriting, no jaw bitmap duplication.
+      avatarAnalyser.getByteTimeDomainData(samples);
+      let sum=0;
+      for(let i=0;i<samples.length;i++){
+        const v=(samples[i]-128)/128;
+        sum+=v*v;
+      }
+      const rms=Math.sqrt(sum/samples.length);
+      const target=Math.max(0,Math.min(.72,(rms-.018)/.16));
+      const frameScale=lastTs?Math.min(1,(ts-lastTs)/16.67):1;
+      const attack=0.24*frameScale;
+      const release=0.15*frameScale;
+      const alpha=target>smoothOpen?attack:release;
+      smoothOpen=smoothOpen+(target-smoothOpen)*alpha;
+      lastTs=ts;
 
       face.style.setProperty('--mouth-open',smoothOpen.toFixed(3));
-      face.style.setProperty('--mouth-wide',wide.toFixed(3));
+      face.style.setProperty('--mouth-wide',Math.min(.5,smoothOpen*.62).toFixed(3));
       avatarLipRAF=requestAnimationFrame(tick);
     };
-    tick();
+
+    avatarLipRAF=requestAnimationFrame(tick);
   }catch(e){
     stopAvatarLipSync();
   }

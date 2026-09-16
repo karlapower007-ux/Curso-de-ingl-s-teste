@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Static JS syntax checks
+        run: |
+          node --check src/index.js
+          node --check public/app.js
+          node --check public/emma-static.js
+
       - name: Deploy Worker
         run: npx wrangler deploy
         env:
@@ -90,15 +96,22 @@ jobs:
           if(markup.includes('avatar-photo-jaw')) fail('Duplicate jaw image layer still present');
           if(markup.includes('avatar-eye-layer')) fail('Duplicate eye image layer still present');
           if(!markup.includes('data-avatar-ready')) fail('Portrait preload state missing');
+          if(!markup.includes('avatar-mouth-motion')) fail('Single smooth mouth overlay missing');
+          if(markup.includes('avatar-mouth-cavity') || markup.includes('avatar-lip ')) fail('Legacy multi-layer mouth still present');
+          if(/canvas|getContext\s*\(/i.test(markup+css)) fail('Canvas/pixel mouth manipulation must not be used');
           if(!css.includes('.avatar-fx-layer')) fail('Transparent FX layer missing');
           if(!css.includes('background:transparent')) fail('FX layer is not transparent');
           if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
           if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
+          if(!app.includes('getByteTimeDomainData(samples)')) fail('Smooth RMS lip-sync missing');
           if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
           if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
           const jpg=fs.readFileSync('public/emma.jpg');
           if(jpg.length<10000 || jpg[0]!==0xff || jpg[1]!==0xd8) fail('Emma JPEG asset is invalid');
           if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
+          if(!app.includes('isSttBackendFailure')) fail('STT backend fallback detector missing');
+          if(!app.includes('status===502')) fail('HTTP 502 STT fallback missing');
+          if(!app.includes('browserSttPreferred')) fail('Persistent browser STT emergency mode missing');
           console.log('QA EMMA VISUAL PASS: real JPEG + fixed portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
           NODE
 
@@ -128,7 +141,8 @@ jobs:
           if(esIds.length!==10) fail('Spanish cascade must have exactly 10 engines: '+esIds.length);
 
           if(!app.includes('enterQuotaRestMode')) fail('Frontend quota rest mode missing');
-          if(!app.includes('mic.disabled=true')) fail('Microphone quota disable missing');
+          if(!app.includes('mic.disabled=false')) fail('Microphone must stay enabled in emergency browser STT mode');
+          if(app.includes("mic.disabled=true;mic.textContent='🎤 Limite diário atingido'")) fail('Legacy quota microphone shutdown still present');
           if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
@@ -156,7 +170,7 @@ jobs:
             -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
-            --data '{"message":"Hello Emma. Reply in one short sentence and ask me one simple question.","teacher":"Emma","level":"A1","accent":"American"}' \
+            --data '{"message":"Hello Emma. Reply in one short sentence and ask me one simple question.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
             "https://fns-stt.karlapower007.workers.dev/chat")
           cat chat.json
           export CHAT_CODE
@@ -167,6 +181,8 @@ jobs:
           if(code!=='200') throw new Error('Chat fallback not available; HTTP '+code+' '+JSON.stringify(r));
           const reply=String(r.reply||'').trim();
           if(!r.ok || !reply) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
+          if(r.fallback!==true || r.forced_public!==true) throw new Error('Public brain route was not actually exercised: '+JSON.stringify(r));
+          if(String(r.model||'').startsWith('@cf/')) throw new Error('Forced public QA unexpectedly used Cloudflare AI: '+JSON.stringify(r));
           if(/api key.*(budget|limit)|raise the key budget|rate.?limit|quota exceeded|insufficient (credits|balance)|unauthorized|forbidden/i.test(reply)){
             throw new Error('Chat provider returned a quota/auth message instead of a real reply: '+reply);
           }

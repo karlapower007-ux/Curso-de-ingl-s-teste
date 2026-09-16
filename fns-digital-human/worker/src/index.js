@@ -648,42 +648,43 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
 async function publicChatFallback(messages) {
   const failures=[];
 
-  // No-key public OpenAI-compatible fallback. This is the first escape route
-  // when Workers AI hits neuron quota or a temporary upstream failure.
-  try{
-    const reply=await noKeyOpenAIChat(
-      "https://text.pollinations.ai/openai",
-      "openai",
-      messages,
-      10000
-    );
-    if(reply) return {reply,model:"pollinations-openai-public"};
-  }catch(error){
-    failures.push("pollinations-openai-public: "+String(error?.message||error).slice(0,180));
+  // Current no-key public endpoint: Qwen3-4B on Hugging Face ZeroGPU.
+  // The Space itself documents an OpenAI-compatible /v1/chat/completions API
+  // and requires no token or signup.
+  const openAIProviders=[
+    {
+      id:"hf-zacheus-qwen3-4b-public",
+      url:"https://zacheus10-free-ai-chat.hf.space/v1/chat/completions",
+      model:"local-ai",
+      timeoutMs:18000
+    }
+  ];
+
+  for(const provider of openAIProviders){
+    try{
+      const reply=await noKeyOpenAIChat(
+        provider.url,
+        provider.model,
+        messages,
+        provider.timeoutMs
+      );
+      if(reply) return {reply,model:provider.id};
+    }catch(error){
+      failures.push(provider.id+": "+String(error?.message||error).slice(0,180));
+    }
   }
 
-  // Public Hugging Face REST fallback.
-  try{
-    const reply=await noKeyOpenAIChat(
-      "https://zacheus10-free-ai-chat.hf.space/v1/chat/completions",
-      "local-ai",
-      messages,
-      12000
-    );
-    if(reply) return {reply,model:"hf-qwen3-4b-public"};
-  }catch(error){
-    failures.push("hf-qwen3-4b-public: "+String(error?.message||error).slice(0,180));
-  }
-
-  // Public Gradio Spaces as tertiary brain fallbacks.
+  // Independent public Hugging Face Gradio routes. API names are discovered
+  // dynamically so UI revisions do not hard-code a fragile endpoint.
   const gradioProviders=[
-    {id:"hf-llama2-chat",base:"https://huggingface-projects-llama-2-7b-chat.hf.space"},
-    {id:"hf-gemma3-chat",base:"https://cognitivescience-gemma-3-chat.hf.space"}
+    {id:"hf-qwen3-demo-public",base:"https://qwen-qwen3-demo.hf.space"},
+    {id:"hf-minicpm5-demo-public",base:"https://openbmb-minicpm5-2b-demo.hf.space"},
+    {id:"hf-gemma3-chat-public",base:"https://cognitivescience-gemma-3-chat.hf.space"}
   ];
 
   for(const provider of gradioProviders){
     try{
-      const reply=await gradioChatFallback(provider.base,messages,10000);
+      const reply=await gradioChatFallback(provider.base,messages,14000);
       if(reply) return {reply,model:provider.id};
     }catch(error){
       failures.push(provider.id+": "+String(error?.message||error).slice(0,180));
@@ -745,10 +746,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.10-real-avatar-immortal-ear-brain",
+          version: "2026-09-16.11-smooth-face-browser-ear-public-brain",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
-          chat: "Cloudflare GPT-OSS + Pollinations no-key + public Hugging Face fallbacks"
+          chat: "Cloudflare GPT-OSS + no-key Qwen/Hugging Face public fallbacks"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -832,6 +833,7 @@ export default {
         const level = String(body?.level || "A1");
         const accent = String(body?.accent || "American");
         const history = Array.isArray(body?.history) ? body.history.slice(-8) : [];
+        const forcePublic = body?.force_public === true;
 
         if (!message) {
           return Response.json(
@@ -852,16 +854,20 @@ export default {
         let model="@cf/openai/gpt-oss-120b";
         let cloudError=null;
 
-        try {
-          const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
-            messages,
-            max_tokens: 220,
-            temperature: 0.55
-          });
-          reply=extractText(result);
-          if(!reply) throw new Error("Cloudflare chat returned an empty reply.");
-        } catch(error) {
-          cloudError=error;
+        if(!forcePublic){
+          try {
+            const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
+              messages,
+              max_tokens: 220,
+              temperature: 0.55
+            });
+            reply=extractText(result);
+            if(!reply) throw new Error("Cloudflare chat returned an empty reply.");
+          } catch(error) {
+            cloudError=error;
+          }
+        }else{
+          cloudError=new Error("Public fallback forced by deployment QA.");
         }
 
         if(!reply){
@@ -883,6 +889,7 @@ export default {
             teacher,
             model,
             fallback: model !== "@cf/openai/gpt-oss-120b",
+            forced_public: forcePublic,
             reply
           },
           { headers: { ...cors(origin), "Cache-Control": "no-store", "X-FNS-Chat-Engine": model } }
