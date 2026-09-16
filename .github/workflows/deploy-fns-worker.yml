@@ -229,9 +229,11 @@ jobs:
 
           if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
           if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
-          if(!app.includes("Math.min(.92,(rms-.014)/.115)")) fail('Stronger analyser mouth opening missing');
-          if(!css.includes("var(--mouth-open,0) * 2.30")) fail('Stronger CSS mouth opening missing');
-          if(!css.includes("scaleY(2.95)")) fail('Stronger simulated mouth fallback missing');
+          if(!app.includes("Math.min(1,(rms-.008)/.075)")) fail('Maximum analyser mouth opening missing');
+          if(!css.includes("var(--mouth-open,0) * 3.65")) fail('Large CSS mouth opening missing');
+          if(!css.includes("scaleY(3.85)")) fail('Large simulated mouth fallback missing');
+          if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
+          if(!css.includes('#fffdfa')) fail('Teeth fill missing');
           console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
 
@@ -411,8 +413,9 @@ jobs:
             if(!app.includes(token)) throw new Error('Production desktop mic fix missing: '+token);
           }
           if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
-          if(!app.includes("Math.min(.92,(rms-.014)/.115)")) throw new Error('Production analyser mouth opening gain missing');
-          if(!css.includes("var(--mouth-open,0) * 2.30")) throw new Error('Production CSS mouth opening gain missing');
+          if(!app.includes("Math.min(1,(rms-.008)/.075)")) throw new Error('Production analyser mouth opening gain missing');
+          if(!css.includes("var(--mouth-open,0) * 3.65")) throw new Error('Production large mouth opening missing');
+          if(!css.includes('.avatar-mouth-motion::before')) throw new Error('Production teeth layer missing');
           console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS');
           NODE
 
