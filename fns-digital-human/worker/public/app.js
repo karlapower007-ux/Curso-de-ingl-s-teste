@@ -304,7 +304,23 @@ function addMsg(role,text){
   const t=document.querySelector('#transcript');
   if(!t)return;
   const display=role==='user'?String(text||''):sanitizeChatText(text);
-  t.insertAdjacentHTML('beforeend',`<div class="msg ${role}">${escapeHtml(display)}</div>`);
+  const normalized=display.replace(/\s+/g,' ').trim();
+  if(!normalized)return;
+
+  const last=t.lastElementChild;
+  const key=role+'|'+normalized.slice(0,500);
+  const now=Date.now();
+  if(last?.dataset?.fnsMessageKey===key && (now-Number(last.dataset.fnsMessageTs||0))<4500){
+    t.scrollTop=t.scrollHeight;
+    return;
+  }
+
+  const node=document.createElement('div');
+  node.className='msg '+role;
+  node.textContent=display;
+  node.dataset.fnsMessageKey=key;
+  node.dataset.fnsMessageTs=String(now);
+  t.appendChild(node);
   t.scrollTop=t.scrollHeight;
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
@@ -548,7 +564,7 @@ function stopRecognition(){
 }
 
 
-const FNS_MEMORY_MAX_MESSAGES=12;
+const FNS_MEMORY_MAX_MESSAGES=20;
 const FNS_MEMORY_LOCAL_PREFIX='fns_digital_human_memory_v1_';
 const FNS_MEMORY_SESSION_PREFIX='fns_digital_human_session_v1_';
 
@@ -566,7 +582,7 @@ function memorySessionKey(){
 
 function normalizeBrowserMemory(items){
   if(!Array.isArray(items))return [];
-  return items
+  const clean=items
     .filter(x=>x&&['user','assistant'].includes(x.role)&&typeof x.content==='string')
     .map(x=>({
       role:x.role,
@@ -574,7 +590,20 @@ function normalizeBrowserMemory(items){
       ts:Number.isFinite(Number(x.ts))?Number(x.ts):0
     }))
     .filter(x=>x.content)
-    .slice(-FNS_MEMORY_MAX_MESSAGES);
+    .sort((a,b)=>(a.ts||0)-(b.ts||0));
+
+  const deduped=[];
+  for(const item of clean){
+    const prev=deduped[deduped.length-1];
+    const same=prev&&prev.role===item.role&&prev.content===item.content;
+    const close=same&&(!prev.ts||!item.ts||Math.abs(item.ts-prev.ts)<15000);
+    if(close){
+      if((item.ts||0)>=(prev.ts||0))deduped[deduped.length-1]=item;
+      continue;
+    }
+    deduped.push(item);
+  }
+  return deduped.slice(-FNS_MEMORY_MAX_MESSAGES);
 }
 
 function readBrowserMemory(){
@@ -625,11 +654,11 @@ function getMemorySessionId(){
   return id;
 }
 
-function memoryMessagesForProvider(history=readBrowserMemory(),limit=8){
+function memoryMessagesForProvider(history=readBrowserMemory(),limit=12){
   return normalizeBrowserMemory(history).slice(-limit).map(x=>({role:x.role,content:x.content}));
 }
 
-function memoryTextForPrompt(history=readBrowserMemory(),limit=6){
+function memoryTextForPrompt(history=readBrowserMemory(),limit=10){
   return memoryMessagesForProvider(history,limit)
     .map(x=>(x.role==='assistant'?'Emma: ':'User: ')+x.content)
     .join('\n');
@@ -663,7 +692,7 @@ async function pollinationsBrowserReply(text,history=readBrowserMemory()){
     :/[¿¡ñ]|\b(hola|usted|gracias|porque)\b/i.test(userText)
       ?'Responde en español.'
       :'Reply in natural English.';
-  const remembered=memoryTextForPrompt(history,6);
+  const remembered=memoryTextForPrompt(history,10);
 
   const prompt=[
     'You are Emma, a friendly concise language tutor.',
@@ -733,7 +762,7 @@ async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200)
         model:'codestral-latest',
         messages:[
           {role:'system',content:system},
-          ...memoryMessagesForProvider(history,8),
+          ...memoryMessagesForProvider(history,12),
           {role:'user',content:userText}
         ],
         temperature:.55,

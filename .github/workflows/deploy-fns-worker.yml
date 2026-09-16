@@ -166,6 +166,33 @@ jobs:
           console.log('QA PHASE 2 PASS: memory A/B/C/D active; only LISTENING timing changed; turn machine is stable');
           NODE
 
+      - name: QA chat dedupe and AvatarManager v3
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const avatar=fs.readFileSync('public/emma-static.js','utf8');
+          const css=fs.readFileSync('public/emma-static.css','utf8');
+          const fail=m=>{throw new Error(m)};
+
+          if(!app.includes("dataset.fnsMessageKey")) fail('Chat visual dedupe guard missing');
+          if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=20')) fail('Browser memory was not expanded to 20 messages');
+          if(!worker.includes('const FNS_MEMORY_MAX_MESSAGES=20')) fail('Worker memory was not expanded to 20 messages');
+          if(!worker.includes('Math.abs(item.ts-prior.ts)<15000')) fail('Remote/client near-duplicate memory collapse missing');
+
+          for(const token of ['class AvatarManager','class AvatarWatchdog','avatar-webgl-layer','readState()','readMouth()','webglcontextlost','scheduleRecovery','static selfTest()']){
+            if(!avatar.includes(token)) fail('AvatarManager requirement missing: '+token);
+          }
+          for(const forbidden of ['MediaRecorder','SpeechRecognition','webkitSpeechRecognition','.play(','.pause(','stopRecognition','setFlowState(']){
+            if(avatar.includes(forbidden)) fail('Avatar visual layer illegally controls core flow: '+forbidden);
+          }
+          if(!avatar.includes("for(let turn=0;turn<20;turn++)")) fail('20-turn visual self-test missing');
+          if(!css.includes('Emma AvatarManager v3')) fail('Avatar WebGL CSS missing');
+          if(!css.includes('.avatar-webgl-layer.avatar-webgl-failed{display:none!important}')) fail('2D fallback visibility rule missing');
+          console.log('QA AVATAR V3 PASS: watchdog/fallback isolated from audio and turn core; 20-turn visual self-test present');
+          NODE
+
       - name: Deploy Worker
         run: npx wrangler deploy
         env:
@@ -310,8 +337,24 @@ jobs:
           for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000']){
             if(!app.includes(token)) throw new Error('Production Phase 2 frontend missing: '+token);
           }
-          if(health.version!=='2026-09-16.21-phase2-memory') throw new Error('Wrong production health version: '+health.version);
+          if(health.version!=='2026-09-16.22-avatar-layer-memory-plus') throw new Error('Wrong production health version: '+health.version);
           console.log('QA PHASE 2 PRODUCTION PASS: browser memory + extended LISTENING + memory-aware Worker deployed');
+          NODE
+
+      - name: QA AvatarManager v3 production
+        run: |
+          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js"
+          curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
+          node - <<'NODE'
+          const fs=require('fs');
+          const avatar=fs.readFileSync('avatar-prod.js','utf8');
+          const app=fs.readFileSync('app-prod.js','utf8');
+          for(const token of ['class AvatarManager','class AvatarWatchdog','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
+            if(!avatar.includes(token)) throw new Error('Production AvatarManager missing: '+token);
+          }
+          if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
+          if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=20')) throw new Error('Production memory+ frontend missing');
+          console.log('QA AVATAR V3 PRODUCTION PASS: visual layer + chat dedupe + memory+ deployed');
           NODE
 
       - name: QA production portrait and brain fallback

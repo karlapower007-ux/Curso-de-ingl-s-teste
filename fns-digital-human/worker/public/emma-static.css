@@ -127,3 +127,36 @@
 @media(prefers-reduced-motion:reduce){
   .human-avatar{animation:none!important}
 }
+
+/* ===== Emma AvatarManager v3 — visual-only WebGL shell ===== */
+.human-avatar .avatar-webgl-layer{
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  z-index:2!important;
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  pointer-events:none!important;
+  background:transparent!important;
+  border:0!important;
+  transform:translateZ(0);
+}
+.human-avatar .avatar-webgl-layer.avatar-webgl-failed{display:none!important}
+.human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base{
+  opacity:1!important;
+  visibility:visible!important;
+}
+.human-avatar[data-avatar-state="processing"]::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:9;
+  pointer-events:none;
+  background:radial-gradient(circle at 50% 36%,rgba(113,142,255,.09),transparent 42%);
+  animation:emmaThinkingGlow 1.8s ease-in-out infinite;
+}
+.human-avatar[data-avatar-state="listening"] .avatar-live-badge{box-shadow:0 0 18px rgba(66,211,146,.22)}
+.human-avatar[data-avatar-state="speaking"] .avatar-live-badge{box-shadow:0 0 20px rgba(109,93,252,.28)}
+@keyframes emmaThinkingGlow{0%,100%{opacity:.35}50%{opacity:.9}}

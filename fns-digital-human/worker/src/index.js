@@ -654,8 +654,8 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
 }
 
 
-const FNS_MEMORY_MAX_MESSAGES=12;
-const FNS_MEMORY_TTL_SECONDS=60*60*24*7;
+const FNS_MEMORY_MAX_MESSAGES=20;
+const FNS_MEMORY_TTL_SECONDS=60*60*24*14;
 
 function normalizeMemoryHistory(items){
   if(!Array.isArray(items))return [];
@@ -676,13 +676,28 @@ function normalizeSessionId(value){
 }
 
 function mergeMemoryHistory(remoteHistory,clientHistory){
-  const combined=[...normalizeMemoryHistory(remoteHistory),...normalizeMemoryHistory(clientHistory)];
-  const seen=new Set();
+  const combined=[...normalizeMemoryHistory(remoteHistory),...normalizeMemoryHistory(clientHistory)]
+    .sort((a,b)=>(a.ts||0)-(b.ts||0));
   const unique=[];
   for(const item of combined){
-    const key=item.role+"\u0000"+item.content+"\u0000"+String(item.ts||0);
-    if(seen.has(key))continue;
-    seen.add(key);
+    let lastSameIndex=-1;
+    for(let i=unique.length-1;i>=0;i--){
+      const candidate=unique[i];
+      if(candidate.role===item.role && candidate.content===item.content){
+        lastSameIndex=i;
+        break;
+      }
+      if((item.ts||0) && (candidate.ts||0) && (item.ts-candidate.ts)>15000)break;
+    }
+
+    if(lastSameIndex>=0){
+      const prior=unique[lastSameIndex];
+      const close=!prior.ts||!item.ts||Math.abs(item.ts-prior.ts)<15000;
+      if(close){
+        if((item.ts||0)>=(prior.ts||0))unique[lastSameIndex]=item;
+        continue;
+      }
+    }
     unique.push(item);
   }
   unique.sort((a,b)=>(a.ts||0)-(b.ts||0));
@@ -777,7 +792,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.21-phase2-memory",
+          version: "2026-09-16.22-avatar-layer-memory-plus",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
           chat: "Cloudflare GPT-OSS + resilient session memory + browser Pollinations/LLM7 + local teaching fallback"
@@ -866,7 +881,7 @@ export default {
         const sessionId = normalizeSessionId(body?.session_id);
         const clientHistory = normalizeMemoryHistory(body?.history);
         const remoteHistory = await loadRemoteSessionMemory(sessionId);
-        const history = mergeMemoryHistory(remoteHistory,clientHistory).slice(-10);
+        const history = mergeMemoryHistory(remoteHistory,clientHistory).slice(-16);
         const forcePublic = body?.force_public === true;
 
         if (!message) {
