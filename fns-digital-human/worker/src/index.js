@@ -653,34 +653,55 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
-async function pollinationsTextFallback(messages,timeoutMs=7000) {
-  const latest=messages.slice().reverse().find(x=>x?.role==="user");
-  const userMessage=String(latest?.content||"").trim().slice(0,700);
-  if(!userMessage)throw new Error("Pollinations fallback received no user message.");
+async function pollinationsTextFallback(messages,timeoutMs=9000) {
+  const lastUser=String([...messages].reverse().find(x=>x?.role==="user")?.content||"").slice(0,650);
+  const lastAssistant=String([...messages].reverse().find(x=>x?.role==="assistant")?.content||"").slice(0,260);
+  const system=String(messages.find(x=>x?.role==="system")?.content||"");
+  const langHint=/[áéíóúãõç]|\b(você|que|não|uma|para)\b/i.test(lastUser)
+    ?"Responda em português brasileiro."
+    :/[¿¡ñ]|\b(usted|hola|gracias|porque)\b/i.test(lastUser)
+      ?"Responde en español."
+      :"Reply in natural English.";
 
-  const system="You are Emma, a friendly multilingual language teacher. Reply naturally and briefly in the user's language unless they ask for another language. Correct language mistakes gently when useful. Avoid markdown.";
+  const prompt=[
+    "You are Emma, a concise friendly language tutor.",
+    langHint,
+    lastAssistant?"Previous Emma: "+lastAssistant:"",
+    "User: "+lastUser,
+    "Emma:"
+  ].filter(Boolean).join("\n");
+
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort("pollinations-get-timeout"),timeoutMs);
+  const timeout=setTimeout(()=>controller.abort("pollinations-race-timeout"),timeoutMs);
 
-  try{
-    const url="https://text.pollinations.ai/"+encodeURIComponent(userMessage)+"?system="+encodeURIComponent(system);
+  const fetchText=async(url)=>{
     const r=await fetch(url,{
       method:"GET",
-      headers:{
-        "Accept":"text/plain",
-        "User-Agent":"Mozilla/5.0 FNS-Digital-Human/1.0"
-      },
+      headers:{"Accept":"text/plain,*/*"},
+      redirect:"follow",
       signal:controller.signal
     });
-    if(!r.ok)throw new Error("Pollinations GET HTTP "+r.status);
-
-    const reply=String(await r.text()).trim();
-    if(!reply)throw new Error("Pollinations returned an empty reply.");
-    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(reply)){
-      throw new Error("Pollinations returned an auth/quota response.");
+    if(!r.ok)throw new Error("Pollinations HTTP "+r.status);
+    const text=String(await r.text()).trim();
+    if(!text)throw new Error("Pollinations empty reply.");
+    if(/^\s*</.test(text))throw new Error("Pollinations HTML reply.");
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(text)){
+      throw new Error("Pollinations auth/quota reply.");
     }
-    if(/^\s*</.test(reply))throw new Error("Pollinations returned HTML instead of model text.");
+    return text;
+  };
+
+  try{
+    const encoded=encodeURIComponent(prompt);
+    const candidates=[
+      "https://text.pollinations.ai/"+encoded+"?model=openai-fast",
+      "https://text.pollinations.ai/"+encoded
+    ];
+    const reply=await Promise.any(candidates.map(fetchText));
+    controller.abort("pollinations-race-won");
     return reply;
+  }catch(error){
+    throw new Error("Pollinations race failed: "+String(error?.message||error));
   }finally{
     clearTimeout(timeout);
   }
@@ -761,7 +782,7 @@ export default {
           version: "2026-09-16.16-pollinations-compact-get",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + Pollinations legacy text GET no-key primary fallback + HF last resort"
+          chat: "Cloudflare GPT-OSS + parallel Pollinations text GET primary fallback + HF last resort"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
