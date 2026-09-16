@@ -175,16 +175,19 @@ jobs:
           if(!app.includes('startSimulatedLipSync')) fail('Mobile simulated mouth fallback missing');
           if(!app.includes('avatar-mouth-simulated')) fail('Mobile mouth fallback state missing');
           if(!css.includes('@keyframes emmaMouthFallback')) fail('Mobile mouth fallback CSS missing');
-          if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
-          if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
-          const jpg=fs.readFileSync('public/emma.jpg');
-          if(jpg.length<10000 || jpg[0]!==0xff || jpg[1]!==0xd8) fail('Emma JPEG asset is invalid');
+          const avatarUrl="https://image.pollinations.ai/prompt/beautiful%20young%20woman%20teacher%20looking%20forward%20portrait%20pixar%20disney%203d%20style%20high%20quality";
+          if(!app.includes("portrait:'"+avatarUrl+"'")) fail('Emma exact external avatar URL missing');
+          if(app.includes('data:image/')) fail('Base64/data URI portrait must not be present');
+          if(!css.includes('Emma 3D visual-only shell')) fail('Visual-only avatar CSS shell missing');
+          if(!css.includes('z-index:2!important')) fail('Portrait z-index guard missing');
+          if(!css.includes('opacity:1!important')) fail('Portrait opacity guard missing');
+          if(!css.includes('visibility:visible!important')) fail('Portrait visibility guard missing');
           if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
           if(!app.includes('isSttBackendFailure')) fail('STT backend fallback detector missing');
           if(!app.includes('status===502')) fail('HTTP 502 STT fallback missing');
           if(!app.includes('browserSttPreferred')) fail('Persistent browser STT emergency mode missing');
           if(app.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
-          console.log('QA EMMA VISUAL PASS: real JPEG + fixed portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
+          console.log('QA EMMA VISUAL PASS: exact external portrait URL + visible IDLE CSS + stable audio analyser + browser STT fallback');
           NODE
 
       - name: QA supercascade and quota guard
