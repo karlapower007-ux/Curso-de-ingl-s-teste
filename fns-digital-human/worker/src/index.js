@@ -296,6 +296,45 @@ async function hfKokoroPortuguese(env, text, origin) {
 }
 
 
+async function portugueseWaterfall(env,text,origin) {
+  const engines = [
+    async()=>hfKokoroPortuguese(env,text,origin),
+    async()=>gradioAudioFromSpace({
+      base:"https://leomartinsjf-voz-clara-parler-ptbr.hf.space",
+      endpointCandidates:["predict","generate","generate_speech","tts"],
+      dataVariants:[[text,"Feminina · natural",17],[text,"Feminina · natural"],[text]],
+      engine:"hf-parler-ptbr",
+      spaceName:"leomartinsjf/voz-clara-parler-ptbr",
+      origin,timeoutMs:6500
+    }),
+    async()=>googleTranslateTtsPortuguese(text,origin),
+    async()=>gradioAudioFromSpace({
+      base:"https://elielsilva-tts-ptbr.hf.space",
+      endpointCandidates:["KOKORO_TTS_API","kokoro_tts_api","predict","generate"],
+      dataVariants:[
+        [text,"Brazilian Portuguese","pf_dora",1,false,false],
+        [text,"Brazilian Portuguese","pf_dora",1,false,false,false,1.0,"Natural (Padrão)",true],
+        [text]
+      ],
+      engine:"hf-kokoro-ptbr-backup",
+      spaceName:"elielsilva/tts_PTBR",
+      origin,timeoutMs:6500
+    })
+  ];
+  const failures=[];
+  for (let i=0;i<engines.length;i++) {
+    try {
+      const response=await engines[i]();
+      if (response instanceof Response && response.ok) return response;
+      failures.push("plan-"+(i+1)+": non-ok response");
+    } catch(error) { failures.push("plan-"+(i+1)+": "+String(error?.message||error)); }
+  }
+  const emergency=await auraEmergencyEnglish(env,origin);
+  const headers=new Headers(emergency.headers);
+  headers.set("X-FNS-PT-Fallbacks-Failed",String(failures.length));
+  return new Response(emergency.body,{status:emergency.status,headers});
+}
+
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -348,9 +387,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.5-resilient-dual-tts",
+          version: "2026-09-16.6-sanitized-waterfall",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "Aura-1 EN + Aura-2-es ES + HF Kokoro PT-BR with Aura emergency fallback",
+          tts: "Aura-1 EN + Aura-2-es ES + PT-BR waterfall: HF Kokoro > HF Parler > Google TTS > HF backup > Aura emergency",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -391,7 +430,8 @@ export default {
     if (url.pathname === "/tts" && request.method === "POST") {
       try {
         const body = await request.json().catch(() => ({}));
-        const text = String(body?.text || body?.prompt || "").trim();
+        const sourceText = String(body?.text || body?.prompt || "");
+        const text = sanitizeTextForTTS(sourceText);
         const teacher = String(body?.teacher || "Emma");
 
         if (!text) {
@@ -405,7 +445,7 @@ export default {
 
         if (language === "pt-BR") {
           try {
-            return await hfKokoroPortuguese(env,text,origin);
+            return await portugueseWaterfall(env,text,origin);
           } catch (error) {
             return await auraEmergencyEnglish(env,origin);
           }
