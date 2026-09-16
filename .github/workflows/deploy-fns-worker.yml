@@ -65,7 +65,6 @@ jobs:
             -H "Content-Type: application/json" \
             --data '{"text":"Olá, vamos praticar português.","teacher":"Emma","lang":"pt-BR"}' \
             "https://fns-stt.karlapower007.workers.dev/tts")
+          export HTTP_CODE
           cat qa-tts.json
           node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-tts.json','utf8')); const code=process.env.HTTP_CODE; if(code!=='409') throw new Error('Expected native PT-BR fallback route, got HTTP '+code); if(r.fallback!=='browser-native-pt-BR') throw new Error('PT-BR voice fallback routing failed: '+JSON.stringify(r)); console.log('QA TTS PT-BR ROUTE PASS');"
-        env:
-          HTTP_CODE: ${{ env.HTTP_CODE }}
