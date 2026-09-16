@@ -630,7 +630,15 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
       data?.response ||
       ""
     ).trim();
+
     if(!reply) throw new Error("No reply content.");
+
+    if(
+      /api key.*(budget|limit)|raise the key budget|rate.?limit|quota exceeded|insufficient (credits|balance)|unauthorized|forbidden/i.test(reply)
+    ){
+      throw new Error("Provider returned a quota/auth message instead of a model reply.");
+    }
+
     return reply;
   } finally {
     clearTimeout(timeout);
