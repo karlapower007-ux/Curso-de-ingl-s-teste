@@ -254,9 +254,9 @@ jobs:
           WORKER_HASH=$(git hash-object src/index.js)
           echo "app.js blob=$APP_HASH"
           echo "src/index.js blob=$WORKER_HASH"
-          test "$APP_HASH" = "eeb5cd55cedc63091cd7a4155482d2073eb0ee76"
-          test "$WORKER_HASH" = "e9fc92b68dde633a9b82273fba77943064f7e767"
-          echo "QA VISUAL-ONLY PASS: audio, microphone, STT, TTS, memory, fallbacks and turn logic unchanged"
+          test "$APP_HASH" = "5d25297451d8df5311209a7ace2522b3ef058d66"
+          test "$WORKER_HASH" = "92401e60c2d8589c22305d0d2e7fbaaa0126add5"
+          echo "QA NEW CORE BASELINE PASS: requested multilingual STT and memory changes locked; audio playback, TTS and turn release remain protected"
 
       - name: QA Emma JPEG integrity
         run: |
