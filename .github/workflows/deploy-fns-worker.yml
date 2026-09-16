@@ -230,12 +230,24 @@ jobs:
           if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
           if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) fail('Maximum analyser mouth opening missing');
-          if(!css.includes("var(--mouth-open,0) * 3.65")) fail('Large CSS mouth opening missing');
-          if(!css.includes("scaleY(3.85)")) fail('Large simulated mouth fallback missing');
+          if(!css.includes("var(--mouth-open,0) * 4.65")) fail('Full CSS mouth opening missing');
+          if(!css.includes("scaleY(4.95)")) fail('Full simulated mouth fallback missing');
           if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
-          if(!css.includes('#fffdfa')) fail('Teeth fill missing');
+          if(!css.includes('#fffefa')) fail('Teeth fill missing');
+          if(!css.includes('Emma sharp portrait mode v1')) fail('Sharp portrait mode missing');
+          if(!css.includes('display:none!important')) fail('Blurred WebGL layer not disabled');
           console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
+
+      - name: Guard visual-only patch
+        run: |
+          APP_HASH=$(git hash-object public/app.js)
+          WORKER_HASH=$(git hash-object src/index.js)
+          echo "app.js blob=$APP_HASH"
+          echo "src/index.js blob=$WORKER_HASH"
+          test "$APP_HASH" = "eeb5cd55cedc63091cd7a4155482d2073eb0ee76"
+          test "$WORKER_HASH" = "e9fc92b68dde633a9b82273fba77943064f7e767"
+          echo "QA VISUAL-ONLY PASS: audio, microphone, STT, TTS, memory, fallbacks and turn logic unchanged"
 
       - name: Deploy Worker
         run: npx wrangler deploy
@@ -414,8 +426,9 @@ jobs:
           }
           if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) throw new Error('Production analyser mouth opening gain missing');
-          if(!css.includes("var(--mouth-open,0) * 3.65")) throw new Error('Production large mouth opening missing');
+          if(!css.includes("var(--mouth-open,0) * 4.65")) throw new Error('Production full mouth opening missing');
           if(!css.includes('.avatar-mouth-motion::before')) throw new Error('Production teeth layer missing');
+          if(!css.includes('Emma sharp portrait mode v1')) throw new Error('Production sharp portrait mode missing');
           console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS');
           NODE
 
