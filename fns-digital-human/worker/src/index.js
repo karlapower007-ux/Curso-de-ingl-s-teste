@@ -1,4 +1,5 @@
 // Rollback deployment marker: restored stable English baseline on 2026-09-16.
+// Stable English redeploy marker after rejecting external-key Dual-TTS.
 function cors(origin="*") {
   return {
     "Access-Control-Allow-Origin": origin || "*",
