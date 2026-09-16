@@ -158,3 +158,22 @@
 
 /* 3D Emma already has rendered catchlights; hide legacy white gaze dots. */
 .human-avatar .avatar-gaze{display:none!important}
+
+/* Production visibility guard: external Emma portrait must always render in IDLE. */
+.human-avatar .avatar-photo-base,
+.human-avatar:not(.avatar-speaking):not(.avatar-listening) .avatar-photo-base{
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  z-index:2!important;
+}
+.human-avatar[data-avatar-ready="false"] .avatar-photo-base,
+.human-avatar[data-avatar-ready="true"] .avatar-photo-base{
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+}
+.human-avatar .avatar-fx-layer{z-index:10!important}
+.human-avatar .avatar-camera-vignette{z-index:20!important}
+.human-avatar .avatar-live-badge{z-index:30!important}
+.human-avatar .avatar-gaze{display:none!important;opacity:0!important}

@@ -156,11 +156,12 @@ jobs:
           if(!css.includes('@keyframes emmaMouthFallback')) fail('Mobile mouth fallback CSS missing');
           if(!app.includes('data-avatar-style="3d-animated"')) fail('3D avatar visual marker missing');
           if(!rig.includes('double blink') && !rig.includes('Math.random()<.18')) fail('Friendly double-blink rig missing');
-          const match=app.match(/portrait:'data:image\/jpeg;base64,([^']+)'/);
-          if(!match) fail('Emma embedded Base64 JPEG missing');
-          const jpeg=Buffer.from(match[1],'base64');
-          if(jpeg.length<10000 || jpeg[0]!==0xff || jpeg[1]!==0xd8) fail('Emma embedded Base64 JPEG is invalid');
-          if(!css.includes('.human-avatar .avatar-gaze{display:none!important}')) fail('Legacy white gaze dots are still visible');
+          const dynamicPortrait="https://image.pollinations.ai/prompt/pixar%20style%20beautiful%20young%20woman%20teacher%20looking%20forward%20portrait";
+          if(!app.includes("portrait:'"+dynamicPortrait+"'")) fail('Emma exact Pollinations dynamic portrait URL missing');
+          if(app.includes('data:image/jpeg;base64,')) fail('Legacy Base64 portrait still present');
+          if(!css.includes('Production visibility guard: external Emma portrait must always render in IDLE.')) fail('IDLE portrait visibility guard missing');
+          if(!css.includes('z-index:2!important')) fail('Portrait z-index guard missing');
+          if(!css.includes('.human-avatar .avatar-gaze{display:none!important;opacity:0!important}')) fail('Legacy white gaze dots are still visible');
           if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
           if(!app.includes('isSttBackendFailure')) fail('STT backend fallback detector missing');
           if(!app.includes('status===502')) fail('HTTP 502 STT fallback missing');
@@ -227,11 +228,10 @@ jobs:
           node - <<'NODE'
           const fs=require('fs');
           const app=fs.readFileSync('deployed-app.js','utf8');
-          const m=app.match(/portrait:'data:image\/jpeg;base64,([^']+)'/);
-          if(!m) throw new Error('Production app.js does not contain Emma Base64 portrait');
-          const img=Buffer.from(m[1],'base64');
-          if(img.length<10000 || img[0]!==0xff || img[1]!==0xd8) throw new Error('Production Emma Base64 portrait is invalid');
-          console.log('QA EMMA BASE64 PRODUCTION PASS bytes='+img.length);
+          const expected="https://image.pollinations.ai/prompt/pixar%20style%20beautiful%20young%20woman%20teacher%20looking%20forward%20portrait";
+          if(!app.includes("portrait:'"+expected+"'")) throw new Error('Production app.js does not contain the exact Pollinations portrait URL');
+          if(app.includes('data:image/jpeg;base64,')) throw new Error('Production app.js still contains a Base64 portrait');
+          console.log('QA EMMA DYNAMIC URL PRODUCTION PASS');
           NODE
 
           # Pollinations remains first browser attempt, but its anonymous budget is external.
