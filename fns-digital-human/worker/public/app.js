@@ -593,7 +593,7 @@ async function pollinationsBrowserReply(text){
     if(!response.ok)throw new Error('Pollinations HTTP '+response.status);
     const reply=String(await response.text()).trim();
     if(!reply||/^\s*</.test(reply))throw new Error('Resposta pública inválida.');
-    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(reply)){
+    if(/api key|key budget|raise the key budget|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(reply)){
       throw new Error('Serviço público temporariamente limitado.');
     }
     return reply;
@@ -602,7 +602,7 @@ async function pollinationsBrowserReply(text){
   }
 }
 
-async function llm7BrowserReply(text,timeoutMs=6500){
+async function llm7BrowserReply(text,timeoutMs=2200){
   const userText=String(text||'').trim().slice(0,700);
   if(!userText)throw new Error('Mensagem vazia para o cérebro LLM7.');
 
