@@ -78,3 +78,24 @@ jobs:
           test_tts en "Now let's continue in English. Correct my mistakes." "aura-1"
           test_tts es "Ahora quiero hablar contigo en español." "aura-2-es"
           test_tts mixed "Emma, explique em português a diferença entre I have been e I was." "hf-kokoro-ptbr"
+
+      - name: QA Emma visual layering
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const css=fs.readFileSync('public/emma-static.css','utf8');
+          const rig=fs.readFileSync('public/emma-static.js','utf8');
+
+          const fail=(m)=>{throw new Error(m)};
+          const markup=app.slice(app.indexOf('function avatarVisualMarkup'),app.indexOf('let activeTeacher'));
+          if(!markup.includes('avatar-photo-base')) fail('Base portrait layer missing');
+          if(markup.includes('avatar-photo-jaw')) fail('Duplicate jaw image layer still present');
+          if(markup.includes('avatar-eye-layer')) fail('Duplicate eye image layer still present');
+          if(!markup.includes('data-avatar-ready')) fail('Portrait preload state missing');
+          if(!css.includes('.avatar-fx-layer')) fail('Transparent FX layer missing');
+          if(!css.includes('background:transparent')) fail('FX layer is not transparent');
+          if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
+          if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
+          console.log('QA EMMA VISUAL PASS: fixed portrait + transparent overlays + preload gate + audio analyser');
+          NODE
