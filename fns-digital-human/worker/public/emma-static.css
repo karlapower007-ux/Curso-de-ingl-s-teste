@@ -31,6 +31,7 @@
   transform-origin:50% 54%;
   transform:
     translateY(calc(var(--mouth-open,0) * 4.8px))
+    scaleX(calc(1 + var(--mouth-wide,0) * .018))
     scaleY(calc(1 + var(--mouth-open,0) * .024))
     scale(1.035)!important;
   filter:saturate(calc(1 + var(--mouth-open,0) * .05));
@@ -74,7 +75,7 @@
   z-index:3;
   left:43.5%;
   top:53.7%;
-  width:13%;
+  width:calc(12.5% + var(--mouth-wide,0) * 2%);
   height:calc(1px + var(--mouth-open,0) * 10px);
   opacity:calc(var(--mouth-open,0) * .72);
   border-radius:50%;
