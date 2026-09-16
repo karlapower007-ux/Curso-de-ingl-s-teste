@@ -95,6 +95,15 @@
   pointer-events:none;
   will-change:transform,opacity;
 }
+.human-avatar.avatar-mouth-simulated .avatar-mouth-motion{
+  animation:emmaMouthFallback 180ms ease-in-out infinite alternate!important;
+}
+@keyframes emmaMouthFallback{
+  0%{opacity:.16;transform:translate3d(0,.2px,0) scaleX(1.01) scaleY(.55)}
+  38%{opacity:.34;transform:translate3d(0,.9px,0) scaleX(1.035) scaleY(1.55)}
+  72%{opacity:.24;transform:translate3d(0,.45px,0) scaleX(.99) scaleY(.92)}
+  100%{opacity:.42;transform:translate3d(0,1.15px,0) scaleX(1.055) scaleY(1.92)}
+}
 .human-avatar.avatar-listening{animation:emmaListening 2.6s ease-in-out infinite!important}
 .human-avatar.avatar-speaking{animation:emmaSpeaking 3.1s ease-in-out infinite!important}
 @keyframes emmaPresence{

@@ -143,6 +143,10 @@ jobs:
           if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
           if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
           if(!app.includes('getByteTimeDomainData(samples)')) fail('Smooth RMS lip-sync missing');
+          if(!app.includes("audio.crossOrigin='anonymous'")) fail('Cross-origin audio flag missing');
+          if(!app.includes('startSimulatedLipSync')) fail('Mobile simulated mouth fallback missing');
+          if(!app.includes('avatar-mouth-simulated')) fail('Mobile mouth fallback state missing');
+          if(!css.includes('@keyframes emmaMouthFallback')) fail('Mobile mouth fallback CSS missing');
           if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
           if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
           const jpg=fs.readFileSync('public/emma.jpg');
@@ -179,6 +183,14 @@ jobs:
           const esIds=(esBlock.match(/\{id:"[^"]+"/g)||[]);
           if(enIds.length!==10) fail('English cascade must have exactly 10 engines: '+enIds.length);
           if(esIds.length!==10) fail('Spanish cascade must have exactly 10 engines: '+esIds.length);
+          const id=s=>s.match(/"([^"]+)"/)?.[1]||'';
+          const enNames=enIds.map(id), esNames=esIds.map(id);
+          if(enNames[0]!=='aura-1'||enNames[1]!=='google-translate-tts-en') fail('English fast path must be Aura then Google: '+enNames.join(','));
+          if(esNames[0]!=='aura-2-es'||esNames[1]!=='google-translate-tts-es') fail('Spanish fast path must be Aura then Google: '+esNames.join(','));
+          if(enNames.slice(2,7).some(x=>x.startsWith('hf-'))) fail('English HF engine found before slot 8: '+enNames.join(','));
+          if(esNames.slice(2,7).some(x=>x.startsWith('hf-'))) fail('Spanish HF engine found before slot 8: '+esNames.join(','));
+          if(enNames.slice(7).some(x=>!x.startsWith('hf-'))) fail('English slots 8-10 must be HF-only: '+enNames.join(','));
+          if(esNames.slice(7).some(x=>!x.startsWith('hf-'))) fail('Spanish slots 8-10 must be HF-only: '+esNames.join(','));
 
           if(!app.includes('enterQuotaRestMode')) fail('Frontend quota rest mode missing');
           if(!app.includes('mic.disabled=busy')) fail('Microphone busy lock missing');
@@ -224,6 +236,7 @@ jobs:
           if(!r.ok || !reply) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
           if(r.fallback!==true || r.forced_public!==true) throw new Error('Public brain route was not actually exercised: '+JSON.stringify(r));
           if(String(r.model||'').startsWith('@cf/')) throw new Error('Forced public QA unexpectedly used Cloudflare AI: '+JSON.stringify(r));
+          if(!String(r.model||'').startsWith('pollinations-')) throw new Error('Fast Pollinations brain was not used: '+JSON.stringify(r));
           if(/api key.*(budget|limit)|raise the key budget|rate.?limit|quota exceeded|insufficient (credits|balance)|unauthorized|forbidden/i.test(reply)){
             throw new Error('Chat provider returned a quota/auth message instead of a real reply: '+reply);
           }

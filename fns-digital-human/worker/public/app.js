@@ -641,7 +641,7 @@ function stopAvatarLipSync(){
   if(face){
     face.style.setProperty('--mouth-open','0');
     face.style.setProperty('--mouth-wide','0');
-    face.classList.remove('avatar-talking');
+    face.classList.remove('avatar-talking','avatar-mouth-simulated');
   }
   avatarAnalyser=null;
   avatarMediaSource=null;
@@ -651,9 +651,19 @@ function stopAvatarLipSync(){
   }
 }
 
-function startAvatarLipSync(audio){
+function startSimulatedLipSync(audio){
   const face=document.querySelector('#avatarFace');
   if(!face?.classList.contains('human-avatar'))return;
+  if(currentVoiceAudio!==audio || audio.paused || audio.ended)return;
+  face.classList.add('avatar-talking','avatar-mouth-simulated');
+}
+
+async function startAvatarLipSync(audio){
+  const face=document.querySelector('#avatarFace');
+  if(!face?.classList.contains('human-avatar'))return;
+
+  startSimulatedLipSync(audio);
+
   const portrait=face.querySelector('#emmaPortrait');
   if(portrait && (!portrait.complete || !portrait.naturalWidth || face.dataset.avatarReady!=='true')){
     const resume=()=>{ if(currentVoiceAudio===audio && !audio.paused) startAvatarLipSync(audio); };
@@ -661,12 +671,19 @@ function startAvatarLipSync(audio){
     return;
   }
 
-  stopAvatarLipSync();
-
   try{
     const AudioCtx=window.AudioContext||window.webkitAudioContext;
     if(!AudioCtx)return;
+
     avatarAudioContext=new AudioCtx();
+    if(avatarAudioContext.state==='suspended'){
+      try{await avatarAudioContext.resume()}catch(e){}
+    }
+    if(avatarAudioContext.state!=='running'){
+      startSimulatedLipSync(audio);
+      return;
+    }
+
     avatarMediaSource=avatarAudioContext.createMediaElementSource(audio);
     avatarAnalyser=avatarAudioContext.createAnalyser();
     avatarAnalyser.fftSize=1024;
@@ -678,15 +695,12 @@ function startAvatarLipSync(audio){
     face.classList.add('avatar-talking');
     let smoothOpen=0;
     let lastTs=0;
+    let signalFrames=0;
+    let silentFrames=0;
 
     const tick=(ts=0)=>{
-      if(!avatarAnalyser||!currentVoiceAudio||currentVoiceAudio.paused){
-        face.style.setProperty('--mouth-open','0');
-        face.style.setProperty('--mouth-wide','0');
-        return;
-      }
+      if(!avatarAnalyser||currentVoiceAudio!==audio||audio.paused||audio.ended)return;
 
-      // RMS amplitude only: no Canvas, no image rewriting, no jaw bitmap duplication.
       avatarAnalyser.getByteTimeDomainData(samples);
       let sum=0;
       for(let i=0;i<samples.length;i++){
@@ -694,10 +708,22 @@ function startAvatarLipSync(audio){
         sum+=v*v;
       }
       const rms=Math.sqrt(sum/samples.length);
+
+      if(rms>.012){
+        signalFrames++;
+        silentFrames=0;
+      }else{
+        silentFrames++;
+        signalFrames=Math.max(0,signalFrames-1);
+      }
+
+      if(signalFrames>=3)face.classList.remove('avatar-mouth-simulated');
+      if(silentFrames>=12)face.classList.add('avatar-mouth-simulated');
+
       const target=Math.max(0,Math.min(.72,(rms-.018)/.16));
       const frameScale=lastTs?Math.min(1,(ts-lastTs)/16.67):1;
-      const attack=0.24*frameScale;
-      const release=0.15*frameScale;
+      const attack=.24*frameScale;
+      const release=.15*frameScale;
       const alpha=target>smoothOpen?attack:release;
       smoothOpen=smoothOpen+(target-smoothOpen)*alpha;
       lastTs=ts;
@@ -709,7 +735,9 @@ function startAvatarLipSync(audio){
 
     avatarLipRAF=requestAnimationFrame(tick);
   }catch(e){
-    stopAvatarLipSync();
+    avatarAnalyser=null;
+    avatarMediaSource=null;
+    startSimulatedLipSync(audio);
   }
 }
 
@@ -787,8 +815,10 @@ async function remoteSpeak(text){
     if(!blob.size)throw new Error('O servidor TTS retornou áudio vazio.');
 
     const url=URL.createObjectURL(blob);
-    const audio=new Audio(url);
+    const audio=new Audio();
+    audio.crossOrigin='anonymous';
     audio.preload='auto';
+    audio.src=url;
     currentVoiceAudio=audio;
     currentVoiceUrl=url;
 
@@ -828,7 +858,7 @@ async function remoteSpeak(text){
           return;
         }
         setFlowState(FLOW_STATES.SPEAKING,{status:'Speaking'});
-        startAvatarLipSync(audio);
+        startAvatarLipSync(audio).catch(()=>startSimulatedLipSync(audio));
         const face=document.querySelector('#avatarFace');
         if(face)face.classList.add('avatar-speaking');
       };

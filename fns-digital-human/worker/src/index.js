@@ -223,17 +223,20 @@ function splitTtsChunks(text,maxLen=180) {
   return chunks;
 }
 
-async function googleTranslateTts(text,lang,origin,engineId) {
+async function googleTranslateTts(text,lang,origin,engineId,opts={}) {
   const buffers=[];
   const tl = lang === "en" ? "en-US" : lang === "es" ? "es-ES" : "pt-BR";
+  const host=String(opts.host||"translate.google.com").replace(/^https?:\/\//,"").replace(/\/$/,"");
+  const client=String(opts.client||"tw-ob");
+  const timeoutMs=Math.max(700,Number(opts.timeoutMs||4500));
 
   for (const chunk of splitTtsChunks(text,180)) {
     const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort("google-tts-timeout"),4500);
+    const timeout=setTimeout(()=>controller.abort("google-tts-timeout"),timeoutMs);
     try {
-      const url="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl="+encodeURIComponent(tl)+"&q="+encodeURIComponent(chunk);
+      const url="https://"+host+"/translate_tts?ie=UTF-8&client="+encodeURIComponent(client)+"&tl="+encodeURIComponent(tl)+"&q="+encodeURIComponent(chunk);
       const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0","Accept":"audio/mpeg,*/*"},signal:controller.signal});
-      if (!r.ok) throw new Error("Google TTS HTTP "+r.status);
+      if (!r.ok) throw new Error("Google TTS HTTP "+r.status+" via "+host);
       const ct=r.headers.get("content-type")||"";
       if (!ct.includes("audio") && !ct.includes("mpeg")) throw new Error("Google TTS non-audio response: "+ct);
       buffers.push(new Uint8Array(await r.arrayBuffer()));
@@ -250,7 +253,8 @@ async function googleTranslateTts(text,lang,origin,engineId) {
   return new Response(merged,{status:200,headers:corsAudioHeaders(origin,{
     "Content-Type":"audio/mpeg",
     "X-FNS-Voice-Engine":engineId || ("google-translate-tts-"+lang),
-    "X-FNS-Voice-Language":lang
+    "X-FNS-Voice-Language":lang,
+    "X-FNS-Google-TTS-Host":host
   })});
 }
 
@@ -401,29 +405,29 @@ function publicTtsEngines(language,text,origin,env) {
   if (language === "es") {
     return [
       {id:"aura-2-es",run:()=>runAuraTts(env,text,origin,{model:"@cf/deepgram/aura-2-es",speaker:"celeste",language:"es",engine:"aura-2-es"})},
-      {id:"google-translate-tts-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-tts-es")},
-      {id:"hf-kokoro-spanish-leonelhs",run:()=>gradioTtsAttempt("https://leonelhs-kokoro-tts-spanish.hf.space",["predict"],[[text,"ef_dora",1]],origin,"hf-kokoro-spanish-leonelhs","es")},
-      {id:"hf-kokoro-pendrokar-es",run:()=>gradioTtsAttempt("https://pendrokar-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"es"],[text,"af_heart",1]],origin,"hf-kokoro-pendrokar-es","es")},
-      {id:"hf-kokoro-ysharma-es",run:()=>gradioTtsAttempt("https://ysharma-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"es"],[text,"af_heart",1]],origin,"hf-kokoro-ysharma-es","es")},
-      {id:"hf-kokoro-neuralfalcon-es",run:()=>gradioTtsAttempt("https://neuralfalcon-kokoro-tts-1-0.hf.space",["KOKORO_TTS_API","predict"],[[text,"Spanish","ef_dora",1,false,false],[text,"Spanish","af_heart",1,false,false]],origin,"hf-kokoro-neuralfalcon-es","es")},
-      {id:"hf-edge-tts-es",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"es-ES-ElviraNeural","0%","0Hz"],[text,"es-ES-ElviraNeural"],[text]],origin,"hf-edge-tts-es","es")},
-      {id:"hf-spanish-f5",run:()=>gradioTtsAttempt("https://jpgallegoar-spanish-f5.hf.space",["predict","generate","generate_speech"],[[text],[text,"es"]],origin,"hf-spanish-f5","es")},
-      {id:"hf-coqui-xtts-es",run:()=>gradioTtsAttempt("https://coqui-xtts.hf.space",["predict","tts","generate"],[[text,"es"],[text]],origin,"hf-coqui-xtts-es","es")},
-      {id:"hf-chatterbox-es",run:()=>gradioTtsAttempt("https://resembleai-chatterbox-multilingual-tts-es-mx-latam.hf.space",["predict","generate","tts"],[[text],[text,"es"]],origin,"hf-chatterbox-es","es")}
+      {id:"google-translate-tts-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-tts-es",{host:"translate.google.com",client:"tw-ob",timeoutMs:2600})},
+      {id:"google-translate-api-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-api-es",{host:"translate.googleapis.com",client:"gtx",timeoutMs:1500})},
+      {id:"google-translate-es-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-es-es",{host:"translate.google.es",client:"tw-ob",timeoutMs:1500})},
+      {id:"google-translate-gtx-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-gtx-es",{host:"translate.google.com",client:"gtx",timeoutMs:1500})},
+      {id:"google-translate-mx-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-mx-es",{host:"translate.google.com.mx",client:"tw-ob",timeoutMs:1500})},
+      {id:"google-translate-ar-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-ar-es",{host:"translate.google.com.ar",client:"tw-ob",timeoutMs:1500})},
+      {id:"hf-kokoro-spanish-leonelhs",run:()=>gradioTtsAttempt("https://leonelhs-kokoro-tts-spanish.hf.space",["predict"],[[text,"ef_dora",1]],origin,"hf-kokoro-spanish-leonelhs","es",4500)},
+      {id:"hf-edge-tts-es",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"es-ES-ElviraNeural","0%","0Hz"],[text,"es-ES-ElviraNeural"],[text]],origin,"hf-edge-tts-es","es",4500)},
+      {id:"hf-chatterbox-es",run:()=>gradioTtsAttempt("https://resembleai-chatterbox-multilingual-tts-es-mx-latam.hf.space",["predict","generate","tts"],[[text],[text,"es"]],origin,"hf-chatterbox-es","es",5000)}
     ];
   }
 
   return [
     {id:"aura-1",run:()=>runAuraTts(env,text,origin,{model:"@cf/deepgram/aura-1",speaker:"asteria",language:"en",engine:"aura-1"})},
-    {id:"google-translate-tts-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-tts-en")},
-    {id:"hf-kokoro-pendrokar-en",run:()=>gradioTtsAttempt("https://pendrokar-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-pendrokar-en","en")},
-    {id:"hf-kokoro-ysharma-en",run:()=>gradioTtsAttempt("https://ysharma-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-ysharma-en","en")},
-    {id:"hf-kokoro-robins-en",run:()=>gradioTtsAttempt("https://robinsaiworld-kokoro-tts-cpu.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-robins-en","en")},
-    {id:"hf-parler-en",run:()=>gradioTtsAttempt("https://parler-tts-parler-tts.hf.space",["gen_tts","predict"],[[text,"Laura's voice is clear, natural, warm and close-mic.",false],[text,"A clear natural female voice.",false]],origin,"hf-parler-en","en",7000)},
-    {id:"hf-edge-tts-en",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"en-US-JennyNeural","0%","0Hz"],[text,"en-US-JennyNeural"],[text]],origin,"hf-edge-tts-en","en")},
-    {id:"hf-coqui-en",run:()=>gradioTtsAttempt("https://samit-khedekar-coqui-tts-demo.hf.space",["predict","generate","tts"],[[text,"FastPitch (Female - LJSpeech)","English"],[text,"English"],[text]],origin,"hf-coqui-en","en")},
-    {id:"hf-bark-en",run:()=>gradioTtsAttempt("https://suno-bark.hf.space",["predict","generate_audio","generate"],[[text],[text,"v2/en_speaker_9"]],origin,"hf-bark-en","en",7000)},
-    {id:"hf-kokoro-zero-en",run:()=>gradioTtsAttempt("https://remsky-kokoro-tts-zero.hf.space",["generate","predict"],[[text,"af_jadzia",1,false,"en-us"],[text,"af_jadzia",1]],origin,"hf-kokoro-zero-en","en")}
+    {id:"google-translate-tts-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-tts-en",{host:"translate.google.com",client:"tw-ob",timeoutMs:2600})},
+    {id:"google-translate-api-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-api-en",{host:"translate.googleapis.com",client:"gtx",timeoutMs:1500})},
+    {id:"google-translate-uk-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-uk-en",{host:"translate.google.co.uk",client:"tw-ob",timeoutMs:1500})},
+    {id:"google-translate-gtx-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-gtx-en",{host:"translate.google.com",client:"gtx",timeoutMs:1500})},
+    {id:"google-translate-ca-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-ca-en",{host:"translate.google.ca",client:"tw-ob",timeoutMs:1500})},
+    {id:"google-translate-au-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-au-en",{host:"translate.google.com.au",client:"tw-ob",timeoutMs:1500})},
+    {id:"hf-kokoro-pendrokar-en",run:()=>gradioTtsAttempt("https://pendrokar-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-pendrokar-en","en",4500)},
+    {id:"hf-edge-tts-en",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"en-US-JennyNeural","0%","0Hz"],[text,"en-US-JennyNeural"],[text]],origin,"hf-edge-tts-en","en",4500)},
+    {id:"hf-kokoro-zero-en",run:()=>gradioTtsAttempt("https://remsky-kokoro-tts-zero.hf.space",["generate","predict"],[[text,"af_jadzia",1,false,"en-us"],[text,"af_jadzia",1]],origin,"hf-kokoro-zero-en","en",5000)}
   ];
 }
 
@@ -463,16 +467,10 @@ async function runPublicTtsCascade(language,text,origin,env) {
 
 async function portugueseWaterfall(env,text,origin) {
   const engines = [
+    async()=>googleTranslateTts(text,"pt-BR",origin,"google-translate-tts-ptbr",{host:"translate.google.com",client:"tw-ob",timeoutMs:2600}),
+    async()=>googleTranslateTts(text,"pt-BR",origin,"google-translate-api-ptbr",{host:"translate.googleapis.com",client:"gtx",timeoutMs:1500}),
+    async()=>googleTranslateTts(text,"pt-BR",origin,"google-translate-br-ptbr",{host:"translate.google.com.br",client:"tw-ob",timeoutMs:1500}),
     async()=>hfKokoroPortuguese(env,text,origin),
-    async()=>gradioAudioFromSpace({
-      base:"https://leomartinsjf-voz-clara-parler-ptbr.hf.space",
-      endpointCandidates:["predict","generate","generate_speech","tts"],
-      dataVariants:[[text,"Feminina · natural",17],[text,"Feminina · natural"],[text]],
-      engine:"hf-parler-ptbr",
-      spaceName:"leomartinsjf/voz-clara-parler-ptbr",
-      origin,timeoutMs:6500
-    }),
-    async()=>googleTranslateTtsPortuguese(text,origin),
     async()=>gradioAudioFromSpace({
       base:"https://elielsilva-tts-ptbr.hf.space",
       endpointCandidates:["KOKORO_TTS_API","kokoro_tts_api","predict","generate"],
@@ -483,14 +481,19 @@ async function portugueseWaterfall(env,text,origin) {
       ],
       engine:"hf-kokoro-ptbr-backup",
       spaceName:"elielsilva/tts_PTBR",
-      origin,timeoutMs:6500
+      origin,timeoutMs:5000
     })
   ];
   const failures=[];
   for (let i=0;i<engines.length;i++) {
     try {
       const response=await engines[i]();
-      if (response instanceof Response && response.ok) return response;
+      if (response instanceof Response && response.ok) {
+        const headers=new Headers(response.headers);
+        headers.set("X-FNS-TTS-Attempt",String(i+1));
+        headers.set("X-FNS-TTS-Cascade-Size",String(engines.length));
+        return new Response(response.body,{status:200,headers});
+      }
       failures.push("plan-"+(i+1)+": non-ok response");
     } catch(error) { failures.push("plan-"+(i+1)+": "+String(error?.message||error)); }
   }
@@ -650,38 +653,77 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
+async function pollinationsTextFallback(messages,timeoutMs=6500) {
+  const compact=messages
+    .slice(-7)
+    .map(m=>({role:String(m?.role||"user"),content:String(m?.content||"").slice(0,m?.role==="system"?900:700)}));
+
+  const rejectBadReply=(reply)=>{
+    const text=String(reply||"").trim();
+    if(!text)throw new Error("Pollinations returned an empty reply.");
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(text)){
+      throw new Error("Pollinations returned an auth/quota response.");
+    }
+    if(/^\s*</.test(text))throw new Error("Pollinations returned HTML instead of model text.");
+    return text;
+  };
+
+  {
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort("pollinations-post-timeout"),Math.min(timeoutMs,3600));
+    try{
+      const r=await fetch("https://text.pollinations.ai/openai",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Accept":"application/json,text/plain"},
+        body:JSON.stringify({model:"openai-fast",messages:compact,stream:false,temperature:.55,max_tokens:220}),
+        signal:controller.signal
+      });
+      if(r.ok){
+        const ct=r.headers.get("content-type")||"";
+        if(ct.includes("json")){
+          const data=await r.json();
+          return rejectBadReply(data?.choices?.[0]?.message?.content||data?.choices?.[0]?.text||data?.response||"");
+        }
+        return rejectBadReply(await r.text());
+      }
+    }catch(e){} finally{clearTimeout(timeout);}
+  }
+
+  const system=String(compact.find(x=>x.role==="system")?.content||"").slice(0,600);
+  const convo=compact
+    .filter(x=>x.role!=="system")
+    .map(x=>(x.role==="assistant"?"Emma: ":"User: ")+x.content)
+    .join("\n")
+    .slice(-2600);
+  const prompt=(system+"\n\n"+convo+"\nEmma:").trim();
+
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort("pollinations-get-timeout"),timeoutMs);
+  try{
+    const url="https://text.pollinations.ai/"+encodeURIComponent(prompt)+"?model=openai-fast";
+    const r=await fetch(url,{headers:{"Accept":"text/plain"},signal:controller.signal});
+    if(!r.ok)throw new Error("Pollinations GET HTTP "+r.status);
+    return rejectBadReply(await r.text());
+  }finally{
+    clearTimeout(timeout);
+  }
+}
+
 async function publicChatFallback(messages) {
   const failures=[];
 
-  // Primary no-key emergency brain.
-  // Zacheus10/free-ai-chat is a current public Hugging Face ZeroGPU Space
-  // using gr.ChatInterface(fn=generate). Gradio 6 exposes the function name
-  // as the public API endpoint, so the call is /gradio_api/call/generate.
-  const gradioProviders=[
-    {
-      id:"hf-zacheus-qwen3-4b-public",
-      base:"https://zacheus10-free-ai-chat.hf.space",
-      timeoutMs:45000
-    },
-    {
-      id:"hf-qwen3-demo-public",
-      base:"https://qwen-qwen3-demo.hf.space",
-      timeoutMs:22000
-    },
-    {
-      id:"hf-gemma3-chat-public",
-      base:"https://cognitivescience-gemma-3-chat.hf.space",
-      timeoutMs:22000
-    }
-  ];
+  try{
+    const reply=await pollinationsTextFallback(messages,6500);
+    if(reply)return {reply,model:"pollinations-openai-fast-public"};
+  }catch(error){
+    failures.push("pollinations-openai-fast-public: "+String(error?.message||error).slice(0,220));
+  }
 
-  for(const provider of gradioProviders){
-    try{
-      const reply=await gradioChatFallback(provider.base,messages,provider.timeoutMs);
-      if(reply) return {reply,model:provider.id};
-    }catch(error){
-      failures.push(provider.id+": "+String(error?.message||error).slice(0,220));
-    }
+  try{
+    const reply=await gradioChatFallback("https://zacheus10-free-ai-chat.hf.space",messages,12000);
+    if(reply)return {reply,model:"hf-zacheus-qwen3-4b-last-resort"};
+  }catch(error){
+    failures.push("hf-zacheus-qwen3-4b-last-resort: "+String(error?.message||error).slice(0,220));
   }
 
   throw new Error("Public chat fallbacks unavailable: "+failures.join(" | "));
@@ -739,10 +781,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.13-turn-state-machine",
+          version: "2026-09-16.14-mobile-mouth-fast-fallbacks",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
-          chat: "Cloudflare GPT-OSS + no-key Gradio 6/Qwen public fallback"
+          tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
+          chat: "Cloudflare GPT-OSS + Pollinations openai-fast no-key primary fallback + HF last resort"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
