@@ -62,155 +62,192 @@ let browserFallbackRecognition=null;
 let browserFallbackTranscript='';
 let browserFallbackActive=false;
 let browserSttPreferred=false;
-const QUOTA_NOTICE_TEXT='Modo de emergência ativo: o microfone do navegador continua ouvindo e o cérebro público de reserva continua respondendo enquanto a cota neural principal estiver indisponível.';
+
+const FLOW_STATES=Object.freeze({
+  IDLE:'idle',
+  LISTENING:'listening',
+  PROCESSING:'processing',
+  SPEAKING:'speaking'
+});
+let flowState=FLOW_STATES.IDLE;
+let isSpeaking=false;
+let isRecording=false;
+let isProcessing=false;
+let listeningEngine='none';
+let mediaSessionSeq=0;
+let browserSessionSeq=0;
+let conversationTurnSeq=0;
+
+const FLOW_TRANSITIONS={
+  [FLOW_STATES.IDLE]:new Set([FLOW_STATES.LISTENING,FLOW_STATES.PROCESSING]),
+  [FLOW_STATES.LISTENING]:new Set([FLOW_STATES.PROCESSING,FLOW_STATES.IDLE]),
+  [FLOW_STATES.PROCESSING]:new Set([FLOW_STATES.SPEAKING,FLOW_STATES.IDLE]),
+  [FLOW_STATES.SPEAKING]:new Set([FLOW_STATES.IDLE])
+};
+
+const QUOTA_NOTICE_TEXT='Modo de emergência ativo: o MediaRecorder foi desligado. A partir de agora, o microfone usa somente o reconhecimento de voz do navegador, um turno por clique.';
+
+function syncFlowFlags(){
+  isSpeaking=flowState===FLOW_STATES.SPEAKING;
+  isRecording=flowState===FLOW_STATES.LISTENING;
+  isProcessing=flowState===FLOW_STATES.PROCESSING;
+  recognizing=isRecording;
+}
+
+function refreshFlowControls(statusOverride=''){
+  syncFlowFlags();
+  const mic=document.querySelector('#micBtn');
+  const input=document.querySelector('#chatInput');
+  const send=document.querySelector('#sendBtn');
+  const voice=document.querySelector('#voiceBtn');
+  const busy=isProcessing||isSpeaking;
+
+  if(mic){
+    mic.disabled=busy;
+    if(isSpeaking) mic.textContent='🔊 Emma falando';
+    else if(isProcessing) mic.textContent='⏳ Processando';
+    else if(isRecording) mic.textContent=listeningEngine==='browser'?'⏹ Parar':'⏹ Enviar fala';
+    else mic.textContent=browserSttPreferred?'🎤 Falar (navegador)':'🎤 Falar';
+  }
+  if(input) input.disabled=busy||isRecording;
+  if(send) send.disabled=busy||isRecording;
+  if(voice) voice.disabled=isSpeaking||isRecording||isProcessing;
+
+  if(statusOverride){
+    setStatus(statusOverride,busy?'busy':'on');
+  }else if(isSpeaking){
+    setStatus('Speaking','busy');
+  }else if(isProcessing){
+    setStatus('Processing','busy');
+  }else if(isRecording){
+    setStatus(listeningEngine==='browser'?'Listening • browser STT':'Listening','on');
+  }else{
+    setStatus(browserSttPreferred?'Ready • browser STT':'Ready','on');
+  }
+}
+
+function setFlowState(next,{force=false,status=''}={}){
+  if(next===flowState){
+    refreshFlowControls(status);
+    return true;
+  }
+  if(!force && !FLOW_TRANSITIONS[flowState]?.has(next)){
+    console.warn('FNS blocked invalid flow transition',flowState,'→',next);
+    return false;
+  }
+  flowState=next;
+  if(next!==FLOW_STATES.LISTENING) listeningEngine='none';
+  refreshFlowControls(status);
+  return true;
+}
 
 function browserSpeechCtor(){
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
-function startShadowBrowserSTT(){
-  const Ctor=browserSpeechCtor();
-  browserFallbackTranscript='';
+function detachBrowserRecognition(r,{abort=false}={}){
+  if(!r)return;
+  r.onstart=null;
+  r.onresult=null;
+  r.onerror=null;
+  r.onend=null;
+  if(browserFallbackRecognition===r)browserFallbackRecognition=null;
   browserFallbackActive=false;
-  if(!Ctor)return;
-
-  try{
-    const r=new Ctor();
-    browserFallbackRecognition=r;
-    r.continuous=false;
-    r.interimResults=true;
-    r.maxAlternatives=1;
-    r.lang=navigator.language || 'pt-BR';
-
-    r.onstart=()=>{browserFallbackActive=true;};
-    r.onresult=(event)=>{
-      let finalText='';
-      let interim='';
-      for(let i=event.resultIndex;i<event.results.length;i++){
-        const piece=event.results[i]?.[0]?.transcript||'';
-        if(event.results[i].isFinal) finalText+=piece;
-        else interim+=piece;
-      }
-      const combined=(finalText||interim).trim();
-      if(combined) browserFallbackTranscript=combined;
-    };
-    r.onerror=()=>{};
-    r.onend=()=>{browserFallbackActive=false;};
-    r.start();
-  }catch(e){}
-}
-
-function stopShadowBrowserSTT(){
-  if(browserFallbackRecognition){
-    try{browserFallbackRecognition.stop()}catch(e){}
-  }
-  browserFallbackActive=false;
+  try{if(abort)r.abort()}catch(e){}
 }
 
 function activateBrowserSttMode(reason=''){
   browserSttPreferred=true;
-  const mic=document.querySelector('#micBtn');
-  if(mic){
-    mic.disabled=false;
-    mic.textContent='🎤 Falar (navegador)';
+  neuralQuotaExhausted=neuralQuotaExhausted||/quota|4006|429/i.test(reason);
+  if(flowState===FLOW_STATES.IDLE){
+    refreshFlowControls(reason?'Ouvido do navegador • '+reason:'Ouvido do navegador ativo');
   }
-  setStatus(reason?'Ouvido do navegador • '+reason:'Ouvido do navegador ativo','on');
 }
 
 function startBrowserOnlySTT(){
+  if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return false;
   const Ctor=browserSpeechCtor();
   if(!Ctor){
     addMsg('system','Este navegador não oferece SpeechRecognition. Você ainda pode digitar sua mensagem normalmente.');
-    setStatus('Digite sua mensagem','busy');
+    refreshFlowControls('Digite sua mensagem');
     return false;
   }
 
-  try{
-    if(browserFallbackRecognition){
-      try{browserFallbackRecognition.abort()}catch(e){}
+  const session=++browserSessionSeq;
+  const r=new Ctor();
+  browserFallbackRecognition=r;
+  browserFallbackTranscript='';
+  browserFallbackActive=false;
+  listeningEngine='browser';
+
+  r.continuous=false;
+  r.interimResults=true;
+  r.maxAlternatives=1;
+  r.lang=navigator.language || 'pt-BR';
+
+  let finalParts=[];
+  let interimText='';
+  let errorCode='';
+
+  r.onstart=()=>{
+    if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
+    browserFallbackActive=true;
+    refreshFlowControls();
+    const face=document.querySelector('#avatarFace');
+    if(face)face.classList.add('avatar-listening');
+  };
+
+  r.onresult=(event)=>{
+    if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
+    interimText='';
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      const piece=String(event.results[i]?.[0]?.transcript||'').trim();
+      if(!piece)continue;
+      if(event.results[i].isFinal) finalParts.push(piece);
+      else interimText=piece;
+    }
+    browserFallbackTranscript=(finalParts.join(' ')||interimText).trim();
+  };
+
+  r.onerror=(event)=>{
+    if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
+    errorCode=String(event?.error||'');
+  };
+
+  r.onend=async()=>{
+    if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
+    const text=(finalParts.join(' ')||browserFallbackTranscript||interimText).trim();
+    detachBrowserRecognition(r);
+    const face=document.querySelector('#avatarFace');
+    if(face)face.classList.remove('avatar-listening');
+
+    if(errorCode && errorCode!=='aborted' && errorCode!=='no-speech'){
+      addMsg('system','O reconhecimento de voz do navegador falhou ('+errorCode+'). Tente novamente ou digite.');
+    }
+
+    if(!text){
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      return;
     }
 
     browserFallbackTranscript='';
-    const r=new Ctor();
-    browserFallbackRecognition=r;
-    r.continuous=false;
-    r.interimResults=true;
-    r.maxAlternatives=1;
-    r.lang=navigator.language || 'pt-BR';
+    setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Processing'});
+    await handleUser(text,{stateOwned:true});
+  };
 
-    let finalText='';
-    let interimText='';
-
-    r.onstart=()=>{
-      browserFallbackActive=true;
-      recognizing=true;
-      const mic=document.querySelector('#micBtn');
-      if(mic)mic.textContent='⏹ Parar';
-      const face=document.querySelector('#avatarFace');
-      if(face)face.classList.add('avatar-listening');
-      setStatus('Listening • browser STT','on');
-    };
-
-    r.onresult=(event)=>{
-      finalText='';
-      interimText='';
-      for(let i=event.resultIndex;i<event.results.length;i++){
-        const piece=String(event.results[i]?.[0]?.transcript||'');
-        if(event.results[i].isFinal)finalText+=piece;
-        else interimText+=piece;
-      }
-      const combined=(finalText||interimText).trim();
-      if(combined)browserFallbackTranscript=combined;
-    };
-
-    r.onerror=(event)=>{
-      const code=String(event?.error||'');
-      if(code && code!=='aborted' && code!=='no-speech'){
-        addMsg('system','O reconhecimento de voz do navegador falhou ('+code+'). Você pode tentar novamente ou digitar.');
-      }
-      setStatus('Ready','on');
-    };
-
-    r.onend=()=>{
-      browserFallbackActive=false;
-      recognizing=false;
-      const mic=document.querySelector('#micBtn');
-      if(mic)mic.textContent=browserSttPreferred?'🎤 Falar (navegador)':'🎤 Falar';
-      const face=document.querySelector('#avatarFace');
-      if(face)face.classList.remove('avatar-listening');
-      const text=(finalText||browserFallbackTranscript||'').trim();
-      browserFallbackRecognition=null;
-      if(text){
-        browserFallbackTranscript='';
-        handleUser(text);
-      }else{
-        setStatus('Ready','on');
-      }
-    };
-
+  try{
+    setFlowState(FLOW_STATES.LISTENING,{status:'Listening • browser STT'});
     r.start();
     return true;
   }catch(e){
-    recognizing=false;
-    browserFallbackActive=false;
-    setStatus('Digite sua mensagem','busy');
+    browserSessionSeq++;
+    detachBrowserRecognition(r,{abort:true});
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
     return false;
   }
 }
 
-function useBrowserSttFallback(reason='fallback'){
-  activateBrowserSttMode(reason);
-  const cached=(browserFallbackTranscript||'').trim();
-  if(cached){
-    browserFallbackTranscript='';
-    setStatus('Ouvido alternativo','on');
-    handleUser(cached);
-    return true;
-  }
-  return startBrowserOnlySTT();
-}
-
-function nextUtcMidnightMs(){
+function nextUtcMidnightMs(){function nextUtcMidnightMs(){
   const now=new Date();
   return Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1,0,0,0)-Date.now();
 }
@@ -224,31 +261,27 @@ function isSttBackendFailure(data,status=0){
 }
 function enterQuotaRestMode(){
   neuralQuotaExhausted=true;
-  cleanupRecorder();
-  stopRemoteVoice();
-  activateBrowserSttMode('modo emergência');
-  const mic=document.querySelector('#micBtn');
-  if(mic){
-    mic.disabled=false;
-    mic.textContent='🎤 Falar (navegador)';
-  }
+  browserSttPreferred=true;
+
   const transcript=document.querySelector('#transcript');
   if(transcript && !transcript.querySelector('.quota-notice')){
     transcript.insertAdjacentHTML('beforeend','<div class="msg system quota-notice">'+escapeHtml(QUOTA_NOTICE_TEXT)+'</div>');
     transcript.scrollTop=transcript.scrollHeight;
   }
-  setStatus('Modo emergência • ouvido local + cérebro público','on');
+
+  if(flowState!==FLOW_STATES.SPEAKING){
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
+  }
+
   if(quotaResetTimer)clearTimeout(quotaResetTimer);
   quotaResetTimer=setTimeout(()=>{
     neuralQuotaExhausted=false;
     browserSttPreferred=false;
-    const m=document.querySelector('#micBtn');
-    if(m){m.disabled=false;m.textContent='🎤 Falar';}
-    setStatus('Ready','on');
+    if(flowState===FLOW_STATES.IDLE)refreshFlowControls('Ready');
   },Math.max(1000,nextUtcMidnightMs()+1500));
 }
 
-function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;if(neuralQuotaExhausted)enterQuotaRestMode();speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
+function openLiteTeacherfunction openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button id="sendBtn" class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;setFlowState(FLOW_STATES.IDLE,{force:true});if(neuralQuotaExhausted)enterQuotaRestMode();speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
 function sanitizeChatText(input){
@@ -274,104 +307,160 @@ function addMsg(role,text){
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function toggleRecognition(){
-  if(recognizing){
+  if(isSpeaking||isProcessing)return;
+  if(isRecording){
     stopRecognition();
     return;
   }
   if(browserSttPreferred||neuralQuotaExhausted){
-    activateBrowserSttMode('modo emergência');
+    activateBrowserSttMode(neuralQuotaExhausted?'quota':'fallback');
     startBrowserOnlySTT();
     return;
   }
   startRecording();
 }
+
 async function startRecording(){
-  if(neuralQuotaExhausted||browserSttPreferred){
-    activateBrowserSttMode('modo emergência');
+  if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return;
+  if(browserSttPreferred||neuralQuotaExhausted){
     startBrowserOnlySTT();
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
-    addMsg('system','Este navegador não oferece gravação de áudio compatível. Você pode digitar sua frase.');
+    addMsg('system','Este navegador não oferece gravação MediaRecorder compatível. Ativando apenas o reconhecimento de voz do navegador.');
+    activateBrowserSttMode('MediaRecorder indisponível');
     return;
   }
+
+  const session=++mediaSessionSeq;
+  listeningEngine='media';
+  setFlowState(FLOW_STATES.LISTENING,{status:'Abrindo microfone'});
+
+  let stream=null;
   try{
-    setStatus('Microfone','busy');
-    mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    if(session!==mediaSessionSeq || flowState!==FLOW_STATES.LISTENING){
+      stream.getTracks().forEach(t=>t.stop());
+      return;
+    }
+
+    mediaStream=stream;
     audioChunks=[];
-    const preferred=[
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus'
-    ];
+    const preferred=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'];
     const mimeType=preferred.find(t=>MediaRecorder.isTypeSupported(t))||'';
-    mediaRecorder=mimeType?new MediaRecorder(mediaStream,{mimeType}):new MediaRecorder(mediaStream);
-    startShadowBrowserSTT();
+    const recorder=mimeType?new MediaRecorder(stream,{mimeType}):new MediaRecorder(stream);
+    mediaRecorder=recorder;
 
-    mediaRecorder.ondataavailable=e=>{
-      if(e.data && e.data.size>0) audioChunks.push(e.data);
+    recorder.ondataavailable=e=>{
+      if(session!==mediaSessionSeq)return;
+      if(e.data && e.data.size>0)audioChunks.push(e.data);
     };
 
-    mediaRecorder.onstart=()=>{
-      recognizing=true;
-      setStatus('Listening','on');
-      if(document.querySelector('#avatarFace')) avatarFace.classList.add('avatar-listening');
-      if(document.querySelector('#micBtn')) micBtn.textContent='⏹ Enviar fala';
-      recordingTimer=setTimeout(()=>stopRecordingAndSend(),12000);
+    recorder.onstart=()=>{
+      if(session!==mediaSessionSeq)return;
+      refreshFlowControls('Listening');
+      const face=document.querySelector('#avatarFace');
+      if(face)face.classList.add('avatar-listening');
+      recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);
     };
 
-    mediaRecorder.onerror=e=>{
-      addMsg('system','Falha ao gravar o microfone. Você também pode digitar.');
-      cleanupRecorder();
+    recorder.onerror=()=>{
+      if(session!==mediaSessionSeq)return;
+      addMsg('system','Falha ao gravar o microfone. Você pode tentar novamente ou digitar.');
+      cancelMediaRecorderSession(session);
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
     };
 
-    mediaRecorder.onstop=async()=>{
+    recorder.onstop=async()=>{
+      if(session!==mediaSessionSeq)return;
       clearTimeout(recordingTimer);
-      if(document.querySelector('#micBtn')) micBtn.textContent='🎤 Falar';
-      if(document.querySelector('#avatarFace')) avatarFace.classList.remove('avatar-listening');
-      const blob=new Blob(audioChunks,{type:mediaRecorder?.mimeType||'audio/webm'});
-      cleanupRecorder(false);
+      const mime=recorder.mimeType||'audio/webm';
+      const blob=new Blob(audioChunks,{type:mime});
+      releaseMediaRecorder(recorder,stream,session);
+      const face=document.querySelector('#avatarFace');
+      if(face)face.classList.remove('avatar-listening');
+
       if(blob.size<1000){
         addMsg('system','Não consegui captar áudio suficiente. Tente falar por 1–3 segundos.');
-        setStatus('Ready','on');
+        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
         return;
       }
-      try {
-        setStatus('Preparando áudio','busy');
-        const wav = await recordingToWav(blob);
+
+      try{
+        const wav=await recordingToWav(blob);
         await transcribeWithFNS(wav);
-      } catch (error) {
-        addMsg('system','Não foi possível preparar o áudio: '+error.message+'. Tente novamente ou digite.');
-        setStatus('Ready','on');
+      }catch(error){
+        addMsg('system','Não foi possível preparar o áudio: '+(error?.message||error)+'. Tente novamente ou digite.');
+        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
       }
     };
 
-    mediaRecorder.start(250);
+    recorder.start(250);
   }catch(err){
-    addMsg('system','Não consegui acessar o microfone: '+(err?.message||err));
-    cleanupRecorder();
+    if(stream)stream.getTracks().forEach(t=>t.stop());
+    if(session===mediaSessionSeq){
+      addMsg('system','Não consegui acessar o microfone: '+(err?.message||err));
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    }
   }
 }
-function stopRecordingAndSend(){
-  stopShadowBrowserSTT();
-  if(mediaRecorder && mediaRecorder.state==='recording'){
-    setStatus('Enviando áudio','busy');
-    mediaRecorder.stop();
-  }
-}
-function cleanupRecorder(stopTracks=true){
-  recognizing=false;
+
+function releaseMediaRecorder(recorder,stream,session){
   clearTimeout(recordingTimer);
-  if(stopTracks && mediaStream){
-    mediaStream.getTracks().forEach(t=>t.stop());
+  recordingTimer=null;
+  if(recorder){
+    recorder.ondataavailable=null;
+    recorder.onstart=null;
+    recorder.onerror=null;
+    recorder.onstop=null;
   }
-  if(mediaStream && (!mediaRecorder || mediaRecorder.state==='inactive')){
-    mediaStream.getTracks().forEach(t=>t.stop());
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  if(session===mediaSessionSeq){
+    mediaRecorder=null;
+    mediaStream=null;
+    audioChunks=[];
   }
-  mediaStream=null;
-  mediaRecorder=null;
 }
-// Decode the complete recording, mix to mono and render at Whisper's 16 kHz.
+
+function cancelMediaRecorderSession(session=mediaSessionSeq){
+  mediaSessionSeq++;
+  clearTimeout(recordingTimer);
+  recordingTimer=null;
+  const recorder=mediaRecorder;
+  const stream=mediaStream;
+  if(recorder){
+    recorder.ondataavailable=null;
+    recorder.onstart=null;
+    recorder.onerror=null;
+    recorder.onstop=null;
+    try{if(recorder.state==='recording')recorder.stop()}catch(e){}
+  }
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  mediaRecorder=null;
+  mediaStream=null;
+  audioChunks=[];
+}
+
+function stopRecordingAndSend(){
+  if(flowState!==FLOW_STATES.LISTENING || listeningEngine!=='media')return;
+  const recorder=mediaRecorder;
+  if(!recorder || recorder.state!=='recording'){
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    return;
+  }
+  clearTimeout(recordingTimer);
+  setFlowState(FLOW_STATES.PROCESSING,{status:'Enviando áudio'});
+  try{recorder.stop()}catch(e){
+    cancelMediaRecorderSession();
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+  }
+}
+
+function cleanupRecorder(){
+  cancelMediaRecorderSession();
+}
+
+// Decode the complete recording// Decode the complete recording, mix to mono and render at Whisper's 16 kHz.
 async function recordingToWav(blob) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   const context = new AudioContextClass();
@@ -405,94 +494,122 @@ function encodePcmWav(samples, sampleRate) {
   return new Blob([buffer],{type:'audio/wav'});
 }
 async function transcribeWithFNS(blob){
-  setStatus('Transcribing','busy');
+  setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Transcribing'});
   try{
     const res=await fetch(FNS_STT_URL,{
       method:'POST',
-      headers:{'Content-Type':blob.type||'audio/webm'},
+      headers:{'Content-Type':blob.type||'audio/wav'},
       body:blob
     });
     const data=await res.json().catch(()=>({}));
+
     if(isSttBackendFailure(data,res.status)){
-      useBrowserSttFallback('HTTP '+res.status);
+      if(isQuotaPayload(data,res.status))neuralQuotaExhausted=true;
+      activateBrowserSttMode('HTTP '+res.status);
+      addMsg('system','O ouvido neural ficou indisponível. O modo de emergência foi ativado sem reiniciar o microfone sozinho. Toque em “Falar (navegador)” e diga sua frase uma vez.');
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
       return;
     }
-    if(!res.ok){
-      throw new Error(data?.message||data?.error||('HTTP '+res.status));
-    }
-    const text=(data?.text||'').trim();
+
+    if(!res.ok)throw new Error(data?.message||data?.error||('HTTP '+res.status));
+
+    const text=String(data?.text||'').trim();
     if(!text){
       addMsg('system','O Whisper não detectou fala. Tente novamente falando um pouco mais perto do microfone.');
-      setStatus('Ready','on');
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
       return;
     }
-    handleUser(text);
+
+    await handleUser(text,{stateOwned:true});
   }catch(err){
-    addMsg('system','Não foi possível usar o reconhecimento neural agora. Ativando o reconhecimento de voz do navegador.');
-    useBrowserSttFallback('rede indisponível');
+    activateBrowserSttMode('rede indisponível');
+    addMsg('system','O reconhecimento neural falhou. O modo de navegador foi ativado, mas não será aberto automaticamente. Toque em “Falar (navegador)” e repita sua frase.');
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
   }
 }
+
 function stopRecognition(){
-  if(mediaRecorder && mediaRecorder.state==='recording'){
+  if(flowState!==FLOW_STATES.LISTENING)return;
+
+  if(listeningEngine==='media'){
     stopRecordingAndSend();
     return;
   }
-  if(browserFallbackRecognition){
-    try{browserFallbackRecognition.stop()}catch(e){}
-    return;
+
+  if(listeningEngine==='browser' && browserFallbackRecognition){
+    try{browserFallbackRecognition.stop()}catch(e){
+      browserSessionSeq++;
+      detachBrowserRecognition(browserFallbackRecognition,{abort:true});
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    }
   }
-  recognizing=false;
 }
-function sendTyped(){const el=document.querySelector('#chatInput');if(!el||!el.value.trim())return;const text=el.value.trim();el.value='';handleUser(text)}
-async function handleUser(text){
+
+function sendTyped(){
+  const el=document.querySelector('#chatInput');
+  if(!el||!el.value.trim()||flowState!==FLOW_STATES.IDLE)return;
+  const text=el.value.trim();
+  el.value='';
+  setFlowState(FLOW_STATES.PROCESSING,{status:'Thinking'});
+  handleUser(text,{stateOwned:true});
+}
+
+async function handleUser(text,{stateOwned=false}={}){
+  text=String(text||'').trim();
+  if(!text)return;
+
+  if(isSpeaking||isRecording)return;
+  if(!stateOwned){
+    if(flowState!==FLOW_STATES.IDLE)return;
+    if(!setFlowState(FLOW_STATES.PROCESSING,{status:'Thinking'}))return;
+  }else if(flowState!==FLOW_STATES.PROCESSING){
+    setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Thinking'});
+  }
+
+  const turn=++conversationTurnSeq;
   addMsg('user',text);
   addPracticeMessage();
-  setStatus('Thinking','busy');
 
   try{
-    const response=await fetch(
-      FNS_CHAT_URL,
-      {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json'
-        },
-        body:JSON.stringify({
-          message:text,
-          teacher:activeTeacher?.name||'Emma',
-          level:document.querySelector('#levelSel')?.value||'A1',
-          accent:activeTeacher?.accent||'British'
-        })
-      }
-    );
+    const response=await fetch(FNS_CHAT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        message:text,
+        teacher:activeTeacher?.name||'Emma',
+        level:document.querySelector('#levelSel')?.value||'A1',
+        accent:activeTeacher?.accent||'British'
+      })
+    });
 
     const data=await response.json().catch(()=>({}));
+    if(turn!==conversationTurnSeq)return;
 
     if(isQuotaPayload(data,response.status)){
       enterQuotaRestMode();
       return;
     }
+    if(!response.ok||!data.ok)throw new Error(data?.message||data?.error||'A Emma está temporariamente indisponível.');
 
-    if(!response.ok || !data.ok){
-      throw new Error(data?.message||'A Emma está temporariamente indisponível.');
-    }
-
-    const reply=data.reply||'Could you say that again?';
-
+    const reply=String(data.reply||'Could you say that again?').trim();
     addMsg('teacher',reply);
-    setStatus('Ready','on');
 
-    try{
-      speak(reply);
-    }catch(e){}
-
+    // Keep PROCESSING locked until TTS either begins SPEAKING or finishes/fails.
+    const spoken=await speak(reply,{fromProcessing:true});
+    if(turn===conversationTurnSeq && !spoken && flowState===FLOW_STATES.PROCESSING){
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    }
   }catch(error){
-    if(isQuotaPayload(error,0)){enterQuotaRestMode();return;}
-    setStatus('Indisponível','busy');
+    if(turn!==conversationTurnSeq)return;
+    if(isQuotaPayload(error,0)){
+      enterQuotaRestMode();
+      return;
+    }
     addMsg('system','A Emma está temporariamente indisponível. Tente novamente em alguns minutos.');
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
   }
 }
-function teacherReply(text){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode;let correction='';
+function teacherReplyfunction teacherReply(text){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode;let correction='';
 if(/\bi am have\b/i.test(x))correction='Small correction: say “I have”, not “I am have”. ';
 else if(/\bhe go\b/i.test(x))correction='Small correction: say “he goes”. ';
 else if(/\byesterday.*\bgo\b/i.test(x))correction='For the past, use “went”: “Yesterday I went…”. ';
@@ -597,54 +714,76 @@ function startAvatarLipSync(audio){
 }
 
 function stopRemoteVoice(){
+  speechSessionSeq++;
   stopAvatarLipSync();
-  const portrait=document.querySelector('#emmaPortrait');
-  if(portrait){portrait.style.opacity='1';portrait.style.visibility='visible';}
-  if(currentVoiceAudio){
-    try{currentVoiceAudio.pause(); currentVoiceAudio.currentTime=0}catch(e){}
-    currentVoiceAudio=null;
+
+  const audio=currentVoiceAudio;
+  const url=currentVoiceUrl;
+  currentVoiceAudio=null;
+  currentVoiceUrl='';
+
+  if(audio){
+    audio.onplay=null;
+    audio.onended=null;
+    audio.onerror=null;
+    try{audio.pause()}catch(e){}
   }
-  if(currentVoiceUrl){
-    try{URL.revokeObjectURL(currentVoiceUrl)}catch(e){}
-    currentVoiceUrl='';
+  if(url){
+    try{URL.revokeObjectURL(url)}catch(e){}
   }
+
   const face=document.querySelector('#avatarFace');
-  if(face){face.classList.remove('avatar-speaking','avatar-talking','avatar-listening');}
+  if(face)face.classList.remove('avatar-speaking','avatar-talking','avatar-listening');
+
+  if(flowState===FLOW_STATES.SPEAKING||flowState===FLOW_STATES.PROCESSING){
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+  }
 }
+
+let speechSessionSeq=0;
 
 async function remoteSpeak(text){
   text=String(text||'').trim();
-  if(!text)return;
+  if(!text)return false;
   lastSpoken=text;
 
   if(!voiceUnlocked){
-    setStatus('Clique em Ativar voz','busy');
-    return;
+    if(flowState===FLOW_STATES.PROCESSING)setFlowState(FLOW_STATES.IDLE,{force:true});
+    refreshFlowControls('Clique em Ativar voz');
+    return false;
   }
 
-  stopRemoteVoice();
-  setStatus('Generating voice','busy');
+  if(isSpeaking||isRecording)return false;
+  if(flowState===FLOW_STATES.IDLE){
+    if(!setFlowState(FLOW_STATES.PROCESSING,{status:'Generating voice'}))return false;
+  }else if(flowState!==FLOW_STATES.PROCESSING){
+    return false;
+  }else{
+    refreshFlowControls('Generating voice');
+  }
+
+  const session=++speechSessionSeq;
 
   try{
     const response=await fetch(FNS_TTS_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        text,
-        teacher:activeTeacher?.name||'Emma',
-      })
+      body:JSON.stringify({text,teacher:activeTeacher?.name||'Emma'})
     });
+
+    if(session!==speechSessionSeq)return false;
 
     if(!response.ok){
       const data=await response.json().catch(()=>({}));
       if(isQuotaPayload(data,response.status)){
         enterQuotaRestMode();
-        return;
+        return false;
       }
       throw new Error(data?.message||'A voz da Emma está temporariamente indisponível.');
     }
 
     const blob=await response.blob();
+    if(session!==speechSessionSeq)return false;
     if(!blob.size)throw new Error('O servidor TTS retornou áudio vazio.');
 
     const url=URL.createObjectURL(blob);
@@ -653,41 +792,72 @@ async function remoteSpeak(text){
     currentVoiceAudio=audio;
     currentVoiceUrl=url;
 
-    audio.onplay=()=>{
-      startAvatarLipSync(audio);
-      setStatus('Speaking','busy');
-      const face=document.querySelector('#avatarFace');
-      if(face)face.classList.add('avatar-speaking');
-    };
+    return await new Promise((resolve,reject)=>{
+      let settled=false;
 
-    const finish=()=>{
-      stopAvatarLipSync();
-      if(currentVoiceAudio===audio)currentVoiceAudio=null;
-      if(currentVoiceUrl===url){
-        try{URL.revokeObjectURL(url)}catch(e){}
-        currentVoiceUrl='';
-      }
-      setStatus('Ready','on');
-      const face=document.querySelector('#avatarFace');
-      if(face)face.classList.remove('avatar-speaking','avatar-talking');
-    };
+      const finish=(ok,error=null)=>{
+        if(settled)return;
+        settled=true;
 
-    audio.onended=finish;
-    audio.onerror=()=>{
-      finish();
-      addMsg('system','FNS VOICE: não foi possível reproduzir o áudio neural recebido.');
-    };
+        audio.onplay=null;
+        audio.onended=null;
+        audio.onerror=null;
 
-    await audio.play();
+        if(session===speechSessionSeq){
+          stopAvatarLipSync();
+          const face=document.querySelector('#avatarFace');
+          if(face)face.classList.remove('avatar-speaking','avatar-talking');
+
+          if(currentVoiceAudio===audio)currentVoiceAudio=null;
+          if(currentVoiceUrl===url)currentVoiceUrl='';
+          try{URL.revokeObjectURL(url)}catch(e){}
+
+          // This is the only normal path that releases the mic after speech.
+          setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+        }else{
+          try{URL.revokeObjectURL(url)}catch(e){}
+        }
+
+        if(ok)resolve(true);
+        else reject(error||new Error('Falha ao reproduzir a voz.'));
+      };
+
+      audio.onplay=()=>{
+        if(session!==speechSessionSeq){
+          finish(false,new Error('Sessão de voz cancelada.'));
+          return;
+        }
+        setFlowState(FLOW_STATES.SPEAKING,{status:'Speaking'});
+        startAvatarLipSync(audio);
+        const face=document.querySelector('#avatarFace');
+        if(face)face.classList.add('avatar-speaking');
+      };
+
+      audio.onended=()=>finish(true);
+      audio.onerror=()=>finish(false,new Error('Falha de reprodução do áudio neural.'));
+
+      audio.play().catch(error=>finish(false,error));
+    });
   }catch(error){
-    stopRemoteVoice();
-    if(isQuotaPayload(error,0)){enterQuotaRestMode();return;}
-    setStatus('Voz indisponível','busy');
-    addMsg('system','A voz da Emma está temporariamente indisponível. O rosto continuará ativo; tente novamente em alguns minutos.');
+    if(session===speechSessionSeq){
+      if(currentVoiceUrl){
+        try{URL.revokeObjectURL(currentVoiceUrl)}catch(e){}
+      }
+      currentVoiceAudio=null;
+      currentVoiceUrl='';
+      stopAvatarLipSync();
+      if(isQuotaPayload(error,0))enterQuotaRestMode();
+      else{
+        addMsg('system','A voz da Emma está temporariamente indisponível. O texto da resposta continua disponível.');
+        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Voz indisponível'});
+      }
+    }
+    return false;
   }
 }
 
 async function unlockVoice(){
+  if(flowState!==FLOW_STATES.IDLE)return;
   voiceUnlocked=true;
   const b=document.querySelector('#voiceBtn');
   if(b)b.textContent='🔊 Voz ativada';
@@ -696,28 +866,31 @@ async function unlockVoice(){
 }
 
 async function unlockAndRepeat(){
+  if(flowState!==FLOW_STATES.IDLE)return;
   voiceUnlocked=true;
   const b=document.querySelector('#voiceBtn');
   if(b)b.textContent='🔊 Voz ativada';
   if(lastSpoken)await remoteSpeak(lastSpoken);
 }
 
-function speak(text){
+async function speak(text){
   lastSpoken=String(text||'').trim();
+  if(!lastSpoken)return false;
   if(!voiceUnlocked){
-    setStatus('Clique em Ativar voz','busy');
-    return;
+    if(flowState===FLOW_STATES.PROCESSING)setFlowState(FLOW_STATES.IDLE,{force:true});
+    refreshFlowControls('Clique em Ativar voz');
+    return false;
   }
-  remoteSpeak(lastSpoken);
+  return await remoteSpeak(lastSpoken);
 }
 
-function speakNow(text){
+async function speakNow(text){
   lastSpoken=String(text||'').trim();
-  if(!voiceUnlocked)return;
-  remoteSpeak(lastSpoken);
+  if(!voiceUnlocked||flowState!==FLOW_STATES.IDLE)return false;
+  return await remoteSpeak(lastSpoken);
 }
 
-function cardsView(){layout(`<h1>Flashcards</h1><div class="grid"><div class="card"><h2>Novo cartão</h2><input id="front" placeholder="Frente / inglês"><textarea id="back" placeholder="Verso / tradução, explicação"></textarea><button class="primary" onclick="saveCard()">SALVAR FLASHCARD</button></div><div class="card"><h2>Seus cartões</h2><div id="cardlist">${cards.length?cards.map((c,i)=>`<div class="card"><b>${escapeHtml(c.f)}</b><p>${escapeHtml(c.b)}</p><div class="row"><button onclick="speakCard(${i})">🔊 Ouvir</button><button onclick="delCard(${i})">Excluir</button></div></div>`).join(''):'Nenhum cartão ainda.'}</div></div></div>`)}
+function cardsViewfunction cardsView(){layout(`<h1>Flashcards</h1><div class="grid"><div class="card"><h2>Novo cartão</h2><input id="front" placeholder="Frente / inglês"><textarea id="back" placeholder="Verso / tradução, explicação"></textarea><button class="primary" onclick="saveCard()">SALVAR FLASHCARD</button></div><div class="card"><h2>Seus cartões</h2><div id="cardlist">${cards.length?cards.map((c,i)=>`<div class="card"><b>${escapeHtml(c.f)}</b><p>${escapeHtml(c.b)}</p><div class="row"><button onclick="speakCard(${i})">🔊 Ouvir</button><button onclick="delCard(${i})">Excluir</button></div></div>`).join(''):'Nenhum cartão ainda.'}</div></div></div>`)}
 function saveCard(){let f=front.value.trim(),b=back.value.trim();if(!f)return;cards.push({f,b});localStorage.setItem('fns_cards',JSON.stringify(cards));cardsView()}
 function delCard(i){cards.splice(i,1);localStorage.setItem('fns_cards',JSON.stringify(cards));cardsView()}
 function speakCard(i){activeTeacher=teachers[2];speak(cards[i].f)}

@@ -739,7 +739,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.12-gradio6-public-brain",
+          version: "2026-09-16.13-turn-state-machine",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
           chat: "Cloudflare GPT-OSS + no-key Gradio 6/Qwen public fallback"
