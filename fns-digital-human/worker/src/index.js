@@ -640,6 +640,21 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
 async function publicChatFallback(messages) {
   const failures=[];
 
+  // No-key public OpenAI-compatible fallback. This is the first escape route
+  // when Workers AI hits neuron quota or a temporary upstream failure.
+  try{
+    const reply=await noKeyOpenAIChat(
+      "https://text.pollinations.ai/openai",
+      "openai",
+      messages,
+      10000
+    );
+    if(reply) return {reply,model:"pollinations-openai-public"};
+  }catch(error){
+    failures.push("pollinations-openai-public: "+String(error?.message||error).slice(0,180));
+  }
+
+  // Public Hugging Face REST fallback.
   try{
     const reply=await noKeyOpenAIChat(
       "https://zacheus10-free-ai-chat.hf.space/v1/chat/completions",
@@ -652,6 +667,7 @@ async function publicChatFallback(messages) {
     failures.push("hf-qwen3-4b-public: "+String(error?.message||error).slice(0,180));
   }
 
+  // Public Gradio Spaces as tertiary brain fallbacks.
   const gradioProviders=[
     {id:"hf-llama2-chat",base:"https://huggingface-projects-llama-2-7b-chat.hf.space"},
     {id:"hf-gemma3-chat",base:"https://cognitivescience-gemma-3-chat.hf.space"}
@@ -721,10 +737,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.9-immortal-ear-brain",
+          version: "2026-09-16.10-real-avatar-immortal-ear-brain",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
-          chat: "Cloudflare GPT-OSS + public Hugging Face Gradio fallbacks"
+          chat: "Cloudflare GPT-OSS + Pollinations no-key + public Hugging Face fallbacks"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
