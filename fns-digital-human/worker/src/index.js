@@ -223,13 +223,15 @@ function splitTtsChunks(text,maxLen=180) {
   return chunks;
 }
 
-async function googleTranslateTtsPortuguese(text,origin) {
+async function googleTranslateTts(text,lang,origin,engineId) {
   const buffers=[];
+  const tl = lang === "en" ? "en-US" : lang === "es" ? "es-ES" : "pt-BR";
+
   for (const chunk of splitTtsChunks(text,180)) {
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort("google-tts-timeout"),4500);
     try {
-      const url="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q="+encodeURIComponent(chunk);
+      const url="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl="+encodeURIComponent(tl)+"&q="+encodeURIComponent(chunk);
       const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0","Accept":"audio/mpeg,*/*"},signal:controller.signal});
       if (!r.ok) throw new Error("Google TTS HTTP "+r.status);
       const ct=r.headers.get("content-type")||"";
@@ -237,15 +239,23 @@ async function googleTranslateTtsPortuguese(text,origin) {
       buffers.push(new Uint8Array(await r.arrayBuffer()));
     } finally { clearTimeout(timeout); }
   }
+
   const size=buffers.reduce((n,b)=>n+b.byteLength,0);
   if (!size) throw new Error("Google TTS returned empty audio.");
-  const merged=new Uint8Array(size); let offset=0;
+
+  const merged=new Uint8Array(size);
+  let offset=0;
   for (const b of buffers) { merged.set(b,offset); offset+=b.byteLength; }
+
   return new Response(merged,{status:200,headers:corsAudioHeaders(origin,{
     "Content-Type":"audio/mpeg",
-    "X-FNS-Voice-Engine":"google-translate-tts-ptbr",
-    "X-FNS-Voice-Language":"pt-BR"
+    "X-FNS-Voice-Engine":engineId || ("google-translate-tts-"+lang),
+    "X-FNS-Voice-Language":lang
   })});
+}
+
+async function googleTranslateTtsPortuguese(text,origin) {
+  return googleTranslateTts(text,"pt-BR",origin,"google-translate-tts-ptbr");
 }
 
 async function hfKokoroPortuguese(env, text, origin) {
@@ -347,6 +357,110 @@ async function hfKokoroPortuguese(env, text, origin) {
 }
 
 
+
+async function runAuraTts(env,text,origin,{model,speaker,language,engine}) {
+  let raw;
+  try {
+    raw = await env.AI.run(
+      model,
+      { text, speaker, encoding:"mp3" },
+      { returnRawResponse:true }
+    );
+  } catch (error) {
+    throw new Error("AURA_RUN_FAILED: "+String(error?.message||error));
+  }
+
+  if (!(raw instanceof Response) || !raw.ok) {
+    const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+    throw new Error("AURA_HTTP_"+(raw instanceof Response?raw.status:502)+": "+detail.slice(0,240));
+  }
+
+  const headers=new Headers(raw.headers);
+  for(const [k,v] of Object.entries(corsAudioHeaders(origin,{
+    "Content-Type":"audio/mpeg",
+    "X-FNS-Voice-Engine":engine,
+    "X-FNS-Voice-Language":language
+  }))) headers.set(k,v);
+
+  return new Response(raw.body,{status:200,headers});
+}
+
+async function gradioTtsAttempt(base,endpointCandidates,dataVariants,origin,engine,language,timeoutMs=5500) {
+  return gradioAudioFromSpace({
+    base,
+    endpointCandidates,
+    dataVariants,
+    engine,
+    spaceName:engine,
+    origin,
+    timeoutMs
+  });
+}
+
+function publicTtsEngines(language,text,origin,env) {
+  if (language === "es") {
+    return [
+      {id:"aura-2-es",run:()=>runAuraTts(env,text,origin,{model:"@cf/deepgram/aura-2-es",speaker:"celeste",language:"es",engine:"aura-2-es"})},
+      {id:"google-translate-tts-es",run:()=>googleTranslateTts(text,"es",origin,"google-translate-tts-es")},
+      {id:"hf-kokoro-spanish-leonelhs",run:()=>gradioTtsAttempt("https://leonelhs-kokoro-tts-spanish.hf.space",["predict"],[[text,"ef_dora",1]],origin,"hf-kokoro-spanish-leonelhs","es")},
+      {id:"hf-kokoro-pendrokar-es",run:()=>gradioTtsAttempt("https://pendrokar-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"es"],[text,"af_heart",1]],origin,"hf-kokoro-pendrokar-es","es")},
+      {id:"hf-kokoro-ysharma-es",run:()=>gradioTtsAttempt("https://ysharma-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"es"],[text,"af_heart",1]],origin,"hf-kokoro-ysharma-es","es")},
+      {id:"hf-kokoro-neuralfalcon-es",run:()=>gradioTtsAttempt("https://neuralfalcon-kokoro-tts-1-0.hf.space",["KOKORO_TTS_API","predict"],[[text,"Spanish","ef_dora",1,false,false],[text,"Spanish","af_heart",1,false,false]],origin,"hf-kokoro-neuralfalcon-es","es")},
+      {id:"hf-edge-tts-es",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"es-ES-ElviraNeural","0%","0Hz"],[text,"es-ES-ElviraNeural"],[text]],origin,"hf-edge-tts-es","es")},
+      {id:"hf-spanish-f5",run:()=>gradioTtsAttempt("https://jpgallegoar-spanish-f5.hf.space",["predict","generate","generate_speech"],[[text],[text,"es"]],origin,"hf-spanish-f5","es")},
+      {id:"hf-coqui-xtts-es",run:()=>gradioTtsAttempt("https://coqui-xtts.hf.space",["predict","tts","generate"],[[text,"es"],[text]],origin,"hf-coqui-xtts-es","es")},
+      {id:"hf-chatterbox-es",run:()=>gradioTtsAttempt("https://resembleai-chatterbox-multilingual-tts-es-mx-latam.hf.space",["predict","generate","tts"],[[text],[text,"es"]],origin,"hf-chatterbox-es","es")}
+    ];
+  }
+
+  return [
+    {id:"aura-1",run:()=>runAuraTts(env,text,origin,{model:"@cf/deepgram/aura-1",speaker:"asteria",language:"en",engine:"aura-1"})},
+    {id:"google-translate-tts-en",run:()=>googleTranslateTts(text,"en",origin,"google-translate-tts-en")},
+    {id:"hf-kokoro-pendrokar-en",run:()=>gradioTtsAttempt("https://pendrokar-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-pendrokar-en","en")},
+    {id:"hf-kokoro-ysharma-en",run:()=>gradioTtsAttempt("https://ysharma-kokoro-tts.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-ysharma-en","en")},
+    {id:"hf-kokoro-robins-en",run:()=>gradioTtsAttempt("https://robinsaiworld-kokoro-tts-cpu.hf.space",["generate","predict"],[[text,"af_heart",1,false,"en-us"],[text,"af_heart",1]],origin,"hf-kokoro-robins-en","en")},
+    {id:"hf-parler-en",run:()=>gradioTtsAttempt("https://parler-tts-parler-tts.hf.space",["gen_tts","predict"],[[text,"Laura's voice is clear, natural, warm and close-mic.",false],[text,"A clear natural female voice.",false]],origin,"hf-parler-en","en",7000)},
+    {id:"hf-edge-tts-en",run:()=>gradioTtsAttempt("https://innoai-edge-tts-text-to-speech.hf.space",["predict","generate","tts"],[[text,"en-US-JennyNeural","0%","0Hz"],[text,"en-US-JennyNeural"],[text]],origin,"hf-edge-tts-en","en")},
+    {id:"hf-coqui-en",run:()=>gradioTtsAttempt("https://samit-khedekar-coqui-tts-demo.hf.space",["predict","generate","tts"],[[text,"FastPitch (Female - LJSpeech)","English"],[text,"English"],[text]],origin,"hf-coqui-en","en")},
+    {id:"hf-bark-en",run:()=>gradioTtsAttempt("https://suno-bark.hf.space",["predict","generate_audio","generate"],[[text],[text,"v2/en_speaker_9"]],origin,"hf-bark-en","en",7000)},
+    {id:"hf-kokoro-zero-en",run:()=>gradioTtsAttempt("https://remsky-kokoro-tts-zero.hf.space",["generate","predict"],[[text,"af_jadzia",1,false,"en-us"],[text,"af_jadzia",1]],origin,"hf-kokoro-zero-en","en")}
+  ];
+}
+
+async function runPublicTtsCascade(language,text,origin,env) {
+  const engines=publicTtsEngines(language,text,origin,env);
+  const failures=[];
+  let quotaSeen=false;
+
+  for (const engine of engines) {
+    try {
+      const response=await engine.run();
+      if (response instanceof Response && response.ok) {
+        const headers=new Headers(response.headers);
+        headers.set("X-FNS-TTS-Attempt",String(failures.length+1));
+        headers.set("X-FNS-TTS-Cascade-Size",String(engines.length));
+        return new Response(response.body,{status:200,headers});
+      }
+      failures.push(engine.id+": non-ok");
+    } catch (error) {
+      const message=String(error?.message||error);
+      if (isWorkersAIQuotaError(message) || /4006|daily free allocation|neurons/i.test(message)) quotaSeen=true;
+      failures.push(engine.id+": "+message.slice(0,180));
+    }
+  }
+
+  if (quotaSeen) return quotaResponse(origin,"tts");
+
+  return Response.json(
+    {
+      ok:false,
+      code:"FNS_TTS_CASCADE_EXHAUSTED",
+      message:"A voz da Emma está temporariamente indisponível. Tente novamente em alguns minutos."
+    },
+    {status:503,headers:{...cors(origin),"Cache-Control":"no-store","X-FNS-TTS-Cascade-Size":String(engines.length)}}
+  );
+}
+
 async function portugueseWaterfall(env,text,origin) {
   const engines = [
     async()=>hfKokoroPortuguese(env,text,origin),
@@ -438,9 +552,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.7-quota-guard",
+          version: "2026-09-16.8-supercascade-visual-resilience",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "Aura-1 EN + Aura-2-es ES + PT-BR waterfall: HF Kokoro > HF Parler > Google TTS > HF backup > Aura emergency",
+          tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -504,70 +618,15 @@ export default {
         }
 
         if (language === "es") {
-          const raw = await env.AI.run(
-            "@cf/deepgram/aura-2-es",
-            { text, speaker:"celeste", encoding:"mp3" },
-            { returnRawResponse:true }
-          );
-
-          if (!(raw instanceof Response) || !raw.ok) {
-            const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
-            if (isWorkersAIQuotaError(detail, raw instanceof Response ? raw.status : 502)) {
-              return quotaResponse(origin, "tts");
-            }
-            return Response.json(
-              { ok:false, error:"Aura Spanish TTS falhou"+(detail?": "+detail.slice(0,180):"") },
-              { status:502, headers:cors(origin) }
-            );
-          }
-
-          const headers = new Headers(raw.headers);
-          for (const [k,v] of Object.entries(corsAudioHeaders(origin,{
-            "Content-Type":"audio/mpeg",
-            "X-FNS-Voice-Engine":"aura-2-es",
-            "X-FNS-Voice-Language":"es"
-          }))) headers.set(k,v);
-
-          return new Response(raw.body,{status:200,headers});
+          return await runPublicTtsCascade("es",text,origin,env);
         }
 
-        const speakerByTeacher = {
-          Emma:"asteria", Olivia:"luna", Sophia:"athena", Charlotte:"hera",
-          James:"orion", Daniel:"perseus", William:"helios", Ethan:"arcas", Noah:"zeus"
-        };
-        const speaker = speakerByTeacher[teacher] || "asteria";
-
-        const raw = await env.AI.run(
-          "@cf/deepgram/aura-1",
-          { text, speaker, encoding:"mp3" },
-          { returnRawResponse:true }
-        );
-
-        if (!(raw instanceof Response) || !raw.ok) {
-          const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
-          if (isWorkersAIQuotaError(detail, raw instanceof Response ? raw.status : 502)) {
-            return quotaResponse(origin, "tts");
-          }
-          return Response.json(
-            { ok:false, error:"Aura TTS falhou"+(detail?": "+detail.slice(0,180):"") },
-            { status:502, headers:cors(origin) }
-          );
-        }
-
-        const headers = new Headers(raw.headers);
-        for (const [k,v] of Object.entries(corsAudioHeaders(origin,{
-          "Content-Type":"audio/mpeg",
-          "X-FNS-Voice-Engine":"aura-1",
-          "X-FNS-Voice-Speaker":speaker,
-          "X-FNS-Voice-Language":"en"
-        }))) headers.set(k,v);
-
-        return new Response(raw.body,{status:200,headers});
+        return await runPublicTtsCascade("en",text,origin,env);
       } catch (error) {
         if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "tts");
         return Response.json(
-          { ok:false, error:String(error?.message || error) },
-          { status:500, headers:cors(origin) }
+          { ok:false, code:"FNS_TTS_ERROR", message:"A voz da Emma está temporariamente indisponível. Tente novamente em alguns minutos." },
+          { status:503, headers:cors(origin) }
         );
       }
     }
