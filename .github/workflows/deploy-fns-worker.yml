@@ -34,9 +34,38 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: QA PT-BR roundtrip
+      - name: QA multilingual PT-BR
         run: |
           sleep 4
-          curl --fail --silent --show-error --retry 2 --retry-delay 2             "https://fns-stt.karlapower007.workers.dev/health?qa=language"             -o qa-language.json
-          cat qa-language.json
-          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-language.json','utf8')); if(!r.ok) throw new Error('QA endpoint failed'); if(!r.transcript_has_portuguese) throw new Error('Portuguese STT detection failed: '+JSON.stringify(r)); if(r.tts_language!=='pt-BR') throw new Error('PT-BR TTS routing failed: '+JSON.stringify(r)); console.log('QA PT-BR PASS', r);"
+          command -v espeak >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y espeak)
+          espeak -v pt-br -s 145 -w qa-pt.wav "Olá, eu gostaria de praticar português com você hoje."
+
+          curl --fail --silent --show-error --retry 2 --retry-delay 2 \
+            -X POST \
+            -H "Content-Type: audio/wav" \
+            --data-binary @qa-pt.wav \
+            "https://fns-stt.karlapower007.workers.dev/stt" \
+            -o qa-stt.json
+          cat qa-stt.json
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-stt.json','utf8')); if(!r.ok) throw new Error('STT QA failed: '+JSON.stringify(r)); if(!String(r.language||'').toLowerCase().startsWith('pt')) throw new Error('STT did not detect Portuguese: '+JSON.stringify(r)); if(!/portugu/i.test(String(r.text||''))) throw new Error('Portuguese transcript is not faithful: '+JSON.stringify(r)); console.log('QA STT PT-BR PASS', r);"
+
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --data '{"message":"Olá Emma. Responda em português brasileiro: como posso melhorar meu vocabulário?","teacher":"Emma","level":"A2","accent":"American","language":"pt-BR"}' \
+            "https://fns-stt.karlapower007.workers.dev/chat" \
+            -o qa-chat.json
+          cat qa-chat.json
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-chat.json','utf8')); if(!r.ok) throw new Error('Chat QA failed: '+JSON.stringify(r)); if(r.language!=='pt-BR') throw new Error('Chat response language routing failed: '+JSON.stringify(r)); console.log('QA CHAT PT-BR PASS');"
+
+          HTTP_CODE=$(curl --silent --show-error \
+            -o qa-tts.json \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --data '{"text":"Olá, vamos praticar português.","teacher":"Emma","lang":"pt-BR"}' \
+            "https://fns-stt.karlapower007.workers.dev/tts")
+          cat qa-tts.json
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-tts.json','utf8')); const code=process.env.HTTP_CODE; if(code!=='409') throw new Error('Expected native PT-BR fallback route, got HTTP '+code); if(r.fallback!=='browser-native-pt-BR') throw new Error('PT-BR voice fallback routing failed: '+JSON.stringify(r)); console.log('QA TTS PT-BR ROUTE PASS');"
+        env:
+          HTTP_CODE: ${{ env.HTTP_CODE }}
