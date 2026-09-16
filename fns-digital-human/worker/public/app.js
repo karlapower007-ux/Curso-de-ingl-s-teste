@@ -297,6 +297,7 @@ function stopAvatarLipSync(){
   const face=document.querySelector('#avatarFace');
   if(face){
     face.style.setProperty('--mouth-open','0');
+    face.style.setProperty('--mouth-wide','0');
     face.classList.remove('avatar-talking');
   }
   avatarAnalyser=null;
@@ -317,25 +318,40 @@ function startAvatarLipSync(audio){
     avatarAudioContext=new AudioCtx();
     avatarMediaSource=avatarAudioContext.createMediaElementSource(audio);
     avatarAnalyser=avatarAudioContext.createAnalyser();
-    avatarAnalyser.fftSize=256;
-    avatarAnalyser.smoothingTimeConstant=.55;
+    avatarAnalyser.fftSize=512;
+    avatarAnalyser.smoothingTimeConstant=.42;
     avatarMediaSource.connect(avatarAnalyser);
     avatarAnalyser.connect(avatarAudioContext.destination);
     const bins=new Uint8Array(avatarAnalyser.frequencyBinCount);
     face.classList.add('avatar-talking');
+    let smoothOpen=0;
+
+    const bandAverage=(from,to)=>{
+      let sum=0,count=0;
+      for(let i=from;i<Math.min(to,bins.length);i++){sum+=bins[i];count++;}
+      return count?sum/count:0;
+    };
 
     const tick=()=>{
       if(!avatarAnalyser||!currentVoiceAudio||currentVoiceAudio.paused){
-        if(face)face.style.setProperty('--mouth-open','0');
+        if(face){
+          face.style.setProperty('--mouth-open','0');
+          face.style.setProperty('--mouth-wide','0');
+        }
         return;
       }
+
       avatarAnalyser.getByteFrequencyData(bins);
-      let sum=0;
-      const limit=Math.min(36,bins.length);
-      for(let i=2;i<limit;i++)sum+=bins[i];
-      const avg=sum/Math.max(1,limit-2);
-      const open=Math.max(0,Math.min(1,(avg-12)/72));
-      face.style.setProperty('--mouth-open',open.toFixed(3));
+      const low=bandAverage(2,18);
+      const mid=bandAverage(18,52);
+      const high=bandAverage(52,96);
+      const energy=low*.56+mid*.34+high*.10;
+      const target=Math.max(0,Math.min(1,Math.pow(Math.max(0,(energy-8)/68),.82)));
+      smoothOpen=smoothOpen*.62+target*.38;
+      const wide=Math.max(0,Math.min(1,(mid-high*.18)/92));
+
+      face.style.setProperty('--mouth-open',smoothOpen.toFixed(3));
+      face.style.setProperty('--mouth-wide',wide.toFixed(3));
       avatarLipRAF=requestAnimationFrame(tick);
     };
     tick();
