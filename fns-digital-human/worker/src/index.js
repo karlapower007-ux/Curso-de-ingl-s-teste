@@ -653,24 +653,17 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
-async function pollinationsTextFallback(messages,timeoutMs=5500) {
-  const compact=messages
-    .slice(-6)
-    .map(m=>({role:String(m?.role||"user"),content:String(m?.content||"").slice(0,m?.role==="system"?500:420)}));
+async function pollinationsTextFallback(messages,timeoutMs=7000) {
+  const latest=messages.slice().reverse().find(x=>x?.role==="user");
+  const userMessage=String(latest?.content||"").trim().slice(0,700);
+  if(!userMessage)throw new Error("Pollinations fallback received no user message.");
 
-  const system=String(compact.find(x=>x.role==="system")?.content||"").slice(0,420);
-  const convo=compact
-    .filter(x=>x.role!=="system")
-    .map(x=>(x.role==="assistant"?"Emma: ":"User: ")+x.content)
-    .join("\n")
-    .slice(-1500);
-
-  const prompt=(system+"\n"+convo+"\nEmma:").trim();
+  const system="You are Emma, a friendly multilingual language teacher. Reply naturally and briefly in the user's language unless they ask for another language. Correct language mistakes gently when useful. Avoid markdown.";
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort("pollinations-get-timeout"),timeoutMs);
 
   try{
-    const url="https://text.pollinations.ai/"+encodeURIComponent(prompt);
+    const url="https://text.pollinations.ai/"+encodeURIComponent(userMessage)+"?system="+encodeURIComponent(system);
     const r=await fetch(url,{
       method:"GET",
       headers:{
@@ -765,7 +758,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.15-pollinations-fast-get",
+          version: "2026-09-16.16-pollinations-compact-get",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
           chat: "Cloudflare GPT-OSS + Pollinations legacy text GET no-key primary fallback + HF last resort"
