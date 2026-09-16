@@ -4,7 +4,7 @@ const FNS_CHAT_URL=FNS_API_BASE+'/chat';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
-{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'https://image.pollinations.ai/prompt/beautiful%20young%20woman%20teacher%20looking%20forward%20portrait%20pixar%20disney%203d%20style%20high%20quality'},
+{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'/emma.jpg'},
 {name:'Olivia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Sophia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Charlotte',accent:'British',gender:'female',provider:'FNS Lite'},

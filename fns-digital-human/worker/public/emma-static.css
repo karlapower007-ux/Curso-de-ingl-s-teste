@@ -2,7 +2,7 @@
 .human-avatar{
   position:relative!important;
   overflow:hidden!important;
-  background:linear-gradient(180deg,#17264d 0%,#0d1731 58%,#070b18 100%)!important;
+  background:#0a1020 url('/emma.jpg') center 34% / cover no-repeat!important;
   isolation:isolate;
   transform-origin:50% 70%;
   animation:emmaPresence 7s ease-in-out infinite!important;
@@ -126,46 +126,4 @@
 }
 @media(prefers-reduced-motion:reduce){
   .human-avatar{animation:none!important}
-}
-/* ===== Emma 3D visual-only shell — logic locked to stable build ===== */
-.human-avatar .avatar-photo-base{
-  display:block!important;
-  opacity:1!important;
-  visibility:visible!important;
-  z-index:2!important;
-  inset:0!important;
-  width:100%!important;
-  height:100%!important;
-  object-fit:cover!important;
-  object-position:center 34%!important;
-  transform:none!important;
-  filter:saturate(1.04) contrast(1.01)!important;
-}
-.human-avatar:not(.avatar-speaking):not(.avatar-listening) .avatar-photo-base{
-  display:block!important;
-  opacity:1!important;
-  visibility:visible!important;
-}
-.human-avatar .avatar-fx-layer{z-index:10!important}
-.human-avatar .avatar-camera-vignette{z-index:20!important}
-.human-avatar .avatar-live-badge{z-index:30!important}
-
-/* The generated portrait already contains its own eye highlights. */
-.human-avatar .avatar-gaze{display:none!important;opacity:0!important}
-
-/* Keep only a simple mouth cue above the real portrait. Audio play/ended already
-   toggles the approved speaking lifecycle in stable app.js. */
-.human-avatar .avatar-mouth-motion{
-  left:45%!important;
-  top:54.5%!important;
-  width:10%!important;
-  height:4px!important;
-  z-index:12!important;
-}
-.human-avatar.avatar-mouth-simulated .avatar-mouth-motion{
-  animation:emmaMouthFallback 165ms ease-in-out infinite alternate!important;
-}
-@media(max-width:820px){
-  .human-avatar .avatar-photo-base{object-position:center 32%!important}
-  .human-avatar .avatar-mouth-motion{left:44.7%!important;top:54.2%!important;width:10.6%!important}
 }
