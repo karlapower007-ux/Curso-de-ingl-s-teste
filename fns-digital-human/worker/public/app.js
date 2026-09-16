@@ -1016,7 +1016,7 @@ async function startAvatarLipSync(audio){
       if(signalFrames>=3)face.classList.remove('avatar-mouth-simulated');
       if(silentFrames>=12)face.classList.add('avatar-mouth-simulated');
 
-      const target=Math.max(0,Math.min(.72,(rms-.018)/.16));
+      const target=Math.max(0,Math.min(.92,(rms-.014)/.115));
       const frameScale=lastTs?Math.min(1,(ts-lastTs)/16.67):1;
       const attack=.24*frameScale;
       const release=.15*frameScale;
@@ -1025,7 +1025,7 @@ async function startAvatarLipSync(audio){
       lastTs=ts;
 
       face.style.setProperty('--mouth-open',smoothOpen.toFixed(3));
-      face.style.setProperty('--mouth-wide',Math.min(.5,smoothOpen*.62).toFixed(3));
+      face.style.setProperty('--mouth-wide',Math.min(.56,smoothOpen*.68).toFixed(3));
       avatarLipRAF=requestAnimationFrame(tick);
     };
 
