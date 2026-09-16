@@ -162,6 +162,55 @@ export default {
       );
     }
 
+    if (request.method === "GET" && url.pathname === "/qa/language") {
+      try {
+        const phrase = "Olá, eu gostaria de praticar português com você hoje.";
+
+        const generated = await env.AI.run("xai/grok-tts", {
+          text: phrase,
+          voice_id: "ara",
+          language: "pt-BR",
+          text_normalization: true,
+          output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 }
+        });
+
+        const audioUrl = generated?.result?.audio || generated?.audio || "";
+        if (!audioUrl) throw new Error("PT-BR TTS returned no audio URL.");
+
+        const audioResponse = await fetch(audioUrl);
+        if (!audioResponse.ok) throw new Error("PT-BR audio fetch failed: HTTP " + audioResponse.status);
+        const audioBuffer = await audioResponse.arrayBuffer();
+
+        const stt = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+          audio: toBase64(audioBuffer),
+          task: "transcribe",
+          vad_filter: true,
+          condition_on_previous_text: false,
+          initial_prompt: "The speaker may use English, Brazilian Portuguese, Spanish, or switch between them. Transcribe the spoken language faithfully; do not translate."
+        });
+
+        const transcript = String(stt?.text || stt?.transcription_info?.text || "").trim();
+        const detected = String(stt?.language || stt?.transcription_info?.language || detectSpeechLanguage(transcript));
+
+        return Response.json({
+          ok: true,
+          test: "pt-BR roundtrip",
+          tts_model: "xai/grok-tts",
+          tts_language: "pt-BR",
+          source: phrase,
+          transcript,
+          detected_language: detected,
+          transcript_has_portuguese: detectSpeechLanguage(transcript) === "pt-BR",
+          audio_bytes: audioBuffer.byteLength
+        }, { headers: { ...cors(origin), "Cache-Control": "no-store" } });
+      } catch (error) {
+        return Response.json(
+          { ok: false, test: "pt-BR roundtrip", error: String(error?.message || error) },
+          { status: 500, headers: { ...cors(origin), "Cache-Control": "no-store" } }
+        );
+      }
+    }
+
     if (url.pathname === "/stt" && request.method === "POST") {
       const startedAt = performance.now();
       try {
