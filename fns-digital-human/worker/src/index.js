@@ -76,27 +76,52 @@ function sanitizeForSpeech(input) {
   return text;
 }
 
+
+function detectSpeechLanguage(text, requested="") {
+  const explicit = String(requested || "").toLowerCase();
+  if (explicit.startsWith("pt")) return "pt-BR";
+  if (explicit.startsWith("es")) return "es";
+  if (explicit.startsWith("en")) return "en";
+
+  const sample = String(text || "").toLowerCase();
+
+  const ptHits = (sample.match(/\b(que|não|nao|você|voce|para|com|uma|como|por|isso|está|esta|sou|meu|minha|obrigado|obrigada|porque|também|tambem|português|portugues)\b/g) || []).length;
+  const esHits = (sample.match(/\b(que|no|usted|tú|tu|para|con|una|como|por|eso|está|soy|mi|gracias|porque|también|tambien|español|espanol)\b/g) || []).length;
+
+  if (ptHits >= 2 && ptHits > esHits) return "pt-BR";
+  if (esHits >= 2 && esHits > ptHits) return "es";
+  return "en";
+}
+
 function latencyHeaders(startedAt) {
   return { "X-FNS-Latency-Ms": String(Math.max(0, Math.round(performance.now() - startedAt))) };
 }
 
-function systemPrompt({ teacher="Emma", level="A1", accent="British" } = {}) {
-  return `You are ${teacher}, a warm, natural English teacher for Estudos Profundos FNS Idiomas.
-Accent/profile: ${accent} English.
-Student CEFR level: ${level}.
+function systemPrompt({ teacher="Emma", level="A1", accent="American" } = {}) {
+  return `You are Emma, a brilliant, hyper-realistic private tutor for Estudos Profundos FNS Idiomas.
+You are fluent in English, Brazilian Portuguese, and Spanish.
+Your vocabulary can be broad, academic, and precise, but you always explain ideas clearly and adapt to the student's level.
+You have broad general knowledge across humanities, philosophy, history, literature, science, technology, religion, esoteric traditions, culture, and everyday conversation.
+When you are uncertain, say so instead of inventing facts.
 
-Rules:
-- Speak mainly in English.
-- Adapt vocabulary and sentence length to the CEFR level.
-- Be conversational, not robotic.
-- Usually respond in 1-4 sentences.
+Teaching behavior:
+- Match the user's language unless they explicitly ask you to use another language.
+- If the user asks for English immersion, stay in English.
+- If the user asks for Portuguese, answer naturally in Brazilian Portuguese.
+- If the user asks for Spanish, answer naturally in Spanish.
+- When the user requests strict teaching, immediately correct grammar mistakes, propose stronger vocabulary, and explain the correction clearly.
+- For language practice, first respond to meaning, then correct errors when useful.
+- Be natural, conversational, warm, intelligent, and concise enough for spoken dialogue.
+- Usually answer in 1-4 sentences unless the user requests a detailed explanation.
 - Ask at most one main follow-up question at a time.
-- Correct only useful mistakes, briefly and gently.
-- First respond to meaning, then correct if needed.
-- Keep the conversation moving naturally.
-- Do not mention being an AI unless directly asked.
-- Avoid markdown-heavy formatting in spoken replies.
-- If the user asks for Portuguese explanation, you may briefly explain in Brazilian Portuguese.`;
+- Avoid markdown-heavy formatting in spoken answers.
+- Do not read formatting symbols aloud.
+- Do not claim certainty when evidence is unclear.
+
+Teacher profile:
+- Name: ${teacher}
+- Accent preference for English: ${accent}
+- Student CEFR level: ${level}`;
 }
 
 export default {
@@ -113,9 +138,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-15.3-turbine",
+          version: "2026-09-15.4-polyglot",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "@cf/deepgram/aura-1",
+          tts: "@cf/deepgram/aura-1 + @cf/deepgram/aura-2-es + multilingual fallback",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -136,7 +161,6 @@ export default {
         const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
           audio: toBase64(buffer),
           task: "transcribe",
-          language: "en",
           vad_filter: true,
           condition_on_previous_text: false
         });
@@ -162,6 +186,7 @@ export default {
         const sourceText = String(body?.text || body?.prompt || "");
         const text = sanitizeForSpeech(sourceText);
         const teacher = String(body?.teacher || "Emma");
+        const language = detectSpeechLanguage(text, body?.language || body?.lang || "");
 
         if (!text) {
           return Response.json(
@@ -189,19 +214,45 @@ export default {
           Noah: "zeus"
         };
 
-        const speaker = speakerByTeacher[teacher] || "asteria";
+        let speaker = speakerByTeacher[teacher] || "asteria";
+        let voiceModel = "@cf/deepgram/aura-1";
+        let raw;
 
-        const raw = await env.AI.run(
-          "@cf/deepgram/aura-1",
-          {
-            text,
-            speaker,
-            encoding: "mp3"
-          },
-          {
-            returnRawResponse: true
+        if (language === "es") {
+          // Aura-2 Spanish provides a native Spanish voice instead of an English-accented reading.
+          voiceModel = "@cf/deepgram/aura-2-es";
+          speaker = "celeste";
+          raw = await env.AI.run(
+            voiceModel,
+            { text, speaker, encoding: "mp3" },
+            { returnRawResponse: true }
+          );
+        } else if (language === "pt-BR") {
+          // Cloudflare does not currently expose a native Portuguese Aura model.
+          // Try its multilingual MeloTTS interface first; if unavailable, keep the proven Aura path as fallback.
+          voiceModel = "@cf/myshell-ai/melotts";
+          raw = await env.AI.run(
+            voiceModel,
+            { prompt: text, lang: "pt" },
+            { returnRawResponse: true }
+          ).catch(() => null);
+
+          if (!(raw instanceof Response) || !raw.ok) {
+            voiceModel = "@cf/deepgram/aura-1";
+            speaker = "asteria";
+            raw = await env.AI.run(
+              voiceModel,
+              { text, speaker, encoding: "mp3" },
+              { returnRawResponse: true }
+            );
           }
-        );
+        } else {
+          raw = await env.AI.run(
+            voiceModel,
+            { text, speaker, encoding: "mp3" },
+            { returnRawResponse: true }
+          );
+        }
 
         if (!(raw instanceof Response)) {
           return Response.json(
@@ -213,7 +264,7 @@ export default {
         if (!raw.ok) {
           const detail = await raw.text().catch(() => "");
           return Response.json(
-            { ok: false, error: "Aura TTS falhou: HTTP " + raw.status + (detail ? " - " + detail.slice(0, 220) : "") },
+            { ok: false, error: "TTS falhou: HTTP " + raw.status + (detail ? " - " + detail.slice(0, 220) : "") },
             { status: 502, headers: cors(origin) }
           );
         }
@@ -222,8 +273,9 @@ export default {
         for (const [k, v] of Object.entries(cors(origin))) headers.set(k, v);
         headers.set("Content-Type", "audio/mpeg");
         headers.set("Cache-Control", "no-store");
-        headers.set("X-FNS-Voice-Engine", "aura-1");
+        headers.set("X-FNS-Voice-Engine", voiceModel);
         headers.set("X-FNS-Voice-Speaker", speaker);
+        headers.set("X-FNS-Voice-Language", language);
         headers.set("X-FNS-Text-Sanitized", sourceText === text ? "0" : "1");
         headers.set("X-FNS-Latency-Ms", String(Math.max(0, Math.round(performance.now() - startedAt))));
 
@@ -246,7 +298,7 @@ export default {
         const message = String(body?.message || "").trim();
         const teacher = String(body?.teacher || "Emma");
         const level = String(body?.level || "A1");
-        const accent = String(body?.accent || "British");
+        const accent = String(body?.accent || "American");
         const history = Array.isArray(body?.history) ? body.history.slice(-6) : [];
 
         if (!message) {
