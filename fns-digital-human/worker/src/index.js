@@ -31,6 +31,19 @@ function collapseTranscriptRepetitions(input){
   return sanitizeTranscriptText(text);
 }
 
+
+function whisperInitialPrompt(language){
+  const prompts={en:"Hello, how are you? I am speaking English.",pt:"Olá, tudo bem? Eu estou falando em português.",es:"Hola, ¿cómo estás? Estoy hablando español.",fr:"Bonjour, comment allez-vous ? Je parle français.",de:"Hallo, wie geht es dir? Ich spreche Deutsch.",it:"Ciao, come stai? Sto parlando italiano.",ja:"こんにちは。私は日本語で話しています。",ko:"안녕하세요. 저는 한국어로 말하고 있습니다.",zh:"你好。我正在说中文。"};
+  return prompts[language]||"";
+}
+function wavDurationSeconds(buffer){
+  try{if(!buffer||buffer.byteLength<44)return 0;const v=new DataView(buffer),channels=v.getUint16(22,true)||1,sampleRate=v.getUint32(24,true)||16000,bits=v.getUint16(34,true)||16,dataBytes=v.getUint32(40,true)||Math.max(0,buffer.byteLength-44),bps=sampleRate*channels*(bits/8);return bps>0?dataBytes/bps:0;}catch(error){return 0;}
+}
+function normalizeChatLanguage(value,label=""){
+  const raw=String(value||"").trim().toLowerCase(),map={en:"en-US","en-us":"en-US",pt:"pt-BR","pt-br":"pt-BR",es:"es-ES","es-es":"es-ES",fr:"fr-FR","fr-fr":"fr-FR",de:"de-DE","de-de":"de-DE",it:"it-IT","it-it":"it-IT",ja:"ja-JP","ja-jp":"ja-JP",ko:"ko-KR","ko-kr":"ko-KR",zh:"zh-CN","zh-cn":"zh-CN"},code=map[raw]||"en-US",labels={"en-US":"English","pt-BR":"Português","es-ES":"Español","fr-FR":"Français","de-DE":"Deutsch","it-IT":"Italiano","ja-JP":"日本語","ko-KR":"한국어","zh-CN":"中文"};
+  return {code,label:String(label||labels[code]||"English").slice(0,40)};
+}
+
 function normalizeRequestedSttLanguage(value){
   const raw=String(value||"auto").trim().toLowerCase();
   if(!raw||raw==="auto"||raw==="device")return "";
@@ -793,12 +806,13 @@ function extractText(result) {
   return "";
 }
 
-function systemPrompt({ teacher="Emma", level="A1", accent="American" } = {}) {
+function systemPrompt({ teacher="Emma", level="A1", accent="American", inputLanguageLabel="English" } = {}) {
   return `Você é Emma, uma professora e amiga brilhante. Você é fluente em Inglês, Português e Espanhol. Adapte-se instantaneamente ao idioma que o usuário falar. Mantenha conversas profundas sobre qualquer assunto. Quando solicitado, atue como professora e corrija os erros gramaticais ou de pronúncia do usuário com didática e clareza.
 
 Regras:
-- Responda no idioma predominante do usuário, salvo se ele pedir outro idioma.
-- Em prática de inglês, permaneça em inglês e explique em português somente quando solicitado.
+- REGRA ABSOLUTA DE IDIOMA: responda ESTRITAMENTE em ${inputLanguageLabel}. Nunca misture português, inglês ou outro idioma na mesma resposta, a menos que o usuário peça explicitamente uma tradução.
+- A etiqueta interna de idioma da mensagem atual tem prioridade sobre inferências baseadas no histórico.
+- Em prática de inglês, se a etiqueta indicar English, permaneça integralmente em inglês.
 - Use o histórico recente de forma ativa e continue no mesmo assunto até o usuário mudar de tema.
 - Não reinicie a conversa, não repita apresentação e não mude de assunto sem motivo.
 - Se uma transcrição parecer quebrada, repetitiva ou sem sentido, peça ao usuário para repetir em vez de inventar uma interpretação.
@@ -823,8 +837,8 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.24-stt-fallback-turbines",
-          stt: "@cf/openai/whisper-large-v3-turbo • A-F fallback turbines • regex + LLM repair + browser contingency",
+          version: "2026-09-16.25-language-lock-g-p",
+          stt: "@cf/openai/whisper-large-v3-turbo • A-P turbines • hard language lock + transcribe-only + prompt/temperature + short-audio protection",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
           chat: "Cloudflare GPT-OSS + resilient session memory + browser Pollinations/LLM7 + local teaching fallback"
         },
@@ -843,21 +857,18 @@ export default {
         }
 
         const requestedLanguage=normalizeRequestedSttLanguage(request.headers.get("X-FNS-STT-Language"));
-        const sttOptions={
-          audio: toBase64(buffer),
-          task: "transcribe",
-          vad_filter: true,
-          condition_on_previous_text: false
-        };
-        if(requestedLanguage)sttOptions.language=requestedLanguage;
-
-        const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", sttOptions);
-        const text = sanitizeTranscriptText(result?.text || result?.transcription_info?.text || "");
-
-        return Response.json(
-          { ok: true, text, language: requestedLanguage||"auto" },
-          { headers: { ...cors(origin), "Cache-Control": "no-store" } }
-        );
+        const durationSeconds=wavDurationSeconds(buffer),shortAudio=durationSeconds>0&&durationSeconds<2;
+        const sttOptions={audio:toBase64(buffer),task:"transcribe",vad_filter:true,condition_on_previous_text:false};
+        if(requestedLanguage){sttOptions.language=requestedLanguage;sttOptions.initial_prompt=whisperInitialPrompt(requestedLanguage);sttOptions.temperature=0.1;}
+        let result;
+        try{result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",sttOptions);}
+        catch(error){
+          const detail=String(error?.message||error);
+          if(requestedLanguage&&/initial_prompt|temperature|unknown|unexpected|validation|schema/i.test(detail))result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",{audio:toBase64(buffer),task:"transcribe",language:requestedLanguage,vad_filter:true,condition_on_previous_text:false});
+          else throw error;
+        }
+        const text=sanitizeTranscriptText(result?.text||result?.transcription_info?.text||"");
+        return Response.json({ok:true,text,language:requestedLanguage||"auto",short_audio:shortAudio,duration_seconds:Number(durationSeconds.toFixed(3)),task:"transcribe"},{headers:{...cors(origin),"Cache-Control":"no-store"}});
       } catch (error) {
         if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "stt");
         return Response.json(
@@ -874,6 +885,7 @@ export default {
         const raw = sanitizeTranscriptText(body?.text || "").slice(0,700);
         const regexCleaned = collapseTranscriptRepetitions(body?.cleaned || raw).slice(0,700);
         const requestedLanguage = String(body?.language || "auto").slice(0,24);
+        const phoneticEnglish = body?.phonetic_english === true || /^en(?:-|$)/i.test(requestedLanguage);
 
         if (!raw) {
           return Response.json({ok:true,text:"",engine:"empty"}, {headers:{...cors(origin),"Cache-Control":"no-store"}});
@@ -884,7 +896,9 @@ export default {
             role:"system",
             content:
               "You repair corrupted speech-to-text transcripts. Return ONLY the repaired transcript, with no explanation. " +
-              "Preserve the speaker's language and intended words. Remove obvious repeated loops, stray symbols and encoding artifacts. " +
+              "The target language is "+requestedLanguage+". Keep the entire repaired sentence in that target language. " +
+              (phoneticEnglish ? "When target language is English, convert Brazilian phonetic spellings such as mai neim, veri gudi and tenquiu into the intended English words. " : "") +
+              "Remove obvious repeated loops, stray symbols, encoding artifacts and accidental translation leakage. " +
               "Do not invent facts, names or missing content. If the real utterance cannot be recovered with reasonable confidence, return exactly EMPTY."
           },
           {
@@ -970,6 +984,7 @@ export default {
         const teacher = String(body?.teacher || "Emma");
         const level = String(body?.level || "A1");
         const accent = String(body?.accent || "American");
+        const inputLanguage=normalizeChatLanguage(body?.input_language,body?.input_language_label);
         const sessionId = normalizeSessionId(body?.session_id);
         const clientHistory = normalizeMemoryHistory(body?.history);
         const remoteHistory = await loadRemoteSessionMemory(sessionId);
@@ -984,8 +999,9 @@ export default {
         }
 
         const messages = [
-          { role: "system", content: systemPrompt({ teacher, level, accent }) },
+          { role: "system", content: systemPrompt({ teacher, level, accent, inputLanguageLabel:inputLanguage.label }) },
           ...history.map(x => ({ role:x.role, content:x.content.slice(0,1600) })),
+          { role: "system", content: `[O usuário falou em ${inputLanguage.label}: "${message.slice(0,700).replace(/"/g,"")}"]` },
           { role: "user", content: message }
         ];
 
@@ -1045,7 +1061,8 @@ export default {
             fallback: model !== "@cf/openai/gpt-oss-120b",
             forced_public: forcePublic,
             reply,
-            memory:{plan:remoteMemorySaved?"cloudflare-cache":"client-fallback",messages:savedHistory.length}
+            memory:{plan:remoteMemorySaved?"cloudflare-cache":"client-fallback",messages:savedHistory.length},
+            input_language:inputLanguage.code
           },
           { headers: { ...cors(origin), "Cache-Control": "no-store", "X-FNS-Chat-Engine": model } }
         );

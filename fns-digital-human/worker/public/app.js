@@ -239,6 +239,68 @@ function transcriptLooksCorrupt(text,confidence=0){
 }
 
 
+
+function languageLabelFromCode(code){
+  const labels={'en-US':'English','pt-BR':'Português','es-ES':'Español','fr-FR':'Français','de-DE':'Deutsch','it-IT':'Italiano','ja-JP':'日本語','ko-KR':'한국어','zh-CN':'中文'};
+  return labels[code]||'the detected language';
+}
+function firstThreeWords(input){return (normalizeTranscriptText(input).match(/[\p{L}\p{M}'’-]+/gu)||[]).slice(0,3).join(' ').toLocaleLowerCase();}
+function looksLikePortglish(input){const s=normalizeTranscriptText(input).toLocaleLowerCase();return /\b(mai neim|mai name|veri gudi?|tenk ?iu|tenquiu|ai em|ai am|rau ar iu|rrau ar iu|gudi (morning|night)|plesi|plis|sori|ai laik|ai live|ai lave|hau ar iu)\b/i.test(s);}
+function detectAutoLanguageFromFirstWords(input){
+  const sample=firstThreeWords(input),full=normalizeTranscriptText(input).toLocaleLowerCase();
+  if(looksLikePortglish(input))return 'en-US';
+  if(/[\u3040-\u30ff]/u.test(sample)||/[\u3040-\u30ff]/u.test(full))return 'ja-JP';
+  if(/[\uac00-\ud7af]/u.test(sample)||/[\uac00-\ud7af]/u.test(full))return 'ko-KR';
+  if(/[\u3400-\u9fff]/u.test(sample)||/[\u3400-\u9fff]/u.test(full))return 'zh-CN';
+  const words=(sample.match(/\p{L}+/gu)||[]),scores={en:0,pt:0,es:0,fr:0,de:0,it:0};
+  const sets={
+    en:new Set(['i','you','my','name','is','am','are','the','what','how','hello','hi','yes','okay','ok','thanks','thank','good']),
+    pt:new Set(['eu','você','voce','meu','minha','nome','é','e','sou','estou','como','que','não','nao','sim','obrigado','obrigada','bom','boa']),
+    es:new Set(['yo','usted','tu','tú','mi','nombre','es','soy','estoy','como','cómo','que','sí','si','gracias','hola','bueno']),
+    fr:new Set(['je','vous','tu','mon','nom','est','suis','comment','oui','merci','bonjour','bon']),
+    de:new Set(['ich','du','sie','mein','name','ist','bin','wie','ja','danke','hallo','gut']),
+    it:new Set(['io','tu','lei','mio','nome','è','sono','come','sì','si','grazie','ciao','buono'])
+  };
+  for(const word of words)for(const [k,set] of Object.entries(sets))if(set.has(word))scores[k]++;
+  if(/[ãõçáâêô]/u.test(sample))scores.pt+=3;if(/[ñ¿¡]/u.test(sample))scores.es+=3;if(/[äöüß]/u.test(sample))scores.de+=3;if(/[àâçéèêëîïôûùüÿœ]/u.test(sample))scores.fr+=3;
+  const best=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
+  if(best?.[1]>0)return ({en:'en-US',pt:'pt-BR',es:'es-ES',fr:'fr-FR',de:'de-DE',it:'it-IT'})[best[0]];
+  if(/[áàâãéêíóôõúç]|\b(você|não|uma|para|obrigad[oa]|então|meu|nome)\b/i.test(full))return 'pt-BR';
+  if(/[¿¡ñ]|\b(hola|usted|gracias|quiero|puedo|mi nombre)\b/i.test(full))return 'es-ES';
+  if(/[àâçéèêëîïôûùüÿœ]|\b(bonjour|merci|avec|parce)\b/i.test(full))return 'fr-FR';
+  if(/[äöüß]|\b(hallo|danke|ich|nicht)\b/i.test(full))return 'de-DE';
+  if(/\b(ciao|grazie|sono|perché|voglio)\b/i.test(full))return 'it-IT';
+  return 'en-US';
+}
+function languageLockForTranscript(input){
+  const selected=selectedSttLanguage();
+  if(selected==='device'){const code=navigator.language||'en-US';return {code,label:languageLabelFromCode(code),source:'device'};}
+  if(selected!=='auto')return {code:selected,label:languageLabelFromCode(selected),source:'manual'};
+  const code=detectAutoLanguageFromFirstWords(input);return {code,label:languageLabelFromCode(code),source:'auto-first-3'};
+}
+function browserRecognitionLanguage(){const selected=selectedSttLanguage();if(selected==='device')return navigator.language||'en-US';if(selected!=='auto')return selected;return inferBrowserSttLanguage();}
+function transcriptHasLanguageLeak(input,targetCode){
+  const s=normalizeTranscriptText(input).toLocaleLowerCase();
+  if(targetCode==='en-US')return /[ãõç]|\b(eu|você|voce|não|nao|uma|para|meu|minha|nome|obrigado|obrigada|muito|bom|boa|estou|sou)\b/i.test(s);
+  if(targetCode==='pt-BR')return /\b(i am|i'm|my name|thank you|very good|how are you|hello|good morning)\b/i.test(s);
+  if(targetCode==='es-ES')return /\b(i am|my name|thank you|hello)\b/i.test(s)&&!/[ñ¿¡]/u.test(s);
+  return false;
+}
+function strictLanguageInstructionFor(input){
+  const lock=languageLockForTranscript(input),map={
+    'en-US':'Reply strictly in English. Do not mix Portuguese into the answer unless the user explicitly asks for a translation.',
+    'pt-BR':'Responda estritamente em português brasileiro. Não misture inglês na resposta, exceto se o usuário pedir tradução.',
+    'es-ES':'Responde estrictamente en español. No mezcles portugués o inglés salvo que el usuario pida una traducción.',
+    'fr-FR':'Réponds strictement en français. Ne mélange pas d’autres langues sauf si l’utilisateur demande une traduction.',
+    'de-DE':'Antworte strikt auf Deutsch. Mische keine andere Sprache ein, außer der Nutzer bittet ausdrücklich um eine Übersetzung.',
+    'it-IT':'Rispondi rigorosamente in italiano. Non mescolare altre lingue salvo richiesta esplicita di traduzione.',
+    'ja-JP':'日本語だけで答えてください。ユーザーが翻訳を明示的に求めた場合を除き、他言語を混ぜないでください。',
+    'ko-KR':'한국어로만 답하세요. 사용자가 번역을 명시적으로 요청하지 않는 한 다른 언어를 섞지 마세요.',
+    'zh-CN':'请严格只用中文回答。除非用户明确要求翻译，否则不要混用其他语言。'
+  };
+  return map[lock.code]||'Reply strictly in the input language. Do not mix languages unless translation is explicitly requested.';
+}
+
 function collapseRepeatedTranscriptPhrases(input){
   let text=normalizeTranscriptText(input);
   if(!text)return '';
@@ -269,7 +331,7 @@ function isLikelySttNoise(input){
   return noise.has(plain);
 }
 
-async function repairTranscriptWithLLM(rawText,regexCleaned=''){
+async function repairTranscriptWithLLM(rawText,regexCleaned='',targetLanguage=''){
   const raw=normalizeTranscriptText(rawText).slice(0,700);
   const cleaned=normalizeTranscriptText(regexCleaned).slice(0,700);
   if(!raw)return '';
@@ -283,7 +345,8 @@ async function repairTranscriptWithLLM(rawText,regexCleaned=''){
       body:JSON.stringify({
         text:raw,
         cleaned,
-        language:selectedSttLanguage()
+        language:targetLanguage||languageLockForTranscript(raw).code,
+        phonetic_english:(targetLanguage||languageLockForTranscript(raw).code)==='en-US'&&looksLikePortglish(raw)
       }),
       signal:controller.signal
     });
@@ -299,27 +362,28 @@ async function repairTranscriptWithLLM(rawText,regexCleaned=''){
   }
 }
 
-async function recoverTranscriptCandidate(rawText,confidence=0){
+async function recoverTranscriptCandidate(rawText,confidence=0,meta={}){
   const raw=normalizeTranscriptText(rawText);
-  if(!raw)return {kind:'empty',text:''};
-
-  // Plano E: ruído/alucinação curta conhecida some silenciosamente.
-  if(isLikelySttNoise(raw))return {kind:'noise',text:''};
-
-  // Plano A: Whisper/Web Speech veio limpo.
-  if(!transcriptLooksCorrupt(raw,confidence))return {kind:'direct',text:raw};
-
-  // Plano B: sanitizador + colapso de loops.
-  const cleaned=collapseRepeatedTranscriptPhrases(raw);
-  if(cleaned && !isLikelySttNoise(cleaned) && !transcriptLooksCorrupt(cleaned,1)){
-    return {kind:'regex',text:cleaned};
+  if(!raw)return {kind:'empty',text:'',language:''};
+  const lock=languageLockForTranscript(raw),targetLanguage=meta?.targetLanguage||lock.code;
+  if(isLikelySttNoise(raw))return {kind:'noise',text:'',language:targetLanguage};
+  if(meta?.shortAudio===true&&lock.source==='manual'&&!looksLikePortglish(raw)&&!transcriptHasLanguageLeak(raw,targetLanguage))return {kind:'short-locked',text:raw,language:targetLanguage};
+  if(looksLikePortglish(raw)||transcriptHasLanguageLeak(raw,targetLanguage)){
+    const fixed=await repairTranscriptWithLLM(raw,collapseRepeatedTranscriptPhrases(raw),targetLanguage);
+    if(fixed)return {kind:'language-repair',text:fixed,language:targetLanguage};
   }
-
-  // Plano C: LLM rápido tenta recuperar somente o que é sustentado pela transcrição.
-  const repaired=await repairTranscriptWithLLM(raw,cleaned);
-  if(repaired)return {kind:'llm',text:repaired};
-
-  return {kind:'failed',text:''};
+  if(!transcriptLooksCorrupt(raw,confidence))return {kind:'direct',text:raw,language:targetLanguage};
+  const cleaned=collapseRepeatedTranscriptPhrases(raw);
+  if(cleaned&&!isLikelySttNoise(cleaned)&&!transcriptLooksCorrupt(cleaned,1)){
+    if(transcriptHasLanguageLeak(cleaned,targetLanguage)){
+      const fixed=await repairTranscriptWithLLM(raw,cleaned,targetLanguage);
+      if(fixed)return {kind:'language-repair',text:fixed,language:targetLanguage};
+    }
+    return {kind:'regex',text:cleaned,language:targetLanguage};
+  }
+  const repaired=await repairTranscriptWithLLM(raw,cleaned,targetLanguage);
+  if(repaired)return {kind:'llm',text:repaired,language:targetLanguage};
+  return {kind:'failed',text:'',language:targetLanguage};
 }
 
 function sttGracefulFailureText(){
@@ -354,31 +418,7 @@ async function gracefulSttFailure(){
 
 
 function replyLanguageInstruction(text){
-  const selected=selectedSttLanguage();
-  const sample=String(text||'').toLowerCase();
-  const lang=selected==='auto'
-    ? (
-        /[áàâãéêíóôõúç]|\b(você|não|uma|para|obrigad[oa]|então)\b/i.test(sample)?'pt-BR':
-        /[¿¡ñ]|\b(hola|usted|gracias|quiero|puedo)\b/i.test(sample)?'es-ES':
-        /[àâçéèêëîïôûùüÿœ]|\b(bonjour|merci|avec|parce)\b/i.test(sample)?'fr-FR':
-        /[äöüß]|\b(hallo|danke|ich|nicht)\b/i.test(sample)?'de-DE':
-        /\b(ciao|grazie|sono|perché|voglio)\b/i.test(sample)?'it-IT':
-        'en-US'
-      )
-    : (selected==='device'?(navigator.language||'en-US'):selected);
-
-  const map={
-    'pt-BR':'Responda em português brasileiro.',
-    'es-ES':'Responde en español.',
-    'fr-FR':'Réponds en français.',
-    'de-DE':'Antworte auf Deutsch.',
-    'it-IT':'Rispondi in italiano.',
-    'ja-JP':'日本語で答えてください。',
-    'ko-KR':'한국어로 답하세요.',
-    'zh-CN':'请用中文回答。',
-    'en-US':'Reply in natural English.'
-  };
-  return map[lang]||'Reply in the same language as the user.';
+  return strictLanguageInstructionFor(text);
 }
 
 
@@ -400,7 +440,7 @@ function startBrowserOnlySTT(){
   r.continuous=true;
   r.interimResults=true;
   r.maxAlternatives=3;
-  r.lang=inferBrowserSttLanguage();
+  r.lang=browserRecognitionLanguage();
 
   let finalParts=[];
   let interimText='';
@@ -458,7 +498,7 @@ function startBrowserOnlySTT(){
     }
 
     setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Limpando transcrição'});
-    const recovered=await recoverTranscriptCandidate(text,confidence);
+    const recovered=await recoverTranscriptCandidate(text,confidence,{targetLanguage:languageLockForTranscript(text).code});
 
     if(recovered.kind==='noise'||recovered.kind==='empty'){
       setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
@@ -807,7 +847,7 @@ async function transcribeWithFNS(blob){
       return;
     }
 
-    const recovered=await recoverTranscriptCandidate(text,1);
+    const recovered=await recoverTranscriptCandidate(text,1,{shortAudio:data?.short_audio===true,targetLanguage:(data?.language&&data.language!=='auto')?({'en':'en-US','pt':'pt-BR','es':'es-ES','fr':'fr-FR','de':'de-DE','it':'it-IT','ja':'ja-JP','ko':'ko-KR','zh':'zh-CN'}[data.language]||data.language):languageLockForTranscript(text).code});
 
     // Plano E: ruído conhecido é ignorado sem bloco de erro.
     if(recovered.kind==='noise'||recovered.kind==='empty'){
@@ -968,7 +1008,9 @@ async function pollinationsBrowserReply(text,history=readBrowserMemory()){
 
   const level=document.querySelector('#levelSel')?.value||activeTeacher?.level||'A1';
   const mode=document.querySelector('#modeSel')?.value||activeTeacher?.mode||'conversation';
+  const lock=languageLockForTranscript(userText);
   const lang=replyLanguageInstruction(userText);
+  const invisibleLanguageTag='[Input language locked to '+lock.label+': "'+userText.replace(/"/g,'')+'"]';
   const remembered=memoryTextForPrompt(history,24);
 
   const prompt=[
@@ -978,6 +1020,8 @@ async function pollinationsBrowserReply(text,history=readBrowserMemory()){
     'Correct language mistakes gently when useful.',
     'Continue the same topic unless the user clearly changes it.',
     'If a transcript looks garbled or repetitive, ask for repetition instead of guessing or quoting garbage.',
+    'Never mix languages unless the user explicitly asks for translation.',
+    invisibleLanguageTag,
     remembered?'Recent conversation:\n'+remembered:'',
     'User: '+userText,
     'Emma:'
@@ -1014,10 +1058,13 @@ async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200)
 
   const level=document.querySelector('#levelSel')?.value||activeTeacher?.level||'A1';
   const mode=document.querySelector('#modeSel')?.value||activeTeacher?.mode||'conversation';
+  const lock=languageLockForTranscript(userText);
+  const strictLanguage=strictLanguageInstructionFor(userText);
   const system=[
     'You are Emma, a friendly multilingual language teacher.',
     'Reply naturally and briefly for spoken conversation.',
-    'Use the user\'s language unless they ask for another language.',
+    strictLanguage,
+    'Never mix languages unless the user explicitly asks for translation.',
     'Correct language mistakes gently when useful.',
     'Keep continuity with the recent conversation history and stay on the same topic until the user changes it.',
     'If the user message looks garbled or mechanically repetitive, ask them to repeat instead of inventing meaning.',
@@ -1043,6 +1090,7 @@ async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200)
         messages:[
           {role:'system',content:system},
           ...memoryMessagesForProvider(history,24),
+          {role:'system',content:'[Input language locked to '+lock.label+': "'+userText.replace(/"/g,'')+'"]'},
           {role:'user',content:userText}
         ],
         temperature:.55,
@@ -1096,6 +1144,7 @@ async function handleUser(text,{stateOwned=false}={}){
   const turn=++conversationTurnSeq;
   const memoryBefore=readBrowserMemory();
   const memorySessionId=getMemorySessionId();
+  const inputLanguageLock=languageLockForTranscript(text);
   addMsg('user',text);
   addPracticeMessage();
 
@@ -1114,6 +1163,8 @@ async function handleUser(text,{stateOwned=false}={}){
           level:document.querySelector('#levelSel')?.value||'A1',
           accent:activeTeacher?.accent||'British',
           session_id:memorySessionId,
+          input_language:inputLanguageLock.code,
+          input_language_label:inputLanguageLock.label,
           history:memoryBefore
         })
       });
@@ -1144,7 +1195,15 @@ async function handleUser(text,{stateOwned=false}={}){
     setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
   }
 }
-function teacherReply(text,history=readBrowserMemory()){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode,previousUser=previousUserMemory(history);let correction='';
+function teacherReply(text,history=readBrowserMemory()){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode,previousUser=previousUserMemory(history),lock=languageLockForTranscript(x);let correction='';
+if(lock.code==='pt-BR')return 'Entendi. Vamos continuar exatamente no mesmo assunto. Conte mais um detalhe.';
+if(lock.code==='es-ES')return 'Entiendo. Sigamos exactamente con el mismo tema. Cuéntame un detalle más.';
+if(lock.code==='fr-FR')return 'Je comprends. Restons exactement sur le même sujet. Donne-moi un détail de plus.';
+if(lock.code==='de-DE')return 'Verstanden. Bleiben wir genau bei demselben Thema. Erzähl mir noch ein Detail.';
+if(lock.code==='it-IT')return 'Capisco. Restiamo esattamente sullo stesso argomento. Dimmi un dettaglio in più.';
+if(lock.code==='ja-JP')return 'わかりました。同じ話題を続けましょう。もう一つ詳しく教えてください。';
+if(lock.code==='ko-KR')return '알겠습니다. 같은 주제를 계속 이야기해요. 한 가지 더 자세히 말해 주세요.';
+if(lock.code==='zh-CN')return '明白了。我们继续同一个话题。请再告诉我一个细节。';
 if(/\bi am have\b/i.test(x))correction='Small correction: say “I have”, not “I am have”. ';
 else if(/\bhe go\b/i.test(x))correction='Small correction: say “he goes”. ';
 else if(/\byesterday.*\bgo\b/i.test(x))correction='For the past, use “went”: “Yesterday I went…”. ';
