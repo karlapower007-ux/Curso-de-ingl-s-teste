@@ -37,9 +37,14 @@ function live(){layout(`<h1>Prática ao vivo</h1><p>Katya usa LiveAvatar. Os out
 function openTeacher(i){let t=teachers[i]; if(t.embed){document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="room"><button class="close" onclick="modal.remove()">Encerrar</button><h2>${t.name} • ${t.accent}</h2><iframe src="${t.embed}" allow="microphone; autoplay"></iframe></div></div>`)}else openLiteTeacher(i,'A1','conversation','General conversation')}
 function avatarVisualMarkup(t){
   if(t?.portrait){
-    return `<div id="avatarFace" class="avatar-face human-avatar" style="--mouth-open:0">
+    return `<div id="avatarFace" class="avatar-face human-avatar" style="--mouth-open:0;--gaze-x:0px;--gaze-y:0px">
       <img class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" referrerpolicy="no-referrer">
       <img class="avatar-photo avatar-photo-jaw" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
+      <img class="avatar-photo avatar-eye-layer avatar-eye-left" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
+      <img class="avatar-photo avatar-eye-layer avatar-eye-right" src="${t.portrait}" alt="" aria-hidden="true" referrerpolicy="no-referrer">
+      <div class="avatar-eyelid avatar-eyelid-left" aria-hidden="true"></div>
+      <div class="avatar-eyelid avatar-eyelid-right" aria-hidden="true"></div>
+      <div class="avatar-mouth-cavity" aria-hidden="true"></div>
       <div class="avatar-camera-vignette"></div>
       <div class="avatar-live-badge">● LIVE</div>
     </div>`;
@@ -51,7 +56,27 @@ let mediaStream=null,mediaRecorder=null,audioChunks=[],recordingTimer=null;
 function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
-function addMsg(role,text){const t=document.querySelector('#transcript');if(!t)return;t.insertAdjacentHTML('beforeend',`<div class="msg ${role}">${escapeHtml(text)}</div>`);t.scrollTop=t.scrollHeight}
+function sanitizeChatText(input){
+  let text=String(input||'');
+  text=text.replace(/```[\s\S]*?```/g,' ');
+  text=text.replace(/!?\[([^\]]*)\]\([^)]*\)/g,'$1');
+  text=text.replace(/\/(?:[^\/\n]|\\.){1,160}\//g,' ');
+  text=text.replace(/[*_~^#>|\`]/g,' ');
+  text=text.replace(/[\[\]{}()<>]/g,' ');
+  text=text.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu,' ');
+  return text
+    .replace(/\s+([.,!?;:])/g,'$1')
+    .replace(/[ \t]+/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
+function addMsg(role,text){
+  const t=document.querySelector('#transcript');
+  if(!t)return;
+  const display=role==='user'?String(text||''):sanitizeChatText(text);
+  t.insertAdjacentHTML('beforeend',`<div class="msg ${role}">${escapeHtml(display)}</div>`);
+  t.scrollTop=t.scrollHeight;
+}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function toggleRecognition(){recognizing?stopRecordingAndSend():startRecording()}
 async function startRecording(){
@@ -78,7 +103,7 @@ async function startRecording(){
     mediaRecorder.onstart=()=>{
       recognizing=true;
       setStatus('Listening','on');
-      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face avatar-listening';
+      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face human-avatar avatar-listening';
       if(document.querySelector('#micBtn')) micBtn.textContent='⏹ Enviar fala';
       recordingTimer=setTimeout(()=>stopRecordingAndSend(),12000);
     };
@@ -91,7 +116,7 @@ async function startRecording(){
     mediaRecorder.onstop=async()=>{
       clearTimeout(recordingTimer);
       if(document.querySelector('#micBtn')) micBtn.textContent='🎤 Falar';
-      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face';
+      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face human-avatar';
       const blob=new Blob(audioChunks,{type:mediaRecorder?.mimeType||'audio/webm'});
       cleanupRecorder(false);
       if(blob.size<1000){
@@ -330,7 +355,7 @@ function stopRemoteVoice(){
     currentVoiceUrl='';
   }
   const face=document.querySelector('#avatarFace');
-  if(face)face.className='avatar-face';
+  if(face)face.className='avatar-face human-avatar';
 }
 
 async function remoteSpeak(text){
@@ -353,7 +378,6 @@ async function remoteSpeak(text){
       body:JSON.stringify({
         text,
         teacher:activeTeacher?.name||'Emma',
-        lang:'en'
       })
     });
 
@@ -375,7 +399,7 @@ async function remoteSpeak(text){
       startAvatarLipSync(audio);
       setStatus('Speaking','busy');
       const face=document.querySelector('#avatarFace');
-      if(face)face.className='avatar-face avatar-speaking';
+      if(face)face.className='avatar-face human-avatar avatar-speaking';
     };
 
     const finish=()=>{
