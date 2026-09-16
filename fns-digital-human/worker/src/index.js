@@ -20,6 +20,23 @@ function toBase64(buffer) {
 }
 
 
+function sanitizeTextForTTS(input) {
+  let text = String(input || "");
+  text = text.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/\/(?:[^\/\n]|\\.){1,160}\//g, " ");
+  text = text.replace(/[*_~^#>|`]/g, " ");
+  text = text.replace(/[\[\]{}()<>]/g, " ");
+  text = text.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
+  text = text.replace(/[^\p{L}\p{M}\p{N}\s.,!?;:\'"\-—–]/gu, " ");
+  return text
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .replace(/([.,!?;:])(?=[\p{L}\p{N}])/gu, "$1 ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function detectLanguage(text) {
   const sample = String(text || "").toLowerCase();
   let pt = 0, es = 0, en = 0;
