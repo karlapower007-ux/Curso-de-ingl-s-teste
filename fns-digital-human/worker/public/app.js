@@ -247,7 +247,7 @@ function startBrowserOnlySTT(){
   }
 }
 
-function nextUtcMidnightMs(){function nextUtcMidnightMs(){
+function nextUtcMidnightMs(){
   const now=new Date();
   return Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1,0,0,0)-Date.now();
 }
@@ -460,7 +460,7 @@ function cleanupRecorder(){
   cancelMediaRecorderSession();
 }
 
-// Decode the complete recording// Decode the complete recording, mix to mono and render at Whisper's 16 kHz.
+// Decode the complete recording, mix to mono and render at Whisper's 16 kHz.
 async function recordingToWav(blob) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   const context = new AudioContextClass();
