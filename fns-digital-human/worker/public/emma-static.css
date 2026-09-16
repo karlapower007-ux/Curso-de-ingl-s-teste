@@ -155,3 +155,6 @@
   .human-avatar{animation:none!important}
   .human-avatar.avatar-listening,.human-avatar.avatar-speaking{animation:none!important}
 }
+
+/* 3D Emma already has rendered catchlights; hide legacy white gaze dots. */
+.human-avatar .avatar-gaze{display:none!important}
