@@ -259,3 +259,111 @@
   filter:none!important;
   backdrop-filter:none!important;
 }
+
+/* ===== Emma emergency visibility lock v1 ===== */
+/* Pure CSS/HTML recovery: no JS/core changes. */
+.avatar-stage{
+  position:relative!important;
+  overflow:hidden!important;
+  isolation:isolate!important;
+  z-index:1!important;
+}
+.avatar-face.human-avatar,
+.human-avatar{
+  position:relative!important;
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  overflow:hidden!important;
+  z-index:2!important;
+  background:none!important;
+  min-width:0!important;
+  min-height:0!important;
+}
+
+/* Kill every dark/empty rendering layer that could cover the portrait. */
+.human-avatar .avatar-webgl-layer,
+.human-avatar .avatar-camera-vignette{
+  display:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+  z-index:-1!important;
+}
+.human-avatar::before,
+.human-avatar::after{
+  pointer-events:none!important;
+  z-index:0!important;
+}
+
+/* The portrait is always the dominant visible layer and cannot escape the card. */
+.human-avatar .avatar-photo-base,
+.human-avatar[data-avatar-ready="false"] .avatar-photo-base,
+.human-avatar[data-avatar-ready="true"] .avatar-photo-base,
+.human-avatar[data-avatar-ready="error"] .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="fallback-2d"] .avatar-photo-base{
+  content:url('/emma.jpg?v=visible3')!important;
+  position:absolute!important;
+  inset:0!important;
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  z-index:9999!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100vh!important;
+  margin:auto!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  mix-blend-mode:normal!important;
+  transform:none!important;
+  clip-path:none!important;
+  mask:none!important;
+  -webkit-mask:none!important;
+  image-rendering:auto!important;
+  pointer-events:none!important;
+}
+
+/* Facial effects remain above the portrait; mouth coordinates remain unchanged. */
+.human-avatar .avatar-fx-layer,
+.human-avatar[data-avatar-ready="false"] .avatar-fx-layer,
+.human-avatar[data-avatar-ready="true"] .avatar-fx-layer,
+.human-avatar[data-avatar-ready="error"] .avatar-fx-layer{
+  position:absolute!important;
+  inset:0!important;
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  z-index:10000!important;
+  background:transparent!important;
+  pointer-events:none!important;
+  overflow:hidden!important;
+}
+.human-avatar .avatar-mouth-motion{
+  z-index:10001!important;
+}
+.human-avatar .avatar-live-badge{
+  z-index:10002!important;
+}
+.human-avatar .avatar-label{
+  z-index:10002!important;
+}
+
+@media(max-width:820px){
+  .human-avatar .avatar-photo-base,
+  .human-avatar[data-avatar-ready="false"] .avatar-photo-base,
+  .human-avatar[data-avatar-ready="true"] .avatar-photo-base,
+  .human-avatar[data-avatar-ready="error"] .avatar-photo-base{
+    width:100%!important;
+    height:100%!important;
+    max-width:100%!important;
+    max-height:100vh!important;
+    margin:auto!important;
+    object-fit:contain!important;
+    object-position:center center!important;
+  }
+}
