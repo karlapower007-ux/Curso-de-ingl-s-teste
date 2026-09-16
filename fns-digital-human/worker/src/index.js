@@ -4,11 +4,29 @@ function cors(origin="*") {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, X-FNS-STT-Language",
     "Access-Control-Max-Age": "86400",
   };
 }
 
+
+function sanitizeTranscriptText(input){
+  return String(input||"")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060\uFEFF\uFFFD]/g," ")
+    .replace(/[^\p{L}\p{M}\p{N}\s'’.,?!:;\-]/gu," ")
+    .replace(/\s+([.,?!:;])/g,"$1")
+    .replace(/[ \t]{2,}/g," ")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+}
+
+function normalizeRequestedSttLanguage(value){
+  const raw=String(value||"auto").trim().toLowerCase();
+  if(!raw||raw==="auto"||raw==="device")return "";
+  const primary=raw.split("-")[0];
+  return /^[a-z]{2,3}$/.test(primary)?primary:"";
+}
 
 const DAILY_QUOTA_MESSAGE = "Aviso: O limite diário de processamento neural gratuito foi atingido. A Emma descansará até a meia-noite (UTC). Volte amanhã!";
 
@@ -654,8 +672,8 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
 }
 
 
-const FNS_MEMORY_MAX_MESSAGES=20;
-const FNS_MEMORY_TTL_SECONDS=60*60*24*14;
+const FNS_MEMORY_MAX_MESSAGES=60;
+const FNS_MEMORY_TTL_SECONDS=60*60*24*30;
 
 function normalizeMemoryHistory(items){
   if(!Array.isArray(items))return [];
@@ -771,6 +789,9 @@ function systemPrompt({ teacher="Emma", level="A1", accent="American" } = {}) {
 Regras:
 - Responda no idioma predominante do usuário, salvo se ele pedir outro idioma.
 - Em prática de inglês, permaneça em inglês e explique em português somente quando solicitado.
+- Use o histórico recente de forma ativa e continue no mesmo assunto até o usuário mudar de tema.
+- Não reinicie a conversa, não repita apresentação e não mude de assunto sem motivo.
+- Se uma transcrição parecer quebrada, repetitiva ou sem sentido, peça ao usuário para repetir em vez de inventar uma interpretação.
 - Seja natural, clara, inteligente, didática e concisa o suficiente para conversa por voz.
 - Adapte vocabulário e complexidade ao nível CEFR do aluno.
 - Não invente fatos quando não tiver certeza.
@@ -792,8 +813,8 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.22-avatar-layer-memory-plus",
-          stt: "@cf/openai/whisper-large-v3-turbo",
+          version: "2026-09-16.23-stt-memory-continuity",
+          stt: "@cf/openai/whisper-large-v3-turbo • multilingual auto/hint • transcript hygiene",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
           chat: "Cloudflare GPT-OSS + resilient session memory + browser Pollinations/LLM7 + local teaching fallback"
         },
@@ -811,17 +832,20 @@ export default {
           );
         }
 
-        const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+        const requestedLanguage=normalizeRequestedSttLanguage(request.headers.get("X-FNS-STT-Language"));
+        const sttOptions={
           audio: toBase64(buffer),
           task: "transcribe",
           vad_filter: true,
           condition_on_previous_text: false
-        });
+        };
+        if(requestedLanguage)sttOptions.language=requestedLanguage;
 
-        const text = String(result?.text || result?.transcription_info?.text || "").trim();
+        const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", sttOptions);
+        const text = sanitizeTranscriptText(result?.text || result?.transcription_info?.text || "");
 
         return Response.json(
-          { ok: true, text },
+          { ok: true, text, language: requestedLanguage||"auto" },
           { headers: { ...cors(origin), "Cache-Control": "no-store" } }
         );
       } catch (error) {
@@ -881,7 +905,7 @@ export default {
         const sessionId = normalizeSessionId(body?.session_id);
         const clientHistory = normalizeMemoryHistory(body?.history);
         const remoteHistory = await loadRemoteSessionMemory(sessionId);
-        const history = mergeMemoryHistory(remoteHistory,clientHistory).slice(-16);
+        const history = mergeMemoryHistory(remoteHistory,clientHistory).slice(-24);
         const forcePublic = body?.force_public === true;
 
         if (!message) {

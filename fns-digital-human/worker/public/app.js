@@ -157,12 +157,114 @@ function detachBrowserRecognition(r,{abort=false}={}){
 }
 
 function activateBrowserSttMode(reason=''){
-  browserSttPreferred=true;
-  neuralQuotaExhausted=neuralQuotaExhausted||/quota|4006|429/i.test(reason);
+  const quotaLike=neuralQuotaExhausted||/quota|4006|429/i.test(reason);
+  neuralQuotaExhausted=quotaLike;
+  browserSttPreferred=quotaLike;
   if(flowState===FLOW_STATES.IDLE){
     refreshFlowControls(reason?'Ouvido do navegador • '+reason:'Ouvido do navegador ativo');
   }
 }
+
+
+function selectedSttLanguage(){
+  return document.querySelector('#sttLangSel')?.value||'auto';
+}
+
+function inferBrowserSttLanguage(){
+  const selected=selectedSttLanguage();
+  if(selected==='device')return navigator.language||'en-US';
+  if(selected!=='auto')return selected;
+
+  const recent=readBrowserMemory()
+    .filter(x=>x.role==='user')
+    .slice(-4)
+    .map(x=>x.content)
+    .join(' ')
+    .toLowerCase();
+
+  if(/[áàâãéêíóôõúç]|\b(você|vocês|não|uma|para|com|obrigad[oa]|então|porque)\b/i.test(recent))return 'pt-BR';
+  if(/[¿¡ñ]|\b(hola|usted|ustedes|gracias|también|porque|quiero|puedo)\b/i.test(recent))return 'es-ES';
+  if(/[àâçéèêëîïôûùüÿœ]|\b(bonjour|merci|avec|pour|parce|je|vous)\b/i.test(recent))return 'fr-FR';
+  if(/[äöüß]|\b(hallo|danke|ich|nicht|und|weil)\b/i.test(recent))return 'de-DE';
+  if(/\b(ciao|grazie|sono|non|perché|voglio|posso)\b/i.test(recent))return 'it-IT';
+  return 'en-US';
+}
+
+function normalizeTranscriptText(input){
+  return String(input||'')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060\uFEFF\uFFFD]/g,' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s'’.,?!:;\-]/gu,' ')
+    .replace(/\s+([.,?!:;])/g,'$1')
+    .replace(/[ \t]{2,}/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
+
+function bestSpeechAlternative(result){
+  const choices=[];
+  const total=Math.min(Number(result?.length||0),3);
+  for(let i=0;i<total;i++){
+    const text=normalizeTranscriptText(result?.[i]?.transcript||'');
+    const confidence=Number(result?.[i]?.confidence||0);
+    if(text)choices.push({text,confidence:Number.isFinite(confidence)?confidence:0});
+  }
+  choices.sort((a,b)=>b.confidence-a.confidence);
+  return choices[0]||{text:'',confidence:0};
+}
+
+function transcriptLooksCorrupt(text,confidence=0){
+  const tokens=String(text||'').toLocaleLowerCase().match(/\p{L}[\p{L}\p{M}'’-]*/gu)||[];
+  if(tokens.length<7)return false;
+
+  const counts=new Map();
+  let maxRun=1;
+  let run=1;
+  for(let i=0;i<tokens.length;i++){
+    counts.set(tokens[i],(counts.get(tokens[i])||0)+1);
+    if(i>0 && tokens[i]===tokens[i-1]){
+      run++;
+      if(run>maxRun)maxRun=run;
+    }else{
+      run=1;
+    }
+  }
+  const uniqueRatio=counts.size/tokens.length;
+  const maxShare=Math.max(...counts.values())/tokens.length;
+
+  return maxRun>=4 ||
+    (tokens.length>=9 && uniqueRatio<0.36 && maxShare>=0.30) ||
+    (confidence>0 && confidence<0.12 && uniqueRatio<0.50);
+}
+
+function replyLanguageInstruction(text){
+  const selected=selectedSttLanguage();
+  const sample=String(text||'').toLowerCase();
+  const lang=selected==='auto'
+    ? (
+        /[áàâãéêíóôõúç]|\b(você|não|uma|para|obrigad[oa]|então)\b/i.test(sample)?'pt-BR':
+        /[¿¡ñ]|\b(hola|usted|gracias|quiero|puedo)\b/i.test(sample)?'es-ES':
+        /[àâçéèêëîïôûùüÿœ]|\b(bonjour|merci|avec|parce)\b/i.test(sample)?'fr-FR':
+        /[äöüß]|\b(hallo|danke|ich|nicht)\b/i.test(sample)?'de-DE':
+        /\b(ciao|grazie|sono|perché|voglio)\b/i.test(sample)?'it-IT':
+        'en-US'
+      )
+    : (selected==='device'?(navigator.language||'en-US'):selected);
+
+  const map={
+    'pt-BR':'Responda em português brasileiro.',
+    'es-ES':'Responde en español.',
+    'fr-FR':'Réponds en français.',
+    'de-DE':'Antworte auf Deutsch.',
+    'it-IT':'Rispondi in italiano.',
+    'ja-JP':'日本語で答えてください。',
+    'ko-KR':'한국어로 답하세요.',
+    'zh-CN':'请用中文回答。',
+    'en-US':'Reply in natural English.'
+  };
+  return map[lang]||'Reply in the same language as the user.';
+}
+
 
 function startBrowserOnlySTT(){
   if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return false;
@@ -182,11 +284,13 @@ function startBrowserOnlySTT(){
 
   r.continuous=true;
   r.interimResults=true;
-  r.maxAlternatives=1;
-  r.lang=navigator.language || 'pt-BR';
+  r.maxAlternatives=3;
+  r.lang=inferBrowserSttLanguage();
 
   let finalParts=[];
   let interimText='';
+  let finalConfidence=[];
+  let interimConfidence=0;
   let errorCode='';
 
   r.onstart=()=>{
@@ -200,13 +304,19 @@ function startBrowserOnlySTT(){
   r.onresult=(event)=>{
     if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
     interimText='';
+    interimConfidence=0;
     for(let i=event.resultIndex;i<event.results.length;i++){
-      const piece=String(event.results[i]?.[0]?.transcript||'').trim();
-      if(!piece)continue;
-      if(event.results[i].isFinal) finalParts.push(piece);
-      else interimText=piece;
+      const best=bestSpeechAlternative(event.results[i]);
+      if(!best.text)continue;
+      if(event.results[i].isFinal){
+        finalParts.push(best.text);
+        finalConfidence.push(best.confidence);
+      }else{
+        interimText=best.text;
+        interimConfidence=best.confidence;
+      }
     }
-    browserFallbackTranscript=(finalParts.join(' ')||interimText).trim();
+    browserFallbackTranscript=normalizeTranscriptText(finalParts.join(' ')||interimText);
   };
 
   r.onerror=(event)=>{
@@ -216,7 +326,8 @@ function startBrowserOnlySTT(){
 
   r.onend=async()=>{
     if(session!==browserSessionSeq || browserFallbackRecognition!==r)return;
-    const text=(finalParts.join(' ')||browserFallbackTranscript||interimText).trim();
+    const text=normalizeTranscriptText(finalParts.join(' ')||browserFallbackTranscript||interimText);
+    const confidence=finalConfidence.length?finalConfidence.reduce((a,b)=>a+b,0)/finalConfidence.length:interimConfidence;
     detachBrowserRecognition(r);
     const face=document.querySelector('#avatarFace');
     if(face)face.classList.remove('avatar-listening');
@@ -227,6 +338,13 @@ function startBrowserOnlySTT(){
 
     if(!text){
       setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      return;
+    }
+
+    if(transcriptLooksCorrupt(text,confidence)){
+      browserFallbackTranscript='';
+      addMsg('system','A transcrição ficou insegura e repetitiva, então não enviei texto errado para a Emma. Fale novamente com calma ou escolha o idioma do microfone.');
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Repita a frase'});
       return;
     }
 
@@ -283,7 +401,7 @@ function enterQuotaRestMode({preserveFlow=false}={}){
   },Math.max(1000,nextUtcMidnightMs()+1500));
 }
 
-function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button id="sendBtn" class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;setFlowState(FLOW_STATES.IDLE,{force:true});if(neuralQuotaExhausted)enterQuotaRestMode();speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
+function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select><select id="sttLangSel" style="width:auto" title="Idioma do microfone"><option value="auto" selected>🎙️ Auto multilíngue</option><option value="en-US">English</option><option value="pt-BR">Português</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="zh-CN">中文</option><option value="device">Idioma do aparelho</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button id="sendBtn" class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;setFlowState(FLOW_STATES.IDLE,{force:true});if(neuralQuotaExhausted)enterQuotaRestMode();speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
 function sanitizeChatText(input){
@@ -555,7 +673,7 @@ async function transcribeWithFNS(blob){
   try{
     const res=await fetch(FNS_STT_URL,{
       method:'POST',
-      headers:{'Content-Type':blob.type||'audio/wav'},
+      headers:{'Content-Type':blob.type||'audio/wav','X-FNS-STT-Language':selectedSttLanguage()},
       body:blob
     });
     const data=await res.json().catch(()=>({}));
@@ -569,10 +687,16 @@ async function transcribeWithFNS(blob){
 
     if(!res.ok)throw new Error(data?.message||data?.error||('HTTP '+res.status));
 
-    const text=String(data?.text||'').trim();
+    const text=normalizeTranscriptText(data?.text||'');
     if(!text){
       addMsg('system','O Whisper não detectou fala. Vou tentar o reconhecimento do navegador uma vez.');
       startBrowserFallbackOnce('Whisper sem fala');
+      return;
+    }
+
+    if(transcriptLooksCorrupt(text,1)){
+      addMsg('system','A transcrição neural pareceu corrompida ou repetitiva. Não enviei o texto errado. Fale novamente.');
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Repita a frase'});
       return;
     }
 
@@ -601,7 +725,7 @@ function stopRecognition(){
 }
 
 
-const FNS_MEMORY_MAX_MESSAGES=20;
+const FNS_MEMORY_MAX_MESSAGES=60;
 const FNS_MEMORY_LOCAL_PREFIX='fns_digital_human_memory_v1_';
 const FNS_MEMORY_SESSION_PREFIX='fns_digital_human_session_v1_';
 
@@ -691,11 +815,11 @@ function getMemorySessionId(){
   return id;
 }
 
-function memoryMessagesForProvider(history=readBrowserMemory(),limit=12){
+function memoryMessagesForProvider(history=readBrowserMemory(),limit=24){
   return normalizeBrowserMemory(history).slice(-limit).map(x=>({role:x.role,content:x.content}));
 }
 
-function memoryTextForPrompt(history=readBrowserMemory(),limit=10){
+function memoryTextForPrompt(history=readBrowserMemory(),limit=24){
   return memoryMessagesForProvider(history,limit)
     .map(x=>(x.role==='assistant'?'Emma: ':'User: ')+x.content)
     .join('\n');
@@ -724,18 +848,16 @@ async function pollinationsBrowserReply(text,history=readBrowserMemory()){
 
   const level=document.querySelector('#levelSel')?.value||activeTeacher?.level||'A1';
   const mode=document.querySelector('#modeSel')?.value||activeTeacher?.mode||'conversation';
-  const lang=/[áéíóúãõç]|\b(você|não|uma|para|porque)\b/i.test(userText)
-    ?'Responda em português brasileiro.'
-    :/[¿¡ñ]|\b(hola|usted|gracias|porque)\b/i.test(userText)
-      ?'Responde en español.'
-      :'Reply in natural English.';
-  const remembered=memoryTextForPrompt(history,10);
+  const lang=replyLanguageInstruction(userText);
+  const remembered=memoryTextForPrompt(history,24);
 
   const prompt=[
     'You are Emma, a friendly concise language tutor.',
     lang,
     'CEFR '+level+'. Mode: '+mode+'.',
     'Correct language mistakes gently when useful.',
+    'Continue the same topic unless the user clearly changes it.',
+    'If a transcript looks garbled or repetitive, ask for repetition instead of guessing or quoting garbage.',
     remembered?'Recent conversation:\n'+remembered:'',
     'User: '+userText,
     'Emma:'
@@ -777,7 +899,8 @@ async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200)
     'Reply naturally and briefly for spoken conversation.',
     'Use the user\'s language unless they ask for another language.',
     'Correct language mistakes gently when useful.',
-    'Keep continuity with the recent conversation history.',
+    'Keep continuity with the recent conversation history and stay on the same topic until the user changes it.',
+    'If the user message looks garbled or mechanically repetitive, ask them to repeat instead of inventing meaning.',
     'CEFR level: '+level+'. Mode: '+mode+'.',
     'Avoid markdown.'
   ].join(' ');
@@ -799,7 +922,7 @@ async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200)
         model:'codestral-latest',
         messages:[
           {role:'system',content:system},
-          ...memoryMessagesForProvider(history,12),
+          ...memoryMessagesForProvider(history,24),
           {role:'user',content:userText}
         ],
         temperature:.55,
@@ -913,8 +1036,11 @@ if(low.includes('how are you'))return correction+`I'm doing well, thank you. Now
 if(low.includes('i like'))return correction+`Great. Why do you like it? Try to answer in two complete sentences.`;
 if(low.includes('because'))return correction+`Good use of “because”. Can you give me one more detail?`;
 if(previousUser){
-  const anchor=previousUser.replace(/\s+/g,' ').slice(0,110);
-  return correction+`Let's keep the same topic. Earlier you said: “${anchor}”. Tell me one more detail about that.`;
+  const anchor=normalizeTranscriptText(previousUser).replace(/\s+/g,' ').slice(0,110);
+  if(anchor&&!transcriptLooksCorrupt(anchor,1)){
+    return correction+`Let's stay with the same topic. You were talking about “${anchor}”. What happened next?`;
+  }
+  return correction+'Let’s stay with the same topic. Please add one more detail.';
 }
 if(level==='A1')return correction+`Good. Now answer one more simple question: What do you usually do in the morning?`;
 if(level==='A2')return correction+`Good answer. Tell me when that happened and how you felt.`;
