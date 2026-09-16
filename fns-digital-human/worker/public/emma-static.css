@@ -76,9 +76,9 @@
 .human-avatar .avatar-eyelid-right{left:54.9%}
 .human-avatar .avatar-mouth-motion{
   position:absolute;
-  left:44.5%;
-  top:54.35%;
-  width:11%;
+  left:45.0%;
+  top:60.0%;
+  width:10.0%;
   height:4px;
   z-index:12;
   opacity:calc(var(--mouth-open,0) * .46);
@@ -123,6 +123,11 @@
 }
 @media(max-width:820px){
   .human-avatar .avatar-photo-base{object-position:center 31%!important}
+  .human-avatar .avatar-mouth-motion{
+    left:45.0%!important;
+    top:59.6%!important;
+    width:10.2%!important;
+  }
 }
 @media(prefers-reduced-motion:reduce){
   .human-avatar{animation:none!important}

@@ -338,6 +338,28 @@ function toggleRecognition(){
   startRecording();
 }
 
+
+let browserAutoFallbackSeq=0;
+
+function startBrowserFallbackOnce(reason=''){
+  const seq=++browserAutoFallbackSeq;
+  activateBrowserSttMode(reason||'fallback');
+  if(flowState!==FLOW_STATES.IDLE){
+    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ativando reconhecimento do navegador'});
+  }else{
+    refreshFlowControls('Ativando reconhecimento do navegador');
+  }
+
+  setTimeout(()=>{
+    if(seq!==browserAutoFallbackSeq)return;
+    if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing || isRecording)return;
+    const started=startBrowserOnlySTT();
+    if(!started){
+      refreshFlowControls('Fallback do navegador pronto • toque em Falar');
+    }
+  },80);
+}
+
 async function startRecording(){
   if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return;
   if(browserSttPreferred||neuralQuotaExhausted){
@@ -345,8 +367,8 @@ async function startRecording(){
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
-    addMsg('system','Este navegador não oferece gravação MediaRecorder compatível. Ativando apenas o reconhecimento de voz do navegador.');
-    activateBrowserSttMode('MediaRecorder indisponível');
+    addMsg('system','Este navegador não oferece gravação MediaRecorder compatível. Ativando o reconhecimento de voz do navegador.');
+    startBrowserFallbackOnce('MediaRecorder indisponível');
     return;
   }
 
@@ -356,15 +378,31 @@ async function startRecording(){
 
   let stream=null;
   try{
-    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const constraints={
+      audio:{
+        echoCancellation:true,
+        noiseSuppression:true,
+        autoGainControl:true,
+        channelCount:1
+      }
+    };
+    stream=await navigator.mediaDevices.getUserMedia(constraints);
     if(session!==mediaSessionSeq || flowState!==FLOW_STATES.LISTENING){
       stream.getTracks().forEach(t=>t.stop());
       return;
     }
 
+    const audioTrack=stream.getAudioTracks?.()[0]||null;
+    if(!audioTrack){
+      stream.getTracks().forEach(t=>t.stop());
+      addMsg('system','Nenhum microfone ativo foi encontrado no computador.');
+      startBrowserFallbackOnce('microfone não detectado');
+      return;
+    }
+
     mediaStream=stream;
     audioChunks=[];
-    const preferred=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'];
+    const preferred=['audio/webm;codecs=opus','audio/webm','audio/mp4'];
     const mimeType=preferred.find(t=>MediaRecorder.isTypeSupported(t))||'';
     const recorder=mimeType?new MediaRecorder(stream,{mimeType}):new MediaRecorder(stream);
     mediaRecorder=recorder;
@@ -376,7 +414,7 @@ async function startRecording(){
 
     recorder.onstart=()=>{
       if(session!==mediaSessionSeq)return;
-      refreshFlowControls('Listening');
+      refreshFlowControls('Microfone detectado • ouvindo');
       const face=document.querySelector('#avatarFace');
       if(face)face.classList.add('avatar-listening');
       recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);
@@ -384,32 +422,33 @@ async function startRecording(){
 
     recorder.onerror=()=>{
       if(session!==mediaSessionSeq)return;
-      addMsg('system','Falha ao gravar o microfone. Você pode tentar novamente ou digitar.');
       cancelMediaRecorderSession(session);
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      addMsg('system','Falha ao gravar o microfone do PC. Ativando reconhecimento do navegador.');
+      startBrowserFallbackOnce('falha no MediaRecorder');
     };
 
     recorder.onstop=async()=>{
       if(session!==mediaSessionSeq)return;
       clearTimeout(recordingTimer);
-      const mime=recorder.mimeType||'audio/webm';
+      const mime=recorder.mimeType||mimeType||'audio/webm';
       const blob=new Blob(audioChunks,{type:mime});
       releaseMediaRecorder(recorder,stream,session);
       const face=document.querySelector('#avatarFace');
       if(face)face.classList.remove('avatar-listening');
 
-      if(blob.size<1000){
-        addMsg('system','Não consegui captar áudio suficiente. Tente falar por 1–3 segundos.');
-        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      if(blob.size<1200){
+        addMsg('system','Nenhum áudio útil foi captado. Vou tentar o reconhecimento do navegador uma vez.');
+        startBrowserFallbackOnce('áudio vazio');
         return;
       }
 
       try{
+        setStatus('Áudio captado • processando','busy');
         const wav=await recordingToWav(blob);
         await transcribeWithFNS(wav);
       }catch(error){
-        addMsg('system','Não foi possível preparar o áudio: '+(error?.message||error)+'. Tente novamente ou digite.');
-        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+        addMsg('system','O áudio foi captado, mas não pôde ser preparado. Vou tentar o reconhecimento do navegador.');
+        startBrowserFallbackOnce('falha ao preparar áudio');
       }
     };
 
@@ -417,8 +456,8 @@ async function startRecording(){
   }catch(err){
     if(stream)stream.getTracks().forEach(t=>t.stop());
     if(session===mediaSessionSeq){
-      addMsg('system','Não consegui acessar o microfone: '+(err?.message||err));
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      addMsg('system','Não consegui acessar o microfone do PC: '+(err?.message||err)+'. Tentando reconhecimento do navegador.');
+      startBrowserFallbackOnce('acesso ao microfone');
     }
   }
 }
@@ -523,9 +562,8 @@ async function transcribeWithFNS(blob){
 
     if(isSttBackendFailure(data,res.status)){
       if(isQuotaPayload(data,res.status))neuralQuotaExhausted=true;
-      activateBrowserSttMode('HTTP '+res.status);
-      addMsg('system','O ouvido neural ficou indisponível. O modo de emergência foi ativado sem reiniciar o microfone sozinho. Toque em “Falar (navegador)” e diga sua frase uma vez.');
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
+      addMsg('system','O ouvido neural ficou indisponível. Vou tentar o reconhecimento do navegador uma vez.');
+      startBrowserFallbackOnce('HTTP '+res.status);
       return;
     }
 
@@ -533,16 +571,15 @@ async function transcribeWithFNS(blob){
 
     const text=String(data?.text||'').trim();
     if(!text){
-      addMsg('system','O Whisper não detectou fala. Tente novamente falando um pouco mais perto do microfone.');
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      addMsg('system','O Whisper não detectou fala. Vou tentar o reconhecimento do navegador uma vez.');
+      startBrowserFallbackOnce('Whisper sem fala');
       return;
     }
 
     await handleUser(text,{stateOwned:true});
   }catch(err){
-    activateBrowserSttMode('rede indisponível');
-    addMsg('system','O reconhecimento neural falhou. O modo de navegador foi ativado, mas não será aberto automaticamente. Toque em “Falar (navegador)” e repita sua frase.');
-    setFlowState(FLOW_STATES.IDLE,{force:true,status:'Modo emergência • toque para falar'});
+    addMsg('system','O reconhecimento neural falhou. Vou tentar o reconhecimento do navegador uma vez.');
+    startBrowserFallbackOnce('rede indisponível');
   }
 }
 

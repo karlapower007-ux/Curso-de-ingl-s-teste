@@ -159,11 +159,22 @@ jobs:
             .replace('r.continuous=true;','r.continuous=false;')
             .replace('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);','recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);');
 
-          for(const name of ['startBrowserOnlySTT','startRecording']){
-            if(normalizeListening(extractFunction(app,name))!==extractFunction(stable,name)) fail('LISTENING function changed beyond approved timing: '+name);
+          if(normalizeListening(extractFunction(app,'startBrowserOnlySTT'))!==extractFunction(stable,'startBrowserOnlySTT')){
+            fail('Browser LISTENING function changed beyond approved timing');
           }
 
-          console.log('QA PHASE 2 PASS: memory A/B/C/D active; only LISTENING timing changed; turn machine is stable');
+          const recording=extractFunction(app,'startRecording');
+          for(const token of [
+            "if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return;",
+            "listeningEngine='media';",
+            "setFlowState(FLOW_STATES.LISTENING,{status:'Abrindo microfone'});",
+            "recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);",
+            "recorder.start(250);"
+          ]) if(!recording.includes(token)) fail('Protected MediaRecorder invariant missing: '+token);
+          if((recording.match(/new MediaRecorder/g)||[]).length!==2) fail('Unexpected MediaRecorder construction shape');
+          if(recording.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
+
+          console.log('QA PHASE 2 PASS: memory A/B/C/D active; turn machine stable; desktop capture hardened only inside LISTENING');
           NODE
 
       - name: QA chat dedupe and AvatarManager v3
@@ -191,6 +202,34 @@ jobs:
           if(!css.includes('Emma AvatarManager v3')) fail('Avatar WebGL CSS missing');
           if(!css.includes('.avatar-webgl-layer.avatar-webgl-failed{display:none!important}')) fail('2D fallback visibility rule missing');
           console.log('QA AVATAR V3 PASS: watchdog/fallback isolated from audio and turn core; 20-turn visual self-test present');
+          NODE
+
+      - name: QA desktop microphone and mouth alignment
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const css=fs.readFileSync('public/emma-static.css','utf8');
+          const fail=m=>{throw new Error(m)};
+
+          for(const token of [
+            'echoCancellation:true',
+            'noiseSuppression:true',
+            'autoGainControl:true',
+            'channelCount:1',
+            "'audio/webm;codecs=opus','audio/webm','audio/mp4'",
+            'startBrowserFallbackOnce',
+            "blob.size<1200",
+            "Whisper sem fala"
+          ]) if(!app.includes(token)) fail('Desktop mic hardening missing: '+token);
+
+          const helper=app.slice(app.indexOf('function startBrowserFallbackOnce'),app.indexOf('async function startRecording'));
+          if(!helper.includes("flowState!==FLOW_STATES.IDLE") || !helper.includes("startBrowserOnlySTT()")) fail('One-shot browser fallback guard missing');
+          if(helper.includes('setInterval')) fail('Fallback must never loop');
+
+          if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
+          if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
+          console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
 
       - name: Deploy Worker
@@ -355,6 +394,21 @@ jobs:
           if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
           if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=20')) throw new Error('Production memory+ frontend missing');
           console.log('QA AVATAR V3 PRODUCTION PASS: visual layer + chat dedupe + memory+ deployed');
+          NODE
+
+      - name: QA desktop microphone and mouth production
+        run: |
+          curl --fail --silent --show-error -o desktop-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
+          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css"
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('desktop-app.js','utf8');
+          const css=fs.readFileSync('desktop-emma.css','utf8');
+          for(const token of ['echoCancellation:true','noiseSuppression:true','autoGainControl:true','channelCount:1','startBrowserFallbackOnce']){
+            if(!app.includes(token)) throw new Error('Production desktop mic fix missing: '+token);
+          }
+          if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
+          console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS');
           NODE
 
       - name: QA production portrait and brain fallback
