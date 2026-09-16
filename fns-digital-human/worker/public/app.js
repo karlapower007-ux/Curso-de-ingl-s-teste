@@ -58,7 +58,41 @@ function avatarVisualMarkup(t){
 }
 let activeTeacher=null,recognizing=false;
 let mediaStream=null,mediaRecorder=null,audioChunks=[],recordingTimer=null;
-function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
+let neuralQuotaExhausted=false;
+let quotaResetTimer=null;
+const QUOTA_NOTICE_TEXT='Aviso: O limite diário de processamento neural gratuito foi atingido. A Emma descansará até a meia-noite (UTC). Volte amanhã!';
+
+function nextUtcMidnightMs(){
+  const now=new Date();
+  return Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1,0,0,0)-Date.now();
+}
+function isQuotaPayload(data,status=0){
+  const raw=(()=>{try{return JSON.stringify(data||'')}catch{return String(data||'')}})();
+  return status===429 || data?.quota_exhausted===true || data?.code==='FNS_DAILY_NEURON_QUOTA' ||
+    /4006|daily free allocation|10\s*,?\s*000\s+neurons|neurons.*(quota|limit|allocation)/i.test(raw);
+}
+function enterQuotaRestMode(){
+  neuralQuotaExhausted=true;
+  cleanupRecorder();
+  stopRemoteVoice();
+  const mic=document.querySelector('#micBtn');
+  if(mic){mic.disabled=true;mic.textContent='🎤 Limite diário atingido';}
+  const transcript=document.querySelector('#transcript');
+  if(transcript && !transcript.querySelector('.quota-notice')){
+    transcript.insertAdjacentHTML('beforeend','<div class="msg system quota-notice">'+escapeHtml(QUOTA_NOTICE_TEXT)+'</div>');
+    transcript.scrollTop=transcript.scrollHeight;
+  }
+  setStatus('Descansando até 00:00 UTC','busy');
+  if(quotaResetTimer)clearTimeout(quotaResetTimer);
+  quotaResetTimer=setTimeout(()=>{
+    neuralQuotaExhausted=false;
+    const m=document.querySelector('#micBtn');
+    if(m){m.disabled=false;m.textContent='🎤 Falar';}
+    setStatus('Ready','on');
+  },Math.max(1000,nextUtcMidnightMs()+1500));
+}
+
+function openLiteTeacher(i,level='A1',mode='conversation',topic='General conversation'){activeTeacher={...teachers[i],i,level,mode,topic};document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="liteModal"><div class="room"><button class="close" onclick="stopRecognition();stopRemoteVoice();liteModal.remove()">Encerrar</button><div class="row"><h2 style="margin-right:auto">${activeTeacher.name} • ${activeTeacher.accent}</h2><span class="status"><i id="statusDot" class="dot on"></i><span id="statusText">Ready</span></span></div><div class="chat-shell"><div class="avatar-stage">${avatarVisualMarkup(activeTeacher)}<div class="avatar-label"><b>${activeTeacher.name}</b><br><span class="small">${activeTeacher.accent} English • FNS Lite</span>${activeTeacher.profile?'<br><span class="small">'+activeTeacher.profile+'</span>':''}${activeTeacher.photoCredit?'<br><span class="photo-credit">Visual pilot • '+activeTeacher.photoCredit+'</span>':''}</div></div><div class="chat-panel"><div class="row"><select id="levelSel" style="width:auto">${levels.map(x=>`<option ${x===level?'selected':''}>${x}</option>`).join('')}</select><select id="modeSel" style="width:auto"><option value="conversation">Conversation</option><option value="drill">Drill</option><option value="lesson">Lesson</option><option value="pronunciation">Pronunciation</option><option value="review">Review</option></select></div><div id="transcript" class="transcript"><div class="msg system">FNS Lite usa microfone + Whisper remoto gratuito para entender sua fala. Nenhuma API key fica no navegador.</div><div class="msg teacher">Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}</div></div><div class="row" style="margin-top:10px"><button id="micBtn" class="good" onclick="toggleRecognition()">🎤 Falar</button><button onclick="stopRecognition()">Parar</button><button id="voiceBtn" class="primary" onclick="unlockVoice()">🔊 Ativar voz</button><button onclick="unlockAndRepeat()">🔁 Repetir</button></div><div class="row"><input id="chatInput" placeholder="Digite em inglês..." onkeydown="if(event.key==='Enter')sendTyped()"><button class="primary" onclick="sendTyped()">Enviar</button></div><div class="small muted">Primeiro clique uma vez em 🔊 Ativar voz. Depois use 🎤 Falar → diga sua frase → ⏹ Enviar fala. A resposta será falada automaticamente.</div></div></div></div></div>`);document.querySelector('#modeSel').value=mode;if(neuralQuotaExhausted)enterQuotaRestMode();else speak(`Hello! I'm ${activeTeacher.name}. ${openingPrompt(level,topic)}`)}
 function openingPrompt(level,topic){if(topic&&topic!=='General conversation')return `Today we'll practice ${topic}. Tell me one thing you already know about it.`;return level==='A1'?'Let’s start simply. What is your name?':'Tell me about your day, and I will help you improve your English.'}
 function setStatus(text,type='on'){const d=document.querySelector('#statusDot'),s=document.querySelector('#statusText');if(!d||!s)return;d.className='dot '+type;s.textContent=text}
 function sanitizeChatText(input){
@@ -83,8 +117,9 @@ function addMsg(role,text){
   t.scrollTop=t.scrollHeight;
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function toggleRecognition(){recognizing?stopRecordingAndSend():startRecording()}
+function toggleRecognition(){if(neuralQuotaExhausted){enterQuotaRestMode();return;}recognizing?stopRecordingAndSend():startRecording()}
 async function startRecording(){
+  if(neuralQuotaExhausted){enterQuotaRestMode();return;}
   if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
     addMsg('system','Este navegador não oferece gravação de áudio compatível. Você pode digitar sua frase.');
     return;
@@ -108,7 +143,7 @@ async function startRecording(){
     mediaRecorder.onstart=()=>{
       recognizing=true;
       setStatus('Listening','on');
-      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face human-avatar avatar-listening';
+      if(document.querySelector('#avatarFace')) avatarFace.classList.add('avatar-listening');
       if(document.querySelector('#micBtn')) micBtn.textContent='⏹ Enviar fala';
       recordingTimer=setTimeout(()=>stopRecordingAndSend(),12000);
     };
@@ -121,7 +156,7 @@ async function startRecording(){
     mediaRecorder.onstop=async()=>{
       clearTimeout(recordingTimer);
       if(document.querySelector('#micBtn')) micBtn.textContent='🎤 Falar';
-      if(document.querySelector('#avatarFace')) avatarFace.className='avatar-face human-avatar';
+      if(document.querySelector('#avatarFace')) avatarFace.classList.remove('avatar-listening');
       const blob=new Blob(audioChunks,{type:mediaRecorder?.mimeType||'audio/webm'});
       cleanupRecorder(false);
       if(blob.size<1000){
@@ -205,8 +240,12 @@ async function transcribeWithFNS(blob){
       body:blob
     });
     const data=await res.json().catch(()=>({}));
+    if(isQuotaPayload(data,res.status)){
+      enterQuotaRestMode();
+      return;
+    }
     if(!res.ok){
-      throw new Error(data?.error||('HTTP '+res.status));
+      throw new Error(data?.message||data?.error||('HTTP '+res.status));
     }
     const text=(data?.text||'').trim();
     if(!text){
@@ -244,10 +283,15 @@ async function handleUser(text){
       }
     );
 
-    const data=await response.json();
+    const data=await response.json().catch(()=>({}));
+
+    if(isQuotaPayload(data,response.status)){
+      enterQuotaRestMode();
+      return;
+    }
 
     if(!response.ok || !data.ok){
-      throw new Error(data?.error||'Erro na IA');
+      throw new Error(data?.message||'A Emma está temporariamente indisponível.');
     }
 
     const reply=data.reply||'Could you say that again?';
@@ -260,15 +304,9 @@ async function handleUser(text){
     }catch(e){}
 
   }catch(error){
-    setStatus('AI error','busy');
-
-    const fallback=teacherReply(text);
-    addMsg('teacher',fallback);
-
-    addMsg(
-      'system',
-      'FNS AI: '+(error?.message||error)
-    );
+    if(isQuotaPayload(error,0)){enterQuotaRestMode();return;}
+    setStatus('Indisponível','busy');
+    addMsg('system','A Emma está temporariamente indisponível. Tente novamente em alguns minutos.');
   }
 }
 function teacherReply(text){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode;let correction='';
@@ -382,7 +420,7 @@ function stopRemoteVoice(){
     currentVoiceUrl='';
   }
   const face=document.querySelector('#avatarFace');
-  if(face)face.className=face.querySelector('#emmaPortrait')?'avatar-face human-avatar':'avatar-face';
+  if(face){face.classList.remove('avatar-speaking','avatar-talking','avatar-listening');}
 }
 
 async function remoteSpeak(text){
@@ -409,8 +447,12 @@ async function remoteSpeak(text){
     });
 
     if(!response.ok){
-      const errText=await response.text().catch(()=> '');
-      throw new Error('TTS HTTP '+response.status+(errText?': '+errText.slice(0,160):''));
+      const data=await response.json().catch(()=>({}));
+      if(isQuotaPayload(data,response.status)){
+        enterQuotaRestMode();
+        return;
+      }
+      throw new Error(data?.message||'A voz da Emma está temporariamente indisponível.');
     }
 
     const blob=await response.blob();
@@ -426,7 +468,7 @@ async function remoteSpeak(text){
       startAvatarLipSync(audio);
       setStatus('Speaking','busy');
       const face=document.querySelector('#avatarFace');
-      if(face)face.className='avatar-face human-avatar avatar-speaking';
+      if(face)face.classList.add('avatar-speaking');
     };
 
     const finish=()=>{
@@ -438,7 +480,7 @@ async function remoteSpeak(text){
       }
       setStatus('Ready','on');
       const face=document.querySelector('#avatarFace');
-      if(face)face.className='avatar-face';
+      if(face)face.classList.remove('avatar-speaking','avatar-talking');
     };
 
     audio.onended=finish;
@@ -450,8 +492,9 @@ async function remoteSpeak(text){
     await audio.play();
   }catch(error){
     stopRemoteVoice();
-    setStatus('TTS error','busy');
-    addMsg('system','FNS VOICE: '+(error?.message||error));
+    if(isQuotaPayload(error,0)){enterQuotaRestMode();return;}
+    setStatus('Voz indisponível','busy');
+    addMsg('system','A voz da Emma está temporariamente indisponível. O rosto continuará ativo; tente novamente em alguns minutos.');
   }
 }
 
