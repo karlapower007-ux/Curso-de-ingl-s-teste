@@ -105,16 +105,22 @@ jobs:
           const app=fs.readFileSync('public/app.js','utf8');
 
           const fail=m=>{throw new Error(m)};
-          const enStart=worker.indexOf('return [',worker.indexOf('function publicTtsEngines'));
-          const esStart=worker.indexOf('return [',worker.indexOf('if (language === "es")'));
           if(!worker.includes('X-FNS-TTS-Cascade-Size')) fail('Cascade telemetry missing');
           if(!worker.includes('runPublicTtsCascade("en"')) fail('English cascade not wired');
           if(!worker.includes('runPublicTtsCascade("es"')) fail('Spanish cascade not wired');
 
-          const enIds=(worker.match(/id:"(?:aura-1|google-translate-tts-en|hf-[^"]+-en)"/g)||[]);
-          const esIds=(worker.match(/id:"(?:aura-2-es|google-translate-tts-es|hf-[^"]+-es)"/g)||[]);
-          if(enIds.length<10) fail('English cascade has fewer than 10 engines: '+enIds.length);
-          if(esIds.length<10) fail('Spanish cascade has fewer than 10 engines: '+esIds.length);
+          const fnStart=worker.indexOf('function publicTtsEngines');
+          const esBranch=worker.indexOf('if (language === "es")',fnStart);
+          const esReturn=worker.indexOf('return [',esBranch);
+          const esEnd=worker.indexOf('];',esReturn)+2;
+          const enReturn=worker.indexOf('return [',esEnd);
+          const enEnd=worker.indexOf('];',enReturn)+2;
+          const esBlock=worker.slice(esReturn,esEnd);
+          const enBlock=worker.slice(enReturn,enEnd);
+          const enIds=(enBlock.match(/\{id:"[^"]+"/g)||[]);
+          const esIds=(esBlock.match(/\{id:"[^"]+"/g)||[]);
+          if(enIds.length!==10) fail('English cascade must have exactly 10 engines: '+enIds.length);
+          if(esIds.length!==10) fail('Spanish cascade must have exactly 10 engines: '+esIds.length);
 
           if(!app.includes('enterQuotaRestMode')) fail('Frontend quota rest mode missing');
           if(!app.includes('mic.disabled=true')) fail('Microphone quota disable missing');
