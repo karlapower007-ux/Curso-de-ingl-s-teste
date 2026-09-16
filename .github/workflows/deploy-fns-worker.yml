@@ -33,3 +33,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: QA PT-BR roundtrip
+        run: |
+          sleep 4
+          curl --fail --silent --show-error --retry 2 --retry-delay 2             https://fns-stt.karlapower007.workers.dev/qa/language             -o qa-language.json
+          cat qa-language.json
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('qa-language.json','utf8')); if(!r.ok) throw new Error('QA endpoint failed'); if(!r.transcript_has_portuguese) throw new Error('Portuguese STT detection failed: '+JSON.stringify(r)); if(r.tts_language!=='pt-BR') throw new Error('PT-BR TTS routing failed: '+JSON.stringify(r)); console.log('QA PT-BR PASS', r);"
