@@ -2,7 +2,7 @@
 .human-avatar{
   position:relative!important;
   overflow:hidden!important;
-  background:#0a1020!important;
+  background:#0a1020 url('/emma.jpg') center 34% / cover no-repeat!important;
   isolation:isolate;
   transform-origin:50% 70%;
   animation:emmaPresence 7s ease-in-out infinite!important;
