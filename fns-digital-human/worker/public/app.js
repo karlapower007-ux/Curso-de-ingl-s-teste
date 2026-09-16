@@ -579,7 +579,10 @@ function normalizeBrowserMemory(items){
 
 function readBrowserMemory(){
   const key=memoryStorageKey();
-  for(const store of [localStorage,sessionStorage]){
+  const stores=[];
+  try{stores.push(localStorage)}catch(e){}
+  try{stores.push(sessionStorage)}catch(e){}
+  for(const store of stores){
     try{
       const raw=store.getItem(key);
       if(!raw)continue;

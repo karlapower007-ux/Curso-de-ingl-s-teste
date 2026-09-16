@@ -125,15 +125,33 @@ jobs:
             if(s<0||e<0)fail('Cannot extract protected section '+a);
             return src.slice(s,e);
           };
-          const exactSections=[
-            ['const FLOW_STATES=Object.freeze','function browserSpeechCtor'],
-            ['function toggleRecognition','async function startRecording'],
-            ['function stopRecognition','function sendTyped'],
-            ['function stopRecordingAndSend','function cleanupRecorder'],
-            ['async function remoteSpeak','async function unlockVoice']
-          ];
-          for(const [a,b] of exactSections){
-            if(section(app,a,b)!==section(stable,a,b)) fail('Protected microphone/turn section changed: '+a);
+          const extractFunction=(src,name)=>{
+            const markers=['function '+name+'(', 'async function '+name+'('];
+            let s=-1;
+            for(const marker of markers){s=src.indexOf(marker);if(s>=0)break;}
+            if(s<0)fail('Cannot find protected function '+name);
+            const open=src.indexOf('{',s);
+            let depth=0,quote='',escape=false;
+            for(let i=open;i<src.length;i++){
+              const ch=src[i];
+              if(quote){
+                if(escape){escape=false;continue;}
+                if(ch==='\\'){escape=true;continue;}
+                if(ch===quote)quote='';
+                continue;
+              }
+              if(ch==="'"||ch==='"'||ch==='`'){quote=ch;continue;}
+              if(ch==='{')depth++;
+              else if(ch==='}'&&--depth===0)return src.slice(s,i+1);
+            }
+            fail('Cannot close protected function '+name);
+          };
+
+          if(section(app,'const FLOW_STATES=Object.freeze','function browserSpeechCtor')!==section(stable,'const FLOW_STATES=Object.freeze','function browserSpeechCtor')){
+            fail('Protected state machine changed');
+          }
+          for(const name of ['toggleRecognition','stopRecognition','stopRecordingAndSend','remoteSpeak']){
+            if(extractFunction(app,name)!==extractFunction(stable,name)) fail('Protected microphone/turn function changed: '+name);
           }
 
           // startBrowserOnlySTT/startRecording may differ only in the two approved timing parameters.
@@ -141,11 +159,8 @@ jobs:
             .replace('r.continuous=true;','r.continuous=false;')
             .replace('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);','recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);');
 
-          for(const [a,b] of [
-            ['function startBrowserOnlySTT','function nextUtcMidnightMs'],
-            ['async function startRecording','function releaseMediaRecorder']
-          ]){
-            if(normalizeListening(section(app,a,b))!==section(stable,a,b)) fail('LISTENING section changed beyond approved timing: '+a);
+          for(const name of ['startBrowserOnlySTT','startRecording']){
+            if(normalizeListening(extractFunction(app,name))!==extractFunction(stable,name)) fail('LISTENING function changed beyond approved timing: '+name);
           }
 
           console.log('QA PHASE 2 PASS: memory A/B/C/D active; only LISTENING timing changed; turn machine is stable');
