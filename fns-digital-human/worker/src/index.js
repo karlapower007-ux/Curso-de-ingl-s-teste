@@ -206,7 +206,7 @@ export default {
       } catch (error) {
         return Response.json(
           { ok: false, test: "pt-BR roundtrip", error: String(error?.message || error) },
-          { status: 500, headers: { ...cors(origin), "Cache-Control": "no-store" } }
+          { status: 200, headers: { ...cors(origin), "Cache-Control": "no-store" } }
         );
       }
     }
