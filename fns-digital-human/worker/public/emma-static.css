@@ -367,3 +367,62 @@
     object-position:center center!important;
   }
 }
+
+
+/* ===== Emma original-image anchor lock v10 ===== */
+/*
+  VISUAL-ONLY LOCK.
+  Do not touch app.js, index.js, microphone, STT, TTS, turn state,
+  remote voice, or audio.onended.
+  The source artwork itself must never receive artificial top padding.
+*/
+.human-avatar .avatar-mouth-motion{
+  left:50%!important;
+  top:58%!important;
+  transform-origin:50% 50%!important;
+  transform:
+    translate(-50%,-50%)
+    translate3d(0,calc(var(--mouth-open,0) * 2.0px),0)
+    scaleX(calc(.94 + var(--mouth-wide,0) * .24))
+    scaleY(calc(.08 + var(--mouth-open,0) * 4.95))!important;
+}
+
+.human-avatar.avatar-mouth-simulated .avatar-mouth-motion{
+  animation:emmaMouthFallbackCentered 138ms cubic-bezier(.18,.82,.24,1) infinite alternate!important;
+}
+
+@keyframes emmaMouthFallbackCentered{
+  0%{
+    opacity:.40;
+    transform:translate(-50%,-50%) translate3d(0,.1px,0) scaleX(.95) scaleY(.30);
+  }
+  22%{
+    opacity:.88;
+    transform:translate(-50%,-50%) translate3d(0,1.3px,0) scaleX(1.04) scaleY(2.90);
+  }
+  48%{
+    opacity:1;
+    transform:translate(-50%,-50%) translate3d(0,2.1px,0) scaleX(1.10) scaleY(4.55);
+  }
+  70%{
+    opacity:.82;
+    transform:translate(-50%,-50%) translate3d(0,.9px,0) scaleX(1.02) scaleY(2.20);
+  }
+  100%{
+    opacity:1;
+    transform:translate(-50%,-50%) translate3d(0,2.4px,0) scaleX(1.12) scaleY(4.95);
+  }
+}
+
+@media(max-width:820px){
+  .human-avatar .avatar-mouth-motion{
+    left:50%!important;
+    top:58%!important;
+    width:10.2%!important;
+    transform:
+      translate(-50%,-50%)
+      translate3d(0,calc(var(--mouth-open,0) * 2.0px),0)
+      scaleX(calc(.94 + var(--mouth-wide,0) * .24))
+      scaleY(calc(.08 + var(--mouth-open,0) * 4.95))!important;
+  }
+}
