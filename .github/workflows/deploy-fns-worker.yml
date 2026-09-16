@@ -165,6 +165,10 @@ jobs:
           const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
           const code=process.env.CHAT_CODE;
           if(code!=='200') throw new Error('Chat fallback not available; HTTP '+code+' '+JSON.stringify(r));
-          if(!r.ok || !String(r.reply||'').trim()) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
+          const reply=String(r.reply||'').trim();
+          if(!r.ok || !reply) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
+          if(/api key.*(budget|limit)|raise the key budget|rate.?limit|quota exceeded|insufficient (credits|balance)|unauthorized|forbidden/i.test(reply)){
+            throw new Error('Chat provider returned a quota/auth message instead of a real reply: '+reply);
+          }
           console.log('QA BRAIN PASS model='+r.model+' fallback='+Boolean(r.fallback));
           NODE
