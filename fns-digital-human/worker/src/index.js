@@ -80,16 +80,31 @@ function sanitizeForSpeech(input) {
 function detectSpeechLanguage(text, requested="") {
   const explicit = String(requested || "").toLowerCase();
   if (explicit.startsWith("pt")) return "pt-BR";
-  if (explicit.startsWith("es")) return "es";
+  if (explicit.startsWith("es")) return "es-ES";
   if (explicit.startsWith("en")) return "en";
 
   const sample = String(text || "").toLowerCase();
 
-  const ptHits = (sample.match(/\b(que|não|nao|você|voce|para|com|uma|como|por|isso|está|esta|sou|meu|minha|obrigado|obrigada|porque|também|tambem|português|portugues)\b/g) || []).length;
-  const esHits = (sample.match(/\b(que|no|usted|tú|tu|para|con|una|como|por|eso|está|soy|mi|gracias|porque|también|tambien|español|espanol)\b/g) || []).length;
+  let pt = 0;
+  let es = 0;
+  let en = 0;
 
-  if (ptHits >= 2 && ptHits > esHits) return "pt-BR";
-  if (esHits >= 2 && esHits > ptHits) return "es";
+  if (/[ãõçáâêô]/u.test(sample)) pt += 3;
+  if (/[ñ¿¡]/u.test(sample)) es += 3;
+
+  const ptWords = ["olá","ola","você","voce","não","nao","estou","quero","obrigado","obrigada","português","portugues","também","tambem","agora","hoje","tudo","bem","meu","minha","seu","sua","preciso","gostaria","falar","fala","qual","porque","como"];
+  const esWords = ["hola","usted","tú","tu","no","estoy","quiero","gracias","español","espanol","también","tambien","ahora","hoy","todo","bien","mi","mío","mio","necesito","gustaría","gustaria","hablar","habla","qué","que","cómo","como"];
+  const enWords = ["hello","hi","you","your","the","is","are","am","i","my","want","need","today","now","thanks","thank","how","what","why","english"];
+
+  const words = sample.match(/\p{L}+/gu) || [];
+  for (const w of words) {
+    if (ptWords.includes(w)) pt += 1;
+    if (esWords.includes(w)) es += 1;
+    if (enWords.includes(w)) en += 1;
+  }
+
+  if (pt > es && pt >= en && pt >= 2) return "pt-BR";
+  if (es > pt && es >= en && es >= 2) return "es-ES";
   return "en";
 }
 
@@ -138,9 +153,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-15.4-polyglot",
+          version: "2026-09-16.1-native-language-routing",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "@cf/deepgram/aura-1 + @cf/deepgram/aura-2-es + multilingual fallback",
+          tts: "English Aura-1 + Spanish Aura-2-es + Portuguese xAI Grok TTS pt-BR",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -162,13 +177,15 @@ export default {
           audio: toBase64(buffer),
           task: "transcribe",
           vad_filter: true,
-          condition_on_previous_text: false
+          condition_on_previous_text: false,
+          initial_prompt: "The speaker may use English, Brazilian Portuguese, Spanish, or switch between them. Transcribe the spoken language faithfully; do not translate."
         });
 
         const text = String(result?.text || result?.transcription_info?.text || "").trim();
+        const detectedLanguage = String(result?.language || result?.transcription_info?.language || detectSpeechLanguage(text));
 
         return Response.json(
-          { ok: true, text },
+          { ok: true, text, language: detectedLanguage },
           { headers: { ...cors(origin), "Cache-Control": "no-store", ...latencyHeaders(startedAt) } }
         );
       } catch (error) {
@@ -218,8 +235,8 @@ export default {
         let voiceModel = "@cf/deepgram/aura-1";
         let raw;
 
-        if (language === "es") {
-          // Aura-2 Spanish provides a native Spanish voice instead of an English-accented reading.
+        if (language === "es-ES") {
+          // Native Spanish route.
           voiceModel = "@cf/deepgram/aura-2-es";
           speaker = "celeste";
           raw = await env.AI.run(
@@ -228,24 +245,25 @@ export default {
             { returnRawResponse: true }
           );
         } else if (language === "pt-BR") {
-          // Cloudflare does not currently expose a native Portuguese Aura model.
-          // Try its multilingual MeloTTS interface first; if unavailable, keep the proven Aura path as fallback.
-          voiceModel = "@cf/myshell-ai/melotts";
-          raw = await env.AI.run(
-            voiceModel,
-            { prompt: text, lang: "pt" },
-            { returnRawResponse: true }
-          ).catch(() => null);
+          // Native Brazilian Portuguese route through Cloudflare's unified AI binding.
+          // Grok TTS explicitly supports pt-BR and avoids English phonetics.
+          voiceModel = "xai/grok-tts";
+          speaker = "ara";
 
-          if (!(raw instanceof Response) || !raw.ok) {
-            voiceModel = "@cf/deepgram/aura-1";
-            speaker = "asteria";
-            raw = await env.AI.run(
-              voiceModel,
-              { text, speaker, encoding: "mp3" },
-              { returnRawResponse: true }
-            );
+          const generated = await env.AI.run(voiceModel, {
+            text,
+            voice_id: speaker,
+            language: "pt-BR",
+            text_normalization: true,
+            output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 }
+          });
+
+          const audioUrl = generated?.result?.audio || generated?.audio || "";
+          if (!audioUrl) {
+            throw new Error("Portuguese TTS did not return an audio URL.");
           }
+
+          raw = await fetch(audioUrl);
         } else {
           raw = await env.AI.run(
             voiceModel,
@@ -253,7 +271,6 @@ export default {
             { returnRawResponse: true }
           );
         }
-
         if (!(raw instanceof Response)) {
           return Response.json(
             { ok: false, error: "O mecanismo de voz não retornou uma resposta de áudio." },
@@ -324,6 +341,7 @@ export default {
 
         const reply = extractText(result) || "Could you say that again?";
         const speech = sanitizeForSpeech(reply) || "Could you say that again?";
+        const responseLanguage = detectSpeechLanguage(speech, body?.language || "");
 
         return Response.json(
           {
@@ -331,7 +349,8 @@ export default {
             teacher,
             model: "@cf/openai/gpt-oss-120b",
             reply,
-            speech
+            speech,
+            language: responseLanguage
           },
           { headers: { ...cors(origin), "Cache-Control": "no-store", ...latencyHeaders(startedAt) } }
         );
