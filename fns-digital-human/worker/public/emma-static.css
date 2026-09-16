@@ -426,3 +426,101 @@
       scaleY(calc(.08 + var(--mouth-open,0) * 4.95))!important;
   }
 }
+
+
+/* ===== Emma PNG original lossless lock v11 ===== */
+/*
+  VISUAL-ONLY FINAL OVERRIDE.
+  app.js, src/index.js, microphone, STT, TTS, memory, turn machine
+  and audio.onended remain untouched.
+  Use the original PNG exactly as stored: no quantization, no filter,
+  no crop, no stretch and no shader/canvas covering the portrait.
+*/
+.avatar-stage{
+  min-height:0!important;
+  height:auto!important;
+  aspect-ratio:1/1!important;
+  align-self:start!important;
+  border:0!important;
+  background:#080d18!important;
+}
+
+.avatar-face.human-avatar,
+.human-avatar{
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  aspect-ratio:1/1!important;
+  background:none!important;
+  overflow:hidden!important;
+}
+
+.human-avatar .avatar-webgl-layer,
+.human-avatar .avatar-camera-vignette{
+  display:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+}
+
+.human-avatar .avatar-photo-base,
+.human-avatar[data-avatar-ready="false"] .avatar-photo-base,
+.human-avatar[data-avatar-ready="true"] .avatar-photo-base,
+.human-avatar[data-avatar-ready="error"] .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="fallback-2d"] .avatar-photo-base{
+  content:url('/emma.png?v=original-lossless-v11')!important;
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  transform:none!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  clip-path:none!important;
+  mask:none!important;
+  -webkit-mask:none!important;
+  image-rendering:auto!important;
+  z-index:9999!important;
+}
+
+.human-avatar .avatar-fx-layer{
+  inset:0!important;
+  z-index:10000!important;
+  background:transparent!important;
+}
+
+.human-avatar .avatar-mouth-motion{
+  left:50%!important;
+  top:58%!important;
+  z-index:10001!important;
+  transform-origin:50% 50%!important;
+}
+
+@media(max-width:820px){
+  .avatar-stage,
+  .avatar-face.human-avatar,
+  .human-avatar{
+    aspect-ratio:1/1!important;
+    min-height:0!important;
+    height:auto!important;
+  }
+  .human-avatar .avatar-photo-base,
+  .human-avatar[data-avatar-ready="false"] .avatar-photo-base,
+  .human-avatar[data-avatar-ready="true"] .avatar-photo-base,
+  .human-avatar[data-avatar-ready="error"] .avatar-photo-base{
+    content:url('/emma.png?v=original-lossless-v11')!important;
+    object-fit:contain!important;
+    object-position:center center!important;
+    transform:none!important;
+    filter:none!important;
+  }
+  .human-avatar .avatar-mouth-motion{
+    left:50%!important;
+    top:58%!important;
+  }
+}
