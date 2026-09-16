@@ -1,6 +1,7 @@
 const FNS_API_BASE=location.hostname.endsWith('workers.dev')?'':'https://fns-stt.karlapower007.workers.dev';
 const FNS_STT_URL=FNS_API_BASE+'/stt';
 const FNS_CHAT_URL=FNS_API_BASE+'/chat';
+const FNS_REPAIR_STT_URL=FNS_API_BASE+'/repair-transcript';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
@@ -237,6 +238,121 @@ function transcriptLooksCorrupt(text,confidence=0){
     (confidence>0 && confidence<0.12 && uniqueRatio<0.50);
 }
 
+
+function collapseRepeatedTranscriptPhrases(input){
+  let text=normalizeTranscriptText(input);
+  if(!text)return '';
+
+  // Plano B: remove loops de uma palavra (4+) e de frases curtas (3+).
+  text=text.replace(/\b(\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){3,}\b/giu,'$1');
+  text=text.replace(/\b((?:\p{L}[\p{L}\p{M}'’-]*\s+){1}\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){2,}\b/giu,'$1');
+  text=text.replace(/\b((?:\p{L}[\p{L}\p{M}'’-]*\s+){2}\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){2,}\b/giu,'$1');
+
+  return normalizeTranscriptText(text);
+}
+
+function isLikelySttNoise(input){
+  const plain=normalizeTranscriptText(input)
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+  if(!plain)return true;
+  const words=plain.split(' ').filter(Boolean);
+  if(words.length>5)return false;
+  const noise=new Set([
+    'obrigado','obrigada','muito obrigado','muito obrigada',
+    'thanks','thank you','thanks for watching','thank you for watching',
+    'legendas','legendas pela comunidade','subtitles','subtitle',
+    'music','música','musica','applause','aplausos','silence','silêncio','silencio'
+  ]);
+  return noise.has(plain);
+}
+
+async function repairTranscriptWithLLM(rawText,regexCleaned=''){
+  const raw=normalizeTranscriptText(rawText).slice(0,700);
+  const cleaned=normalizeTranscriptText(regexCleaned).slice(0,700);
+  if(!raw)return '';
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort('stt-repair-timeout'),2600);
+  try{
+    const response=await fetch(FNS_REPAIR_STT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        text:raw,
+        cleaned,
+        language:selectedSttLanguage()
+      }),
+      signal:controller.signal
+    });
+    if(!response.ok)return '';
+    const data=await response.json().catch(()=>({}));
+    const repaired=normalizeTranscriptText(data?.text||'');
+    if(!repaired||isLikelySttNoise(repaired)||transcriptLooksCorrupt(repaired,1))return '';
+    return repaired;
+  }catch(error){
+    return '';
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function recoverTranscriptCandidate(rawText,confidence=0){
+  const raw=normalizeTranscriptText(rawText);
+  if(!raw)return {kind:'empty',text:''};
+
+  // Plano E: ruído/alucinação curta conhecida some silenciosamente.
+  if(isLikelySttNoise(raw))return {kind:'noise',text:''};
+
+  // Plano A: Whisper/Web Speech veio limpo.
+  if(!transcriptLooksCorrupt(raw,confidence))return {kind:'direct',text:raw};
+
+  // Plano B: sanitizador + colapso de loops.
+  const cleaned=collapseRepeatedTranscriptPhrases(raw);
+  if(cleaned && !isLikelySttNoise(cleaned) && !transcriptLooksCorrupt(cleaned,1)){
+    return {kind:'regex',text:cleaned};
+  }
+
+  // Plano C: LLM rápido tenta recuperar somente o que é sustentado pela transcrição.
+  const repaired=await repairTranscriptWithLLM(raw,cleaned);
+  if(repaired)return {kind:'llm',text:repaired};
+
+  return {kind:'failed',text:''};
+}
+
+function sttGracefulFailureText(){
+  const lang=inferBrowserSttLanguage();
+  if(lang==='en-US')return "Sorry, I couldn't understand because of the noise. Could you repeat that?";
+  if(lang==='es-ES')return 'Lo siento, no pude entenderte por el ruido. ¿Puedes repetirlo?';
+  if(lang==='fr-FR')return "Désolée, je n'ai pas pu comprendre à cause du bruit. Peux-tu répéter ?";
+  if(lang==='de-DE')return 'Entschuldigung, wegen der Geräusche konnte ich dich nicht verstehen. Kannst du das wiederholen?';
+  if(lang==='it-IT')return 'Scusa, non sono riuscita a capire a causa del rumore. Puoi ripetere?';
+  return 'Desculpe, não consegui entender devido ao ruído. Pode repetir?';
+}
+
+let sttGracefulFailureInFlight=false;
+async function gracefulSttFailure(){
+  if(sttGracefulFailureInFlight)return false;
+  sttGracefulFailureInFlight=true;
+  const message=sttGracefulFailureText();
+  try{
+    if(flowState!==FLOW_STATES.PROCESSING){
+      setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Pode repetir'});
+    }
+    addMsg('teacher',message);
+    const spoken=await speak(message);
+    if(!spoken && flowState!==FLOW_STATES.IDLE){
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+    }
+    return true;
+  }finally{
+    sttGracefulFailureInFlight=false;
+  }
+}
+
+
 function replyLanguageInstruction(text){
   const selected=selectedSttLanguage();
   const sample=String(text||'').toLowerCase();
@@ -270,8 +386,7 @@ function startBrowserOnlySTT(){
   if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return false;
   const Ctor=browserSpeechCtor();
   if(!Ctor){
-    addMsg('system','Este navegador não oferece SpeechRecognition. Você ainda pode digitar sua mensagem normalmente.');
-    refreshFlowControls('Digite sua mensagem');
+    void gracefulSttFailure();
     return false;
   }
 
@@ -331,26 +446,31 @@ function startBrowserOnlySTT(){
     detachBrowserRecognition(r);
     const face=document.querySelector('#avatarFace');
     if(face)face.classList.remove('avatar-listening');
-
-    if(errorCode && errorCode!=='aborted' && errorCode!=='no-speech'){
-      addMsg('system','O reconhecimento de voz do navegador falhou ('+errorCode+'). Tente novamente ou digite.');
-    }
+    browserFallbackTranscript='';
 
     if(!text){
+      if(errorCode && errorCode!=='aborted' && errorCode!=='no-speech'){
+        await gracefulSttFailure();
+      }else{
+        setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
+      }
+      return;
+    }
+
+    setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Limpando transcrição'});
+    const recovered=await recoverTranscriptCandidate(text,confidence);
+
+    if(recovered.kind==='noise'||recovered.kind==='empty'){
       setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
       return;
     }
 
-    if(transcriptLooksCorrupt(text,confidence)){
-      browserFallbackTranscript='';
-      addMsg('system','A transcrição ficou insegura e repetitiva, então não enviei texto errado para a Emma. Fale novamente com calma ou escolha o idioma do microfone.');
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Repita a frase'});
+    if(recovered.text){
+      await handleUser(recovered.text,{stateOwned:true});
       return;
     }
 
-    browserFallbackTranscript='';
-    setFlowState(FLOW_STATES.PROCESSING,{force:true,status:'Processing'});
-    await handleUser(text,{stateOwned:true});
+    await gracefulSttFailure();
   };
 
   try{
@@ -473,7 +593,7 @@ function startBrowserFallbackOnce(reason=''){
     if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing || isRecording)return;
     const started=startBrowserOnlySTT();
     if(!started){
-      refreshFlowControls('Fallback do navegador pronto • toque em Falar');
+      void gracefulSttFailure();
     }
   },80);
 }
@@ -485,7 +605,6 @@ async function startRecording(){
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
-    addMsg('system','Este navegador não oferece gravação MediaRecorder compatível. Ativando o reconhecimento de voz do navegador.');
     startBrowserFallbackOnce('MediaRecorder indisponível');
     return;
   }
@@ -513,7 +632,6 @@ async function startRecording(){
     const audioTrack=stream.getAudioTracks?.()[0]||null;
     if(!audioTrack){
       stream.getTracks().forEach(t=>t.stop());
-      addMsg('system','Nenhum microfone ativo foi encontrado no computador.');
       startBrowserFallbackOnce('microfone não detectado');
       return;
     }
@@ -541,7 +659,6 @@ async function startRecording(){
     recorder.onerror=()=>{
       if(session!==mediaSessionSeq)return;
       cancelMediaRecorderSession(session);
-      addMsg('system','Falha ao gravar o microfone do PC. Ativando reconhecimento do navegador.');
       startBrowserFallbackOnce('falha no MediaRecorder');
     };
 
@@ -555,7 +672,6 @@ async function startRecording(){
       if(face)face.classList.remove('avatar-listening');
 
       if(blob.size<1200){
-        addMsg('system','Nenhum áudio útil foi captado. Vou tentar o reconhecimento do navegador uma vez.');
         startBrowserFallbackOnce('áudio vazio');
         return;
       }
@@ -565,7 +681,6 @@ async function startRecording(){
         const wav=await recordingToWav(blob);
         await transcribeWithFNS(wav);
       }catch(error){
-        addMsg('system','O áudio foi captado, mas não pôde ser preparado. Vou tentar o reconhecimento do navegador.');
         startBrowserFallbackOnce('falha ao preparar áudio');
       }
     };
@@ -574,7 +689,6 @@ async function startRecording(){
   }catch(err){
     if(stream)stream.getTracks().forEach(t=>t.stop());
     if(session===mediaSessionSeq){
-      addMsg('system','Não consegui acessar o microfone do PC: '+(err?.message||err)+'. Tentando reconhecimento do navegador.');
       startBrowserFallbackOnce('acesso ao microfone');
     }
   }
@@ -678,9 +792,9 @@ async function transcribeWithFNS(blob){
     });
     const data=await res.json().catch(()=>({}));
 
+    // Plano D: se Whisper/Workers AI falhar ou estourar timeout/cota, use Web Speech.
     if(isSttBackendFailure(data,res.status)){
       if(isQuotaPayload(data,res.status))neuralQuotaExhausted=true;
-      addMsg('system','O ouvido neural ficou indisponível. Vou tentar o reconhecimento do navegador uma vez.');
       startBrowserFallbackOnce('HTTP '+res.status);
       return;
     }
@@ -689,20 +803,26 @@ async function transcribeWithFNS(blob){
 
     const text=normalizeTranscriptText(data?.text||'');
     if(!text){
-      addMsg('system','O Whisper não detectou fala. Vou tentar o reconhecimento do navegador uma vez.');
       startBrowserFallbackOnce('Whisper sem fala');
       return;
     }
 
-    if(transcriptLooksCorrupt(text,1)){
-      addMsg('system','A transcrição neural pareceu corrompida ou repetitiva. Não enviei o texto errado. Fale novamente.');
-      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Repita a frase'});
+    const recovered=await recoverTranscriptCandidate(text,1);
+
+    // Plano E: ruído conhecido é ignorado sem bloco de erro.
+    if(recovered.kind==='noise'||recovered.kind==='empty'){
+      setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
       return;
     }
 
-    await handleUser(text,{stateOwned:true});
+    if(recovered.text){
+      await handleUser(recovered.text,{stateOwned:true});
+      return;
+    }
+
+    // Se A/B/C não recuperarem, tente D.
+    startBrowserFallbackOnce('Whisper irreparável');
   }catch(err){
-    addMsg('system','O reconhecimento neural falhou. Vou tentar o reconhecimento do navegador uma vez.');
     startBrowserFallbackOnce('rede indisponível');
   }
 }

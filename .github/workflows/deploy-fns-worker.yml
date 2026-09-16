@@ -167,8 +167,9 @@ jobs:
             "r.lang=inferBrowserSttLanguage();",
             "bestSpeechAlternative",
             "normalizeTranscriptText",
-            "transcriptLooksCorrupt",
-            "await handleUser(text,{stateOwned:true});"
+            "recoverTranscriptCandidate",
+            "gracefulSttFailure",
+            "await handleUser(recovered.text,{stateOwned:true});"
           ]) if(!browserStt.includes(token)) fail('Browser STT invariant missing: '+token);
           if(browserStt.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
 
@@ -248,15 +249,50 @@ jobs:
           console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
 
+
+      - name: QA STT fallback turbines A-F
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const fail=m=>{throw new Error(m)};
+
+          for(const token of [
+            "FNS_REPAIR_STT_URL",
+            "recoverTranscriptCandidate",
+            "collapseRepeatedTranscriptPhrases",
+            "repairTranscriptWithLLM",
+            "isLikelySttNoise",
+            "startBrowserFallbackOnce('Whisper irreparável')",
+            "gracefulSttFailure",
+            "Desculpe, não consegui entender devido ao ruído. Pode repetir?"
+          ]) if(!app.includes(token)) fail('Frontend STT turbine missing: '+token);
+
+          for(const token of [
+            'url.pathname === "/repair-transcript"',
+            'collapseTranscriptRepetitions',
+            'gpt-oss-transcript-repair',
+            'return exactly EMPTY'
+          ]) if(!worker.includes(token)) fail('Worker STT repair missing: '+token);
+
+          for(const forbidden of [
+            'A transcrição ficou insegura e repetitiva, então não enviei texto errado para a Emma.',
+            'A transcrição neural pareceu corrompida ou repetitiva. Não enviei o texto errado.'
+          ]) if(app.includes(forbidden)) fail('Aggressive blocking UI returned: '+forbidden);
+
+          console.log('QA STT TURBINES PASS: A Whisper, B regex, C LLM repair, D browser fallback, E noise ignore, F Emma TTS retry');
+          NODE
+
       - name: Guard visual-only patch
         run: |
           APP_HASH=$(git hash-object public/app.js)
           WORKER_HASH=$(git hash-object src/index.js)
           echo "app.js blob=$APP_HASH"
           echo "src/index.js blob=$WORKER_HASH"
-          test "$APP_HASH" = "5d25297451d8df5311209a7ace2522b3ef058d66"
-          test "$WORKER_HASH" = "92401e60c2d8589c22305d0d2e7fbaaa0126add5"
-          echo "QA NEW CORE BASELINE PASS: requested multilingual STT and memory changes locked; audio playback, TTS and turn release remain protected"
+          test "$APP_HASH" = "f5e12813945286a1c42d52c5e51ec8b34df6c187"
+          test "$WORKER_HASH" = "8b1596a49ef2c0606591419fd300641af542dabd"
+          echo "QA STT TURBINE BASELINE PASS: A-F transcription recovery locked; audio playback, TTS and turn release remain protected"
 
       - name: QA Emma JPEG integrity
         run: |
@@ -425,10 +461,10 @@ jobs:
           const fs=require('fs');
           const app=fs.readFileSync('phase2-app.js','utf8');
           const health=JSON.parse(fs.readFileSync('phase2-health.json','utf8'));
-          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000']){
+          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000','recoverTranscriptCandidate','gracefulSttFailure','FNS_REPAIR_STT_URL']){
             if(!app.includes(token)) throw new Error('Production Phase 2 frontend missing: '+token);
           }
-          if(health.version!=='2026-09-16.23-stt-memory-continuity') throw new Error('Wrong production health version: '+health.version);
+          if(health.version!=='2026-09-16.24-stt-fallback-turbines') throw new Error('Wrong production health version: '+health.version);
           console.log('QA PHASE 2 PRODUCTION PASS: browser memory + extended LISTENING + memory-aware Worker deployed');
           NODE
 

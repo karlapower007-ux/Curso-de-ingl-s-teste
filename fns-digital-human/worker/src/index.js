@@ -21,6 +21,16 @@ function sanitizeTranscriptText(input){
     .trim();
 }
 
+
+function collapseTranscriptRepetitions(input){
+  let text=sanitizeTranscriptText(input);
+  if(!text)return "";
+  text=text.replace(/\b(\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){3,}\b/giu,"$1");
+  text=text.replace(/\b((?:\p{L}[\p{L}\p{M}'’-]*\s+){1}\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){2,}\b/giu,"$1");
+  text=text.replace(/\b((?:\p{L}[\p{L}\p{M}'’-]*\s+){2}\p{L}[\p{L}\p{M}'’-]*)(?:\s+\1){2,}\b/giu,"$1");
+  return sanitizeTranscriptText(text);
+}
+
 function normalizeRequestedSttLanguage(value){
   const raw=String(value||"auto").trim().toLowerCase();
   if(!raw||raw==="auto"||raw==="device")return "";
@@ -813,8 +823,8 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.23-stt-memory-continuity",
-          stt: "@cf/openai/whisper-large-v3-turbo • multilingual auto/hint • transcript hygiene",
+          version: "2026-09-16.24-stt-fallback-turbines",
+          stt: "@cf/openai/whisper-large-v3-turbo • A-F fallback turbines • regex + LLM repair + browser contingency",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
           chat: "Cloudflare GPT-OSS + resilient session memory + browser Pollinations/LLM7 + local teaching fallback"
         },
@@ -853,6 +863,64 @@ export default {
         return Response.json(
           { ok: false, error: String(error?.message || error) },
           { status: 500, headers: cors(origin) }
+        );
+      }
+    }
+
+
+    if (url.pathname === "/repair-transcript" && request.method === "POST") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const raw = sanitizeTranscriptText(body?.text || "").slice(0,700);
+        const regexCleaned = collapseTranscriptRepetitions(body?.cleaned || raw).slice(0,700);
+        const requestedLanguage = String(body?.language || "auto").slice(0,24);
+
+        if (!raw) {
+          return Response.json({ok:true,text:"",engine:"empty"}, {headers:{...cors(origin),"Cache-Control":"no-store"}});
+        }
+
+        const messages = [
+          {
+            role:"system",
+            content:
+              "You repair corrupted speech-to-text transcripts. Return ONLY the repaired transcript, with no explanation. " +
+              "Preserve the speaker's language and intended words. Remove obvious repeated loops, stray symbols and encoding artifacts. " +
+              "Do not invent facts, names or missing content. If the real utterance cannot be recovered with reasonable confidence, return exactly EMPTY."
+          },
+          {
+            role:"user",
+            content:
+              "Language hint: "+requestedLanguage+
+              "\nRAW STT: "+raw+
+              "\nREGEX CLEANED: "+regexCleaned
+          }
+        ];
+
+        const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
+          messages,
+          max_tokens: 96,
+          temperature: 0
+        });
+
+        let repaired = sanitizeTranscriptText(extractText(result));
+        repaired = repaired.replace(/^["'“”‘’]+|["'“”‘’]+$/gu,"").trim();
+        if (/^EMPTY[.!]?$/i.test(repaired)) repaired="";
+        if (repaired.length > 700) repaired=repaired.slice(0,700).trim();
+
+        return Response.json(
+          {ok:true,text:repaired,engine:"gpt-oss-transcript-repair"},
+          {headers:{...cors(origin),"Cache-Control":"no-store","X-FNS-STT-Repair":"llm"}}
+        );
+      } catch (error) {
+        return Response.json(
+          {
+            ok:false,
+            code:"FNS_STT_REPAIR_UNAVAILABLE",
+            repair_unavailable:true,
+            quota_exhausted:isWorkersAIQuotaError(error),
+            text:""
+          },
+          {status:503,headers:{...cors(origin),"Cache-Control":"no-store"}}
         );
       }
     }
@@ -991,7 +1059,7 @@ export default {
     }
 
     return Response.json(
-      { error: "Use GET /health, POST /stt, POST /tts ou POST /chat." },
+      { error: "Use GET /health, POST /stt, POST /repair-transcript, POST /tts ou POST /chat." },
       { status: 404, headers: cors(origin) }
     );
   }
