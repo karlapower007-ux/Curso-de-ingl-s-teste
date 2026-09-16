@@ -500,6 +500,128 @@ async function portugueseWaterfall(env,text,origin) {
   return new Response(emergency.body,{status:emergency.status,headers});
 }
 
+
+function extractTextFromUnknown(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    for (let i=value.length-1;i>=0;i--) {
+      const t=extractTextFromUnknown(value[i]);
+      if (t) return t;
+    }
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["content","text","response","answer","message","value"]) {
+      const t=extractTextFromUnknown(value[key]);
+      if (t) return t;
+    }
+  }
+  return "";
+}
+
+async function gradioChatFallback(base,messages,timeoutMs=9000) {
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort("chat-fallback-timeout"),timeoutMs);
+
+  try {
+    const userMessage=String(messages[messages.length-1]?.content||"");
+    const systemMessage=String(messages.find(x=>x?.role==="system")?.content||"");
+    const historyMessages=messages
+      .filter(x=>x && ["user","assistant"].includes(x.role))
+      .slice(0,-1)
+      .map(x=>({role:x.role,content:String(x.content||"")}));
+    const historyPairs=[];
+    for(let i=0;i<historyMessages.length;i+=2){
+      historyPairs.push([
+        historyMessages[i]?.content||"",
+        historyMessages[i+1]?.content||""
+      ]);
+    }
+
+    let discovered=[];
+    try {
+      const info=await fetch(base+"/gradio_api/openapi.json",{signal:controller.signal});
+      if(info.ok){
+        const spec=await info.json();
+        discovered=Object.keys(spec?.paths||{})
+          .map(p=>{
+            const m=p.match(/\/call\/([^/{]+)/);
+            return m?m[1]:"";
+          })
+          .filter(Boolean);
+      }
+    } catch(e){}
+
+    const names=[...new Set([
+      ...discovered,
+      "chat","predict","generate","generate_response","chatbot","_chat_fn","submit"
+    ])];
+
+    const dataVariants=[
+      [userMessage,historyMessages,systemMessage,256,0.6,0.9,50,1.1],
+      [userMessage,historyPairs,systemMessage,256,0.6,0.9,50,1.1],
+      [userMessage,historyMessages,systemMessage],
+      [userMessage,historyPairs,systemMessage],
+      [userMessage,historyMessages],
+      [userMessage,historyPairs],
+      [userMessage]
+    ];
+
+    for(const name of names){
+      for(const data of dataVariants){
+        try{
+          const submit=await fetch(base+"/gradio_api/call/"+encodeURIComponent(name),{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({data}),
+            signal:controller.signal
+          });
+          if(!submit.ok) continue;
+
+          const json=await submit.json().catch(()=>null);
+          if(!json?.event_id) continue;
+
+          const resultResponse=await fetch(
+            base+"/gradio_api/call/"+encodeURIComponent(name)+"/"+encodeURIComponent(json.event_id),
+            {signal:controller.signal}
+          );
+          if(!resultResponse.ok) continue;
+
+          const sse=await resultResponse.text();
+          const payload=parseSseData(sse);
+          const text=extractTextFromUnknown(payload);
+          if(text && text.length>1) return text;
+        }catch(error){
+          if(controller.signal.aborted) throw error;
+        }
+      }
+    }
+
+    throw new Error("No compatible public Gradio chat endpoint responded.");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function publicChatFallback(messages) {
+  const providers=[
+    {id:"hf-qwen3-free-chat",base:"https://zacheus10-free-ai-chat.hf.space"},
+    {id:"hf-llama2-chat",base:"https://huggingface-projects-llama-2-7b-chat.hf.space"},
+    {id:"hf-gemma3-chat",base:"https://cognitivescience-gemma-3-chat.hf.space"}
+  ];
+
+  const failures=[];
+  for(const provider of providers){
+    try{
+      const reply=await gradioChatFallback(provider.base,messages,9000);
+      if(reply) return {reply,model:provider.id};
+    }catch(error){
+      failures.push(provider.id+": "+String(error?.message||error).slice(0,160));
+    }
+  }
+
+  throw new Error("Public chat fallbacks unavailable: "+failures.join(" | "));
+}
+
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -552,10 +674,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.8-supercascade-visual-resilience",
+          version: "2026-09-16.9-immortal-ear-brain",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
-          chat: "@cf/openai/gpt-oss-120b"
+          chat: "Cloudflare GPT-OSS + public Hugging Face Gradio fallbacks"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -655,22 +777,44 @@ export default {
           { role: "user", content: message }
         ];
 
-        const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
-          messages,
-          max_tokens: 220,
-          temperature: 0.55
-        });
+        let reply="";
+        let model="@cf/openai/gpt-oss-120b";
+        let cloudError=null;
 
-        const reply = extractText(result) || "Could you say that again?";
+        try {
+          const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
+            messages,
+            max_tokens: 220,
+            temperature: 0.55
+          });
+          reply=extractText(result);
+          if(!reply) throw new Error("Cloudflare chat returned an empty reply.");
+        } catch(error) {
+          cloudError=error;
+        }
+
+        if(!reply){
+          try{
+            const fallback=await publicChatFallback(messages);
+            reply=fallback.reply;
+            model=fallback.model;
+          }catch(fallbackError){
+            if(isWorkersAIQuotaError(cloudError) || isWorkersAIQuotaError(fallbackError)){
+              return quotaResponse(origin,"chat");
+            }
+            throw fallbackError;
+          }
+        }
 
         return Response.json(
           {
             ok: true,
             teacher,
-            model: "@cf/openai/gpt-oss-120b",
+            model,
+            fallback: model !== "@cf/openai/gpt-oss-120b",
             reply
           },
-          { headers: { ...cors(origin), "Cache-Control": "no-store" } }
+          { headers: { ...cors(origin), "Cache-Control": "no-store", "X-FNS-Chat-Engine": model } }
         );
       } catch (error) {
         if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "chat");
