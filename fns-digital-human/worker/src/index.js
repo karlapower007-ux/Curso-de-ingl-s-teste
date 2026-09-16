@@ -557,6 +557,11 @@ async function gradioChatFallback(base,messages,timeoutMs=9000) {
     ])];
 
     const dataVariants=[
+      // Gradio 6 ChatInterface + additional_inputs for Zacheus10/free-ai-chat.
+      // generate(message, chat_history, max_new_tokens, temperature)
+      [userMessage,historyMessages,320,0.65],
+      [userMessage,historyMessages,192,0.55],
+      // Compatibility variants for older/public Spaces.
       [userMessage,historyMessages,systemMessage,256,0.6,0.9,50,1.1],
       [userMessage,historyPairs,systemMessage,256,0.6,0.9,50,1.1],
       [userMessage,historyMessages,systemMessage],
@@ -648,46 +653,34 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
 async function publicChatFallback(messages) {
   const failures=[];
 
-  // Current no-key public endpoint: Qwen3-4B on Hugging Face ZeroGPU.
-  // The Space itself documents an OpenAI-compatible /v1/chat/completions API
-  // and requires no token or signup.
-  const openAIProviders=[
+  // Primary no-key emergency brain.
+  // Zacheus10/free-ai-chat is a current public Hugging Face ZeroGPU Space
+  // using gr.ChatInterface(fn=generate). Gradio 6 exposes the function name
+  // as the public API endpoint, so the call is /gradio_api/call/generate.
+  const gradioProviders=[
     {
       id:"hf-zacheus-qwen3-4b-public",
-      url:"https://zacheus10-free-ai-chat.hf.space/v1/chat/completions",
-      model:"local-ai",
-      timeoutMs:18000
+      base:"https://zacheus10-free-ai-chat.hf.space",
+      timeoutMs:45000
+    },
+    {
+      id:"hf-qwen3-demo-public",
+      base:"https://qwen-qwen3-demo.hf.space",
+      timeoutMs:22000
+    },
+    {
+      id:"hf-gemma3-chat-public",
+      base:"https://cognitivescience-gemma-3-chat.hf.space",
+      timeoutMs:22000
     }
-  ];
-
-  for(const provider of openAIProviders){
-    try{
-      const reply=await noKeyOpenAIChat(
-        provider.url,
-        provider.model,
-        messages,
-        provider.timeoutMs
-      );
-      if(reply) return {reply,model:provider.id};
-    }catch(error){
-      failures.push(provider.id+": "+String(error?.message||error).slice(0,180));
-    }
-  }
-
-  // Independent public Hugging Face Gradio routes. API names are discovered
-  // dynamically so UI revisions do not hard-code a fragile endpoint.
-  const gradioProviders=[
-    {id:"hf-qwen3-demo-public",base:"https://qwen-qwen3-demo.hf.space"},
-    {id:"hf-minicpm5-demo-public",base:"https://openbmb-minicpm5-2b-demo.hf.space"},
-    {id:"hf-gemma3-chat-public",base:"https://cognitivescience-gemma-3-chat.hf.space"}
   ];
 
   for(const provider of gradioProviders){
     try{
-      const reply=await gradioChatFallback(provider.base,messages,14000);
+      const reply=await gradioChatFallback(provider.base,messages,provider.timeoutMs);
       if(reply) return {reply,model:provider.id};
     }catch(error){
-      failures.push(provider.id+": "+String(error?.message||error).slice(0,180));
+      failures.push(provider.id+": "+String(error?.message||error).slice(0,220));
     }
   }
 
@@ -746,10 +739,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.11-smooth-face-browser-ear-public-brain",
+          version: "2026-09-16.12-gradio6-public-brain",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "EN 10-engine cascade + ES 10-engine cascade + PT resilient waterfall",
-          chat: "Cloudflare GPT-OSS + no-key Qwen/Hugging Face public fallbacks"
+          chat: "Cloudflare GPT-OSS + no-key Gradio 6/Qwen public fallback"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
