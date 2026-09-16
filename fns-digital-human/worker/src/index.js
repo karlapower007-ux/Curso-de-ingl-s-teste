@@ -148,7 +148,7 @@ export default {
       return new Response(null, { status: 204, headers: cors(origin) });
     }
 
-    if (request.method === "GET" && url.pathname === "/health") {
+    if (request.method === "GET" && url.pathname === "/health" && !url.searchParams.get("qa")) {
       return Response.json(
         {
           ok: true,
@@ -162,7 +162,7 @@ export default {
       );
     }
 
-    if (request.method === "GET" && url.pathname === "/qa/language") {
+    if (request.method === "GET" && url.pathname === "/health" && url.searchParams.get("qa") === "language") {
       try {
         const phrase = "Olá, eu gostaria de praticar português com você hoje.";
 
