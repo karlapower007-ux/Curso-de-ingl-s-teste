@@ -33,3 +33,48 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: QA resilient multilingual TTS
+        run: |
+          sleep 5
+          test_tts () {
+            NAME="$1"
+            TEXT="$2"
+            EXPECTED_ENGINE="$3"
+
+            curl --fail --silent --show-error \
+              -D "$NAME.headers" \
+              -o "$NAME.audio" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              --data "$(node -e 'console.log(JSON.stringify({text:process.argv[1],teacher:"Emma"}))' "$TEXT")" \
+              "https://fns-stt.karlapower007.workers.dev/tts"
+
+            test -s "$NAME.audio"
+            SIZE=$(wc -c < "$NAME.audio")
+            if [ "$SIZE" -lt 1000 ]; then
+              echo "$NAME returned too little audio: $SIZE bytes"
+              cat "$NAME.audio" || true
+              exit 1
+            fi
+
+            ENGINE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="x-fns-voice-engine"{print $2}' | tail -1)
+            TYPE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
+
+            echo "$NAME engine=$ENGINE type=$TYPE bytes=$SIZE"
+
+            if [ "$ENGINE" != "$EXPECTED_ENGINE" ]; then
+              echo "$NAME wrong engine: expected $EXPECTED_ENGINE got $ENGINE"
+              exit 1
+            fi
+
+            case "$TYPE" in
+              audio/*|application/octet-stream*) ;;
+              *) echo "$NAME invalid audio content-type: $TYPE"; exit 1 ;;
+            esac
+          }
+
+          test_tts pt "Olá Emma, boa noite. Você consegue me entender perfeitamente em português?" "hf-kokoro-ptbr"
+          test_tts en "Now let's continue in English. Correct my mistakes." "aura-1"
+          test_tts es "Ahora quiero hablar contigo en español." "aura-2-es"
+          test_tts mixed "Emma, explique em português a diferença entre I have been e I was." "hf-kokoro-ptbr"
