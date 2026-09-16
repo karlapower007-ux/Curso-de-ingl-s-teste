@@ -164,7 +164,7 @@ jobs:
             "r.continuous=true;",
             "r.interimResults=true;",
             "r.maxAlternatives=3;",
-            "r.lang=inferBrowserSttLanguage();",
+            "r.lang=browserRecognitionLanguage();",
             "bestSpeechAlternative",
             "normalizeTranscriptText",
             "recoverTranscriptCandidate",
@@ -284,15 +284,34 @@ jobs:
           console.log('QA STT TURBINES PASS: A Whisper, B regex, C LLM repair, D browser fallback, E noise ignore, F Emma TTS retry');
           NODE
 
+
+      - name: QA language lock turbines G-P
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const fail=m=>{throw new Error(m)};
+          for(const token of ['browserRecognitionLanguage','r.lang=browserRecognitionLanguage();','detectAutoLanguageFromFirstWords','firstThreeWords','looksLikePortglish','transcriptHasLanguageLeak','strictLanguageInstructionFor','input_language:inputLanguageLock.code','shortAudio:data?.short_audio===true']){
+            if(!app.includes(token))fail('Frontend G-P missing: '+token);
+          }
+          for(const token of ['sttOptions.language=requestedLanguage','task:"transcribe"','sttOptions.initial_prompt=whisperInitialPrompt(requestedLanguage)','sttOptions.temperature=0.1','short_audio:shortAudio','normalizeChatLanguage','REGRA ABSOLUTA DE IDIOMA']){
+            if(!worker.includes(token))fail('Worker G-P missing: '+token);
+          }
+          if(!worker.includes('convert Brazilian phonetic spellings such as mai neim, veri gudi and tenquiu'))fail('Port-glish repair rule missing');
+          if(!app.includes("source:'auto-first-3'"))fail('Auto first-three-word language lock missing');
+          if(!worker.includes('O usuário falou em ${inputLanguage.label}'))fail('Invisible language tag missing');
+          console.log('QA LANGUAGE LOCK G-P PASS');
+          NODE
       - name: Guard visual-only patch
         run: |
           APP_HASH=$(git hash-object public/app.js)
           WORKER_HASH=$(git hash-object src/index.js)
           echo "app.js blob=$APP_HASH"
           echo "src/index.js blob=$WORKER_HASH"
-          test "$APP_HASH" = "f5e12813945286a1c42d52c5e51ec8b34df6c187"
-          test "$WORKER_HASH" = "8b1596a49ef2c0606591419fd300641af542dabd"
-          echo "QA STT TURBINE BASELINE PASS: A-F transcription recovery locked; audio playback, TTS and turn release remain protected"
+          test "$APP_HASH" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$WORKER_HASH" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          echo "QA LANGUAGE-LOCK BASELINE PASS: A-P transcription/language recovery locked; audio playback, TTS and turn release remain protected"
 
       - name: QA Emma JPEG integrity
         run: |
@@ -461,10 +480,10 @@ jobs:
           const fs=require('fs');
           const app=fs.readFileSync('phase2-app.js','utf8');
           const health=JSON.parse(fs.readFileSync('phase2-health.json','utf8'));
-          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000','recoverTranscriptCandidate','gracefulSttFailure','FNS_REPAIR_STT_URL']){
+          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000','recoverTranscriptCandidate','gracefulSttFailure','FNS_REPAIR_STT_URL','browserRecognitionLanguage','detectAutoLanguageFromFirstWords','strictLanguageInstructionFor']){
             if(!app.includes(token)) throw new Error('Production Phase 2 frontend missing: '+token);
           }
-          if(health.version!=='2026-09-16.24-stt-fallback-turbines') throw new Error('Wrong production health version: '+health.version);
+          if(health.version!=='2026-09-16.25-language-lock-g-p') throw new Error('Wrong production health version: '+health.version);
           console.log('QA PHASE 2 PRODUCTION PASS: browser memory + extended LISTENING + memory-aware Worker deployed');
           NODE
 
