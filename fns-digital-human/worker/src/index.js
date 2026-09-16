@@ -47,7 +47,7 @@ function sanitizeForSpeech(input) {
   let text = String(input || "");
 
   // Preserve the visible label of Markdown links, drop the URL.
-  text = text.replace(/!?\\[([^\\]]*)\\]\\([^)]*\\)/g, "$1");
+  text = text.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
 
   // Remove fenced and inline-code markers while preserving human-readable words.
   text = text.replace(/```[\s\S]*?```/g, " ");
