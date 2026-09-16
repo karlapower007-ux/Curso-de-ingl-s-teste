@@ -203,7 +203,9 @@ jobs:
           if(app.includes("mic.disabled=true;mic.textContent='🎤 Limite diário atingido'")) fail('Legacy quota microphone shutdown still present');
           if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
           if(!worker.includes('llm7FastFallback')) fail('LLM7 fast fallback missing');
-          if(!worker.includes('"Authorization":"Bearer unused"')) fail('LLM7 anonymous placeholder transport missing');
+          if(worker.includes('"Authorization":"Bearer unused"')) fail('LLM7 fallback should use truly keyless transport without Authorization');
+          if(!worker.includes('"codestral-latest"')) fail('LLM7 keyless turbo model missing');
+          if(!worker.includes('"gpt-oss:20b"')) fail('LLM7 secondary keyless turbo model missing');
           if(worker.includes('hf-zacheus-qwen3-4b-last-resort')) fail('HF chat cold-start fallback still present');
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
@@ -242,6 +244,28 @@ jobs:
             echo "QA POLLINATIONS DEGRADED: automatic LLM7 fast fallback will take over"
           fi
 
+          LLM7_CODE=$(curl --silent --show-error --max-time 8 \
+            -D llm7.headers \
+            -o llm7.json \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --data '{"model":"codestral-latest","messages":[{"role":"user","content":"Reply exactly: Emma ready"}],"max_tokens":40,"temperature":0.2}' \
+            "https://api.llm7.io/v1/chat/completions" || true)
+          echo "LLM7 direct http=$LLM7_CODE"
+          head -c 500 llm7.json 2>/dev/null || true
+          test "$LLM7_CODE" = "200"
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('llm7.json','utf8'));
+          const reply=String(r?.choices?.[0]?.message?.content||r?.choices?.[0]?.text||'').trim();
+          if(!reply) throw new Error('Direct LLM7 keyless probe returned no reply: '+JSON.stringify(r));
+          if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
+            throw new Error('Direct LLM7 keyless probe returned auth/quota text: '+reply);
+          }
+          console.log('QA LLM7 DIRECT KEYLESS PASS');
+          NODE
+
           CHAT_CODE=$(curl --silent --show-error --max-time 10 \
             -D chat.headers \
             -o chat.json \
@@ -259,7 +283,7 @@ jobs:
           if(code!=='200') throw new Error('LLM7 fast fallback unavailable; HTTP '+code+' '+JSON.stringify(r));
           const reply=String(r.reply||'').trim();
           if(!r.ok||!reply) throw new Error('LLM7 returned no usable reply: '+JSON.stringify(r));
-          if(r.model!=='llm7-fast-public') throw new Error('Fast emergency route was not LLM7: '+JSON.stringify(r));
+          if(!String(r.model||'').startsWith('llm7-')) throw new Error('Fast emergency route was not LLM7: '+JSON.stringify(r));
           if(r.fallback!==true||r.forced_public!==true) throw new Error('Forced fast fallback was not exercised: '+JSON.stringify(r));
           if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
             throw new Error('LLM7 returned auth/quota text: '+reply);
