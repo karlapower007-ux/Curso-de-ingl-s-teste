@@ -434,7 +434,7 @@
   app.js, src/index.js, microphone, STT, TTS, memory, turn machine
   and audio.onended remain untouched.
   Use the original PNG exactly as stored: no quantization, no filter,
-  no crop, no stretch and no shader/canvas covering the portrait.
+  no crop, no stretch and no visual processing covering the portrait.
 */
 .avatar-stage{
   min-height:0!important;
