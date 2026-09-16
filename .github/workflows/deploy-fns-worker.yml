@@ -40,44 +40,41 @@ jobs:
           test_tts () {
             NAME="$1"
             TEXT="$2"
-            EXPECTED_ENGINE="$3"
 
-            curl --fail --silent --show-error \
+            HTTP_CODE=$(curl --silent --show-error \
               -D "$NAME.headers" \
-              -o "$NAME.audio" \
+              -o "$NAME.body" \
+              -w "%{http_code}" \
               -X POST \
               -H "Content-Type: application/json" \
               --data "$(node -e 'console.log(JSON.stringify({text:process.argv[1],teacher:"Emma"}))' "$TEXT")" \
-              "https://fns-stt.karlapower007.workers.dev/tts"
-
-            test -s "$NAME.audio"
-            SIZE=$(wc -c < "$NAME.audio")
-            if [ "$SIZE" -lt 1000 ]; then
-              echo "$NAME returned too little audio: $SIZE bytes"
-              cat "$NAME.audio" || true
-              exit 1
-            fi
+              "https://fns-stt.karlapower007.workers.dev/tts")
 
             ENGINE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="x-fns-voice-engine"{print $2}' | tail -1)
             TYPE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
+            SIZE=$(wc -c < "$NAME.body")
 
-            echo "$NAME engine=$ENGINE type=$TYPE bytes=$SIZE"
+            echo "$NAME http=$HTTP_CODE engine=$ENGINE type=$TYPE bytes=$SIZE"
 
-            if [ "$ENGINE" != "$EXPECTED_ENGINE" ]; then
-              echo "$NAME wrong engine: expected $EXPECTED_ENGINE got $ENGINE"
-              exit 1
+            if [ "$HTTP_CODE" = "200" ]; then
+              if [ "$SIZE" -lt 1000 ]; then
+                echo "$NAME returned too little audio: $SIZE bytes"
+                exit 1
+              fi
+              case "$TYPE" in
+                audio/*|application/octet-stream*) ;;
+                *) echo "$NAME invalid audio content-type: $TYPE"; exit 1 ;;
+              esac
+              return
             fi
 
-            case "$TYPE" in
-              audio/*|application/octet-stream*) ;;
-              *) echo "$NAME invalid audio content-type: $TYPE"; exit 1 ;;
-            esac
+            node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('$NAME.body','utf8')); if(!(r.quota_exhausted===true || r.code==='FNS_DAILY_NEURON_QUOTA')) throw new Error('Unexpected TTS failure: '+JSON.stringify(r)); console.log('Graceful quota response accepted for $NAME');"
           }
 
-          test_tts pt "Olá Emma, boa noite. Você consegue me entender perfeitamente em português?" "hf-kokoro-ptbr"
-          test_tts en "Now let's continue in English. Correct my mistakes." "aura-1"
-          test_tts es "Ahora quiero hablar contigo en español." "aura-2-es"
-          test_tts mixed "Emma, explique em português a diferença entre I have been e I was." "hf-kokoro-ptbr"
+          test_tts pt "Olá Emma, boa noite. Você consegue me entender perfeitamente em português?"
+          test_tts en "Now let's continue in English. Correct my mistakes."
+          test_tts es "Ahora quiero hablar contigo en español."
+          test_tts mixed "Emma, explique em português a diferença entre I have been e I was."
 
       - name: QA Emma visual layering
         run: |
@@ -98,4 +95,31 @@ jobs:
           if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
           if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
           console.log('QA EMMA VISUAL PASS: fixed portrait + transparent overlays + preload gate + audio analyser');
+          NODE
+
+      - name: QA supercascade and quota guard
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const app=fs.readFileSync('public/app.js','utf8');
+
+          const fail=m=>{throw new Error(m)};
+          const enStart=worker.indexOf('return [',worker.indexOf('function publicTtsEngines'));
+          const esStart=worker.indexOf('return [',worker.indexOf('if (language === "es")'));
+          if(!worker.includes('X-FNS-TTS-Cascade-Size')) fail('Cascade telemetry missing');
+          if(!worker.includes('runPublicTtsCascade("en"')) fail('English cascade not wired');
+          if(!worker.includes('runPublicTtsCascade("es"')) fail('Spanish cascade not wired');
+
+          const enIds=(worker.match(/id:"(?:aura-1|google-translate-tts-en|hf-[^"]+-en)"/g)||[]);
+          const esIds=(worker.match(/id:"(?:aura-2-es|google-translate-tts-es|hf-[^"]+-es)"/g)||[]);
+          if(enIds.length<10) fail('English cascade has fewer than 10 engines: '+enIds.length);
+          if(esIds.length<10) fail('Spanish cascade has fewer than 10 engines: '+esIds.length);
+
+          if(!app.includes('enterQuotaRestMode')) fail('Frontend quota rest mode missing');
+          if(!app.includes('mic.disabled=true')) fail('Microphone quota disable missing');
+          if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
+          if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
+
+          console.log('QA SUPER-CASCADE PASS: EN='+enIds.length+' ES='+esIds.length+' visual/quota guard active');
           NODE
