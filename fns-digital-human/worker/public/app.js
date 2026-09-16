@@ -4,7 +4,7 @@ const FNS_CHAT_URL=FNS_API_BASE+'/chat';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
-{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'https://image.pollinations.ai/prompt/pixar%20style%20beautiful%20young%20woman%20teacher%20looking%20forward%20portrait'},
+{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'https://image.pollinations.ai/prompt/beautiful%20young%20woman%20teacher%20looking%20forward%20portrait%20pixar%20disney%203d%20style%20high%20quality'},
 {name:'Olivia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Sophia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Charlotte',accent:'British',gender:'female',provider:'FNS Lite'},
@@ -37,7 +37,7 @@ function live(){layout(`<h1>Prática ao vivo</h1><p>Katya usa LiveAvatar. Os out
 function openTeacher(i){let t=teachers[i]; if(t.embed){document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="room"><button class="close" onclick="modal.remove()">Encerrar</button><h2>${t.name} • ${t.accent}</h2><iframe src="${t.embed}" allow="microphone; autoplay"></iframe></div></div>`)}else openLiteTeacher(i,'A1','conversation','General conversation')}
 function avatarVisualMarkup(t){
   if(t?.portrait){
-    return `<div id="avatarFace" class="avatar-face human-avatar avatar-style-3d" data-avatar-style="3d-animated" data-avatar-ready="false" style="--mouth-open:0;--mouth-wide:0;--gaze-x:0px;--gaze-y:0px">
+    return `<div id="avatarFace" class="avatar-face human-avatar" data-avatar-ready="false" style="--mouth-open:0;--mouth-wide:0;--gaze-x:0px;--gaze-y:0px">
       <img id="emmaPortrait" class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" decoding="sync"
         onload="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','true')"
         onerror="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','error')">

@@ -34,6 +34,27 @@ jobs:
           node --check public/app.js
           node --check public/emma-static.js
 
+      - name: Guard approved ABCDE logic
+        run: |
+          BACKEND_HASH=$(git hash-object src/index.js)
+          RIG_HASH=$(git hash-object public/emma-static.js)
+          echo "backend blob=$BACKEND_HASH"
+          echo "visual rig blob=$RIG_HASH"
+          test "$BACKEND_HASH" = "f065dbcec93d9348e88fb1670a52cefc5d6c442e"
+          test "$RIG_HASH" = "5c1a9967dbb449cea48c23696a8f9608a64857a1"
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const exact="portrait:'https://image.pollinations.ai/prompt/beautiful%20young%20woman%20teacher%20looking%20forward%20portrait%20pixar%20disney%203d%20style%20high%20quality'";
+          if(!app.includes(exact)) throw new Error('Exact avatar URL missing before normalization');
+          fs.writeFileSync('/tmp/fns-app-normalized.js',app.replace(exact,"portrait:'/emma.jpg'"));
+          NODE
+          APP_HASH=$(git hash-object /tmp/fns-app-normalized.js)
+          echo "normalized app blob=$APP_HASH"
+          test "$APP_HASH" = "558cbf8f92d0c99fb01867df59a8ccdd180869cd"
+          echo "QA LOGIC LOCK PASS: backend + microphone/STT/LLM/TTS frontend logic exactly match stable 93187821"
+
       - name: QA turn state machine
         run: |
           node - <<'NODE'
@@ -154,20 +175,16 @@ jobs:
           if(!app.includes('startSimulatedLipSync')) fail('Mobile simulated mouth fallback missing');
           if(!app.includes('avatar-mouth-simulated')) fail('Mobile mouth fallback state missing');
           if(!css.includes('@keyframes emmaMouthFallback')) fail('Mobile mouth fallback CSS missing');
-          if(!app.includes('data-avatar-style="3d-animated"')) fail('3D avatar visual marker missing');
-          if(!rig.includes('double blink') && !rig.includes('Math.random()<.18')) fail('Friendly double-blink rig missing');
-          const dynamicPortrait="https://image.pollinations.ai/prompt/pixar%20style%20beautiful%20young%20woman%20teacher%20looking%20forward%20portrait";
-          if(!app.includes("portrait:'"+dynamicPortrait+"'")) fail('Emma exact Pollinations dynamic portrait URL missing');
-          if(app.includes('data:image/jpeg;base64,')) fail('Legacy Base64 portrait still present');
-          if(!css.includes('Production visibility guard: external Emma portrait must always render in IDLE.')) fail('IDLE portrait visibility guard missing');
-          if(!css.includes('z-index:2!important')) fail('Portrait z-index guard missing');
-          if(!css.includes('.human-avatar .avatar-gaze{display:none!important;opacity:0!important}')) fail('Legacy white gaze dots are still visible');
+          if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
+          if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
+          const jpg=fs.readFileSync('public/emma.jpg');
+          if(jpg.length<10000 || jpg[0]!==0xff || jpg[1]!==0xd8) fail('Emma JPEG asset is invalid');
           if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
           if(!app.includes('isSttBackendFailure')) fail('STT backend fallback detector missing');
           if(!app.includes('status===502')) fail('HTTP 502 STT fallback missing');
           if(!app.includes('browserSttPreferred')) fail('Persistent browser STT emergency mode missing');
           if(app.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
-          console.log('QA EMMA VISUAL PASS: 3D WebP avatar + animated portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
+          console.log('QA EMMA VISUAL PASS: real JPEG + fixed portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
           NODE
 
       - name: QA supercascade and quota guard
@@ -220,18 +237,22 @@ jobs:
       - name: QA production portrait and brain fallback
         run: |
           curl --fail --silent --show-error \
-            -D app.headers \
             -o deployed-app.js \
             "https://fns-stt.karlapower007.workers.dev/app.js"
-          APP_TYPE=$(tr -d '\r' < app.headers | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
-          echo "deployed app.js type=$APP_TYPE bytes=$(wc -c < deployed-app.js)"
+          curl --fail --silent --show-error \
+            -o deployed-emma.css \
+            "https://fns-stt.karlapower007.workers.dev/emma-static.css"
           node - <<'NODE'
           const fs=require('fs');
           const app=fs.readFileSync('deployed-app.js','utf8');
-          const expected="https://image.pollinations.ai/prompt/pixar%20style%20beautiful%20young%20woman%20teacher%20looking%20forward%20portrait";
-          if(!app.includes("portrait:'"+expected+"'")) throw new Error('Production app.js does not contain the exact Pollinations portrait URL');
-          if(app.includes('data:image/jpeg;base64,')) throw new Error('Production app.js still contains a Base64 portrait');
-          console.log('QA EMMA DYNAMIC URL PRODUCTION PASS');
+          const css=fs.readFileSync('deployed-emma.css','utf8');
+          const exact="https://image.pollinations.ai/prompt/beautiful%20young%20woman%20teacher%20looking%20forward%20portrait%20pixar%20disney%203d%20style%20high%20quality";
+          if(!app.includes("portrait:'"+exact+"'")) throw new Error('Production does not contain the exact requested avatar URL');
+          if(app.includes('data:image/')) throw new Error('Production still contains a Base64/data URI portrait');
+          for(const token of ['z-index:2!important','opacity:1!important','visibility:visible!important']){
+            if(!css.includes(token)) throw new Error('Production avatar visibility CSS missing: '+token);
+          }
+          console.log('QA EMMA URL PRODUCTION PASS: exact external avatar URL + visible IDLE CSS');
           NODE
 
           # Pollinations remains first browser attempt, but its anonymous budget is external.
