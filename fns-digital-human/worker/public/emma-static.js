@@ -1,4 +1,4 @@
-/* Emma Phase 2.1: stable procedural face rig after portrait preload. */
+/* Emma 3D Animated Avatar visual rig. Conversation/voice state logic lives elsewhere. */
 window.FNS_EMMA_VISUAL_RIG=true;
 
 (()=>{
@@ -7,6 +7,8 @@ window.FNS_EMMA_VISUAL_RIG=true;
   let rigFace=null;
   let installToken=0;
 
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
   function clearRigTimers(){
     if(blinkTimer){clearTimeout(blinkTimer);blinkTimer=null;}
     if(gazeTimer){clearTimeout(gazeTimer);gazeTimer=null;}
@@ -14,36 +16,48 @@ window.FNS_EMMA_VISUAL_RIG=true;
 
   function setBlink(face,amount){
     if(!face||face.dataset.avatarReady!=='true')return;
+    const a=Math.max(0,Math.min(1,amount));
     face.querySelectorAll('.avatar-eyelid').forEach(el=>{
-      el.style.opacity=String(Math.max(0,Math.min(1,amount)));
-      el.style.transform='scaleY('+Math.max(.06,amount)+')';
+      el.style.opacity=String(a);
+      el.style.transform='scaleY('+Math.max(.05,a)+')';
     });
   }
 
+  async function blinkOnce(face,token){
+    if(token!==installToken||!face.isConnected||face.dataset.avatarReady!=='true')return false;
+    setBlink(face,.62);
+    await sleep(42);
+    setBlink(face,1);
+    await sleep(58);
+    setBlink(face,.30);
+    await sleep(48);
+    setBlink(face,0);
+    return token===installToken&&face.isConnected;
+  }
+
   function scheduleBlink(face,token){
-    const next=2200+Math.random()*4200;
+    const speaking=face.classList.contains('avatar-speaking');
+    const next=(speaking?1650:2050)+Math.random()*(speaking?2450:3300);
     blinkTimer=setTimeout(async()=>{
-      if(token!==installToken||!face.isConnected||face.dataset.avatarReady!=='true')return;
-      setBlink(face,.78);
-      await new Promise(r=>setTimeout(r,62));
-      setBlink(face,1);
-      await new Promise(r=>setTimeout(r,54));
-      setBlink(face,.28);
-      await new Promise(r=>setTimeout(r,50));
-      setBlink(face,0);
+      if(!(await blinkOnce(face,token)))return;
+      // Friendly animated characters often make an occasional soft double blink.
+      if(Math.random()<.18){
+        await sleep(115+Math.random()*85);
+        if(!(await blinkOnce(face,token)))return;
+      }
       scheduleBlink(face,token);
     },next);
   }
 
   function scheduleGaze(face,token){
-    const next=1300+Math.random()*2400;
+    const next=1250+Math.random()*2500;
     gazeTimer=setTimeout(()=>{
       if(token!==installToken||!face.isConnected||face.dataset.avatarReady!=='true')return;
       const speaking=face.classList.contains('avatar-speaking');
       const listening=face.classList.contains('avatar-listening');
-      const span=speaking?.8:listening?1.0:.55;
+      const span=speaking?.70:listening?.82:.42;
       const x=((Math.random()*2)-1)*span;
-      const y=((Math.random()*2)-1)*span*.45;
+      const y=((Math.random()*2)-1)*span*.38;
       face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
       face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
       scheduleGaze(face,token);

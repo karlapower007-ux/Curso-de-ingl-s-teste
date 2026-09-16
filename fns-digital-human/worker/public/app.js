@@ -4,7 +4,7 @@ const FNS_CHAT_URL=FNS_API_BASE+'/chat';
 const FNS_TTS_URL=FNS_API_BASE+'/tts';
 const teachers=[
 {name:'Katya',accent:'American',gender:'female',provider:'LiveAvatar',premium:true,embed:'https://embed.liveavatar.com/v1/c605c6f9-9790-4db2-a3c2-1975926c433d?orientation=horizontal'},
-{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'/emma.jpg'},
+{name:'Emma',accent:'American',gender:'female',provider:'FNS Lite',profile:'20 • United States',portrait:'/emma-3d.webp'},
 {name:'Olivia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Sophia',accent:'American',gender:'female',provider:'FNS Lite'},
 {name:'Charlotte',accent:'British',gender:'female',provider:'FNS Lite'},
@@ -37,7 +37,7 @@ function live(){layout(`<h1>Prática ao vivo</h1><p>Katya usa LiveAvatar. Os out
 function openTeacher(i){let t=teachers[i]; if(t.embed){document.body.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="room"><button class="close" onclick="modal.remove()">Encerrar</button><h2>${t.name} • ${t.accent}</h2><iframe src="${t.embed}" allow="microphone; autoplay"></iframe></div></div>`)}else openLiteTeacher(i,'A1','conversation','General conversation')}
 function avatarVisualMarkup(t){
   if(t?.portrait){
-    return `<div id="avatarFace" class="avatar-face human-avatar" data-avatar-ready="false" style="--mouth-open:0;--mouth-wide:0;--gaze-x:0px;--gaze-y:0px">
+    return `<div id="avatarFace" class="avatar-face human-avatar avatar-style-3d" data-avatar-style="3d-animated" data-avatar-ready="false" style="--mouth-open:0;--mouth-wide:0;--gaze-x:0px;--gaze-y:0px">
       <img id="emmaPortrait" class="avatar-photo avatar-photo-base" src="${t.portrait}" alt="${t.name}, professora virtual" loading="eager" decoding="sync"
         onload="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','true')"
         onerror="this.closest('.human-avatar')?.setAttribute('data-avatar-ready','error')">
@@ -807,8 +807,8 @@ async function startAvatarLipSync(audio){
 
     avatarMediaSource=avatarAudioContext.createMediaElementSource(audio);
     avatarAnalyser=avatarAudioContext.createAnalyser();
-    avatarAnalyser.fftSize=1024;
-    avatarAnalyser.smoothingTimeConstant=.68;
+    avatarAnalyser.fftSize=512;
+    avatarAnalyser.smoothingTimeConstant=.52;
     avatarMediaSource.connect(avatarAnalyser);
     avatarAnalyser.connect(avatarAudioContext.destination);
 
@@ -830,7 +830,7 @@ async function startAvatarLipSync(audio){
       }
       const rms=Math.sqrt(sum/samples.length);
 
-      if(rms>.012){
+      if(rms>.009){
         signalFrames++;
         silentFrames=0;
       }else{
@@ -838,19 +838,19 @@ async function startAvatarLipSync(audio){
         signalFrames=Math.max(0,signalFrames-1);
       }
 
-      if(signalFrames>=3)face.classList.remove('avatar-mouth-simulated');
-      if(silentFrames>=12)face.classList.add('avatar-mouth-simulated');
+      if(signalFrames>=2)face.classList.remove('avatar-mouth-simulated');
+      if(silentFrames>=8)face.classList.add('avatar-mouth-simulated');
 
-      const target=Math.max(0,Math.min(.72,(rms-.018)/.16));
+      const target=Math.max(0,Math.min(.90,(rms-.008)/.105));
       const frameScale=lastTs?Math.min(1,(ts-lastTs)/16.67):1;
-      const attack=.24*frameScale;
-      const release=.15*frameScale;
+      const attack=.34*frameScale;
+      const release=.20*frameScale;
       const alpha=target>smoothOpen?attack:release;
       smoothOpen=smoothOpen+(target-smoothOpen)*alpha;
       lastTs=ts;
 
       face.style.setProperty('--mouth-open',smoothOpen.toFixed(3));
-      face.style.setProperty('--mouth-wide',Math.min(.5,smoothOpen*.62).toFixed(3));
+      face.style.setProperty('--mouth-wide',Math.min(.72,smoothOpen*.72).toFixed(3));
       avatarLipRAF=requestAnimationFrame(tick);
     };
 
