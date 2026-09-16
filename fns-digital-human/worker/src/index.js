@@ -28,7 +28,7 @@ function sanitizeTextForTTS(input) {
   text = text.replace(/[*_~^#>|`]/g, " ");
   text = text.replace(/[\[\]{}()<>]/g, " ");
   text = text.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
-  text = text.replace(/[^\p{L}\p{M}\p{N}\s.,!?;:\'"\-—–]/gu, " ");
+  text = text.replace(/[^\p{L}\p{M}\p{N}\s.,!?;:'"—–-]/gu, " ");
   return text
     .replace(/\s+([.,!?;:])/g, "$1")
     .replace(/([.,!?;:])(?=[\p{L}\p{N}])/gu, "$1 ")
