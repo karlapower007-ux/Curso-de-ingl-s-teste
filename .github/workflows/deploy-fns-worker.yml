@@ -61,6 +61,8 @@ jobs:
           if(app.includes('startShadowBrowserSTT();')) fail('MediaRecorder still starts browser STT');
           if(!app.includes("if(isSpeaking||isProcessing)return;")) fail('Mic has no speaking/processing guard');
           if(!app.includes('pollinationsBrowserReply')) fail('Direct browser Pollinations fallback missing');
+          if(!app.includes('serverFastBrainReply')) fail('LLM7 server emergency fallback missing from frontend');
+          if(!app.includes('browserSttPreferred||neuralQuotaExhausted')) fail('Known emergency mode still wastes a Cloudflare chat round-trip');
           if(!app.includes("'https://text.pollinations.ai/'")) fail('Pollinations browser endpoint missing');
           if(!app.includes("enterQuotaRestMode({preserveFlow:true})")) fail('Emergency brain can still unlock microphone early');
 
@@ -200,6 +202,9 @@ jobs:
           if(!app.includes("browserSttPreferred?'🎤 Falar (navegador)'")) fail('Emergency browser microphone label missing');
           if(app.includes("mic.disabled=true;mic.textContent='🎤 Limite diário atingido'")) fail('Legacy quota microphone shutdown still present');
           if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
+          if(!worker.includes('llm7FastFallback')) fail('LLM7 fast fallback missing');
+          if(!worker.includes('"Authorization":"Bearer unused"')) fail('LLM7 anonymous placeholder transport missing');
+          if(worker.includes('hf-zacheus-qwen3-4b-last-resort')) fail('HF chat cold-start fallback still present');
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
           console.log('QA SUPER-CASCADE PASS: EN='+enIds.length+' ES='+esIds.length+' visual/quota guard active');
@@ -220,13 +225,30 @@ jobs:
             *) echo "Invalid Emma content type: $EMMA_TYPE"; exit 1 ;;
           esac
 
-          CHAT_CODE=$(curl --silent --show-error \
+          # Pollinations is attempted first in the mobile browser, but its anonymous
+          # budget is external and may be exhausted. Record its state without blocking deploy.
+          POLL_CODE=$(curl --silent --show-error --max-time 8 \
+            -D poll.headers \
+            -o poll.txt \
+            -w "%{http_code}" \
+            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
+            -H "Accept: text/plain,*/*" \
+            "https://text.pollinations.ai/Reply%20briefly%3A%20Emma%20ready" || true)
+          POLL_CORS=$(tr -d '\r' < poll.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
+          echo "Pollinations http=$POLL_CODE cors=$POLL_CORS"
+          if [ -f poll.txt ] && [ "$POLL_CODE" = "200" ] && ! grep -Eqi 'api key|raise the key budget|unauthorized|forbidden|quota exceeded|rate.?limit' poll.txt; then
+            echo "QA POLLINATIONS BEST-EFFORT PASS"
+          else
+            echo "QA POLLINATIONS DEGRADED: automatic LLM7 fast fallback will take over"
+          fi
+
+          CHAT_CODE=$(curl --silent --show-error --max-time 10 \
             -D chat.headers \
             -o chat.json \
             -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
-            --data '{"message":"Hello Emma.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
+            --data '{"message":"Hello Emma. Reply in one short sentence and ask one simple question.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
             "https://fns-stt.karlapower007.workers.dev/chat")
           cat chat.json
           export CHAT_CODE
@@ -234,26 +256,14 @@ jobs:
           const fs=require('fs');
           const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
           const code=process.env.CHAT_CODE;
-          if(code!=='503') throw new Error('Forced public handoff must be immediate HTTP 503, got '+code+' '+JSON.stringify(r));
-          if(r.code!=='FNS_BROWSER_POLLINATIONS'||r.browser_fallback!==true) throw new Error('Browser Pollinations handoff missing: '+JSON.stringify(r));
-          console.log('QA BRAIN HANDOFF PASS: backend exits immediately to browser Pollinations');
+          if(code!=='200') throw new Error('LLM7 fast fallback unavailable; HTTP '+code+' '+JSON.stringify(r));
+          const reply=String(r.reply||'').trim();
+          if(!r.ok||!reply) throw new Error('LLM7 returned no usable reply: '+JSON.stringify(r));
+          if(r.model!=='llm7-fast-public') throw new Error('Fast emergency route was not LLM7: '+JSON.stringify(r));
+          if(r.fallback!==true||r.forced_public!==true) throw new Error('Forced fast fallback was not exercised: '+JSON.stringify(r));
+          if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
+            throw new Error('LLM7 returned auth/quota text: '+reply);
+          }
+          console.log('QA FAST BRAIN PASS model='+r.model);
           NODE
 
-          POLL_CODE=$(curl --silent --show-error --max-time 15 \
-            -D poll.headers \
-            -o poll.txt \
-            -w "%{http_code}" \
-            -H "Referer: https://fns-stt.karlapower007.workers.dev/" \
-            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
-            -H "Accept: text/plain,*/*" \
-            "https://text.pollinations.ai/Reply%20with%20exactly%20these%20two%20words%3A%20Emma%20ready")
-          echo "Pollinations http=$POLL_CODE"
-          head -c 300 poll.txt || true
-          test "$POLL_CODE" = "200"
-          POLL_SIZE=$(wc -c < poll.txt)
-          test "$POLL_SIZE" -gt 2
-          if grep -Eqi 'api key|unauthorized|forbidden|quota exceeded|rate.?limit' poll.txt; then
-            echo "Pollinations returned auth/quota text instead of a reply"
-            exit 1
-          fi
-          echo "QA POLLINATIONS DIRECT PASS bytes=$POLL_SIZE"

@@ -602,12 +602,35 @@ async function pollinationsBrowserReply(text){
   }
 }
 
+async function serverFastBrainReply(text){
+  const response=await fetch(FNS_CHAT_URL,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      message:text,
+      teacher:activeTeacher?.name||'Emma',
+      level:document.querySelector('#levelSel')?.value||'A1',
+      accent:activeTeacher?.accent||'British',
+      force_public:true
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!data.ok||!String(data.reply||'').trim()){
+    throw new Error(data?.message||data?.error||'Cérebro rápido de reserva indisponível.');
+  }
+  return String(data.reply).trim();
+}
+
 async function emergencyBrainReply(text){
   enterQuotaRestMode({preserveFlow:true});
   try{
     return await pollinationsBrowserReply(text);
-  }catch(error){
-    return teacherReply(text);
+  }catch(pollinationsError){
+    try{
+      return await serverFastBrainReply(text);
+    }catch(fastBrainError){
+      return teacherReply(text);
+    }
   }
 }
 
@@ -630,7 +653,10 @@ async function handleUser(text,{stateOwned=false}={}){
   let reply='';
 
   try{
-    const response=await fetch(FNS_CHAT_URL,{
+    if(browserSttPreferred||neuralQuotaExhausted){
+      reply=await emergencyBrainReply(text);
+    }else{
+      const response=await fetch(FNS_CHAT_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -650,6 +676,7 @@ async function handleUser(text,{stateOwned=false}={}){
       reply=await emergencyBrainReply(text);
     }else{
       reply=String(data.reply||'Could you say that again?').trim();
+    }
     }
   }catch(error){
     if(turn!==conversationTurnSeq)return;

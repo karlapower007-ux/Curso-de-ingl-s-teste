@@ -653,78 +653,46 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
-async function pollinationsTextFallback(messages,timeoutMs=9000) {
-  const lastUser=String([...messages].reverse().find(x=>x?.role==="user")?.content||"").slice(0,650);
-  const lastAssistant=String([...messages].reverse().find(x=>x?.role==="assistant")?.content||"").slice(0,260);
-  const system=String(messages.find(x=>x?.role==="system")?.content||"");
-  const langHint=/[áéíóúãõç]|\b(você|que|não|uma|para)\b/i.test(lastUser)
-    ?"Responda em português brasileiro."
-    :/[¿¡ñ]|\b(usted|hola|gracias|porque)\b/i.test(lastUser)
-      ?"Responde en español."
-      :"Reply in natural English.";
-
-  const prompt=[
-    "You are Emma, a concise friendly language tutor.",
-    langHint,
-    lastAssistant?"Previous Emma: "+lastAssistant:"",
-    "User: "+lastUser,
-    "Emma:"
-  ].filter(Boolean).join("\n");
+async function llm7FastFallback(messages,timeoutMs=7000) {
+  const compact=messages.slice(-7).map(m=>({
+    role:String(m?.role||"user"),
+    content:String(m?.content||"").slice(0,m?.role==="system"?1000:900)
+  }));
 
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort("pollinations-race-timeout"),timeoutMs);
-
-  const fetchText=async(url)=>{
-    const r=await fetch(url,{
-      method:"GET",
-      headers:{"Accept":"text/plain,*/*"},
-      redirect:"follow",
+  const timeout=setTimeout(()=>controller.abort("llm7-fast-timeout"),timeoutMs);
+  try{
+    const response=await fetch("https://api.llm7.io/v1/chat/completions",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Accept":"application/json",
+        "Authorization":"Bearer unused"
+      },
+      body:JSON.stringify({
+        model:"fast",
+        messages:compact,
+        temperature:0.55,
+        max_tokens:220,
+        stream:false
+      }),
       signal:controller.signal
     });
-    if(!r.ok)throw new Error("Pollinations HTTP "+r.status);
-    const text=String(await r.text()).trim();
-    if(!text)throw new Error("Pollinations empty reply.");
-    if(/^\s*</.test(text))throw new Error("Pollinations HTML reply.");
-    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|insufficient (credits|balance)/i.test(text)){
-      throw new Error("Pollinations auth/quota reply.");
-    }
-    return text;
-  };
 
-  try{
-    const encoded=encodeURIComponent(prompt);
-    const candidates=[
-      "https://text.pollinations.ai/"+encoded+"?model=openai-fast",
-      "https://text.pollinations.ai/"+encoded
-    ];
-    const reply=await Promise.any(candidates.map(fetchText));
-    controller.abort("pollinations-race-won");
-    return reply;
-  }catch(error){
-    throw new Error("Pollinations race failed: "+String(error?.message||error));
+    const raw=await response.text();
+    if(!response.ok)throw new Error("LLM7 HTTP "+response.status+": "+raw.slice(0,180));
+
+    let data={};
+    try{data=JSON.parse(raw)}catch{throw new Error("LLM7 returned invalid JSON.");}
+    const reply=String(data?.choices?.[0]?.message?.content||data?.choices?.[0]?.text||"").trim();
+    if(!reply)throw new Error("LLM7 returned an empty reply.");
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
+      throw new Error("LLM7 returned an auth/quota response.");
+    }
+    return {reply,model:"llm7-fast-public"};
   }finally{
     clearTimeout(timeout);
   }
-}
-
-async function publicChatFallback(messages) {
-  const failures=[];
-
-  try{
-    const reply=await pollinationsTextFallback(messages,6500);
-    if(reply)return {reply,model:"pollinations-openai-fast-public"};
-  }catch(error){
-    failures.push("pollinations-openai-fast-public: "+String(error?.message||error).slice(0,220));
-  }
-
-  try{
-    const reply=await gradioChatFallback("https://zacheus10-free-ai-chat.hf.space",messages,12000);
-    if(reply)return {reply,model:"hf-zacheus-qwen3-4b-last-resort"};
-  }catch(error){
-    failures.push("hf-zacheus-qwen3-4b-last-resort: "+String(error?.message||error).slice(0,220));
-  }
-
-  throw new Error("Public chat fallbacks unavailable: "+failures.join(" | "));
 }
 
 function extractText(result) {
@@ -779,10 +747,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.17-browser-pollinations",
+          version: "2026-09-16.18-pollinations-llm7-fast",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + immediate browser Pollinations anonymous fallback; no HF on critical path"
+          chat: "Cloudflare GPT-OSS + browser Pollinations best-effort + LLM7 fast emergency fallback; no HF on chat critical path"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -903,6 +871,25 @@ export default {
           cloudError=new Error("Public fallback forced by deployment QA.");
         }
 
+        if(!reply && forcePublic){
+          try{
+            const fallback=await llm7FastFallback(messages,7000);
+            reply=fallback.reply;
+            model=fallback.model;
+          }catch(fallbackError){
+            return Response.json(
+              {
+                ok:false,
+                code:"FNS_FAST_BRAIN_UNAVAILABLE",
+                browser_fallback:true,
+                forced_public:true,
+                message:"Fast public brain unavailable; use the local teaching fallback."
+              },
+              {status:503,headers:{...cors(origin),"Cache-Control":"no-store","X-FNS-Chat-Engine":"local-fallback"}}
+            );
+          }
+        }
+
         if(!reply){
           return Response.json(
             {
@@ -910,7 +897,7 @@ export default {
               code:"FNS_BROWSER_POLLINATIONS",
               browser_fallback:true,
               quota_exhausted:isWorkersAIQuotaError(cloudError),
-              forced_public:forcePublic,
+              forced_public:false,
               message:"Use the browser Pollinations fallback immediately."
             },
             {
