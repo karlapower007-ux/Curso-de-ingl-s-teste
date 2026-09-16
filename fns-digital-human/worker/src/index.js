@@ -17,6 +17,47 @@ function toBase64(buffer) {
   return btoa(binary);
 }
 
+function fromBase64(base64) {
+  const clean = String(base64 || "").replace(/^data:[^;]+;base64,/, "");
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function portugueseTtsResponse(env, text) {
+  const response = await env.AI.run(
+    "@cf/myshell-ai/melotts",
+    { prompt: text, lang: "pt" },
+    { returnRawResponse: true }
+  );
+
+  if (!(response instanceof Response)) {
+    throw new Error("PT-BR MeloTTS did not return a Response.");
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error("PT-BR MeloTTS failed: HTTP " + response.status + (detail ? " - " + detail.slice(0, 220) : ""));
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("audio/")) return response;
+
+  const payload = await response.json().catch(() => null);
+  const encoded = payload?.audio || payload?.result?.audio || "";
+  if (!encoded) throw new Error("PT-BR MeloTTS returned no audio payload.");
+
+  const bytes = fromBase64(encoded);
+  const isWav = bytes.length >= 4 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+
+  return new Response(bytes, {
+    status: 200,
+    headers: { "Content-Type": isWav ? "audio/wav" : "audio/mpeg" }
+  });
+}
+
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -166,26 +207,13 @@ export default {
       try {
         const phrase = "Olá, eu gostaria de praticar português com você hoje.";
 
-        const ttsResponse = await env.AI.run(
-          "@cf/myshell-ai/melotts",
-          { prompt: phrase, lang: "pt" },
-          { returnRawResponse: true }
-        );
-
-        if (!(ttsResponse instanceof Response)) throw new Error("PT-BR MeloTTS did not return a Response.");
-        if (!ttsResponse.ok) {
-          const detail = await ttsResponse.text().catch(() => "");
-          throw new Error("PT-BR MeloTTS failed: HTTP " + ttsResponse.status + (detail ? " - " + detail.slice(0, 220) : ""));
-        }
-
-        const audioResponse = ttsResponse;
-        if (!audioResponse.ok) throw new Error("PT-BR audio fetch failed: HTTP " + audioResponse.status);
+        const audioResponse = await portugueseTtsResponse(env, phrase);
+        if (!audioResponse.ok) throw new Error("PT-BR audio generation failed: HTTP " + audioResponse.status);
         const contentType = audioResponse.headers.get("content-type") || "";
         const audioBuffer = await audioResponse.arrayBuffer();
 
         if (!contentType.includes("audio/")) {
-          const sample = new TextDecoder().decode(audioBuffer.slice(0, 500));
-          throw new Error("PT-BR TTS returned non-audio content-type " + contentType + ": " + sample);
+          throw new Error("PT-BR TTS normalization failed: " + contentType);
         }
 
         const stt = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
@@ -305,11 +333,7 @@ export default {
           // Explicit lang=pt avoids applying English phonetics to Portuguese text.
           voiceModel = "@cf/myshell-ai/melotts";
           speaker = "pt";
-          raw = await env.AI.run(
-            voiceModel,
-            { prompt: text, lang: "pt" },
-            { returnRawResponse: true }
-          );
+          raw = await portugueseTtsResponse(env, text);
         } else {
           raw = await env.AI.run(
             voiceModel,
