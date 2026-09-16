@@ -94,7 +94,12 @@ jobs:
           if(!css.includes('background:transparent')) fail('FX layer is not transparent');
           if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
           if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
-          console.log('QA EMMA VISUAL PASS: fixed portrait + transparent overlays + preload gate + audio analyser');
+          if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
+          if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
+          const jpg=fs.readFileSync('public/emma.jpg');
+          if(jpg.length<10000 || jpg[0]!==0xff || jpg[1]!==0xd8) fail('Emma JPEG asset is invalid');
+          if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
+          console.log('QA EMMA VISUAL PASS: real JPEG + fixed portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
           NODE
 
       - name: QA supercascade and quota guard
@@ -128,4 +133,38 @@ jobs:
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
           console.log('QA SUPER-CASCADE PASS: EN='+enIds.length+' ES='+esIds.length+' visual/quota guard active');
+          NODE
+
+      - name: QA production portrait and brain fallback
+        run: |
+          curl --fail --silent --show-error \
+            -D emma.headers \
+            -o emma.jpg \
+            "https://fns-stt.karlapower007.workers.dev/emma.jpg"
+          EMMA_SIZE=$(wc -c < emma.jpg)
+          EMMA_TYPE=$(tr -d '\r' < emma.headers | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
+          echo "emma.jpg type=$EMMA_TYPE bytes=$EMMA_SIZE"
+          test "$EMMA_SIZE" -gt 10000
+          case "$EMMA_TYPE" in
+            image/jpeg*|image/jpg*) ;;
+            *) echo "Invalid Emma content type: $EMMA_TYPE"; exit 1 ;;
+          esac
+
+          CHAT_CODE=$(curl --silent --show-error \
+            -D chat.headers \
+            -o chat.json \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --data '{"message":"Hello Emma. Reply in one short sentence and ask me one simple question.","teacher":"Emma","level":"A1","accent":"American"}' \
+            "https://fns-stt.karlapower007.workers.dev/chat")
+          cat chat.json
+          export CHAT_CODE
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
+          const code=process.env.CHAT_CODE;
+          if(code!=='200') throw new Error('Chat fallback not available; HTTP '+code+' '+JSON.stringify(r));
+          if(!r.ok || !String(r.reply||'').trim()) throw new Error('Chat returned no usable reply: '+JSON.stringify(r));
+          console.log('QA BRAIN PASS model='+r.model+' fallback='+Boolean(r.fallback));
           NODE
