@@ -230,12 +230,12 @@ jobs:
           if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
           if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) fail('Maximum analyser mouth opening missing');
-          if(!css.includes("var(--mouth-open,0) * 4.65")) fail('Full CSS mouth opening missing');
+          if(!css.includes("var(--mouth-open,0) * 4.95")) fail('Full CSS mouth opening missing');
           if(!css.includes("scaleY(4.95)")) fail('Full simulated mouth fallback missing');
           if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
           if(!css.includes('#fffefa')) fail('Teeth fill missing');
-          if(!css.includes('Emma sharp portrait mode v1')) fail('Sharp portrait mode missing');
-          if(!css.includes('display:none!important')) fail('Blurred WebGL layer not disabled');
+          if(!css.includes('Emma sharp portrait mode v2')) fail('Sharp portrait mode v2 missing');
+          if(!css.includes("content:url('/emma.jpg?v=hd2')!important")) fail('High-res portrait cache-bust missing');
           console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
 
@@ -426,9 +426,9 @@ jobs:
           }
           if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) throw new Error('Production analyser mouth opening gain missing');
-          if(!css.includes("var(--mouth-open,0) * 4.65")) throw new Error('Production full mouth opening missing');
+          if(!css.includes("var(--mouth-open,0) * 4.95")) throw new Error('Production full mouth opening missing');
           if(!css.includes('.avatar-mouth-motion::before')) throw new Error('Production teeth layer missing');
-          if(!css.includes('Emma sharp portrait mode v1')) throw new Error('Production sharp portrait mode missing');
+          if(!css.includes('Emma sharp portrait mode v2')) throw new Error('Production sharp portrait mode v2 missing');
           console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS');
           NODE
 

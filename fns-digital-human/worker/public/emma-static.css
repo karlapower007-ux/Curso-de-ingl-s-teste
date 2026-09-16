@@ -95,7 +95,7 @@
   transform:
     translate3d(0,calc(var(--mouth-open,0) * 2.0px),0)
     scaleX(calc(.94 + var(--mouth-wide,0) * .24))
-    scaleY(calc(.08 + var(--mouth-open,0) * 4.65));
+    scaleY(calc(.08 + var(--mouth-open,0) * 4.95));
   transition:
     opacity 48ms linear,
     transform 52ms cubic-bezier(.16,.86,.24,1);
@@ -227,4 +227,35 @@
 .human-avatar .avatar-camera-vignette{
   opacity:.18!important;
   filter:none!important;
+}
+
+/* ===== Emma sharp portrait mode v2 — no blur, no shader, high-res asset ===== */
+.human-avatar .avatar-webgl-layer{
+  display:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+}
+.human-avatar .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="webgl"] .avatar-photo-base,
+.human-avatar[data-avatar-visual-mode="fallback-2d"] .avatar-photo-base{
+  content:url('/emma.jpg?v=hd2')!important;
+  display:block!important;
+  opacity:1!important;
+  visibility:visible!important;
+  z-index:2!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  image-rendering:auto!important;
+  object-fit:cover!important;
+  object-position:center 31%!important;
+  transform:none!important;
+  backface-visibility:hidden!important;
+  -webkit-backface-visibility:hidden!important;
+}
+.human-avatar .avatar-camera-vignette{
+  opacity:.08!important;
+  filter:none!important;
+  backdrop-filter:none!important;
 }
