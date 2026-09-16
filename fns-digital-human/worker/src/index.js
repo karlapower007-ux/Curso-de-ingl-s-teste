@@ -9,6 +9,48 @@ function cors(origin="*") {
   };
 }
 
+
+const DAILY_QUOTA_MESSAGE = "Aviso: O limite diário de processamento neural gratuito foi atingido. A Emma descansará até a meia-noite (UTC). Volte amanhã!";
+
+function isWorkersAIQuotaError(value, status=0) {
+  const text = typeof value === "string"
+    ? value
+    : (() => {
+        try { return JSON.stringify(value || ""); }
+        catch { return String(value || ""); }
+      })();
+
+  return status === 429 ||
+    /\b4006\b/i.test(text) ||
+    /daily free allocation/i.test(text) ||
+    /10\s*,?\s*000\s+neurons/i.test(text) ||
+    /used up.*neurons/i.test(text) ||
+    /neurons.*(limit|quota|allocation)/i.test(text) ||
+    /workers ai.*(quota|allocation)/i.test(text);
+}
+
+function quotaResponse(origin, endpoint) {
+  return Response.json(
+    {
+      ok: false,
+      code: "FNS_DAILY_NEURON_QUOTA",
+      quota_exhausted: true,
+      endpoint,
+      retry_at: "00:00 UTC",
+      message: DAILY_QUOTA_MESSAGE
+    },
+    {
+      status: 429,
+      headers: {
+        ...cors(origin),
+        "Cache-Control": "no-store",
+        "Retry-After": "3600",
+        "X-FNS-Quota-Exhausted": "1"
+      }
+    }
+  );
+}
+
 function toBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -70,14 +112,23 @@ function corsAudioHeaders(origin, extra={}) {
 
 async function auraEmergencyEnglish(env, origin) {
   const emergencyText = "Sorry, my Portuguese voice server is currently busy. Let's practice in English for now.";
-  const raw = await env.AI.run(
-    "@cf/deepgram/aura-1",
-    { text: emergencyText, speaker: "asteria", encoding: "mp3" },
-    { returnRawResponse: true }
-  );
+  let raw;
+  try {
+    raw = await env.AI.run(
+      "@cf/deepgram/aura-1",
+      { text: emergencyText, speaker: "asteria", encoding: "mp3" },
+      { returnRawResponse: true }
+    );
+  } catch (error) {
+    if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "tts");
+    throw error;
+  }
 
   if (!(raw instanceof Response) || !raw.ok) {
     const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+    if (isWorkersAIQuotaError(detail, raw instanceof Response ? raw.status : 502)) {
+      return quotaResponse(origin, "tts");
+    }
     return Response.json(
       { ok:false, error:"Emergency Aura fallback failed"+(detail?": "+detail.slice(0,180):"") },
       { status:502, headers:cors(origin) }
@@ -387,7 +438,7 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.6-sanitized-waterfall",
+          version: "2026-09-16.7-quota-guard",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura-1 EN + Aura-2-es ES + PT-BR waterfall: HF Kokoro > HF Parler > Google TTS > HF backup > Aura emergency",
           chat: "@cf/openai/gpt-oss-120b"
@@ -420,6 +471,7 @@ export default {
           { headers: { ...cors(origin), "Cache-Control": "no-store" } }
         );
       } catch (error) {
+        if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "stt");
         return Response.json(
           { ok: false, error: String(error?.message || error) },
           { status: 500, headers: cors(origin) }
@@ -460,6 +512,9 @@ export default {
 
           if (!(raw instanceof Response) || !raw.ok) {
             const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+            if (isWorkersAIQuotaError(detail, raw instanceof Response ? raw.status : 502)) {
+              return quotaResponse(origin, "tts");
+            }
             return Response.json(
               { ok:false, error:"Aura Spanish TTS falhou"+(detail?": "+detail.slice(0,180):"") },
               { status:502, headers:cors(origin) }
@@ -490,6 +545,9 @@ export default {
 
         if (!(raw instanceof Response) || !raw.ok) {
           const detail = raw instanceof Response ? await raw.text().catch(()=>"") : "";
+          if (isWorkersAIQuotaError(detail, raw instanceof Response ? raw.status : 502)) {
+            return quotaResponse(origin, "tts");
+          }
           return Response.json(
             { ok:false, error:"Aura TTS falhou"+(detail?": "+detail.slice(0,180):"") },
             { status:502, headers:cors(origin) }
@@ -506,6 +564,7 @@ export default {
 
         return new Response(raw.body,{status:200,headers});
       } catch (error) {
+        if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "tts");
         return Response.json(
           { ok:false, error:String(error?.message || error) },
           { status:500, headers:cors(origin) }
@@ -555,6 +614,7 @@ export default {
           { headers: { ...cors(origin), "Cache-Control": "no-store" } }
         );
       } catch (error) {
+        if (isWorkersAIQuotaError(error)) return quotaResponse(origin, "chat");
         return Response.json(
           { ok: false, error: String(error?.message || error) },
           { status: 500, headers: cors(origin) }
