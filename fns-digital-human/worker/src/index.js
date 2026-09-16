@@ -602,20 +602,67 @@ async function gradioChatFallback(base,messages,timeoutMs=9000) {
   }
 }
 
+async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort("public-chat-timeout"),timeoutMs);
+  try{
+    const response=await fetch(url,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model,
+        messages,
+        stream:false,
+        temperature:0.65,
+        top_p:0.9,
+        max_tokens:260
+      }),
+      signal:controller.signal
+    });
+    if(!response.ok){
+      const detail=await response.text().catch(()=>"");
+      throw new Error("HTTP "+response.status+(detail?": "+detail.slice(0,200):""));
+    }
+    const data=await response.json();
+    const reply=String(
+      data?.choices?.[0]?.message?.content ||
+      data?.choices?.[0]?.text ||
+      data?.response ||
+      ""
+    ).trim();
+    if(!reply) throw new Error("No reply content.");
+    return reply;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function publicChatFallback(messages) {
-  const providers=[
-    {id:"hf-qwen3-free-chat",base:"https://zacheus10-free-ai-chat.hf.space"},
+  const failures=[];
+
+  try{
+    const reply=await noKeyOpenAIChat(
+      "https://zacheus10-free-ai-chat.hf.space/v1/chat/completions",
+      "local-ai",
+      messages,
+      12000
+    );
+    if(reply) return {reply,model:"hf-qwen3-4b-public"};
+  }catch(error){
+    failures.push("hf-qwen3-4b-public: "+String(error?.message||error).slice(0,180));
+  }
+
+  const gradioProviders=[
     {id:"hf-llama2-chat",base:"https://huggingface-projects-llama-2-7b-chat.hf.space"},
     {id:"hf-gemma3-chat",base:"https://cognitivescience-gemma-3-chat.hf.space"}
   ];
 
-  const failures=[];
-  for(const provider of providers){
+  for(const provider of gradioProviders){
     try{
-      const reply=await gradioChatFallback(provider.base,messages,9000);
+      const reply=await gradioChatFallback(provider.base,messages,10000);
       if(reply) return {reply,model:provider.id};
     }catch(error){
-      failures.push(provider.id+": "+String(error?.message||error).slice(0,160));
+      failures.push(provider.id+": "+String(error?.message||error).slice(0,180));
     }
   }
 
