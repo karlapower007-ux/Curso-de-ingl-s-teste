@@ -602,23 +602,61 @@ async function pollinationsBrowserReply(text){
   }
 }
 
-async function serverFastBrainReply(text){
-  const response=await fetch(FNS_CHAT_URL,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      message:text,
-      teacher:activeTeacher?.name||'Emma',
-      level:document.querySelector('#levelSel')?.value||'A1',
-      accent:activeTeacher?.accent||'British',
-      force_public:true
-    })
-  });
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok||!data.ok||!String(data.reply||'').trim()){
-    throw new Error(data?.message||data?.error||'Cérebro rápido de reserva indisponível.');
+async function llm7BrowserReply(text,timeoutMs=6500){
+  const userText=String(text||'').trim().slice(0,700);
+  if(!userText)throw new Error('Mensagem vazia para o cérebro LLM7.');
+
+  const level=document.querySelector('#levelSel')?.value||activeTeacher?.level||'A1';
+  const mode=document.querySelector('#modeSel')?.value||activeTeacher?.mode||'conversation';
+  const system=[
+    'You are Emma, a friendly multilingual language teacher.',
+    'Reply naturally and briefly for spoken conversation.',
+    'Use the user\'s language unless they ask for another language.',
+    'Correct language mistakes gently when useful.',
+    'CEFR level: '+level+'. Mode: '+mode+'.',
+    'Avoid markdown.'
+  ].join(' ');
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort('llm7-browser-timeout'),timeoutMs);
+
+  try{
+    const response=await fetch('https://api.llm7.io/v1/chat/completions',{
+      method:'POST',
+      mode:'cors',
+      credentials:'omit',
+      cache:'no-store',
+      headers:{
+        'Content-Type':'application/json',
+        'Accept':'application/json'
+      },
+      body:JSON.stringify({
+        model:'codestral-latest',
+        messages:[
+          {role:'system',content:system},
+          {role:'user',content:userText}
+        ],
+        temperature:.55,
+        max_tokens:220,
+        stream:false
+      }),
+      signal:controller.signal
+    });
+
+    const raw=await response.text();
+    if(!response.ok)throw new Error('LLM7 HTTP '+response.status+': '+raw.slice(0,160));
+
+    let data={};
+    try{data=JSON.parse(raw)}catch{throw new Error('LLM7 retornou JSON inválido.');}
+    const reply=String(data?.choices?.[0]?.message?.content||data?.choices?.[0]?.text||'').trim();
+    if(!reply)throw new Error('LLM7 retornou resposta vazia.');
+    if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
+      throw new Error('LLM7 retornou erro de autenticação/cota.');
+    }
+    return reply;
+  }finally{
+    clearTimeout(timer);
   }
-  return String(data.reply).trim();
 }
 
 async function emergencyBrainReply(text){
@@ -627,8 +665,8 @@ async function emergencyBrainReply(text){
     return await pollinationsBrowserReply(text);
   }catch(pollinationsError){
     try{
-      return await serverFastBrainReply(text);
-    }catch(fastBrainError){
+      return await llm7BrowserReply(text);
+    }catch(llm7Error){
       return teacherReply(text);
     }
   }

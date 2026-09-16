@@ -61,7 +61,9 @@ jobs:
           if(app.includes('startShadowBrowserSTT();')) fail('MediaRecorder still starts browser STT');
           if(!app.includes("if(isSpeaking||isProcessing)return;")) fail('Mic has no speaking/processing guard');
           if(!app.includes('pollinationsBrowserReply')) fail('Direct browser Pollinations fallback missing');
-          if(!app.includes('serverFastBrainReply')) fail('LLM7 server emergency fallback missing from frontend');
+          if(!app.includes('llm7BrowserReply')) fail('Direct browser LLM7 emergency fallback missing');
+          if(!app.includes("'https://api.llm7.io/v1/chat/completions'")) fail('Browser LLM7 endpoint missing');
+          if(!app.includes("model:'codestral-latest'")) fail('Browser LLM7 turbo model missing');
           if(!app.includes('browserSttPreferred||neuralQuotaExhausted')) fail('Known emergency mode still wastes a Cloudflare chat round-trip');
           if(!app.includes("'https://text.pollinations.ai/'")) fail('Pollinations browser endpoint missing');
           if(!app.includes("enterQuotaRestMode({preserveFlow:true})")) fail('Emergency brain can still unlock microphone early');
@@ -202,10 +204,9 @@ jobs:
           if(!app.includes("browserSttPreferred?'🎤 Falar (navegador)'")) fail('Emergency browser microphone label missing');
           if(app.includes("mic.disabled=true;mic.textContent='🎤 Limite diário atingido'")) fail('Legacy quota microphone shutdown still present');
           if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
-          if(!worker.includes('llm7FastFallback')) fail('LLM7 fast fallback missing');
-          if(worker.includes('"Authorization":"Bearer unused"')) fail('LLM7 fallback should use truly keyless transport without Authorization');
-          if(!worker.includes('"codestral-latest"')) fail('LLM7 keyless turbo model missing');
-          if(!worker.includes('"gpt-oss:20b"')) fail('LLM7 secondary keyless turbo model missing');
+          if(worker.includes('llm7FastFallback')) fail('Cloudflare Worker must not call LLM7; browser owns the keyless fallback');
+          if(worker.includes('api.llm7.io/v1/chat/completions')) fail('Worker still contains a direct LLM7 dependency');
+          if(!app.includes('llm7BrowserReply')) fail('Browser LLM7 fallback missing');
           if(worker.includes('hf-zacheus-qwen3-4b-last-resort')) fail('HF chat cold-start fallback still present');
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
@@ -227,8 +228,7 @@ jobs:
             *) echo "Invalid Emma content type: $EMMA_TYPE"; exit 1 ;;
           esac
 
-          # Pollinations is attempted first in the mobile browser, but its anonymous
-          # budget is external and may be exhausted. Record its state without blocking deploy.
+          # Pollinations remains first browser attempt, but its anonymous budget is external.
           POLL_CODE=$(curl --silent --show-error --max-time 8 \
             -D poll.headers \
             -o poll.txt \
@@ -241,38 +241,61 @@ jobs:
           if [ -f poll.txt ] && [ "$POLL_CODE" = "200" ] && ! grep -Eqi 'api key|raise the key budget|unauthorized|forbidden|quota exceeded|rate.?limit' poll.txt; then
             echo "QA POLLINATIONS BEST-EFFORT PASS"
           else
-            echo "QA POLLINATIONS DEGRADED: automatic LLM7 fast fallback will take over"
+            echo "QA POLLINATIONS DEGRADED: browser LLM7 takes over immediately"
           fi
+
+          # Simulate the browser CORS preflight required by JSON POST.
+          LLM7_OPTIONS_CODE=$(curl --silent --show-error --max-time 8 \
+            -D llm7-options.headers \
+            -o /dev/null \
+            -w "%{http_code}" \
+            -X OPTIONS \
+            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: content-type" \
+            "https://api.llm7.io/v1/chat/completions" || true)
+          LLM7_OPTIONS_CORS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
+          LLM7_ALLOW_METHODS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-methods"{print $2}' | tail -1)
+          LLM7_ALLOW_HEADERS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-headers"{print $2}' | tail -1)
+          echo "LLM7 preflight http=$LLM7_OPTIONS_CODE cors=$LLM7_OPTIONS_CORS methods=$LLM7_ALLOW_METHODS headers=$LLM7_ALLOW_HEADERS"
+          case "$LLM7_OPTIONS_CODE" in 200|204) ;; *) echo "LLM7 browser preflight failed"; exit 1 ;; esac
+          case "$LLM7_OPTIONS_CORS" in "*"|"https://fns-stt.karlapower007.workers.dev") ;; *) echo "LLM7 preflight CORS denied: $LLM7_OPTIONS_CORS"; exit 1 ;; esac
+          echo "$LLM7_ALLOW_METHODS" | grep -Eqi 'POST' || { echo "LLM7 preflight did not allow POST"; exit 1; }
+          echo "$LLM7_ALLOW_HEADERS" | grep -Eqi 'content-type|\*' || { echo "LLM7 preflight did not allow content-type"; exit 1; }
 
           LLM7_CODE=$(curl --silent --show-error --max-time 8 \
             -D llm7.headers \
             -o llm7.json \
             -w "%{http_code}" \
             -X POST \
+            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
             -H "Content-Type: application/json" \
-            --data '{"model":"codestral-latest","messages":[{"role":"user","content":"Reply exactly: Emma ready"}],"max_tokens":40,"temperature":0.2}' \
+            -H "Accept: application/json" \
+            --data '{"model":"codestral-latest","messages":[{"role":"user","content":"Reply exactly: Emma ready"}],"max_tokens":40,"temperature":0.2,"stream":false}' \
             "https://api.llm7.io/v1/chat/completions" || true)
-          echo "LLM7 direct http=$LLM7_CODE"
+          LLM7_CORS=$(tr -d '\r' < llm7.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
+          echo "LLM7 browser POST http=$LLM7_CODE cors=$LLM7_CORS"
           head -c 500 llm7.json 2>/dev/null || true
           test "$LLM7_CODE" = "200"
+          case "$LLM7_CORS" in "*"|"https://fns-stt.karlapower007.workers.dev") ;; *) echo "LLM7 response CORS denied: $LLM7_CORS"; exit 1 ;; esac
           node - <<'NODE'
           const fs=require('fs');
           const r=JSON.parse(fs.readFileSync('llm7.json','utf8'));
           const reply=String(r?.choices?.[0]?.message?.content||r?.choices?.[0]?.text||'').trim();
-          if(!reply) throw new Error('Direct LLM7 keyless probe returned no reply: '+JSON.stringify(r));
+          if(!reply) throw new Error('Browser LLM7 keyless probe returned no reply: '+JSON.stringify(r));
           if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
-            throw new Error('Direct LLM7 keyless probe returned auth/quota text: '+reply);
+            throw new Error('Browser LLM7 keyless probe returned auth/quota text: '+reply);
           }
-          console.log('QA LLM7 DIRECT KEYLESS PASS');
+          console.log('QA LLM7 BROWSER CORS PASS');
           NODE
 
-          CHAT_CODE=$(curl --silent --show-error --max-time 10 \
+          CHAT_CODE=$(curl --silent --show-error --max-time 4 \
             -D chat.headers \
             -o chat.json \
             -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
-            --data '{"message":"Hello Emma. Reply in one short sentence and ask one simple question.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
+            --data '{"message":"Hello Emma.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
             "https://fns-stt.karlapower007.workers.dev/chat")
           cat chat.json
           export CHAT_CODE
@@ -280,14 +303,10 @@ jobs:
           const fs=require('fs');
           const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
           const code=process.env.CHAT_CODE;
-          if(code!=='200') throw new Error('LLM7 fast fallback unavailable; HTTP '+code+' '+JSON.stringify(r));
-          const reply=String(r.reply||'').trim();
-          if(!r.ok||!reply) throw new Error('LLM7 returned no usable reply: '+JSON.stringify(r));
-          if(!String(r.model||'').startsWith('llm7-')) throw new Error('Fast emergency route was not LLM7: '+JSON.stringify(r));
-          if(r.fallback!==true||r.forced_public!==true) throw new Error('Forced fast fallback was not exercised: '+JSON.stringify(r));
-          if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
-            throw new Error('LLM7 returned auth/quota text: '+reply);
+          if(code!=='503') throw new Error('Forced public handoff must be immediate HTTP 503, got '+code+' '+JSON.stringify(r));
+          if(r.code!=='FNS_BROWSER_PUBLIC_BRAIN'||r.browser_fallback!==true||r.forced_public!==true){
+            throw new Error('Browser public-brain handoff missing: '+JSON.stringify(r));
           }
-          console.log('QA FAST BRAIN PASS model='+r.model);
+          console.log('QA BRAIN HANDOFF PASS: Worker exits immediately; browser owns Pollinations -> LLM7');
           NODE
 

@@ -653,56 +653,6 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
-async function llm7FastFallback(messages,timeoutMs=7500) {
-  const compact=messages.slice(-7).map(m=>({
-    role:String(m?.role||"user"),
-    content:String(m?.content||"").slice(0,m?.role==="system"?1000:900)
-  }));
-  const models=["codestral-latest","gpt-oss:20b"];
-  const failures=[];
-  const perAttempt=Math.max(2200,Math.floor(timeoutMs/models.length));
-
-  for(const selectedModel of models){
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort("llm7-keyless-timeout"),perAttempt);
-    try{
-      const response=await fetch("https://api.llm7.io/v1/chat/completions",{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "Accept":"application/json"
-        },
-        body:JSON.stringify({
-          model:selectedModel,
-          messages:compact,
-          temperature:0.55,
-          max_tokens:220,
-          stream:false
-        }),
-        signal:controller.signal
-      });
-
-      const raw=await response.text();
-      if(!response.ok)throw new Error("HTTP "+response.status+": "+raw.slice(0,160));
-
-      let data={};
-      try{data=JSON.parse(raw)}catch{throw new Error("invalid JSON");}
-      const reply=String(data?.choices?.[0]?.message?.content||data?.choices?.[0]?.text||"").trim();
-      if(!reply)throw new Error("empty reply");
-      if(/api key|unauthorized|forbidden|quota exceeded|rate.?limit|missing_api_key/i.test(reply)){
-        throw new Error("auth/quota response");
-      }
-      return {reply,model:"llm7-"+selectedModel+"-keyless"};
-    }catch(error){
-      failures.push(selectedModel+": "+String(error?.message||error).slice(0,180));
-    }finally{
-      clearTimeout(timeout);
-    }
-  }
-
-  throw new Error("LLM7 keyless routes unavailable: "+failures.join(" | "));
-}
-
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -755,10 +705,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.19-keyless-llm7-turbo",
+          version: "2026-09-16.20-browser-public-brains",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + browser Pollinations best-effort + keyless LLM7 turbo emergency fallback; no HF on chat critical path"
+          chat: "Cloudflare GPT-OSS + browser Pollinations then browser LLM7 keyless + local teaching fallback; no HF chat cold start"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -879,41 +829,22 @@ export default {
           cloudError=new Error("Public fallback forced by deployment QA.");
         }
 
-        if(!reply && forcePublic){
-          try{
-            const fallback=await llm7FastFallback(messages,7000);
-            reply=fallback.reply;
-            model=fallback.model;
-          }catch(fallbackError){
-            return Response.json(
-              {
-                ok:false,
-                code:"FNS_FAST_BRAIN_UNAVAILABLE",
-                browser_fallback:true,
-                forced_public:true,
-                message:"Fast public brain unavailable; use the local teaching fallback."
-              },
-              {status:503,headers:{...cors(origin),"Cache-Control":"no-store","X-FNS-Chat-Engine":"local-fallback"}}
-            );
-          }
-        }
-
         if(!reply){
           return Response.json(
             {
               ok:false,
-              code:"FNS_BROWSER_POLLINATIONS",
+              code:"FNS_BROWSER_PUBLIC_BRAIN",
               browser_fallback:true,
               quota_exhausted:isWorkersAIQuotaError(cloudError),
-              forced_public:false,
-              message:"Use the browser Pollinations fallback immediately."
+              forced_public:forcePublic,
+              message:"Use the browser public brain immediately."
             },
             {
               status:503,
               headers:{
                 ...cors(origin),
                 "Cache-Control":"no-store",
-                "X-FNS-Chat-Engine":"browser-pollinations"
+                "X-FNS-Chat-Engine":"browser-public-brain"
               }
             }
           );
