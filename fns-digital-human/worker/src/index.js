@@ -17,60 +17,6 @@ function toBase64(buffer) {
   return btoa(binary);
 }
 
-function fromBase64(base64) {
-  const clean = String(base64 || "").replace(/^data:[^;]+;base64,/, "");
-  const binary = atob(clean);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-async function portugueseTtsResponse(env, text) {
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const response = await env.AI.run(
-        "@cf/myshell-ai/melotts",
-        { prompt: text, lang: "pt" },
-        { returnRawResponse: true }
-      );
-
-      if (!(response instanceof Response)) {
-        throw new Error("PT-BR MeloTTS did not return a Response.");
-      }
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error("PT-BR MeloTTS failed: HTTP " + response.status + (detail ? " - " + detail.slice(0, 220) : ""));
-      }
-
-      const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("audio/")) return response;
-
-      const payload = await response.json().catch(() => null);
-      const encoded = payload?.audio || payload?.result?.audio || "";
-      if (!encoded) throw new Error("PT-BR MeloTTS returned no audio payload.");
-
-      const bytes = fromBase64(encoded);
-      const isWav = bytes.length >= 4 &&
-        bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
-
-      return new Response(bytes, {
-        status: 200,
-        headers: { "Content-Type": isWav ? "audio/wav" : "audio/mpeg" }
-      });
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) {
-        await new Promise(resolve => setTimeout(resolve, 180 * attempt));
-      }
-    }
-  }
-
-  throw lastError || new Error("PT-BR TTS failed after retries.");
-}
-
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -162,6 +108,33 @@ function detectSpeechLanguage(text, requested="") {
   return "en";
 }
 
+function normalizeLanguageTag(value, text="") {
+  const tag = String(value || "").toLowerCase();
+  if (tag.startsWith("pt")) return "pt-BR";
+  if (tag.startsWith("es")) return "es-ES";
+  if (tag.startsWith("en")) return "en";
+  return detectSpeechLanguage(text);
+}
+
+function extractNovaTranscript(result) {
+  const channel = result?.results?.channels?.[0];
+  const alternative = channel?.alternatives?.[0];
+  const text = String(
+    alternative?.transcript ||
+    result?.text ||
+    result?.transcript ||
+    ""
+  ).trim();
+  const language = normalizeLanguageTag(
+    channel?.detected_language ||
+    result?.detected_language ||
+    "",
+    text
+  );
+  const confidence = Number(channel?.language_confidence || alternative?.confidence || 0);
+  return { text, language, confidence };
+}
+
 function latencyHeaders(startedAt) {
   return { "X-FNS-Latency-Ms": String(Math.max(0, Math.round(performance.now() - startedAt))) };
 }
@@ -202,67 +175,26 @@ export default {
       return new Response(null, { status: 204, headers: cors(origin) });
     }
 
-    if (request.method === "GET" && url.pathname === "/health" && !url.searchParams.get("qa")) {
+    if (request.method === "GET" && url.pathname === "/health") {
       return Response.json(
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.2-language-routing",
-          stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "English Aura-1 + Spanish Aura-2-es + Portuguese MeloTTS lang=pt",
+          version: "2026-09-16.3-dynamic-language",
+          stt: "@cf/deepgram/nova-3 multi + Whisper fallback",
+          tts: "English Aura-1 + Spanish Aura-2-es + native pt-BR device voice",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
     }
 
-    if (request.method === "GET" && url.pathname === "/health" && url.searchParams.get("qa") === "language") {
-      try {
-        const phrase = "Olá, eu gostaria de praticar português com você hoje.";
-
-        const audioResponse = await portugueseTtsResponse(env, phrase);
-        if (!audioResponse.ok) throw new Error("PT-BR audio generation failed: HTTP " + audioResponse.status);
-        const contentType = audioResponse.headers.get("content-type") || "";
-        const audioBuffer = await audioResponse.arrayBuffer();
-
-        if (!contentType.includes("audio/")) {
-          throw new Error("PT-BR TTS normalization failed: " + contentType);
-        }
-
-        const stt = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
-          audio: toBase64(audioBuffer),
-          task: "transcribe",
-          vad_filter: true,
-          condition_on_previous_text: false,
-          initial_prompt: "The speaker may use English, Brazilian Portuguese, Spanish, or switch between them. Transcribe the spoken language faithfully; do not translate."
-        });
-
-        const transcript = String(stt?.text || stt?.transcription_info?.text || "").trim();
-        const detected = String(stt?.language || stt?.transcription_info?.language || detectSpeechLanguage(transcript));
-
-        return Response.json({
-          ok: true,
-          test: "pt-BR roundtrip",
-          tts_model: "@cf/myshell-ai/melotts",
-          tts_language: "pt-BR",
-          source: phrase,
-          transcript,
-          detected_language: detected,
-          transcript_has_portuguese: detectSpeechLanguage(transcript) === "pt-BR",
-          audio_bytes: audioBuffer.byteLength
-        }, { headers: { ...cors(origin), "Cache-Control": "no-store" } });
-      } catch (error) {
-        return Response.json(
-          { ok: false, test: "pt-BR roundtrip", error: String(error?.message || error) },
-          { status: 200, headers: { ...cors(origin), "Cache-Control": "no-store" } }
-        );
-      }
-    }
-
     if (url.pathname === "/stt" && request.method === "POST") {
       const startedAt = performance.now();
       try {
+        const contentType = (request.headers.get("Content-Type") || "audio/webm").split(";")[0].trim();
         const buffer = await request.arrayBuffer();
+
         if (!buffer.byteLength) {
           return Response.json(
             { ok: false, error: "Áudio vazio." },
@@ -270,20 +202,60 @@ export default {
           );
         }
 
-        const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
-          audio: toBase64(buffer),
-          task: "transcribe",
-          vad_filter: true,
-          condition_on_previous_text: false,
-          initial_prompt: "The speaker may use English, Brazilian Portuguese, Spanish, or switch between them. Transcribe the spoken language faithfully; do not translate."
-        });
+        let text = "";
+        let detectedLanguage = "";
+        let engine = "@cf/deepgram/nova-3";
 
-        const text = String(result?.text || result?.transcription_info?.text || "").trim();
-        const detectedLanguage = String(result?.language || result?.transcription_info?.language || detectSpeechLanguage(text));
+        try {
+          const novaResult = await env.AI.run("@cf/deepgram/nova-3", {
+            audio: {
+              body: new Response(buffer).body,
+              contentType
+            },
+            language: "multi",
+            detect_language: true,
+            smart_format: true,
+            punctuate: true
+          });
+
+          const parsed = extractNovaTranscript(novaResult);
+          text = parsed.text;
+          detectedLanguage = parsed.language;
+        } catch (novaError) {
+          engine = "@cf/openai/whisper-large-v3-turbo";
+        }
+
+        if (!text) {
+          const whisperResult = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+            audio: toBase64(buffer),
+            task: "transcribe",
+            vad_filter: true,
+            condition_on_previous_text: false,
+            initial_prompt: "The speaker may use English, Brazilian Portuguese, Spanish, or switch between them. Transcribe exactly what is spoken in the original language; do not translate."
+          });
+
+          text = String(whisperResult?.text || whisperResult?.transcription_info?.text || "").trim();
+          detectedLanguage = normalizeLanguageTag(
+            whisperResult?.language || whisperResult?.transcription_info?.language || "",
+            text
+          );
+        }
 
         return Response.json(
-          { ok: true, text, language: detectedLanguage },
-          { headers: { ...cors(origin), "Cache-Control": "no-store", ...latencyHeaders(startedAt) } }
+          {
+            ok: true,
+            text,
+            language: detectedLanguage || detectSpeechLanguage(text),
+            engine
+          },
+          {
+            headers: {
+              ...cors(origin),
+              "Cache-Control": "no-store",
+              "X-FNS-STT-Engine": engine,
+              ...latencyHeaders(startedAt)
+            }
+          }
         );
       } catch (error) {
         return Response.json(
@@ -342,11 +314,24 @@ export default {
             { returnRawResponse: true }
           );
         } else if (language === "pt-BR") {
-          // Cloudflare-hosted multilingual route for Portuguese.
-          // Explicit lang=pt avoids applying English phonetics to Portuguese text.
-          voiceModel = "@cf/myshell-ai/melotts";
-          speaker = "pt";
-          raw = await portugueseTtsResponse(env, text);
+          return Response.json(
+            {
+              ok: false,
+              fallback: "browser-native-pt-BR",
+              language: "pt-BR",
+              message: "Use the device native pt-BR speech engine for Portuguese."
+            },
+            {
+              status: 409,
+              headers: {
+                ...cors(origin),
+                "Cache-Control": "no-store",
+                "X-FNS-Voice-Engine": "browser-native-pt-BR",
+                "X-FNS-Voice-Language": "pt-BR",
+                ...latencyHeaders(startedAt)
+              }
+            }
+          );
         } else {
           raw = await env.AI.run(
             voiceModel,
@@ -426,7 +411,7 @@ export default {
 
         const reply = extractText(result) || "Could you say that again?";
         const speech = sanitizeForSpeech(reply) || "Could you say that again?";
-        const responseLanguage = detectSpeechLanguage(speech, body?.language || "");
+        const responseLanguage = detectSpeechLanguage(speech);
 
         return Response.json(
           {
