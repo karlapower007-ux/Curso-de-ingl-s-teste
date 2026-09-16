@@ -1,3 +1,4 @@
+// Rollback deployment marker: restored stable English baseline on 2026-09-16.
 function cors(origin="*") {
   return {
     "Access-Control-Allow-Origin": origin || "*",
