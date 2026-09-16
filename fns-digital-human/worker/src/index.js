@@ -153,9 +153,9 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.1-native-language-routing",
+          version: "2026-09-16.2-language-routing",
           stt: "@cf/openai/whisper-large-v3-turbo",
-          tts: "English Aura-1 + Spanish Aura-2-es + Portuguese xAI Grok TTS pt-BR",
+          tts: "English Aura-1 + Spanish Aura-2-es + Portuguese MeloTTS lang=pt",
           chat: "@cf/openai/gpt-oss-120b"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
@@ -166,18 +166,19 @@ export default {
       try {
         const phrase = "Olá, eu gostaria de praticar português com você hoje.";
 
-        const generated = await env.AI.run("xai/grok-tts", {
-          text: phrase,
-          voice_id: "ara",
-          language: "pt-BR",
-          text_normalization: true,
-          output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 }
-        });
+        const ttsResponse = await env.AI.run(
+          "@cf/myshell-ai/melotts",
+          { prompt: phrase, lang: "pt" },
+          { returnRawResponse: true }
+        );
 
-        const audioUrl = generated?.result?.audio || generated?.audio || "";
-        if (!audioUrl) throw new Error("PT-BR TTS returned no audio URL.");
+        if (!(ttsResponse instanceof Response)) throw new Error("PT-BR MeloTTS did not return a Response.");
+        if (!ttsResponse.ok) {
+          const detail = await ttsResponse.text().catch(() => "");
+          throw new Error("PT-BR MeloTTS failed: HTTP " + ttsResponse.status + (detail ? " - " + detail.slice(0, 220) : ""));
+        }
 
-        const audioResponse = await fetch(audioUrl);
+        const audioResponse = ttsResponse;
         if (!audioResponse.ok) throw new Error("PT-BR audio fetch failed: HTTP " + audioResponse.status);
         const audioBuffer = await audioResponse.arrayBuffer();
 
@@ -195,7 +196,7 @@ export default {
         return Response.json({
           ok: true,
           test: "pt-BR roundtrip",
-          tts_model: "xai/grok-tts",
+          tts_model: "@cf/myshell-ai/melotts",
           tts_language: "pt-BR",
           source: phrase,
           transcript,
@@ -294,25 +295,15 @@ export default {
             { returnRawResponse: true }
           );
         } else if (language === "pt-BR") {
-          // Native Brazilian Portuguese route through Cloudflare's unified AI binding.
-          // Grok TTS explicitly supports pt-BR and avoids English phonetics.
-          voiceModel = "xai/grok-tts";
-          speaker = "ara";
-
-          const generated = await env.AI.run(voiceModel, {
-            text,
-            voice_id: speaker,
-            language: "pt-BR",
-            text_normalization: true,
-            output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 }
-          });
-
-          const audioUrl = generated?.result?.audio || generated?.audio || "";
-          if (!audioUrl) {
-            throw new Error("Portuguese TTS did not return an audio URL.");
-          }
-
-          raw = await fetch(audioUrl);
+          // Cloudflare-hosted multilingual route for Portuguese.
+          // Explicit lang=pt avoids applying English phonetics to Portuguese text.
+          voiceModel = "@cf/myshell-ai/melotts";
+          speaker = "pt";
+          raw = await env.AI.run(
+            voiceModel,
+            { prompt: text, lang: "pt" },
+            { returnRawResponse: true }
+          );
         } else {
           raw = await env.AI.run(
             voiceModel,
