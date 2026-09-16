@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -78,6 +80,75 @@ jobs:
           if(starts!==1) fail('Browser STT must have exactly one explicit start call, found '+starts);
 
           console.log('QA TURN STATE PASS: one ear at a time; mic locked during processing/speaking; audio releases only on ended');
+          NODE
+
+      - name: QA Phase 2 memory and listening window
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const cp=require('child_process');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const stable=cp.execFileSync('git',['show','93187821bcd8a01e1875219cbeb3ba818f73c5b4:fns-digital-human/worker/public/app.js'],{encoding:'utf8'});
+          const fail=m=>{throw new Error(m)};
+
+          // Memory A/B/C/D
+          for(const token of [
+            'loadRemoteSessionMemory',
+            'saveRemoteSessionMemory',
+            'caches.default',
+            'session_id',
+            'mergeMemoryHistory'
+          ]) if(!worker.includes(token)) fail('Plan A remote memory missing: '+token);
+
+          for(const token of [
+            'localStorage',
+            'sessionStorage',
+            'readBrowserMemory',
+            'rememberExchange',
+            'memorySessionId',
+            'history:memoryBefore'
+          ]) if(!app.includes(token)) fail('Plan B browser memory missing: '+token);
+
+          if(!app.includes('pollinationsBrowserReply(text,history=readBrowserMemory())')) fail('Plan C Pollinations history missing');
+          if(!app.includes('llm7BrowserReply(text,history=readBrowserMemory()')) fail('Plan C LLM7 history missing');
+          if(!app.includes('teacherReply(text,history=readBrowserMemory())')) fail('Plan D local memory missing');
+          if(!app.includes('previousUserMemory(history)')) fail('Plan D previous interaction lookup missing');
+
+          // Listening-only permitted changes.
+          if(!app.includes('r.continuous=true;')) fail('Browser STT longer listening mode missing');
+          if(!app.includes('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);')) fail('MediaRecorder 45s window missing');
+
+          // Absolute state-machine and microphone safety lock against stable 93187821.
+          const section=(src,a,b)=>{
+            const s=src.indexOf(a),e=src.indexOf(b,s);
+            if(s<0||e<0)fail('Cannot extract protected section '+a);
+            return src.slice(s,e);
+          };
+          const exactSections=[
+            ['const FLOW_STATES=Object.freeze','function browserSpeechCtor'],
+            ['function toggleRecognition','async function startRecording'],
+            ['function stopRecognition','function sendTyped'],
+            ['function stopRecordingAndSend','function cleanupRecorder'],
+            ['async function remoteSpeak','async function unlockVoice']
+          ];
+          for(const [a,b] of exactSections){
+            if(section(app,a,b)!==section(stable,a,b)) fail('Protected microphone/turn section changed: '+a);
+          }
+
+          // startBrowserOnlySTT/startRecording may differ only in the two approved timing parameters.
+          const normalizeListening=s=>s
+            .replace('r.continuous=true;','r.continuous=false;')
+            .replace('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);','recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);');
+
+          for(const [a,b] of [
+            ['function startBrowserOnlySTT','function nextUtcMidnightMs'],
+            ['async function startRecording','function releaseMediaRecorder']
+          ]){
+            if(normalizeListening(section(app,a,b))!==section(stable,a,b)) fail('LISTENING section changed beyond approved timing: '+a);
+          }
+
+          console.log('QA PHASE 2 PASS: memory A/B/C/D active; only LISTENING timing changed; turn machine is stable');
           NODE
 
       - name: Deploy Worker
@@ -211,6 +282,21 @@ jobs:
           if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
 
           console.log('QA SUPER-CASCADE PASS: EN='+enIds.length+' ES='+esIds.length+' visual/quota guard active');
+          NODE
+
+      - name: QA Phase 2 production memory
+        run: |
+          curl --fail --silent --show-error -o phase2-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
+          curl --fail --silent --show-error -o phase2-health.json "https://fns-stt.karlapower007.workers.dev/health"
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('phase2-app.js','utf8');
+          const health=JSON.parse(fs.readFileSync('phase2-health.json','utf8'));
+          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000']){
+            if(!app.includes(token)) throw new Error('Production Phase 2 frontend missing: '+token);
+          }
+          if(health.version!=='2026-09-16.21-phase2-memory') throw new Error('Wrong production health version: '+health.version);
+          console.log('QA PHASE 2 PRODUCTION PASS: browser memory + extended LISTENING + memory-aware Worker deployed');
           NODE
 
       - name: QA production portrait and brain fallback

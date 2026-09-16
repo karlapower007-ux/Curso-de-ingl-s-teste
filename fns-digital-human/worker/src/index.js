@@ -653,6 +653,78 @@ async function noKeyOpenAIChat(url,model,messages,timeoutMs=9000) {
   }
 }
 
+
+const FNS_MEMORY_MAX_MESSAGES=12;
+const FNS_MEMORY_TTL_SECONDS=60*60*24*7;
+
+function normalizeMemoryHistory(items){
+  if(!Array.isArray(items))return [];
+  return items
+    .filter(x=>x && ["user","assistant"].includes(x.role) && typeof x.content==="string")
+    .map(x=>({
+      role:x.role,
+      content:String(x.content).trim().slice(0,1600),
+      ts:Number.isFinite(Number(x.ts))?Number(x.ts):0
+    }))
+    .filter(x=>x.content)
+    .slice(-FNS_MEMORY_MAX_MESSAGES);
+}
+
+function normalizeSessionId(value){
+  const id=String(value||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,96);
+  return id.length>=12?id:"";
+}
+
+function mergeMemoryHistory(remoteHistory,clientHistory){
+  const combined=[...normalizeMemoryHistory(remoteHistory),...normalizeMemoryHistory(clientHistory)];
+  const seen=new Set();
+  const unique=[];
+  for(const item of combined){
+    const key=item.role+"\u0000"+item.content+"\u0000"+String(item.ts||0);
+    if(seen.has(key))continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  unique.sort((a,b)=>(a.ts||0)-(b.ts||0));
+  return unique.slice(-FNS_MEMORY_MAX_MESSAGES);
+}
+
+function memoryCacheRequest(sessionId){
+  return new Request("https://fns-memory.internal/session/"+encodeURIComponent(sessionId),{method:"GET"});
+}
+
+async function loadRemoteSessionMemory(sessionId){
+  const id=normalizeSessionId(sessionId);
+  if(!id || typeof caches==="undefined" || !caches.default)return [];
+  try{
+    const cached=await caches.default.match(memoryCacheRequest(id));
+    if(!cached)return [];
+    const data=await cached.json();
+    return normalizeMemoryHistory(data?.history);
+  }catch(error){
+    return [];
+  }
+}
+
+async function saveRemoteSessionMemory(sessionId,history){
+  const id=normalizeSessionId(sessionId);
+  if(!id || typeof caches==="undefined" || !caches.default)return false;
+  try{
+    const clean=normalizeMemoryHistory(history);
+    const response=Response.json(
+      {ok:true,history:clean,updated_at:Date.now()},
+      {headers:{
+        "Cache-Control":"public, max-age="+FNS_MEMORY_TTL_SECONDS,
+        "Content-Type":"application/json"
+      }}
+    );
+    await caches.default.put(memoryCacheRequest(id),response);
+    return true;
+  }catch(error){
+    return false;
+  }
+}
+
 function extractText(result) {
   if (!result) return "";
   if (typeof result === "string") return result.trim();
@@ -705,10 +777,10 @@ export default {
         {
           ok: true,
           service: "FNS Voice Gateway",
-          version: "2026-09-16.20-browser-public-brains",
+          version: "2026-09-16.21-phase2-memory",
           stt: "@cf/openai/whisper-large-v3-turbo",
           tts: "Aura -> Google fast path; HF reserved for late fallbacks; PT Google-first",
-          chat: "Cloudflare GPT-OSS + browser Pollinations then browser LLM7 keyless + local teaching fallback; no HF chat cold start"
+          chat: "Cloudflare GPT-OSS + resilient session memory + browser Pollinations/LLM7 + local teaching fallback"
         },
         { headers: { ...cors(origin), "Cache-Control": "no-store" } }
       );
@@ -791,7 +863,10 @@ export default {
         const teacher = String(body?.teacher || "Emma");
         const level = String(body?.level || "A1");
         const accent = String(body?.accent || "American");
-        const history = Array.isArray(body?.history) ? body.history.slice(-8) : [];
+        const sessionId = normalizeSessionId(body?.session_id);
+        const clientHistory = normalizeMemoryHistory(body?.history);
+        const remoteHistory = await loadRemoteSessionMemory(sessionId);
+        const history = mergeMemoryHistory(remoteHistory,clientHistory).slice(-10);
         const forcePublic = body?.force_public === true;
 
         if (!message) {
@@ -803,9 +878,7 @@ export default {
 
         const messages = [
           { role: "system", content: systemPrompt({ teacher, level, accent }) },
-          ...history
-            .filter(x => x && ["user","assistant"].includes(x.role) && typeof x.content === "string")
-            .map(x => ({ role: x.role, content: x.content.slice(0, 2000) })),
+          ...history.map(x => ({ role:x.role, content:x.content.slice(0,1600) })),
           { role: "user", content: message }
         ];
 
@@ -850,6 +923,13 @@ export default {
           );
         }
 
+        const memoryNow=Date.now();
+        const savedHistory=mergeMemoryHistory(history,[
+          {role:"user",content:message,ts:memoryNow},
+          {role:"assistant",content:reply,ts:memoryNow+1}
+        ]);
+        const remoteMemorySaved=await saveRemoteSessionMemory(sessionId,savedHistory);
+
         return Response.json(
           {
             ok: true,
@@ -857,7 +937,8 @@ export default {
             model,
             fallback: model !== "@cf/openai/gpt-oss-120b",
             forced_public: forcePublic,
-            reply
+            reply,
+            memory:{plan:remoteMemorySaved?"cloudflare-cache":"client-fallback",messages:savedHistory.length}
           },
           { headers: { ...cors(origin), "Cache-Control": "no-store", "X-FNS-Chat-Engine": model } }
         );

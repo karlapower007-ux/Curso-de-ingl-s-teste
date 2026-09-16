@@ -180,7 +180,7 @@ function startBrowserOnlySTT(){
   browserFallbackActive=false;
   listeningEngine='browser';
 
-  r.continuous=false;
+  r.continuous=true;
   r.interimResults=true;
   r.maxAlternatives=1;
   r.lang=navigator.language || 'pt-BR';
@@ -363,7 +363,7 @@ async function startRecording(){
       refreshFlowControls('Listening');
       const face=document.querySelector('#avatarFace');
       if(face)face.classList.add('avatar-listening');
-      recordingTimer=setTimeout(()=>stopRecordingAndSend(),20000);
+      recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);
     };
 
     recorder.onerror=()=>{
@@ -547,6 +547,99 @@ function stopRecognition(){
   }
 }
 
+
+const FNS_MEMORY_MAX_MESSAGES=12;
+const FNS_MEMORY_LOCAL_PREFIX='fns_digital_human_memory_v1_';
+const FNS_MEMORY_SESSION_PREFIX='fns_digital_human_session_v1_';
+
+function memoryTeacherSlug(){
+  return String(activeTeacher?.name||'Emma').toLowerCase().replace(/[^a-z0-9_-]/g,'_').slice(0,40)||'emma';
+}
+
+function memoryStorageKey(){
+  return FNS_MEMORY_LOCAL_PREFIX+memoryTeacherSlug();
+}
+
+function memorySessionKey(){
+  return FNS_MEMORY_SESSION_PREFIX+memoryTeacherSlug();
+}
+
+function normalizeBrowserMemory(items){
+  if(!Array.isArray(items))return [];
+  return items
+    .filter(x=>x&&['user','assistant'].includes(x.role)&&typeof x.content==='string')
+    .map(x=>({
+      role:x.role,
+      content:String(x.content).trim().slice(0,1600),
+      ts:Number.isFinite(Number(x.ts))?Number(x.ts):0
+    }))
+    .filter(x=>x.content)
+    .slice(-FNS_MEMORY_MAX_MESSAGES);
+}
+
+function readBrowserMemory(){
+  const key=memoryStorageKey();
+  for(const store of [localStorage,sessionStorage]){
+    try{
+      const raw=store.getItem(key);
+      if(!raw)continue;
+      const parsed=normalizeBrowserMemory(JSON.parse(raw));
+      if(parsed.length)return parsed;
+    }catch(e){}
+  }
+  return [];
+}
+
+function writeBrowserMemory(history){
+  const clean=normalizeBrowserMemory(history);
+  const raw=JSON.stringify(clean);
+  try{localStorage.setItem(memoryStorageKey(),raw)}catch(e){}
+  try{sessionStorage.setItem(memoryStorageKey(),raw)}catch(e){}
+  return clean;
+}
+
+function rememberExchange(userText,assistantText){
+  const now=Date.now();
+  return writeBrowserMemory([
+    ...readBrowserMemory(),
+    {role:'user',content:String(userText||'').trim(),ts:now},
+    {role:'assistant',content:String(assistantText||'').trim(),ts:now+1}
+  ]);
+}
+
+function getMemorySessionId(){
+  const key=memorySessionKey();
+  let id='';
+  try{id=localStorage.getItem(key)||''}catch(e){}
+  if(!id){
+    try{id=sessionStorage.getItem(key)||''}catch(e){}
+  }
+  if(!id){
+    id=(globalThis.crypto?.randomUUID?.()||('fns-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,14))).replace(/[^a-zA-Z0-9_-]/g,'');
+    try{localStorage.setItem(key,id)}catch(e){}
+    try{sessionStorage.setItem(key,id)}catch(e){}
+  }
+  return id;
+}
+
+function memoryMessagesForProvider(history=readBrowserMemory(),limit=8){
+  return normalizeBrowserMemory(history).slice(-limit).map(x=>({role:x.role,content:x.content}));
+}
+
+function memoryTextForPrompt(history=readBrowserMemory(),limit=6){
+  return memoryMessagesForProvider(history,limit)
+    .map(x=>(x.role==='assistant'?'Emma: ':'User: ')+x.content)
+    .join('\n');
+}
+
+function previousUserMemory(history=readBrowserMemory()){
+  const clean=normalizeBrowserMemory(history);
+  for(let i=clean.length-1;i>=0;i--){
+    if(clean[i].role==='user')return clean[i].content;
+  }
+  return '';
+}
+
 function sendTyped(){
   const el=document.querySelector('#chatInput');
   if(!el||!el.value.trim()||flowState!==FLOW_STATES.IDLE)return;
@@ -556,7 +649,7 @@ function sendTyped(){
   handleUser(text,{stateOwned:true});
 }
 
-async function pollinationsBrowserReply(text){
+async function pollinationsBrowserReply(text,history=readBrowserMemory()){
   const userText=String(text||'').trim().slice(0,700);
   if(!userText)throw new Error('Mensagem vazia.');
 
@@ -567,15 +660,17 @@ async function pollinationsBrowserReply(text){
     :/[¿¡ñ]|\b(hola|usted|gracias|porque)\b/i.test(userText)
       ?'Responde en español.'
       :'Reply in natural English.';
+  const remembered=memoryTextForPrompt(history,6);
 
   const prompt=[
     'You are Emma, a friendly concise language tutor.',
     lang,
     'CEFR '+level+'. Mode: '+mode+'.',
     'Correct language mistakes gently when useful.',
+    remembered?'Recent conversation:\n'+remembered:'',
     'User: '+userText,
     'Emma:'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort('pollinations-browser-timeout'),8500);
@@ -602,7 +697,7 @@ async function pollinationsBrowserReply(text){
   }
 }
 
-async function llm7BrowserReply(text,timeoutMs=2200){
+async function llm7BrowserReply(text,history=readBrowserMemory(),timeoutMs=2200){
   const userText=String(text||'').trim().slice(0,700);
   if(!userText)throw new Error('Mensagem vazia para o cérebro LLM7.');
 
@@ -613,6 +708,7 @@ async function llm7BrowserReply(text,timeoutMs=2200){
     'Reply naturally and briefly for spoken conversation.',
     'Use the user\'s language unless they ask for another language.',
     'Correct language mistakes gently when useful.',
+    'Keep continuity with the recent conversation history.',
     'CEFR level: '+level+'. Mode: '+mode+'.',
     'Avoid markdown.'
   ].join(' ');
@@ -634,6 +730,7 @@ async function llm7BrowserReply(text,timeoutMs=2200){
         model:'codestral-latest',
         messages:[
           {role:'system',content:system},
+          ...memoryMessagesForProvider(history,8),
           {role:'user',content:userText}
         ],
         temperature:.55,
@@ -659,15 +756,15 @@ async function llm7BrowserReply(text,timeoutMs=2200){
   }
 }
 
-async function emergencyBrainReply(text){
+async function emergencyBrainReply(text,history=readBrowserMemory()){
   enterQuotaRestMode({preserveFlow:true});
   try{
-    return await pollinationsBrowserReply(text);
+    return await pollinationsBrowserReply(text,history);
   }catch(pollinationsError){
     try{
-      return await llm7BrowserReply(text);
+      return await llm7BrowserReply(text,history);
     }catch(llm7Error){
-      return teacherReply(text);
+      return teacherReply(text,history);
     }
   }
 }
@@ -685,6 +782,8 @@ async function handleUser(text,{stateOwned=false}={}){
   }
 
   const turn=++conversationTurnSeq;
+  const memoryBefore=readBrowserMemory();
+  const memorySessionId=getMemorySessionId();
   addMsg('user',text);
   addPracticeMessage();
 
@@ -692,37 +791,40 @@ async function handleUser(text,{stateOwned=false}={}){
 
   try{
     if(browserSttPreferred||neuralQuotaExhausted){
-      reply=await emergencyBrainReply(text);
+      reply=await emergencyBrainReply(text,memoryBefore);
     }else{
       const response=await fetch(FNS_CHAT_URL,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        message:text,
-        teacher:activeTeacher?.name||'Emma',
-        level:document.querySelector('#levelSel')?.value||'A1',
-        accent:activeTeacher?.accent||'British'
-      })
-    });
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          message:text,
+          teacher:activeTeacher?.name||'Emma',
+          level:document.querySelector('#levelSel')?.value||'A1',
+          accent:activeTeacher?.accent||'British',
+          session_id:memorySessionId,
+          history:memoryBefore
+        })
+      });
 
-    const data=await response.json().catch(()=>({}));
-    if(turn!==conversationTurnSeq)return;
+      const data=await response.json().catch(()=>({}));
+      if(turn!==conversationTurnSeq)return;
 
-    if(isQuotaPayload(data,response.status) || data?.browser_fallback===true || data?.code==='FNS_BROWSER_POLLINATIONS'){
-      reply=await emergencyBrainReply(text);
-    }else if(!response.ok||!data.ok){
-      reply=await emergencyBrainReply(text);
-    }else{
-      reply=String(data.reply||'Could you say that again?').trim();
-    }
+      if(isQuotaPayload(data,response.status) || data?.browser_fallback===true || data?.code==='FNS_BROWSER_POLLINATIONS'){
+        reply=await emergencyBrainReply(text,memoryBefore);
+      }else if(!response.ok||!data.ok){
+        reply=await emergencyBrainReply(text,memoryBefore);
+      }else{
+        reply=String(data.reply||'Could you say that again?').trim();
+      }
     }
   }catch(error){
     if(turn!==conversationTurnSeq)return;
-    reply=await emergencyBrainReply(text);
+    reply=await emergencyBrainReply(text,memoryBefore);
   }
 
   if(turn!==conversationTurnSeq)return;
-  reply=String(reply||teacherReply(text)).trim();
+  reply=String(reply||teacherReply(text,memoryBefore)).trim();
+  rememberExchange(text,reply);
   addMsg('teacher',reply);
 
   const spoken=await speak(reply,{fromProcessing:true});
@@ -730,7 +832,7 @@ async function handleUser(text,{stateOwned=false}={}){
     setFlowState(FLOW_STATES.IDLE,{force:true,status:'Ready'});
   }
 }
-function teacherReply(text){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode;let correction='';
+function teacherReply(text,history=readBrowserMemory()){const x=text.trim(),low=x.toLowerCase(),level=document.querySelector('#levelSel')?.value||activeTeacher.level,mode=document.querySelector('#modeSel')?.value||activeTeacher.mode,previousUser=previousUserMemory(history);let correction='';
 if(/\bi am have\b/i.test(x))correction='Small correction: say “I have”, not “I am have”. ';
 else if(/\bhe go\b/i.test(x))correction='Small correction: say “he goes”. ';
 else if(/\byesterday.*\bgo\b/i.test(x))correction='For the past, use “went”: “Yesterday I went…”. ';
@@ -741,6 +843,10 @@ if(low.includes('my name is')||low.startsWith("i'm ")||low.startsWith('i am '))r
 if(low.includes('how are you'))return correction+`I'm doing well, thank you. Now tell me: how are you feeling today, and why?`;
 if(low.includes('i like'))return correction+`Great. Why do you like it? Try to answer in two complete sentences.`;
 if(low.includes('because'))return correction+`Good use of “because”. Can you give me one more detail?`;
+if(previousUser){
+  const anchor=previousUser.replace(/\s+/g,' ').slice(0,110);
+  return correction+`Let's keep the same topic. Earlier you said: “${anchor}”. Tell me one more detail about that.`;
+}
 if(level==='A1')return correction+`Good. Now answer one more simple question: What do you usually do in the morning?`;
 if(level==='A2')return correction+`Good answer. Tell me when that happened and how you felt.`;
 if(level==='B1')return correction+`Nice. Can you explain your opinion and give one example?`;
