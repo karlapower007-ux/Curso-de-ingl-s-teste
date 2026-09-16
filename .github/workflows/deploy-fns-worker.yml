@@ -235,7 +235,7 @@ jobs:
           if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
           if(!css.includes('#fffefa')) fail('Teeth fill missing');
           if(!css.includes('Emma sharp portrait mode v2')) fail('Sharp portrait mode v2 missing');
-          if(!css.includes("content:url('/emma.jpg?v=hd2')!important")) fail('High-res portrait cache-bust missing');
+          if(!css.includes("content:url('/emma.jpg?v=valid4')!important")) fail('Restored portrait cache-bust missing');
           console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
           NODE
 
