@@ -184,15 +184,15 @@ async function transcribeWithFNS(blob){
       setStatus('Ready','on');
       return;
     }
-    handleUser(text);
+    handleUser(text,data?.language||'');
   }catch(err){
     addMsg('system','FNS STT: '+(err?.message||err)+'. Você também pode digitar.');
     setStatus('Ready','on');
   }
 }
 function stopRecognition(){stopRecordingAndSend()}
-function sendTyped(){const el=document.querySelector('#chatInput');if(!el||!el.value.trim())return;const text=el.value.trim();el.value='';handleUser(text)}
-async function handleUser(text){
+function sendTyped(){const el=document.querySelector('#chatInput');if(!el||!el.value.trim())return;const text=el.value.trim();el.value='';handleUser(text,'')}
+async function handleUser(text,inputLanguage=''){
   addMsg('user',text);
   addPracticeMessage();
   setStatus('Thinking','busy');
@@ -209,7 +209,8 @@ async function handleUser(text){
           message:text,
           teacher:activeTeacher?.name||'Emma',
           level:document.querySelector('#levelSel')?.value||'A1',
-          accent:activeTeacher?.accent||'British'
+          accent:activeTeacher?.accent||'British',
+          language:inputLanguage||''
         })
       }
     );
@@ -221,12 +222,14 @@ async function handleUser(text){
     }
 
     const reply=data.reply||'Could you say that again?';
+    const speechText=data.speech||reply;
+    const replyLanguage=data.language||'';
 
     addMsg('teacher',reply);
     setStatus('Ready','on');
 
     try{
-      speak(reply);
+      speak(speechText,replyLanguage);
     }catch(e){}
 
   }catch(error){
@@ -259,6 +262,7 @@ if(level==='B2')return correction+`Good. Now contrast that idea with an alternat
 if(level==='C1')return correction+`Strong answer. Reformulate it in a more precise and natural way, using a linking expression.`;
 return correction+`Excellent. Add nuance: what assumption or implication is hidden in that idea?`}
 let lastSpoken='';
+let lastSpokenLanguage='';
 let voiceUnlocked=false;
 let currentVoiceAudio=null;
 let currentVoiceUrl='';
@@ -333,10 +337,45 @@ function stopRemoteVoice(){
   if(face)face.className='avatar-face';
 }
 
-async function remoteSpeak(text){
+function nativePortugueseSpeak(text){
+  return new Promise((resolve,reject)=>{
+    if(!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance==='undefined'){
+      reject(new Error('Este navegador não oferece voz nativa pt-BR.'));
+      return;
+    }
+
+    try{
+      window.speechSynthesis.cancel();
+      const utterance=new SpeechSynthesisUtterance(String(text||''));
+      utterance.lang='pt-BR';
+      utterance.rate=1;
+      utterance.pitch=1;
+
+      const chooseVoice=()=>{
+        const voices=window.speechSynthesis.getVoices()||[];
+        return voices.find(v=>String(v.lang||'').toLowerCase()==='pt-br')
+          || voices.find(v=>String(v.lang||'').toLowerCase().startsWith('pt'));
+      };
+
+      const voice=chooseVoice();
+      if(voice)utterance.voice=voice;
+
+      utterance.onstart=()=>setStatus('Speaking • Português BR','busy');
+      utterance.onend=()=>{setStatus('Ready','on');resolve();};
+      utterance.onerror=e=>{setStatus('TTS error','busy');reject(new Error(e?.error||'Falha na voz pt-BR'));};
+
+      window.speechSynthesis.speak(utterance);
+    }catch(error){
+      reject(error);
+    }
+  });
+}
+
+async function remoteSpeak(text,lang=''){
   text=String(text||'').trim();
   if(!text)return;
   lastSpoken=text;
+  lastSpokenLanguage=String(lang||'');
 
   if(!voiceUnlocked){
     setStatus('Clique em Ativar voz','busy');
@@ -344,6 +383,19 @@ async function remoteSpeak(text){
   }
 
   stopRemoteVoice();
+
+  const normalizedLang=String(lang||'').toLowerCase();
+  if(normalizedLang.startsWith('pt')){
+    try{
+      setStatus('Generating voice • Português BR','busy');
+      await nativePortugueseSpeak(text);
+    }catch(error){
+      setStatus('TTS error','busy');
+      addMsg('system','FNS VOICE PT-BR: '+(error?.message||error));
+    }
+    return;
+  }
+
   setStatus('Generating voice','busy');
 
   try{
@@ -353,7 +405,7 @@ async function remoteSpeak(text){
       body:JSON.stringify({
         text,
         teacher:activeTeacher?.name||'Emma',
-        lang:'en'
+        lang:lang||''
       })
     });
 
@@ -409,29 +461,31 @@ async function unlockVoice(){
   const b=document.querySelector('#voiceBtn');
   if(b)b.textContent='🔊 Voz ativada';
   const text=lastSpoken||`Hello! I'm ${activeTeacher?.name||'your teacher'}. Voice is ready.`;
-  await remoteSpeak(text);
+  await remoteSpeak(text,lastSpokenLanguage);
 }
 
 async function unlockAndRepeat(){
   voiceUnlocked=true;
   const b=document.querySelector('#voiceBtn');
   if(b)b.textContent='🔊 Voz ativada';
-  if(lastSpoken)await remoteSpeak(lastSpoken);
+  if(lastSpoken)await remoteSpeak(lastSpoken,lastSpokenLanguage);
 }
 
-function speak(text){
+function speak(text,lang=''){
   lastSpoken=String(text||'').trim();
+  lastSpokenLanguage=String(lang||'');
   if(!voiceUnlocked){
     setStatus('Clique em Ativar voz','busy');
     return;
   }
-  remoteSpeak(lastSpoken);
+  remoteSpeak(lastSpoken,lastSpokenLanguage);
 }
 
-function speakNow(text){
+function speakNow(text,lang=''){
   lastSpoken=String(text||'').trim();
+  lastSpokenLanguage=String(lang||'');
   if(!voiceUnlocked)return;
-  remoteSpeak(lastSpoken);
+  remoteSpeak(lastSpoken,lastSpokenLanguage);
 }
 
 function cardsView(){layout(`<h1>Flashcards</h1><div class="grid"><div class="card"><h2>Novo cartão</h2><input id="front" placeholder="Frente / inglês"><textarea id="back" placeholder="Verso / tradução, explicação"></textarea><button class="primary" onclick="saveCard()">SALVAR FLASHCARD</button></div><div class="card"><h2>Seus cartões</h2><div id="cardlist">${cards.length?cards.map((c,i)=>`<div class="card"><b>${escapeHtml(c.f)}</b><p>${escapeHtml(c.b)}</p><div class="row"><button onclick="speakCard(${i})">🔊 Ouvir</button><button onclick="delCard(${i})">Excluir</button></div></div>`).join(''):'Nenhum cartão ainda.'}</div></div></div>`)}
