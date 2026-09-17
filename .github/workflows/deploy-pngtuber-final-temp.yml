@@ -1,0 +1,102 @@
+name: Deploy Emma PNGTuber Final Temporary
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - '.github/workflows/deploy-pngtuber-final-temp.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate PNGTuber source and protected core
+        run: |
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q "FNS FINAL FIX: MOTOR PNGTUBER" public/index.html
+          ! grep -q "emma-static.js" public/index.html
+          ! grep -q "avatar-mouth-motion" public/emma-static.css
+          node - <<'NODE'
+          const fs=require('fs');
+          for(const f of ['emma-fechada.png','emma-falando.png','emma-aberta.png']){
+            const b=fs.readFileSync('public/assets/'+f);
+            if(b.length<5000) throw new Error(f+' too small');
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47) throw new Error(f+' is not PNG');
+            console.log(f,b.length);
+          }
+          NODE
+
+      - name: Deploy Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Validate production PNGTuber
+        run: |
+          sleep 5
+          for f in emma-fechada.png emma-falando.png emma-aberta.png; do
+            curl --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=pngtuber-final-20260917"
+          done
+          node - <<'NODE'
+          const fs=require('fs');
+          for(const f of ['emma-fechada.png','emma-falando.png','emma-aberta.png']){
+            const b=fs.readFileSync(f);
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47) throw new Error('production '+f+' invalid');
+          }
+          NODE
+          npm install --no-save puppeteer-core@24.18.0
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?pngtuber-final=1',{waitUntil:'networkidle2',timeout:60000});
+            await page.click('button[data-view="live"]');
+            await page.waitForSelector('.card.teacher',{timeout:30000});
+            const opened=await page.evaluate(()=>{
+              const card=[...document.querySelectorAll('.card.teacher')].find(x=>x.querySelector('h3')?.textContent?.trim()==='Emma');
+              const btn=card?.querySelector('button.primary'); if(!btn)return false; btn.click(); return true;
+            });
+            if(!opened)throw new Error('Emma card not found');
+            await page.waitForSelector('.human-avatar img',{timeout:30000});
+            const check=async(level,needle,state)=>{
+              await page.evaluate(v=>document.querySelector('.human-avatar')?.style.setProperty('--mouth-open',String(v),'important'),level);
+              await new Promise(r=>setTimeout(r,250));
+              const got=await page.evaluate(()=>({
+                src:document.querySelector('.human-avatar img')?.src||'',
+                state:document.querySelector('.human-avatar')?.dataset.pngtuberState||'',
+                legacyMouth:!!document.querySelector('.avatar-mouth-motion'),
+                legacyFx:!!document.querySelector('.avatar-fx-layer')
+              }));
+              if(got.legacyMouth||got.legacyFx)throw new Error('legacy mouth/fx survived '+JSON.stringify(got));
+              if(!got.src.includes(needle)||got.state!==state)throw new Error('swap failed '+JSON.stringify({level,got}));
+              return got;
+            };
+            console.log('closed',await check(0,'emma-fechada.png','closed'));
+            console.log('talking',await check(0.30,'emma-falando.png','talking'));
+            console.log('open',await check(0.80,'emma-aberta.png','open'));
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
