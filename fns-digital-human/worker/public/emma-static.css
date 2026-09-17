@@ -1,5 +1,4 @@
-/* FNS Emma PNGTuber v1 — static portrait shell only.
-   No drawn mouth, no pseudo mouth, no WebGL face layer, no lip CSS. */
+/* FNS Emma PNGTuber FINAL — imagem pura, sem boca CSS, sem WebGL e sem ExpressionTurbine. */
 .human-avatar{
   position:relative!important;
   display:block!important;
@@ -8,6 +7,8 @@
   background:#0a1020!important;
   opacity:1!important;
   visibility:visible!important;
+  animation:none!important;
+  transform:none!important;
 }
 
 .human-avatar .avatar-photo-base,
@@ -40,27 +41,10 @@
   pointer-events:none!important;
 }
 
-/* Terra arrasada das camadas antigas de boca/rosto desenhado. */
-.human-avatar .avatar-mouth-motion,
-.human-avatar .avatar-mouth-motion::before,
-.human-avatar .avatar-mouth-motion::after,
-.human-avatar .avatar-fx-layer,
-.human-avatar .avatar-webgl-layer,
-.human-avatar .avatar-gaze,
-.human-avatar .avatar-eyelid,
-.human-avatar .avatar-camera-vignette{
-  display:none!important;
-  opacity:0!important;
-  visibility:hidden!important;
-  pointer-events:none!important;
-}
-
 .human-avatar .avatar-live-badge{
   z-index:3!important;
 }
 
-/* Image swapping deve trocar o quadro; o contêiner não deforma o retrato. */
-.human-avatar,
 .human-avatar.avatar-listening,
 .human-avatar.avatar-speaking,
 .human-avatar.avatar-talking,
