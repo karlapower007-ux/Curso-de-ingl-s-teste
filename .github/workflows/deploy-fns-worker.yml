@@ -527,7 +527,7 @@ jobs:
 
       - name: QA AvatarManager v3 production
         run: |
-          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js"
+          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=natural-v12"
           curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
           node - <<'NODE'
           const fs=require('fs');
@@ -544,7 +544,7 @@ jobs:
       - name: QA desktop microphone and mouth production
         run: |
           curl --fail --silent --show-error -o desktop-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css"
+          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=natural-v12"
           node - <<'NODE'
           const fs=require('fs');
           const app=fs.readFileSync('desktop-app.js','utf8');
