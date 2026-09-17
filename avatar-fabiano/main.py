@@ -9,6 +9,7 @@ import chromadb
 import edge_tts
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -29,14 +30,20 @@ for pasta in (STATIC_DIR, LIVROS_DIR, CHROMA_DIR, AUDIOS_DIR):
     pasta.mkdir(parents=True, exist_ok=True)
 
 GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-2").strip()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 TTS_VOICE = os.getenv("TTS_VOICE", "pt-BR-AntonioNeural").strip()
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "18000"))
-AUTO_INDEX_ON_STARTUP = os.getenv("AUTO_INDEX_ON_STARTUP", "1").lower() in {"1","true","yes","on"}
+AUTO_INDEX_ON_STARTUP = os.getenv("AUTO_INDEX_ON_STARTUP", "1").lower() in {"1", "true", "yes", "on"}
+DEFAULT_MAIN_SITE = "https://estudos-profundos-fns.karlapower007.chatgpt.site"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", DEFAULT_MAIN_SITE).split(",")
+    if origin.strip()
+]
 
 genai_client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
@@ -102,7 +109,7 @@ def require_api():
     if not genai_client:
         raise HTTPException(
             status_code=503,
-            detail="GEMINI_API_KEY/GOOGLE_API_KEY não configurada no servidor."
+            detail="GEMINI_API_KEY/GOOGLE_API_KEY não configurada no servidor.",
         )
 
 
@@ -118,7 +125,7 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
     vectors = []
     batch_size = 40
     for i in range(0, len(texts), batch_size):
-        batch = texts[i:i+batch_size]
+        batch = texts[i:i + batch_size]
         result = await genai_client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=batch,
@@ -177,9 +184,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Estudos Profundos FNS — Avatar Fabiano",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
+)
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -188,7 +204,7 @@ async def recuperar_contexto(pergunta: str):
     if collection.count() == 0:
         raise HTTPException(
             status_code=400,
-            detail="A memória está vazia. Adicione PDFs à pasta livros e redeploy, ou use /admin."
+            detail="A memória está vazia. Adicione PDFs à pasta livros e redeploy, ou use /admin.",
         )
 
     q = await embed_texts([pergunta])
@@ -241,13 +257,15 @@ def health():
     return {
         "ok": True,
         "projeto": "Estudos Profundos FNS — Avatar Fabiano",
-        "versao": "3.0.0",
+        "versao": "3.1.0",
         "modelo": GEMINI_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "documentos_indexados": collection.count(),
         "gemini_configurado": bool(GOOGLE_API_KEY),
         "admin_configurado": bool(ADMIN_TOKEN),
         "voz": TTS_VOICE,
+        "site_principal": DEFAULT_MAIN_SITE,
+        "cors_origins": CORS_ORIGINS,
         "nota_persistencia": (
             "Em Render Free, uploads feitos durante a execução são temporários. "
             "PDFs colocados em /livros no repositório são reindexados automaticamente."
