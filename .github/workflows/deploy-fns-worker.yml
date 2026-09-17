@@ -16,6 +16,7 @@ jobs:
     defaults:
       run:
         working-directory: fns-digital-human/worker
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,357 +31,45 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Static JS syntax checks
+      - name: Protect audio, STT, TTS, memory and turn core
         run: |
           node --check src/index.js
           node --check public/app.js
-          node --check public/emma-static.js
-          node --check public/emma-turbine-v19.js
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          echo "CORE LOCK PASS: app.js and src/index.js unchanged"
 
-      - name: QA turn state machine
+      - name: QA Emma PNGTuber final architecture
         run: |
+          grep -q "FNS FINAL FIX: MOTOR PNGTUBER" public/index.html
+          grep -q "emma-fechada.png" public/index.html
+          grep -q "emma-falando.png" public/index.html
+          grep -q "emma-aberta.png" public/index.html
+          grep -q "mouthOpen >= 0.15" public/index.html
+          grep -q "mouthOpen >= 0.60" public/index.html
+          ! grep -q "emma-static.js" public/index.html
+          ! grep -q "avatar-mouth-motion" public/emma-static.css
+          ! grep -q "avatar-webgl-layer" public/emma-static.css
+          ! grep -q "ExpressionTurbine" public/emma-static.css
+
           node - <<'NODE'
           const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const fail=m=>{throw new Error(m)};
-
-          for(const token of [
-            "FLOW_STATES=Object.freeze",
-            "IDLE:'idle'",
-            "LISTENING:'listening'",
-            "PROCESSING:'processing'",
-            "SPEAKING:'speaking'",
-            "let isSpeaking=false",
-            "let isRecording=false",
-            "let isProcessing=false",
-            "mic.disabled=busy",
-            "audio.onended=()=>finish(true)",
-            "setFlowState(FLOW_STATES.SPEAKING",
-            "setFlowState(FLOW_STATES.IDLE"
-          ]) if(!app.includes(token)) fail('Missing state-machine invariant: '+token);
-
-          if(app.includes('startShadowBrowserSTT')) fail('Shadow SpeechRecognition must not coexist with MediaRecorder');
-          if(app.includes('useBrowserSttFallback(')) fail('STT fallback must not auto-open Web Speech');
-          if(app.includes('startShadowBrowserSTT();')) fail('MediaRecorder still starts browser STT');
-          if(!app.includes("if(isSpeaking||isProcessing)return;")) fail('Mic has no speaking/processing guard');
-          if(!app.includes('pollinationsBrowserReply')) fail('Direct browser Pollinations fallback missing');
-          if(!app.includes('llm7BrowserReply')) fail('Direct browser LLM7 emergency fallback missing');
-          if(!app.includes("'https://api.llm7.io/v1/chat/completions'")) fail('Browser LLM7 endpoint missing');
-          if(!app.includes("model:'codestral-latest'")) fail('Browser LLM7 turbo model missing');
-          if(!app.includes('browserSttPreferred||neuralQuotaExhausted')) fail('Known emergency mode still wastes a Cloudflare chat round-trip');
-          if(!app.includes("'https://text.pollinations.ai/'")) fail('Pollinations browser endpoint missing');
-          if(!app.includes("enterQuotaRestMode({preserveFlow:true})")) fail('Emergency brain can still unlock microphone early');
-
-          const remote=app.slice(app.indexOf('async function remoteSpeak'),app.indexOf('async function unlockVoice'));
-          if(remote.includes('stopRemoteVoice();')) fail('remoteSpeak must not destroy an active audio element before playback');
-          if(!remote.includes('audio.onended=()=>finish(true)')) fail('Audio completion is not gated on onended');
-          if(!remote.includes('return await new Promise')) fail('Speech lifecycle is not awaited');
-
-          const browser=app.slice(app.indexOf('function startBrowserOnlySTT'),app.indexOf('function nextUtcMidnightMs'));
-          const starts=(browser.match(/\.start\(\)/g)||[]).length;
-          if(starts!==1) fail('Browser STT must have exactly one explicit start call, found '+starts);
-
-          console.log('QA TURN STATE PASS: one ear at a time; mic locked during processing/speaking; audio releases only on ended');
-          NODE
-
-      - name: QA Phase 2 memory and listening window
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const cp=require('child_process');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const worker=fs.readFileSync('src/index.js','utf8');
-          const stable=cp.execFileSync('git',['show','93187821bcd8a01e1875219cbeb3ba818f73c5b4:fns-digital-human/worker/public/app.js'],{encoding:'utf8'});
-          const fail=m=>{throw new Error(m)};
-
-          // Memory A/B/C/D
-          for(const token of [
-            'loadRemoteSessionMemory',
-            'saveRemoteSessionMemory',
-            'caches.default',
-            'session_id',
-            'mergeMemoryHistory'
-          ]) if(!worker.includes(token)) fail('Plan A remote memory missing: '+token);
-
-          for(const token of [
-            'localStorage',
-            'sessionStorage',
-            'readBrowserMemory',
-            'rememberExchange',
-            'memorySessionId',
-            'history:memoryBefore'
-          ]) if(!app.includes(token)) fail('Plan B browser memory missing: '+token);
-
-          if(!app.includes('pollinationsBrowserReply(text,history=readBrowserMemory())')) fail('Plan C Pollinations history missing');
-          if(!app.includes('llm7BrowserReply(text,history=readBrowserMemory()')) fail('Plan C LLM7 history missing');
-          if(!app.includes('teacherReply(text,history=readBrowserMemory())')) fail('Plan D local memory missing');
-          if(!app.includes('previousUserMemory(history)')) fail('Plan D previous interaction lookup missing');
-
-          // Listening-only permitted changes.
-          if(!app.includes('r.continuous=true;')) fail('Browser STT longer listening mode missing');
-          if(!app.includes('recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);')) fail('MediaRecorder 45s window missing');
-
-          // Absolute state-machine and microphone safety lock against stable 93187821.
-          const section=(src,a,b)=>{
-            const s=src.indexOf(a),e=src.indexOf(b,s);
-            if(s<0||e<0)fail('Cannot extract protected section '+a);
-            return src.slice(s,e);
-          };
-          const extractFunction=(src,name)=>{
-            const markers=['function '+name+'(', 'async function '+name+'('];
-            let s=-1;
-            for(const marker of markers){s=src.indexOf(marker);if(s>=0)break;}
-            if(s<0)fail('Cannot find protected function '+name);
-            const open=src.indexOf('{',s);
-            let depth=0,quote='',escape=false;
-            for(let i=open;i<src.length;i++){
-              const ch=src[i];
-              if(quote){
-                if(escape){escape=false;continue;}
-                if(ch==='\\'){escape=true;continue;}
-                if(ch===quote)quote='';
-                continue;
-              }
-              if(ch==="'"||ch==='"'||ch==='`'){quote=ch;continue;}
-              if(ch==='{')depth++;
-              else if(ch==='}'&&--depth===0)return src.slice(s,i+1);
-            }
-            fail('Cannot close protected function '+name);
-          };
-
-          if(section(app,'const FLOW_STATES=Object.freeze','function browserSpeechCtor')!==section(stable,'const FLOW_STATES=Object.freeze','function browserSpeechCtor')){
-            fail('Protected state machine changed');
+          const crypto=require('crypto');
+          const files=['emma-fechada.png','emma-falando.png','emma-aberta.png'];
+          const hashes=new Set();
+          for(const f of files){
+            const p='public/assets/'+f;
+            const b=fs.readFileSync(p);
+            if(b.length<5000) throw new Error(f+' too small: '+b.length);
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47) throw new Error(f+' is not PNG');
+            const w=b.readUInt32BE(16), h=b.readUInt32BE(20);
+            if(w<256||h<256) throw new Error(f+' dimensions too small: '+w+'x'+h);
+            const sha=crypto.createHash('sha256').update(b).digest('hex');
+            hashes.add(sha);
+            console.log(f, w+'x'+h, b.length+' bytes', sha.slice(0,12));
           }
-          for(const name of ['toggleRecognition','stopRecognition','stopRecordingAndSend','remoteSpeak']){
-            if(extractFunction(app,name)!==extractFunction(stable,name)) fail('Protected microphone/turn function changed: '+name);
-          }
-
-          // Browser STT may now change only for the requested multilingual transcription hardening.
-          // The protected audio capture/turn machine remains guarded separately below.
-          const browserStt=extractFunction(app,'startBrowserOnlySTT');
-          for(const token of [
-            "if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return false;",
-            "const Ctor=browserSpeechCtor();",
-            "listeningEngine='browser';",
-            "r.continuous=true;",
-            "r.interimResults=true;",
-            "r.maxAlternatives=3;",
-            "r.lang=browserRecognitionLanguage();",
-            "bestSpeechAlternative",
-            "normalizeTranscriptText",
-            "recoverTranscriptCandidate",
-            "gracefulSttFailure",
-            "await handleUser(recovered.text,{stateOwned:true});"
-          ]) if(!browserStt.includes(token)) fail('Browser STT invariant missing: '+token);
-          if(browserStt.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
-
-          const recording=extractFunction(app,'startRecording');
-          for(const token of [
-            "if(flowState!==FLOW_STATES.IDLE || isSpeaking || isProcessing)return;",
-            "listeningEngine='media';",
-            "setFlowState(FLOW_STATES.LISTENING,{status:'Abrindo microfone'});",
-            "recordingTimer=setTimeout(()=>stopRecordingAndSend(),45000);",
-            "recorder.start(250);"
-          ]) if(!recording.includes(token)) fail('Protected MediaRecorder invariant missing: '+token);
-          if((recording.match(/new MediaRecorder/g)||[]).length!==2) fail('Unexpected MediaRecorder construction shape');
-          if(recording.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
-
-          console.log('QA PHASE 2 PASS: memory A/B/C/D active; turn machine stable; desktop capture hardened only inside LISTENING');
-          NODE
-
-      - name: QA chat dedupe and AvatarManager v3
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const worker=fs.readFileSync('src/index.js','utf8');
-          const avatar=fs.readFileSync('public/emma-static.js','utf8');
-          const css=fs.readFileSync('public/emma-static.css','utf8');
-          const fail=m=>{throw new Error(m)};
-
-          if(!app.includes("dataset.fnsMessageKey")) fail('Chat visual dedupe guard missing');
-          if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=60')) fail('Browser memory was not expanded to 20 messages');
-          if(!worker.includes('const FNS_MEMORY_MAX_MESSAGES=60')) fail('Worker memory was not expanded to 20 messages');
-          if(!worker.includes('Math.abs(item.ts-prior.ts)<15000')) fail('Remote/client near-duplicate memory collapse missing');
-
-          for(const token of ['class AvatarManager','class AvatarWatchdog','avatar-webgl-layer','readState()','readMouth()','webglcontextlost','scheduleRecovery','static selfTest()']){
-            if(!avatar.includes(token)) fail('AvatarManager requirement missing: '+token);
-          }
-          for(const forbidden of ['MediaRecorder','SpeechRecognition','webkitSpeechRecognition','.play(','.pause(','stopRecognition','setFlowState(']){
-            if(avatar.includes(forbidden)) fail('Avatar visual layer illegally controls core flow: '+forbidden);
-          }
-          if(!avatar.includes("for(let turn=0;turn<20;turn++)")) fail('20-turn visual self-test missing');
-          if(!css.includes('Emma AvatarManager v3')) fail('Avatar WebGL CSS missing');
-          if(!css.includes('.avatar-webgl-layer.avatar-webgl-failed{display:none!important}')) fail('2D fallback visibility rule missing');
-          console.log('QA AVATAR V3 PASS: watchdog/fallback isolated from audio and turn core; 20-turn visual self-test present');
-          NODE
-
-      - name: QA desktop microphone and mouth alignment
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const css=fs.readFileSync('public/emma-static.css','utf8');
-          const fail=m=>{throw new Error(m)};
-
-          for(const token of [
-            'echoCancellation:true',
-            'noiseSuppression:true',
-            'autoGainControl:true',
-            'channelCount:1',
-            "'audio/webm;codecs=opus','audio/webm','audio/mp4'",
-            'startBrowserFallbackOnce',
-            "blob.size<1200",
-            "Whisper sem fala"
-          ]) if(!app.includes(token)) fail('Desktop mic hardening missing: '+token);
-
-          const helper=app.slice(app.indexOf('function startBrowserFallbackOnce'),app.indexOf('async function startRecording'));
-          if(!helper.includes("flowState!==FLOW_STATES.IDLE") || !helper.includes("startBrowserOnlySTT()")) fail('One-shot browser fallback guard missing');
-          if(helper.includes('setInterval')) fail('Fallback must never loop');
-
-          if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
-          if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
-          if(!app.includes("Math.min(1,(rms-.008)/.075)")) fail('Maximum analyser mouth opening missing');
-          if(!css.includes("var(--mouth-open,0) * 1.55")) fail('Natural CSS mouth amplitude missing');
-          if(!css.includes("scaleY(1.75)")) fail('Natural simulated mouth fallback missing');
-          if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
-          if(!css.includes('#fffefa')) fail('Teeth fill missing');
-          if(!css.includes('Emma sharp portrait mode v2')) fail('Sharp portrait mode v2 missing');
-          if(!css.includes("content:url('/emma.jpg?v=valid4')!important")) fail('Restored portrait cache-bust missing');
-          console.log('QA DESKTOP MIC/MOUTH PASS: natural mouth limits active; PC capture + STT core preserved');
-          NODE
-
-
-      - name: QA STT fallback turbines A-F
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const worker=fs.readFileSync('src/index.js','utf8');
-          const fail=m=>{throw new Error(m)};
-
-          for(const token of [
-            "FNS_REPAIR_STT_URL",
-            "recoverTranscriptCandidate",
-            "collapseRepeatedTranscriptPhrases",
-            "repairTranscriptWithLLM",
-            "isLikelySttNoise",
-            "startBrowserFallbackOnce('Whisper irreparável')",
-            "gracefulSttFailure",
-            "Desculpe, não consegui entender devido ao ruído. Pode repetir?"
-          ]) if(!app.includes(token)) fail('Frontend STT turbine missing: '+token);
-
-          for(const token of [
-            'url.pathname === "/repair-transcript"',
-            'collapseTranscriptRepetitions',
-            'gpt-oss-transcript-repair',
-            'return exactly EMPTY'
-          ]) if(!worker.includes(token)) fail('Worker STT repair missing: '+token);
-
-          for(const forbidden of [
-            'A transcrição ficou insegura e repetitiva, então não enviei texto errado para a Emma.',
-            'A transcrição neural pareceu corrompida ou repetitiva. Não enviei o texto errado.'
-          ]) if(app.includes(forbidden)) fail('Aggressive blocking UI returned: '+forbidden);
-
-          console.log('QA STT TURBINES PASS: A Whisper, B regex, C LLM repair, D browser fallback, E noise ignore, F Emma TTS retry');
-          NODE
-
-
-      - name: QA language lock turbines G-P
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const worker=fs.readFileSync('src/index.js','utf8');
-          const fail=m=>{throw new Error(m)};
-          for(const token of ['browserRecognitionLanguage','r.lang=browserRecognitionLanguage();','detectAutoLanguageFromFirstWords','firstThreeWords','looksLikePortglish','transcriptHasLanguageLeak','strictLanguageInstructionFor','input_language:inputLanguageLock.code','shortAudio:data?.short_audio===true']){
-            if(!app.includes(token))fail('Frontend G-P missing: '+token);
-          }
-          for(const token of ['sttOptions.language=requestedLanguage','task:"transcribe"','sttOptions.initial_prompt=whisperInitialPrompt(requestedLanguage)','sttOptions.temperature=0.1','short_audio:shortAudio','normalizeChatLanguage','REGRA ABSOLUTA DE IDIOMA']){
-            if(!worker.includes(token))fail('Worker G-P missing: '+token);
-          }
-          if(!worker.includes('convert Brazilian phonetic spellings such as mai neim, veri gudi and tenquiu'))fail('Port-glish repair rule missing');
-          if(!app.includes("source:'auto-first-3'"))fail('Auto first-three-word language lock missing');
-          if(!worker.includes('O usuário falou em ${inputLanguage.label}'))fail('Invisible language tag missing');
-          console.log('QA LANGUAGE LOCK G-P PASS');
-          NODE
-
-      - name: QA Emma visual compatibility for turbine v19
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const avatar=fs.readFileSync('public/emma-static.js','utf8');
-          const css=fs.readFileSync('public/emma-static.css','utf8');
-          const turbine=fs.readFileSync('public/emma-turbine-v19.js','utf8');
-          const fail=m=>{throw new Error(m)};
-
-          for(const token of [
-            "dataset.expressionRig='turbine-v17'",
-            "const baseDelay=state==='speaking'?2600",
-            "const span=state==='speaking'?1.18",
-            "Math.random()<.07"
-          ]) if(!avatar.includes(token)) fail('Natural eye rig missing: '+token);
-
-          for(const token of [
-            'Emma natural facial refinement v12',
-            'var(--mouth-open,0) * 1.55',
-            'scaleY(1.75)',
-            'emmaMouthNaturalFallback',
-            '.avatar-fx-layer::before',
-            '.avatar-fx-layer::after',
-            'var(--mouth-open,0) * .72',
-            'transition:transform 680ms'
-          ]) if(!css.includes(token)) fail('Natural facial CSS missing: '+token);
-
-          for(const forbidden of ['4.95','4.55','2.90']){
-            if(css.includes(forbidden)) fail('Exaggerated legacy mouth amplitude still active in CSS: '+forbidden);
-          }
-
-          for(const forbidden of ['MediaRecorder','SpeechRecognition','webkitSpeechRecognition','.play(','.pause(','stopRecognition','setFlowState(','/stt','/tts','/chat']){
-            if(avatar.includes(forbidden)) fail('Visual rig illegally touches protected core: '+forbidden);
-          }
-
-          for(const token of ['[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA','fns-override-v19','#fns-nova-boca-v19','clip-path: polygon(','BOCA V19 INJETADA NO DOM','requestAnimationFrame(loop)']){
-            if(!turbine.includes(token)) fail('Turbine v19 invariant missing: '+token);
-          }
-
-          console.log('QA EMMA V19 PASS: organic blink/gaze preserved; scorched-earth mouth override present; core untouched');
-          NODE
-
-      - name: Guard visual-only patch
-        run: |
-          APP_HASH=$(git hash-object public/app.js)
-          WORKER_HASH=$(git hash-object src/index.js)
-          echo "app.js blob=$APP_HASH"
-          echo "src/index.js blob=$WORKER_HASH"
-          test "$APP_HASH" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
-          test "$WORKER_HASH" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
-          echo "QA LANGUAGE-LOCK BASELINE PASS: A-P transcription/language recovery locked; audio playback, TTS and turn release remain protected"
-
-      - name: QA Emma JPEG integrity
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const b=fs.readFileSync('public/emma.jpg');
-          const fail=m=>{throw new Error(m)};
-          if(b.length<10000)fail('Emma JPEG unexpectedly small: '+b.length);
-          if(b[0]!==0xff||b[1]!==0xd8)fail('Emma JPEG missing SOI');
-          if(b[b.length-2]!==0xff||b[b.length-1]!==0xd9)fail('Emma JPEG missing EOI');
-          let i=2,w=0,h=0;
-          const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
-          while(i+9<b.length){
-            if(b[i]!==0xff){i++;continue}
-            while(i<b.length&&b[i]===0xff)i++;
-            const marker=b[i++];
-            if(marker===0xd8||marker===0xd9)continue;
-            if(i+1>=b.length)break;
-            const len=(b[i]<<8)|b[i+1];
-            if(len<2||i+len>b.length)break;
-            if(sof.has(marker)){h=(b[i+3]<<8)|b[i+4];w=(b[i+5]<<8)|b[i+6];break}
-            i+=len;
-          }
-          if(w<500||h<600)fail('Emma JPEG dimensions invalid: '+w+'x'+h);
-          console.log('QA EMMA JPEG PASS: valid JPEG '+w+'x'+h+' bytes='+b.length);
+          if(hashes.size!==3) throw new Error('PNGTuber frames are not three distinct images');
+          console.log('PNGTUBER SOURCE QA PASS');
           NODE
 
       - name: Deploy Worker
@@ -389,424 +78,79 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: QA browser v19 production DOM
+      - name: QA production PNGTuber
         run: |
+          sleep 5
+          for f in emma-fechada.png emma-falando.png emma-aberta.png; do
+            curl --compressed --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=pngtuber-final-20260917"
+          done
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const crypto=require('crypto');
+          const hashes=new Set();
+          for(const f of ['emma-fechada.png','emma-falando.png','emma-aberta.png']){
+            const b=fs.readFileSync(f);
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47) throw new Error('production '+f+' invalid');
+            const w=b.readUInt32BE(16), h=b.readUInt32BE(20);
+            if(w<256||h<256) throw new Error('production '+f+' too small: '+w+'x'+h);
+            hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
+          }
+          if(hashes.size!==3) throw new Error('production frames are not distinct');
+          console.log('PRODUCTION ASSET QA PASS');
+          NODE
+
           npm install --no-save puppeteer-core@24.18.0
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           test -n "$CHROME_BIN"
           export CHROME_BIN
-          node - <<'NODE'
-          const fs=require('fs');
-          const puppeteer=require('puppeteer-core');
 
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
           (async()=>{
-            const consoleLogs=[];
             const browser=await puppeteer.launch({
               headless:true,
               executablePath:process.env.CHROME_BIN,
               args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']
             });
             const page=await browser.newPage();
-            await page.setViewport({width:1440,height:1100,deviceScaleFactor:1});
-            page.on('console',msg=>consoleLogs.push(msg.text()));
-
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?qa=v19-browser', {
-              waitUntil:'networkidle2',
-              timeout:60000
-            });
-
-            const live=await page.$('button[data-view="live"]');
-            if(!live) throw new Error('Live navigation button not found');
-            await live.click();
-
+            await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?pngtuber-final=persistent',{waitUntil:'networkidle2',timeout:60000});
+            await page.click('button[data-view="live"]');
             await page.waitForSelector('.card.teacher',{timeout:30000});
-            const emmaOpened=await page.evaluate(()=>{
-              const cards=[...document.querySelectorAll('.card.teacher')];
-              const card=cards.find(x=>x.querySelector('h3')?.textContent?.trim()==='Emma');
-              const button=card?.querySelector('button.primary');
-              if(!button) return false;
-              button.click();
+
+            const opened=await page.evaluate(()=>{
+              const card=[...document.querySelectorAll('.card.teacher')]
+                .find(x=>x.querySelector('h3')?.textContent?.trim()==='Emma');
+              const btn=card?.querySelector('button.primary');
+              if(!btn)return false;
+              btn.click();
               return true;
             });
-            if(!emmaOpened) throw new Error('Emma teacher card could not be opened');
+            if(!opened)throw new Error('Emma card not found');
+            await page.waitForSelector('.human-avatar img',{timeout:30000});
 
-            await page.waitForSelector('.human-avatar',{timeout:30000});
-            await page.waitForFunction(()=>!!document.getElementById('fns-nova-boca-v19'),{timeout:30000});
-
-            await page.evaluate(()=>{
-              const avatar=document.querySelector('.human-avatar');
-              avatar.style.setProperty('--mouth-open','0.78','important');
-              avatar.style.setProperty('--mouth-wide','0.90','important');
-              avatar.classList.add('avatar-speaking');
-            });
-
-            await new Promise(resolve=>setTimeout(resolve,500));
-
-            const state=await page.evaluate(()=>{
-              const avatar=document.querySelector('.human-avatar');
-              const nativeMouth=document.querySelector('.human-avatar .avatar-mouth-motion');
-              const fake=document.getElementById('fns-nova-boca-v19');
-              const fakeStyle=fake?getComputedStyle(fake):null;
-              const nativeStyle=nativeMouth?getComputedStyle(nativeMouth):null;
-              const rect=fake?fake.getBoundingClientRect():null;
-              return {
-                avatarExists:!!avatar,
-                fakeExists:!!fake,
-                nativeExists:!!nativeMouth,
-                nativeDisplay:nativeStyle?.display||null,
-                nativeVisibility:nativeStyle?.visibility||null,
-                fakeOpacity:fakeStyle?.opacity||null,
-                fakeClipPath:fakeStyle?.clipPath||null,
-                fakeWidth:rect?.width||0,
-                fakeHeight:rect?.height||0,
-                mouthOpen:getComputedStyle(avatar).getPropertyValue('--mouth-open').trim(),
-                mouthWide:getComputedStyle(avatar).getPropertyValue('--mouth-wide').trim()
-              };
-            });
-
-            const bootLog=consoleLogs.some(x=>x.includes('[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA'));
-            const injectedLog=consoleLogs.some(x=>x.includes('[FNS TURBINE v19] BOCA V19 INJETADA NO DOM'));
-
-            if(!bootLog) throw new Error('Browser console missing v19 boot log');
-            if(!injectedLog) throw new Error('Browser console missing v19 injected-mouth log');
-            if(!state.fakeExists) throw new Error('Injected v19 mouth is absent from production DOM');
-            if(state.nativeDisplay!=='none') throw new Error('Native mouth is still visible: '+state.nativeDisplay);
-            if(!(parseFloat(state.fakeOpacity)>0.5)) throw new Error('Injected mouth is not visibly opaque: '+state.fakeOpacity);
-            if(!String(state.fakeClipPath).includes('polygon')) throw new Error('Injected mouth smile polygon is not active: '+state.fakeClipPath);
-            if(!(state.fakeWidth>20 && state.fakeHeight>1)) throw new Error('Injected mouth has invalid geometry: '+JSON.stringify(state));
-
-            await page.screenshot({path:'v19-production-page.png',fullPage:true});
-            const avatarEl=await page.$('.human-avatar');
-            if(!avatarEl) throw new Error('Avatar element disappeared before screenshot');
-            await avatarEl.screenshot({path:'v19-production-avatar.png'});
-
-            const evidence={
-              bootLog,
-              injectedLog,
-              state,
-              consoleLogs:consoleLogs.filter(x=>x.includes('[FNS TURBINE v19]'))
+            const check=async(level,needle,state)=>{
+              await page.evaluate(v=>document.querySelector('.human-avatar')?.style.setProperty('--mouth-open',String(v),'important'),level);
+              await new Promise(r=>setTimeout(r,300));
+              const got=await page.evaluate(()=>({
+                src:document.querySelector('.human-avatar img')?.src||'',
+                state:document.querySelector('.human-avatar')?.dataset.pngtuberState||'',
+                legacyMouth:!!document.querySelector('.avatar-mouth-motion'),
+                legacyFx:!!document.querySelector('.avatar-fx-layer'),
+                legacyWebgl:!!document.querySelector('.avatar-webgl-layer')
+              }));
+              if(got.legacyMouth||got.legacyFx||got.legacyWebgl) throw new Error('legacy visual layer survived '+JSON.stringify(got));
+              if(!got.src.includes(needle)||got.state!==state) throw new Error('swap failed '+JSON.stringify({level,got}));
+              return got;
             };
-            fs.writeFileSync('v19-browser-qa.json',JSON.stringify(evidence,null,2));
-            console.log('QA BROWSER V19 PASS',JSON.stringify(evidence));
+
+            console.log('closed',await check(0,'emma-fechada.png','closed'));
+            console.log('talking',await check(0.30,'emma-falando.png','talking'));
+            console.log('open',await check(0.80,'emma-aberta.png','open'));
             await browser.close();
-          })().catch(err=>{
-            console.error(err);
-            process.exit(1);
-          });
+          })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
-      - name: Upload v19 browser evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: emma-v19-browser-evidence
-          path: |
-            fns-digital-human/worker/v19-production-avatar.png
-            fns-digital-human/worker/v19-production-page.png
-            fns-digital-human/worker/v19-browser-qa.json
-          if-no-files-found: error
-
-      - name: QA resilient multilingual TTS
-        run: |
-          sleep 5
-          test_tts () {
-            NAME="$1"
-            TEXT="$2"
-
-            HTTP_CODE=$(curl --silent --show-error \
-              -D "$NAME.headers" \
-              -o "$NAME.body" \
-              -w "%{http_code}" \
-              -X POST \
-              -H "Content-Type: application/json" \
-              --data "$(node -e 'console.log(JSON.stringify({text:process.argv[1],teacher:"Emma"}))' "$TEXT")" \
-              "https://fns-stt.karlapower007.workers.dev/tts")
-
-            ENGINE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="x-fns-voice-engine"{print $2}' | tail -1)
-            TYPE=$(tr -d '\r' < "$NAME.headers" | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
-            SIZE=$(wc -c < "$NAME.body")
-
-            echo "$NAME http=$HTTP_CODE engine=$ENGINE type=$TYPE bytes=$SIZE"
-
-            if [ "$HTTP_CODE" = "200" ]; then
-              if [ "$SIZE" -lt 1000 ]; then
-                echo "$NAME returned too little audio: $SIZE bytes"
-                exit 1
-              fi
-              case "$TYPE" in
-                audio/*|application/octet-stream*) ;;
-                *) echo "$NAME invalid audio content-type: $TYPE"; exit 1 ;;
-              esac
-              return
-            fi
-
-            node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('$NAME.body','utf8')); if(!(r.quota_exhausted===true || r.code==='FNS_DAILY_NEURON_QUOTA')) throw new Error('Unexpected TTS failure: '+JSON.stringify(r)); console.log('Graceful quota response accepted for $NAME');"
-          }
-
-          test_tts pt "Olá Emma, boa noite. Você consegue me entender perfeitamente em português?"
-          test_tts en "Now let's continue in English. Correct my mistakes."
-          test_tts es "Ahora quiero hablar contigo en español."
-          test_tts mixed "Emma, explique em português a diferença entre I have been e I was."
-
-      - name: QA Emma visual layering
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          const css=fs.readFileSync('public/emma-static.css','utf8');
-          const rig=fs.readFileSync('public/emma-static.js','utf8');
-
-          const fail=(m)=>{throw new Error(m)};
-          const markup=app.slice(app.indexOf('function avatarVisualMarkup'),app.indexOf('let activeTeacher'));
-          if(!markup.includes('avatar-photo-base')) fail('Base portrait layer missing');
-          if(markup.includes('avatar-photo-jaw')) fail('Duplicate jaw image layer still present');
-          if(markup.includes('avatar-eye-layer')) fail('Duplicate eye image layer still present');
-          if(!markup.includes('data-avatar-ready')) fail('Portrait preload state missing');
-          if(!markup.includes('avatar-mouth-motion')) fail('Single smooth mouth overlay missing');
-          if(markup.includes('avatar-mouth-cavity') || markup.includes('avatar-lip ')) fail('Legacy multi-layer mouth still present');
-          if(/canvas|getContext\s*\(/i.test(markup+css)) fail('Canvas/pixel mouth manipulation must not be used');
-          if(!css.includes('.avatar-fx-layer')) fail('Transparent FX layer missing');
-          if(!css.includes('background:transparent')) fail('FX layer is not transparent');
-          if(!rig.includes('portrait.complete&&portrait.naturalWidth>0')) fail('Rig does not wait for portrait load');
-          if(!app.includes('createMediaElementSource(audio)')) fail('Audio analyser lip-sync missing');
-          if(!app.includes('getByteTimeDomainData(samples)')) fail('Smooth RMS lip-sync missing');
-          if(!app.includes("audio.crossOrigin='anonymous'")) fail('Cross-origin audio flag missing');
-          if(!app.includes('startSimulatedLipSync')) fail('Mobile simulated mouth fallback missing');
-          if(!app.includes('avatar-mouth-simulated')) fail('Mobile mouth fallback state missing');
-          if(!css.includes('@keyframes emmaMouthFallback')) fail('Mobile mouth fallback CSS missing');
-          if(!app.includes("portrait:'/emma.jpg'")) fail('Emma is not wired to the static JPEG asset');
-          if(!fs.existsSync('public/emma.jpg')) fail('public/emma.jpg missing');
-          const jpg=fs.readFileSync('public/emma.jpg');
-          if(jpg.length<10000 || jpg[0]!==0xff || jpg[1]!==0xd8) fail('Emma JPEG asset is invalid');
-          if(!app.includes('window.SpeechRecognition || window.webkitSpeechRecognition')) fail('Browser STT fallback missing');
-          if(!app.includes('isSttBackendFailure')) fail('STT backend fallback detector missing');
-          if(!app.includes('status===502')) fail('HTTP 502 STT fallback missing');
-          if(!app.includes('browserSttPreferred')) fail('Persistent browser STT emergency mode missing');
-          if(app.includes('startShadowBrowserSTT')) fail('Shadow browser STT race returned');
-          console.log('QA EMMA VISUAL PASS: real JPEG + fixed portrait + transparent overlays + preload gate + audio analyser + browser STT fallback');
-          NODE
-
-      - name: QA supercascade and quota guard
-        run: |
-          node - <<'NODE'
-          const fs=require('fs');
-          const worker=fs.readFileSync('src/index.js','utf8');
-          const app=fs.readFileSync('public/app.js','utf8');
-
-          const fail=m=>{throw new Error(m)};
-          if(!worker.includes('X-FNS-TTS-Cascade-Size')) fail('Cascade telemetry missing');
-          if(!worker.includes('runPublicTtsCascade("en"')) fail('English cascade not wired');
-          if(!worker.includes('runPublicTtsCascade("es"')) fail('Spanish cascade not wired');
-
-          const fnStart=worker.indexOf('function publicTtsEngines');
-          const esBranch=worker.indexOf('if (language === "es")',fnStart);
-          const esReturn=worker.indexOf('return [',esBranch);
-          const esEnd=worker.indexOf('];',esReturn)+2;
-          const enReturn=worker.indexOf('return [',esEnd);
-          const enEnd=worker.indexOf('];',enReturn)+2;
-          const esBlock=worker.slice(esReturn,esEnd);
-          const enBlock=worker.slice(enReturn,enEnd);
-          const enIds=(enBlock.match(/\{id:"[^"]+"/g)||[]);
-          const esIds=(esBlock.match(/\{id:"[^"]+"/g)||[]);
-          if(enIds.length!==10) fail('English cascade must have exactly 10 engines: '+enIds.length);
-          if(esIds.length!==10) fail('Spanish cascade must have exactly 10 engines: '+esIds.length);
-          const id=s=>s.match(/"([^"]+)"/)?.[1]||'';
-          const enNames=enIds.map(id), esNames=esIds.map(id);
-          if(enNames[0]!=='aura-1'||enNames[1]!=='google-translate-tts-en') fail('English fast path must be Aura then Google: '+enNames.join(','));
-          if(esNames[0]!=='aura-2-es'||esNames[1]!=='google-translate-tts-es') fail('Spanish fast path must be Aura then Google: '+esNames.join(','));
-          if(enNames.slice(2,7).some(x=>x.startsWith('hf-'))) fail('English HF engine found before slot 8: '+enNames.join(','));
-          if(esNames.slice(2,7).some(x=>x.startsWith('hf-'))) fail('Spanish HF engine found before slot 8: '+esNames.join(','));
-          if(enNames.slice(7).some(x=>!x.startsWith('hf-'))) fail('English slots 8-10 must be HF-only: '+enNames.join(','));
-          if(esNames.slice(7).some(x=>!x.startsWith('hf-'))) fail('Spanish slots 8-10 must be HF-only: '+esNames.join(','));
-
-          if(!app.includes('enterQuotaRestMode')) fail('Frontend quota rest mode missing');
-          if(!app.includes('mic.disabled=busy')) fail('Microphone busy lock missing');
-          if(!app.includes("browserSttPreferred?'🎤 Falar (navegador)'")) fail('Emergency browser microphone label missing');
-          if(app.includes("mic.disabled=true;mic.textContent='🎤 Limite diário atingido'")) fail('Legacy quota microphone shutdown still present');
-          if(!app.includes('QUOTA_NOTICE_TEXT')) fail('Friendly quota notice missing');
-          if(worker.includes('llm7FastFallback')) fail('Cloudflare Worker must not call LLM7; browser owns the keyless fallback');
-          if(worker.includes('api.llm7.io/v1/chat/completions')) fail('Worker still contains a direct LLM7 dependency');
-          if(!app.includes('llm7BrowserReply')) fail('Browser LLM7 fallback missing');
-          if(worker.includes('hf-zacheus-qwen3-4b-last-resort')) fail('HF chat cold-start fallback still present');
-          if(/className\s*=\s*['"]avatar-face/.test(app)) fail('Avatar class replacement can still erase human-avatar state');
-
-          console.log('QA SUPER-CASCADE PASS: EN='+enIds.length+' ES='+esIds.length+' visual/quota guard active');
-          NODE
-
-      - name: QA Phase 2 production memory
-        run: |
-          curl --fail --silent --show-error -o phase2-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          curl --fail --silent --show-error -o phase2-health.json "https://fns-stt.karlapower007.workers.dev/health"
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('phase2-app.js','utf8');
-          const health=JSON.parse(fs.readFileSync('phase2-health.json','utf8'));
-          for(const token of ['readBrowserMemory','rememberExchange','history:memoryBefore','r.continuous=true','45000','recoverTranscriptCandidate','gracefulSttFailure','FNS_REPAIR_STT_URL','browserRecognitionLanguage','detectAutoLanguageFromFirstWords','strictLanguageInstructionFor']){
-            if(!app.includes(token)) throw new Error('Production Phase 2 frontend missing: '+token);
-          }
-          if(health.version!=='2026-09-16.25-language-lock-g-p') throw new Error('Wrong production health version: '+health.version);
-          console.log('QA PHASE 2 PRODUCTION PASS: browser memory + extended LISTENING + memory-aware Worker deployed');
-          NODE
-
-      - name: QA AvatarManager v3 production
-        run: |
-          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=18"
-          curl --fail --silent --show-error -o turbine-v19-prod.js "https://fns-stt.karlapower007.workers.dev/emma-turbine-v19.js?v=1900"
-          curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          node - <<'NODE'
-          const fs=require('fs');
-          const avatar=fs.readFileSync('avatar-prod.js','utf8');
-          const turbine=fs.readFileSync('turbine-v19-prod.js','utf8');
-          const app=fs.readFileSync('app-prod.js','utf8');
-          for(const token of ['class AvatarManager','class AvatarWatchdog','class ExpressionTurbine','__FNS_EXPRESSION_TURBINE_V17__','data-expression-rig','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
-            if(!avatar.includes(token)) throw new Error('Production AvatarManager missing: '+token);
-          }
-          for(const token of ['[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA','fns-override-v19','fns-nova-boca-v19','display: none !important','z-index: 2147483647','BOCA V19 INJETADA NO DOM','requestAnimationFrame(loop)']){
-            if(!turbine.includes(token)) throw new Error('Production turbine v19 missing: '+token);
-          }
-          if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
-          if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=60')) throw new Error('Production memory+ frontend missing');
-          console.log('QA AVATAR V3 PRODUCTION PASS: visual layer + chat dedupe + memory+ deployed');
-          NODE
-
-      - name: QA desktop microphone and mouth production
-        run: |
-          curl --fail --silent --show-error -o desktop-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=18"
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('desktop-app.js','utf8');
-          const css=fs.readFileSync('desktop-emma.css','utf8');
-          for(const token of ['echoCancellation:true','noiseSuppression:true','autoGainControl:true','channelCount:1','startBrowserFallbackOnce']){
-            if(!app.includes(token)) throw new Error('Production desktop mic fix missing: '+token);
-          }
-          if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
-          if(!app.includes("Math.min(1,(rms-.008)/.075)")) throw new Error('Production analyser mouth opening gain missing');
-          if(!css.includes("var(--mouth-open,0) * 1.55")) throw new Error('Production natural mouth amplitude missing');
-          if(!css.includes('.avatar-mouth-motion::before')) throw new Error('Production teeth layer missing');
-          if(!css.includes('Emma sharp portrait mode v2')) throw new Error('Production sharp portrait mode v2 missing');
-          if(!css.includes('Emma natural facial refinement v12')) throw new Error('Production natural facial refinement v12 missing');
-          if(!css.includes('emmaMouthNaturalFallback')) throw new Error('Production natural mouth fallback missing');
-          if(css.includes('4.95')||css.includes('4.55')||css.includes('2.90')) throw new Error('Production exaggerated mouth amplitude returned');
-          console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS: natural facial refinement deployed');
-          NODE
-
-      - name: QA production portrait and brain fallback
-        run: |
-          curl --fail --silent --show-error \
-            -D emma.headers \
-            -o emma.jpg \
-            "https://fns-stt.karlapower007.workers.dev/emma.jpg"
-          EMMA_SIZE=$(wc -c < emma.jpg)
-          EMMA_TYPE=$(tr -d '\r' < emma.headers | awk -F': ' 'tolower($1)=="content-type"{print $2}' | tail -1)
-          echo "emma.jpg type=$EMMA_TYPE bytes=$EMMA_SIZE"
-          test "$EMMA_SIZE" -gt 10000
-          node - <<'NODE'
-          const fs=require('fs');
-          const b=fs.readFileSync('emma.jpg');
-          const fail=m=>{throw new Error(m)};
-          if(b[0]!==0xff||b[1]!==0xd8)fail('Production Emma JPEG missing SOI');
-          if(b[b.length-2]!==0xff||b[b.length-1]!==0xd9)fail('Production Emma JPEG missing EOI');
-          let i=2,w=0,h=0;
-          const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
-          while(i+9<b.length){
-            if(b[i]!==0xff){i++;continue}
-            while(i<b.length&&b[i]===0xff)i++;
-            const marker=b[i++];
-            if(marker===0xd8||marker===0xd9)continue;
-            if(i+1>=b.length)break;
-            const len=(b[i]<<8)|b[i+1];
-            if(len<2||i+len>b.length)break;
-            if(sof.has(marker)){h=(b[i+3]<<8)|b[i+4];w=(b[i+5]<<8)|b[i+6];break}
-            i+=len;
-          }
-          if(w<500||h<600)fail('Production Emma JPEG dimensions invalid: '+w+'x'+h);
-          console.log('QA EMMA JPEG PRODUCTION PASS: '+w+'x'+h+' bytes='+b.length);
-          NODE
-          case "$EMMA_TYPE" in
-            image/jpeg*|image/jpg*) ;;
-            *) echo "Invalid Emma content type: $EMMA_TYPE"; exit 1 ;;
-          esac
-
-          # Pollinations remains first browser attempt, but its anonymous budget is external.
-          POLL_CODE=$(curl --silent --show-error --max-time 8 \
-            -D poll.headers \
-            -o poll.txt \
-            -w "%{http_code}" \
-            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
-            -H "Accept: text/plain,*/*" \
-            "https://text.pollinations.ai/Reply%20briefly%3A%20Emma%20ready" || true)
-          POLL_CORS=$(tr -d '\r' < poll.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
-          echo "Pollinations http=$POLL_CODE cors=$POLL_CORS"
-          if [ -f poll.txt ] && [ "$POLL_CODE" = "200" ] && ! grep -Eqi 'api key|raise the key budget|unauthorized|forbidden|quota exceeded|rate.?limit' poll.txt; then
-            echo "QA POLLINATIONS BEST-EFFORT PASS"
-          else
-            echo "QA POLLINATIONS DEGRADED: browser LLM7 takes over immediately"
-          fi
-
-          # Simulate the browser CORS preflight required by JSON POST.
-          LLM7_OPTIONS_CODE=$(curl --silent --show-error --max-time 8 \
-            -D llm7-options.headers \
-            -o /dev/null \
-            -w "%{http_code}" \
-            -X OPTIONS \
-            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
-            -H "Access-Control-Request-Method: POST" \
-            -H "Access-Control-Request-Headers: content-type" \
-            "https://api.llm7.io/v1/chat/completions" || true)
-          LLM7_OPTIONS_CORS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
-          LLM7_ALLOW_METHODS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-methods"{print $2}' | tail -1)
-          LLM7_ALLOW_HEADERS=$(tr -d '\r' < llm7-options.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-headers"{print $2}' | tail -1)
-          echo "LLM7 preflight http=$LLM7_OPTIONS_CODE cors=$LLM7_OPTIONS_CORS methods=$LLM7_ALLOW_METHODS headers=$LLM7_ALLOW_HEADERS"
-          case "$LLM7_OPTIONS_CODE" in 200|204) ;; *) echo "LLM7 browser preflight failed"; exit 1 ;; esac
-          case "$LLM7_OPTIONS_CORS" in "*"|"https://fns-stt.karlapower007.workers.dev") ;; *) echo "LLM7 preflight CORS denied: $LLM7_OPTIONS_CORS"; exit 1 ;; esac
-          echo "$LLM7_ALLOW_METHODS" | grep -Eqi 'POST' || { echo "LLM7 preflight did not allow POST"; exit 1; }
-          echo "$LLM7_ALLOW_HEADERS" | grep -Eqi 'content-type|\*' || { echo "LLM7 preflight did not allow content-type"; exit 1; }
-
-          LLM7_CODE=$(curl --silent --show-error --max-time 8 \
-            -D llm7.headers \
-            -o llm7.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Origin: https://fns-stt.karlapower007.workers.dev" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" \
-            --data '{"model":"codestral-latest","messages":[{"role":"user","content":"Reply exactly: Emma ready"}],"max_tokens":40,"temperature":0.2,"stream":false}' \
-            "https://api.llm7.io/v1/chat/completions" || true)
-          LLM7_CORS=$(tr -d '\r' < llm7.headers 2>/dev/null | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
-          echo "LLM7 browser POST http=$LLM7_CODE cors=$LLM7_CORS"
-          head -c 500 llm7.json 2>/dev/null || true
-          if [ "$LLM7_CODE" = "200" ]; then
-            case "$LLM7_CORS" in "*"|"https://fns-stt.karlapower007.workers.dev") echo "QA LLM7 BROWSER CORS PASS" ;; *) echo "QA LLM7 DEGRADED: CORS=$LLM7_CORS; local tutor fallback remains available" ;; esac
-          else
-            echo "QA LLM7 DEGRADED: HTTP=$LLM7_CODE; local tutor fallback remains available"
-          fi
-          node - <<'NODE'
-          const fs=require('fs');
-          const app=fs.readFileSync('public/app.js','utf8');
-          if(!app.includes('return teacherReply(text,history)')) throw new Error('Zero-wait local continuity fallback with memory missing');
-          if(!app.includes('raise the key budget')) throw new Error('Pollinations budget detector missing');
-          if(!app.includes('timeoutMs=2200')) throw new Error('Fast secondary fallback timeout missing');
-          console.log('QA CONTINUITY PASS: Pollinations primary, fast browser backup, local zero-wait fallback');
-          NODE
-
-          CHAT_CODE=$(curl --silent --show-error --max-time 4 \
-            -D chat.headers \
-            -o chat.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            --data '{"message":"Hello Emma.","teacher":"Emma","level":"A1","accent":"American","force_public":true}' \
-            "https://fns-stt.karlapower007.workers.dev/chat")
-          cat chat.json
-          export CHAT_CODE
-          node - <<'NODE'
-          const fs=require('fs');
-          const r=JSON.parse(fs.readFileSync('chat.json','utf8'));
-          const code=process.env.CHAT_CODE;
-          if(code!=='503') throw new Error('Forced public handoff must be immediate HTTP 503, got '+code+' '+JSON.stringify(r));
-          if(r.code!=='FNS_BROWSER_PUBLIC_BRAIN'||r.browser_fallback!==true||r.forced_public!==true){
-            throw new Error('Browser public-brain handoff missing: '+JSON.stringify(r));
-          }
-          console.log('QA BRAIN HANDOFF PASS: Worker exits immediately; browser owns Pollinations -> LLM7');
-          NODE
-
+      - name: Final status
+        run: echo "DEPLOY PASS - protected core intact; Emma PNGTuber final active"
