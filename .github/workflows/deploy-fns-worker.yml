@@ -93,14 +93,15 @@ jobs:
           done
           echo 'PRODUCTION V15 HTML + IMAGE ASSETS PASS — NO TTS/STT/CHAT CALLED'
 
-      - name: Pixel-visible browser QA — block all AI routes
+      - name: Pixel-visible browser QA — screenshot pixels, zero AI calls
         run: |
-          npm install --no-save puppeteer-core@24.18.0
+          npm install --no-save puppeteer-core@24.18.0 pngjs@7.0.0
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           test -n "$CHROME_BIN"
           export CHROME_BIN
           node - <<'NODE'
           const puppeteer=require('puppeteer-core');
+          const {PNG}=require('pngjs');
           (async()=>{
             const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
             const page=await browser.newPage();
@@ -119,30 +120,40 @@ jobs:
             },{timeout:30000});
             const result=await page.evaluate(()=>{
               const img=document.getElementById('olivia-avatar-img');
-              const panel=document.getElementById('panel-language')?.textContent?.trim();
-              const subtitle=document.getElementById('avatar-subtitle')?.textContent?.trim();
               const rect=img.getBoundingClientRect();
-              const c=document.createElement('canvas'); c.width=64;c.height=64;
-              const x=c.getContext('2d',{willReadFrequently:true});
-              x.drawImage(img,0,0,64,64);
-              const d=x.getImageData(0,0,64,64).data;
-              let nonBlack=0, bright=0, min=765, max=0;
-              for(let i=0;i<d.length;i+=4){
-                const sum=d[i]+d[i+1]+d[i+2];
-                if(sum>30)nonBlack++;
-                if(sum>180)bright++;
-                if(sum<min)min=sum;if(sum>max)max=sum;
-              }
-              return {panel,subtitle,src:img.currentSrc||img.src,natural:[img.naturalWidth,img.naturalHeight],rect:[rect.width,rect.height],nonBlack,bright,dynamicRange:max-min};
+              return {
+                panel:document.getElementById('panel-language')?.textContent?.trim(),
+                subtitle:document.getElementById('avatar-subtitle')?.textContent?.trim(),
+                src:img.currentSrc||img.src,
+                natural:[img.naturalWidth,img.naturalHeight],
+                rect:[rect.width,rect.height],
+                display:getComputedStyle(img).display,
+                visibility:getComputedStyle(img).visibility,
+                opacity:getComputedStyle(img).opacity
+              };
             });
             if(result.panel!=='Español · A1')throw new Error('language leak '+JSON.stringify(result));
             if(!/español/i.test(result.subtitle||''))throw new Error('subtitle leak '+JSON.stringify(result));
             if(!result.src.includes('olivia-fechada-v15.jpg'))throw new Error('wrong frame source '+JSON.stringify(result));
-            if(result.rect[0]<100||result.rect[1]<100)throw new Error('avatar geometry hidden '+JSON.stringify(result));
-            if(result.nonBlack<1500||result.bright<500||result.dynamicRange<120)throw new Error('avatar decoded but visually black/blank '+JSON.stringify(result));
+            if(result.rect[0]<100||result.rect[1]<100||result.display==='none'||result.visibility==='hidden'||Number(result.opacity)<0.9)throw new Error('avatar geometry hidden '+JSON.stringify(result));
             if(blockedAI!==0)throw new Error('page attempted AI endpoints during visual QA: '+blockedAI);
+
+            const element=await page.$('#olivia-avatar-img');
+            const rendered=await element.screenshot({encoding:'binary'});
+            const png=PNG.sync.read(rendered);
+            let nonBlack=0,bright=0,min=765,max=0;
+            for(let i=0;i<png.data.length;i+=4){
+              const sum=png.data[i]+png.data[i+1]+png.data[i+2];
+              if(sum>30)nonBlack++;
+              if(sum>180)bright++;
+              if(sum<min)min=sum;
+              if(sum>max)max=sum;
+            }
+            const total=png.width*png.height;
+            const pixels={nonBlack,bright,dynamicRange:max-min,total,nonBlackRatio:nonBlack/total,brightRatio:bright/total};
+            if(pixels.nonBlackRatio<0.35||pixels.brightRatio<0.10||pixels.dynamicRange<120)throw new Error('avatar rendered black/blank '+JSON.stringify({result,pixels}));
             await page.screenshot({path:'olivia-v15-visible.png',fullPage:true});
-            console.log('OLIVIA V15 PIXEL QA PASS',result);
+            console.log('OLIVIA V15 PIXEL QA PASS',result,pixels);
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
