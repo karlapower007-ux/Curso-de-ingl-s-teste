@@ -1,4 +1,4 @@
-name: QA Olivia V15 Quota-Safe Gate
+name: QA Olivia V16 Quota-Safe Gate
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  qa-olivia-v15:
+  qa-olivia-v16:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -22,10 +22,22 @@ jobs:
           node-version: '22'
       - name: Install
         run: npm install
-      - name: Core blindagem + V15 source
+      - name: Materialize Olivia V16 avatar frames
         run: |
           set -euo pipefail
-          node --check src/strict-output-v15.js
+          base64 -d public/assets/olivia-fechada-v16.b64 > public/assets/olivia-fechada-v16.jpg
+          base64 -d public/assets/olivia-falando-v16.b64 > public/assets/olivia-falando-v16.jpg
+          base64 -d public/assets/olivia-aberta-v16.b64 > public/assets/olivia-aberta-v16.jpg
+          file public/assets/olivia-fechada-v16.jpg | grep -q JPEG
+          file public/assets/olivia-falando-v16.jpg | grep -q JPEG
+          file public/assets/olivia-aberta-v16.jpg | grep -q JPEG
+          echo 'f7e90163f5fba287dbea7c6aa3daad04700c7946b1479c5f89df68f6040b8b3  public/assets/olivia-fechada-v16.jpg' | sha256sum -c -
+          echo '922b62af403a5298a7b4aad171bb584b15e37a7dfbcfc024729f95bbd614feeb  public/assets/olivia-falando-v16.jpg' | sha256sum -c -
+          echo '2e313e08c167b1e1631bcbbd1cbda0a0e676316292685f11c3af6956ce30f7e6  public/assets/olivia-aberta-v16.jpg' | sha256sum -c -
+      - name: Core blindagem + V16 source
+        run: |
+          set -euo pipefail
+          node --check src/strict-output-v16.js
           node --check src/strict-output-v7.js
           node --check src/strict-output.js
           node --check src/index.js
@@ -33,21 +45,18 @@ jobs:
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
-          grep -q '"main": "src/strict-output-v15.js"' wrangler.jsonc
+          grep -q '"main": "src/strict-output-v16.js"' wrangler.jsonc
           grep -q "language:'es-ES'" src/strict-output-v7.js
           grep -q "languageLabel:'Español'" src/strict-output-v7.js
           grep -q "subtitle:'Profesora de español'" src/strict-output-v7.js
-          grep -q 'olivia-fechada-v15.jpg' src/strict-output-v15.js
-          grep -q 'olivia-falando-v15.jpg' src/strict-output-v15.js
-          grep -q 'olivia-aberta-v15.jpg' src/strict-output-v15.js
-          file public/assets/olivia-fechada-v15.jpg | grep -q JPEG
-          file public/assets/olivia-falando-v15.jpg | grep -q JPEG
-          file public/assets/olivia-aberta-v15.jpg | grep -q JPEG
-          echo 'V15 SOURCE + SPANISH + IMAGE ASSETS PASS'
+          grep -q 'olivia-fechada-v16.jpg' src/strict-output-v16.js
+          grep -q 'olivia-falando-v16.jpg' src/strict-output-v16.js
+          grep -q 'olivia-aberta-v16.jpg' src/strict-output-v16.js
+          echo 'V16 SOURCE + SPANISH + GENERATED IMAGE ASSETS PASS'
       - name: Local mock QA — zero Workers AI calls
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v15.js';
+          import worker from './src/strict-output-v16.js';
           const env = new Proxy({}, {get(){ throw new Error('QA tried to touch production env/AI'); }});
           for (const path of ['/tts','/chat','/stt']) {
             const req = new Request('https://qa.local'+path, {
@@ -71,6 +80,6 @@ jobs:
           console.log('A-O PASS');
           NODE
       - name: Bundle gate only
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v15-gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v16-gate
       - name: Final gate
-        run: echo 'OLIVIA V15 QUOTA-SAFE SOURCE GATE PASS'
+        run: echo 'OLIVIA V16 QUOTA-SAFE SOURCE GATE PASS'
