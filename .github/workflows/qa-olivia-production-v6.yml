@@ -1,0 +1,111 @@
+name: QA Olivia Production V6
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-production-v6.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-olivia-v6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Source QA v6
+        run: |
+          node --check public/olivia-core-v6.js
+          node --check src/strict-output-v6.js
+          grep -q 'id="oliviaAvatarIsland"' public/olivia-core-v6.js
+          grep -q 'noGlobalAvatar' public/olivia-core-v6.js
+          grep -q "history_purged:false" src/strict-output-v6.js
+          grep -q "client-bilingual-es-pt" src/strict-output-v6.js
+          grep -q 'professora de espanhol para alunos brasileiros' src/strict-output-v6.js
+          echo 'SOURCE V6 PASS'
+      - name: Wait for deployed v6
+        run: |
+          for i in $(seq 1 30); do
+            HTML=$(curl --compressed --silent --show-error 'https://fns-stt.karlapower007.workers.dev/?olivia=v6&qa=1' || true)
+            if echo "$HTML" | grep -q 'olivia-core-v6.js?v=6'; then echo 'V6 DEPLOY DETECTED'; exit 0; fi
+            sleep 3
+          done
+          echo 'Production never exposed v6'; exit 1
+      - name: Production assets
+        run: |
+          for f in olivia-fechada.png olivia-falando.png olivia-aberta.png; do
+            curl --compressed --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=v6-20260917"
+          done
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');const hashes=new Set();for(const f of ['olivia-fechada.png','olivia-falando.png','olivia-aberta.png']){const b=fs.readFileSync(f);if(b.length<5000||b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid');hashes.add(crypto.createHash('sha256').update(b).digest('hex'));}if(hashes.size!==3)throw new Error('frames duplicate');console.log('V6 ASSETS PASS');
+          NODE
+      - name: Production bilingual chat and context
+        run: |
+          curl --compressed --fail --silent --show-error -H 'Content-Type: application/json' \
+            -d '{"message":"¿Puedes recordar lo que te conté y ayudarme a practicar?","teacher":"Olivia","level":"A1","history":[{"role":"user","content":"Eu trabalho em um condomínio e quero aprender espanhol."},{"role":"assistant","content":"Perfecto. Vamos a practicar situaciones de tu trabajo."}]}' \
+            -o olivia-context.json 'https://fns-stt.karlapower007.workers.dev/chat'
+          node - <<'NODE'
+          const fs=require('fs');const d=JSON.parse(fs.readFileSync('olivia-context.json','utf8'));if(!d.ok||!d.reply)throw new Error(JSON.stringify(d));if(d.language_guard!=='FNS-OLIVIA-BILINGUAL-V6'||d.language_mode!=='es-ES+pt-BR'||d.history_purged!==false)throw new Error('v6 flags missing '+JSON.stringify(d));if((d.memory?.messages||0)<2)throw new Error('Portuguese history was lost '+JSON.stringify(d));if(/\b(i am|thank you|how are you|tell me|let us|you can|you should)\b/i.test(d.reply))throw new Error('English leak '+d.reply);console.log('V6 CONTEXT PASS',d.reply);
+          NODE
+          curl --compressed --fail --silent --show-error -H 'Content-Type: application/json' \
+            -d '{"message":"Explique em português quando eu devo usar ser e estar em espanhol.","teacher":"Olivia","level":"A1","history":[]}' \
+            -o olivia-pt.json 'https://fns-stt.karlapower007.workers.dev/chat'
+          node - <<'NODE'
+          const fs=require('fs');const d=JSON.parse(fs.readFileSync('olivia-pt.json','utf8'));if(!d.ok||!d.reply||d.language_guard!=='FNS-OLIVIA-BILINGUAL-V6')throw new Error(JSON.stringify(d));if(/\b(i am|thank you|how are you|tell me|let us)\b/i.test(d.reply))throw new Error('English leak '+d.reply);console.log('V6 PORTUGUESE PEDAGOGY PASS',d.reply);
+          NODE
+      - name: Olivia Portuguese TTS is not blocked
+        run: |
+          STATUS=$(curl --compressed --silent --show-error -D olivia-pt-tts.headers -o olivia-pt-tts.body -w '%{http_code}' -H 'Content-Type: application/json' -d '{"text":"Vou explicar em português para ajudar você a entender.","teacher":"Olivia"}' 'https://fns-stt.karlapower007.workers.dev/tts')
+          echo "TTS status=$STATUS"
+          test "$STATUS" != "422"
+          if [ "$STATUS" = "200" ]; then grep -i '^content-type: audio/' olivia-pt-tts.headers; fi
+          echo 'V6 PORTUGUESE TTS GATE PASS'
+      - name: Install browser QA
+        run: npm install --no-save puppeteer-core@24.18.0
+      - name: Browser QA isolated avatar, real mic pipeline and fast fallback
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required','--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});
+            const page=await browser.newPage();await page.setViewport({width:1280,height:900});
+            const pageErrors=[];page.on('pageerror',e=>pageErrors.push(String(e?.message||e)));
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v6',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForSelector('#liteModal[data-olivia-v6="true"] #oliviaAvatarIsland #oliviaAvatarImage',{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V6?.health?.().imageLoaded===true,{timeout:30000});
+            const visible=async label=>{const h=await page.evaluate(()=>window.FNS_OLIVIA_V6.health());if(!h.active||!h.island||!h.imageLoaded||!h.noGlobalAvatar)throw new Error(label+' architecture '+JSON.stringify(h));if(h.islandDisplay==='none'||h.islandVisibility==='hidden'||Number(h.islandOpacity)<.99||h.imageDisplay==='none'||h.imageVisibility==='hidden'||Number(h.imageOpacity)<.99)throw new Error(label+' hidden '+JSON.stringify(h));if(!h.islandRect||h.islandRect.width<200||h.islandRect.height<300||!h.imageRect||h.imageRect.width<200||h.imageRect.height<300)throw new Error(label+' collapsed '+JSON.stringify(h));return h;};
+            let h=await visible('boot');if(h.stt!=='auto')throw new Error('STT should start auto '+JSON.stringify(h));
+            await sleep(6500);await visible('ambient');
+            await page.evaluate(()=>setNaturalAvatarState('listening'));await sleep(400);await visible('natural-listening-noop');
+            await page.evaluate(()=>{const stage=document.querySelector('[data-olivia-island-host]');const fake=document.createElement('div');fake.id='avatarFace';fake.className='human-avatar';fake.innerHTML='<div class="avatar-loading-overlay"></div>';stage?.appendChild(fake);});await sleep(400);h=await visible('foreign-avatar-cleanup');if(!h.noGlobalAvatar)throw new Error('global avatar survived');
+            await page.evaluate(()=>document.querySelector('#oliviaAvatarIsland')?.remove());await sleep(500);h=await visible('island-rebuild');if(h.repairs<1)throw new Error('island repair not recorded');
+
+            const sttRequest=page.waitForRequest(r=>/\/stt(?:\?|$)/.test(r.url())&&r.method()==='POST',{timeout:15000});
+            await page.click('#micBtn');await page.waitForFunction(()=>window.FNS_OLIVIA_V6.health().mic.attempts>0,{timeout:8000});await sleep(1200);await page.click('#micBtn');
+            const req=await sttRequest;const lang=req.headers()['x-fns-stt-language']||'';if(lang!=='auto')throw new Error('STT header not auto: '+lang);console.log('REAL MIC PIPELINE PASS',lang);
+            await sleep(500);await visible('after-mic');
+
+            await page.setRequestInterception(true);
+            page.on('request',r=>{if(/\/tts(?:\?|$)/.test(r.url())&&r.method()==='POST')r.respond({status:503,contentType:'application/json',body:'{"ok":false,"code":"FORCED_FAST_FALLBACK"}'});else r.continue();});
+            await page.evaluate(()=>{window.__OLIVIA_V6_SPOKEN__=[];const s=window.speechSynthesis;s.cancel=()=>{};s.getVoices=()=>[];s.speak=u=>{window.__OLIVIA_V6_SPOKEN__.push({text:u.text,lang:u.lang,at:performance.now()});setTimeout(()=>u.onstart?.(),5);setTimeout(()=>u.onend?.(),70);};});
+            const t0=Date.now();await page.click('#voiceBtn');await page.waitForFunction(()=>window.__OLIVIA_V6_SPOKEN__?.length>0,{timeout:3000});let spoken=await page.evaluate(()=>window.__OLIVIA_V6_SPOKEN__[0]);if(!spoken.lang.toLowerCase().startsWith('es'))throw new Error('Spanish browser fallback wrong '+JSON.stringify(spoken));if(Date.now()-t0>1800)throw new Error('Safety voice fallback too slow: '+(Date.now()-t0));
+            await page.evaluate(()=>remoteSpeak('Vou explicar em português para ajudar você a entender.'));await page.waitForFunction(()=>window.__OLIVIA_V6_SPOKEN__?.length>1,{timeout:3000});spoken=await page.evaluate(()=>window.__OLIVIA_V6_SPOKEN__.at(-1));if(!spoken.lang.toLowerCase().startsWith('pt'))throw new Error('Portuguese pedagogical voice wrong '+JSON.stringify(spoken));
+            await visible('final');if(pageErrors.length)throw new Error('page errors '+JSON.stringify(pageErrors));
+            console.log('OLIVIA V6 BROWSER QA PASS',JSON.stringify(await page.evaluate(()=>window.FNS_OLIVIA_V6.health())));await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Final Olivia v6 status
+        run: echo 'OLIVIA V6 PRODUCTION QA PASS - isolated DOM, PT/ES STT, bilingual context and fast voice fallback verified'
