@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="theme-color" content="#07111f">
+  <title>Olivia • Español • FNS Idiomas</title>
+  <meta name="fns-core" content="olivia-dual-core-v11">
+  <link rel="preload" as="image" href="/assets/olivia-fechada.png?v=dual-v11-20260917" fetchpriority="high">
+  <link rel="preload" as="image" href="/assets/olivia-falando.png?v=dual-v11-20260917">
+  <link rel="preload" as="image" href="/assets/olivia-aberta.png?v=dual-v11-20260917">
+  <link rel="stylesheet" href="/olivia-core.css?v=11-dual">
+</head>
+<body data-fns-core="olivia-dual-core-v11">
+  <main id="root" class="olivia-app" aria-label="Olivia professora de espanhol">
+    <section class="avatar-pane" aria-label="Avatar da Olivia">
+      <div class="brand-row">
+        <span class="brand">FNS IDIOMAS</span>
+        <span id="connectionBadge" class="badge">NÚCLEO OLIVIA</span>
+      </div>
+      <div class="avatar-stage" id="avatarStage">
+        <img id="oliviaAvatar" src="/assets/olivia-fechada.png?v=dual-v11-20260917" alt="Olivia, professora virtual de espanhol" loading="eager" decoding="sync" fetchpriority="high">
+        <div id="voiceState" class="voice-state">Lista</div>
+      </div>
+      <div class="avatar-caption">
+        <strong>Olivia</strong>
+        <span>Español para brasileiros • núcleo independente</span>
+      </div>
+    </section>
+
+    <section class="conversation-pane" aria-label="Conversa com Olivia">
+      <header class="conversation-header">
+        <div>
+          <h1>Olivia • Español</h1>
+          <p>Converse em espanhol ou português. Olivia responde principalmente em espanhol.</p>
+        </div>
+        <a class="emma-link" href="/">Voltar ao núcleo principal</a>
+      </header>
+
+      <div class="control-grid">
+        <label>Nível
+          <select id="levelSel">
+            <option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option>
+          </select>
+        </label>
+        <label>Microfone
+          <select id="sttLangSel">
+            <option value="auto">PT + ES automático</option>
+            <option value="es">Español</option>
+            <option value="pt">Português</option>
+          </select>
+        </label>
+        <label>Voz
+          <select id="voiceTurbineSel" aria-label="Turbina de voz"></select>
+        </label>
+      </div>
+
+      <div id="transcript" class="transcript" aria-live="polite">
+        <div class="msg teacher">¡Hola! Soy Olivia. Podemos practicar español y usar portugués cuando ayude a explicar.</div>
+      </div>
+
+      <div class="action-row">
+        <button id="voiceBtn" class="primary" type="button">🔊 Activar voz</button>
+        <button id="micBtn" class="good" type="button">🎤 Hablar / Falar</button>
+        <button id="stopBtn" type="button">⏹ Parar</button>
+        <button id="repeatBtn" type="button">🔁 Repetir</button>
+      </div>
+
+      <form id="chatForm" class="composer" autocomplete="off">
+        <input id="chatInput" maxlength="1400" placeholder="Escribe en español o português..." aria-label="Mensagem para Olivia">
+        <button id="sendBtn" class="primary" type="submit">Enviar</button>
+      </form>
+      <div id="statusText" class="status-line">Núcleo Olivia pronto.</div>
+    </section>
+  </main>
+  <script src="/olivia-core.js?v=11-dual"></script>
+</body>
+</html>
