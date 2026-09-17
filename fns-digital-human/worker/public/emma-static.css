@@ -844,3 +844,135 @@
     top:58.1%!important;
   }
 }
+
+
+/* ===== Emma smile v16 — TRUE UPWARD CORNERS / VISUAL ONLY =====
+   Geometry fix: mouth corners are HIGHER than the center.
+   Core remains blinded: no app.js, STT, TTS, microphone, memory,
+   turns, fallbacks or language turbines A-P changes. */
+.human-avatar .avatar-mouth-motion{
+  left:50%!important;
+  top:58.05%!important;
+  width:13.6%!important;
+  height:9.2px!important;
+  overflow:visible!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  border:0!important;
+  border-radius:0!important;
+  transform-origin:50% 50%!important;
+  transform:
+    translate(-50%,-50%)
+    translate3d(0,calc(var(--mouth-open,0) * .22px),0)
+    scaleX(calc(1.00 + var(--mouth-wide,0) * .18))
+    scaleY(calc(.30 + var(--mouth-open,0) * .92))!important;
+  transition:opacity 88ms ease-out,transform 108ms cubic-bezier(.18,.72,.22,1)!important;
+}
+
+/* Main mouth shape.
+   IMPORTANT: corners start near y=22%, center near y=38%.
+   That makes the smile rise at both sides instead of forming a flat/inverted arc. */
+.human-avatar .avatar-mouth-motion::before{
+  content:""!important;
+  position:absolute!important;
+  left:3%!important;
+  top:6%!important;
+  width:94%!important;
+  height:88%!important;
+  background:
+    linear-gradient(
+      180deg,
+      #fffefa 0 17%,
+      #f5f1ec 17% 29%,
+      #2a070c 30% 68%,
+      #a93b54 69% 100%
+    )!important;
+  clip-path:polygon(
+    2% 24%,
+    8% 20%,
+    16% 19%,
+    27% 22%,
+    39% 30%,
+    50% 38%,
+    61% 30%,
+    73% 22%,
+    84% 19%,
+    92% 20%,
+    98% 24%,
+    96% 48%,
+    90% 60%,
+    80% 69%,
+    66% 76%,
+    50% 79%,
+    34% 76%,
+    20% 69%,
+    10% 60%,
+    4% 48%
+  )!important;
+  border-radius:48% 48% 64% 64% / 42% 42% 72% 72%!important;
+  box-shadow:
+    inset 0 .8px 0 rgba(255,255,255,.20),
+    inset 0 -1px 1px rgba(50,7,13,.26)!important;
+  opacity:clamp(0,calc(var(--mouth-open,0) * .98),.95)!important;
+}
+
+/* Upper lip/smile contour follows the same upward-corner geometry. */
+.human-avatar .avatar-mouth-motion::after{
+  content:""!important;
+  position:absolute!important;
+  left:4%!important;
+  top:4%!important;
+  width:92%!important;
+  height:42%!important;
+  background:rgba(154,43,63,.88)!important;
+  clip-path:polygon(
+    0 42%,
+    7% 30%,
+    16% 24%,
+    28% 28%,
+    40% 40%,
+    50% 52%,
+    60% 40%,
+    72% 28%,
+    84% 24%,
+    93% 30%,
+    100% 42%,
+    100% 48%,
+    93% 36%,
+    84% 30%,
+    72% 34%,
+    60% 46%,
+    50% 58%,
+    40% 46%,
+    28% 34%,
+    16% 30%,
+    7% 36%,
+    0 48%
+  )!important;
+  border:0!important;
+  border-radius:0!important;
+  transform:none!important;
+  opacity:.86!important;
+  box-shadow:none!important;
+}
+
+.human-avatar.avatar-mouth-simulated .avatar-mouth-motion{
+  animation:emmaSmileTrueUpV16 210ms cubic-bezier(.2,.72,.22,1) infinite alternate!important;
+}
+.human-avatar.avatar-mouth-simulated .avatar-mouth-motion::before{opacity:.92!important}
+.human-avatar.avatar-mouth-simulated .avatar-mouth-motion::after{opacity:.88!important}
+
+@keyframes emmaSmileTrueUpV16{
+  0%{transform:translate(-50%,-50%) translate3d(0,0,0) scaleX(1.00) scaleY(.34)}
+  25%{transform:translate(-50%,-50%) translate3d(0,.08px,0) scaleX(1.045) scaleY(.56)}
+  50%{transform:translate(-50%,-50%) translate3d(0,.15px,0) scaleX(1.085) scaleY(.76)}
+  75%{transform:translate(-50%,-50%) translate3d(0,.07px,0) scaleX(1.055) scaleY(.54)}
+  100%{transform:translate(-50%,-50%) translate3d(0,.20px,0) scaleX(1.11) scaleY(.88)}
+}
+
+@media(max-width:820px){
+  .human-avatar .avatar-mouth-motion{
+    width:13.0%!important;
+    top:58.05%!important;
+  }
+}
