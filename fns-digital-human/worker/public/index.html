@@ -6,32 +6,32 @@
   (()=>{try{
     if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister().catch(()=>{}))).catch(()=>{});}
     if('caches' in window){caches.keys().then(keys=>Promise.all(keys.filter(k=>/fns|emma|olivia|avatar|visual|static|pngtuber/i.test(k)).map(k=>caches.delete(k)))).catch(()=>{});}
-    console.warn('[FNS PNGTUBER FINAL] cache bypass ativo');
-  }catch(e){console.warn('[FNS PNGTUBER FINAL] bootstrap warning',e)}})();
+    console.warn('[FNS V6] cache bypass ativo');
+  }catch(e){console.warn('[FNS V6] bootstrap warning',e)}})();
   </script>
   <link rel="preload" as="image" href="./assets/emma-fechada.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-falando.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-aberta.png?v=pngtuber-final-20260917">
-  <link rel="preload" as="image" href="./assets/olivia-fechada.png?v=v5-20260917">
-  <link rel="preload" as="image" href="./assets/olivia-falando.png?v=v5-20260917">
-  <link rel="preload" as="image" href="./assets/olivia-aberta.png?v=v5-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-fechada.png?v=v6-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-falando.png?v=v6-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-aberta.png?v=v6-20260917">
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#070b18">
   <title>Estudos Profundos FNS Idiomas</title>
   <link rel="stylesheet" href="style.css?v=12">
   <link rel="stylesheet" href="natural-v2.css?v=2">
   <link rel="stylesheet" href="emma-static.css?v=21">
-  <link rel="stylesheet" href="olivia-static.css?v=5">
+  <link rel="stylesheet" href="olivia-v6.css?v=6">
 </head><body>
 <header><div><b>FNS</b><span>ESTUDOS PROFUNDOS FNS IDIOMAS</span></div><nav><button data-view="home">Início</button><button data-view="course">Curso A1–C2</button><button data-view="live">Prática ao vivo</button><button data-view="cards">Flashcards</button><button data-view="library">Biblioteca</button><button data-view="progress">Progresso</button></nav></header>
 <main id="app"></main>
 <script src="app.js?v=14"></script>
-<!-- Olivia core patches before natural wrappers: audio/STT/TTS behavior remains v4. -->
-<script src="olivia-core-v4.js?v=4"></script>
 <script src="natural-state.js?v=2"></script>
 <script src="natural-turns.js?v=2"></script>
+<!-- Olivia V6 loads LAST: it owns an isolated visual island and wraps the final STT/TTS functions. -->
+<script src="olivia-core-v6.js?v=6"></script>
 
-<!-- FNS FINAL FIX: MOTOR PNGTUBER (IMAGE SWAP AUTOMÁTICO) -->
+<!-- FNS FINAL FIX: MOTOR PNGTUBER DA EMMA (inalterado) -->
 <script>
     (function() {
         const BASE_PATH = './assets/';
@@ -118,6 +118,4 @@
         requestAnimationFrame(loopPNGTuber);
     })();
 </script>
-<!-- Olivia v5 visual guard MUST be last so no natural wrapper can hide/collapse the avatar. -->
-<script src="olivia-visual-v5.js?v=5"></script>
 </body></html>
