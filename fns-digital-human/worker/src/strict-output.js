@@ -1,5 +1,6 @@
 import core from './index.js';
 
+// FNS EMMA OUTPUT TURBINE A-H
 // FNS LANGUAGE OUTPUT TURBINES A-H
 // Emma = strict English room. Olivia = strict Spanish room.
 // This wrapper intentionally leaves the PNGTuber/HTML/image engine and the core turn machine untouched.
