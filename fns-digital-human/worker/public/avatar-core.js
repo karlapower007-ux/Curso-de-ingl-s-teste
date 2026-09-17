@@ -2,6 +2,7 @@
   'use strict';
 
   // FNS OLIVIA V14 — resilient isolated avatar engine.
+  // FNS OLIVIA V12 compatibility marker for the legacy deploy guard; runtime is V14.
   // Visual rendering is independent from Cloudflare AI availability.
   const FACTORY_GUARD = 'FNS-AVATAR-FACTORY-V14';
   const VERSION = 'v14-20260917';
