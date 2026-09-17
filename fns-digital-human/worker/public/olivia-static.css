@@ -1,8 +1,44 @@
-/* FNS Olivia PNGTuber — overlay visual sem tocar na Emma */
+/* FNS Olivia PNGTuber V5 — anti-blackout visual lock */
 
+#liteModal[data-fns-olivia-visual-v5="true"],
+#liteModal[data-fns-olivia-visual-v5="true"] .room,
+#liteModal[data-fns-olivia-visual-v5="true"] .chat-shell,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage{
+  visibility:visible!important;
+  opacity:1!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"]{
+  display:flex!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"] .room{
+  display:block!important;
+  position:relative!important;
+  background:#080b14!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"] .chat-shell{
+  display:grid!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage{
+  position:relative!important;
+  display:block!important;
+  overflow:hidden!important;
+  min-height:520px!important;
+  background:#0a1020!important;
+  isolation:isolate!important;
+  z-index:1!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"] .human-avatar[data-teacher="olivia"],
 .human-avatar[data-teacher="olivia"]{
   position:relative!important;
   display:block!important;
+  width:100%!important;
+  height:100%!important;
+  min-height:520px!important;
   overflow:hidden!important;
   isolation:isolate!important;
   background:#0a1020!important;
@@ -10,17 +46,23 @@
   visibility:visible!important;
   animation:none!important;
   transform:none!important;
+  filter:none!important;
+  z-index:2!important;
 }
 
+#liteModal[data-fns-olivia-visual-v5="true"] .human-avatar[data-teacher="olivia"] .avatar-photo-base,
 .human-avatar[data-teacher="olivia"] .avatar-photo-base,
 .human-avatar[data-teacher="olivia"][data-avatar-ready="false"] .avatar-photo-base,
 .human-avatar[data-teacher="olivia"][data-avatar-ready="true"] .avatar-photo-base,
+.human-avatar[data-teacher="olivia"][data-avatar-ready="error"] .avatar-photo-base,
 .human-avatar[data-teacher="olivia"][data-avatar-visual-mode="image-swapping"] .avatar-photo-base{
   position:absolute!important;
   inset:0!important;
   display:block!important;
   width:100%!important;
   height:100%!important;
+  min-width:100%!important;
+  min-height:100%!important;
   max-width:100%!important;
   max-height:100%!important;
   object-fit:contain!important;
@@ -41,16 +83,45 @@
   pointer-events:none!important;
 }
 
+#liteModal[data-fns-olivia-visual-v5="true"] .human-avatar[data-teacher="olivia"] .avatar-live-badge,
 .human-avatar[data-teacher="olivia"] .avatar-live-badge{
-  z-index:3!important;
+  display:block!important;
+  visibility:visible!important;
+  opacity:1!important;
+  z-index:4!important;
+}
+
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-label{
+  display:block!important;
+  visibility:visible!important;
+  opacity:1!important;
+  z-index:5!important;
 }
 
 .human-avatar[data-teacher="olivia"].avatar-listening,
 .human-avatar[data-teacher="olivia"].avatar-speaking,
+.human-avatar[data-teacher="olivia"].avatar-thinking,
 .human-avatar[data-teacher="olivia"].avatar-talking,
-.human-avatar[data-teacher="olivia"].avatar-mouth-simulated{
+.human-avatar[data-teacher="olivia"].avatar-mouth-simulated,
+.human-avatar[data-teacher="olivia"].avatar-micro-expression{
   animation:none!important;
   transform:none!important;
+  opacity:1!important;
+  visibility:visible!important;
+}
+
+/* Loading/mask overlays are forbidden over Olivia after v5 boot. */
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .loading,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .loader,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .avatar-loading,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .avatar-overlay,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .loading-overlay,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > .avatar-loading-overlay,
+#liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage > [data-loading-overlay]{
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
 }
 
 .fns-olivia-lock{
@@ -60,6 +131,11 @@
 }
 
 @media(max-width:820px){
+  #liteModal[data-fns-olivia-visual-v5="true"] .avatar-stage,
+  #liteModal[data-fns-olivia-visual-v5="true"] .human-avatar[data-teacher="olivia"],
+  .human-avatar[data-teacher="olivia"]{
+    min-height:420px!important;
+  }
   .human-avatar[data-teacher="olivia"] .avatar-photo-base{
     object-fit:contain!important;
     object-position:center center!important;
