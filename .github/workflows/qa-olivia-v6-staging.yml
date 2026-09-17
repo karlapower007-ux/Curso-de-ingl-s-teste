@@ -1,0 +1,70 @@
+name: QA Olivia V6 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v6-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-v6-staging.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-v6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Syntax and architecture
+        run: |
+          node --check public/app.js
+          node --check public/natural-state.js
+          node --check public/natural-turns.js
+          node --check public/olivia-core-v6.js
+          node --check src/index.js
+          node --check src/strict-output.js
+          node --check src/strict-output-v6.js
+          grep -q '"main": "src/strict-output-v6.js"' wrangler.jsonc
+          grep -q 'olivia-core-v6.js?v=6' public/index.html
+          grep -q 'olivia-v6.css?v=6' public/index.html
+          ! grep -q 'olivia-core-v4.js' public/index.html
+          ! grep -q 'olivia-visual-v5.js' public/index.html
+          grep -q 'id="oliviaAvatarIsland"' public/olivia-core-v6.js
+          grep -q 'noGlobalAvatar' public/olivia-core-v6.js
+          grep -q "body.input_language=selectedSttLanguage()" public/olivia-core-v6.js
+          grep -q "headers.set('X-FNS-STT-Language',selectedSttLanguage())" public/olivia-core-v6.js
+          grep -q 'professora de espanhol para alunos brasileiros' src/strict-output-v6.js
+          grep -q "history_purged:false" src/strict-output-v6.js
+          grep -q "client-bilingual-es-pt" src/strict-output-v6.js
+          echo 'OLIVIA V6 SOURCE ARCHITECTURE PASS'
+      - name: Protect Emma and core
+        run: |
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+          echo 'EMMA + CORE LOCK PASS'
+      - name: Validate PNG assets
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const files=['olivia-fechada.png','olivia-falando.png','olivia-aberta.png'];
+          const hashes=new Set();
+          for(const f of files){const b=fs.readFileSync('public/assets/'+f);if(b.length<5000)throw new Error(f+' too small');if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid PNG');hashes.add(crypto.createHash('sha256').update(b).digest('hex'));}
+          if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
+          console.log('OLIVIA V6 ASSET PASS');
+          NODE
+      - name: Wrangler bundle dry run
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v6-dist
+      - name: Final staging status
+        run: echo 'OLIVIA V6 STAGING QA PASS'
