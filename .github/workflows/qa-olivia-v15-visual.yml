@@ -107,4 +107,5 @@ jobs:
           path: |
             olivia-v15-production.png
             olivia-v15-diagnostics.json
+            fns-digital-human/worker/public/assets/olivia-fechada.png
           if-no-files-found: warn
