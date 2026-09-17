@@ -1,637 +1,150 @@
-/* FNS Digital Human — Emma visual layer.
-   Strictly visual: reads DOM/state classes and CSS variables only.
-   Never controls audio, microphone, speech recognition, page or turn flow. */
+/* FNS Emma PNGTuber v1 — visual-only image swapping.
+   Uses the existing RMS-derived --mouth-open signal produced by app.js.
+   Never changes audio, TTS, STT, microphone, memory or turn flow. */
 window.FNS_EMMA_VISUAL_RIG=true;
 
 (()=>{
-  const TEXTURE_URL='/emma.jpg';
-  const CACHE_NAME='fns-emma-visual-v3';
-  const STATE_INDEX={idle:0,listening:1,processing:2,speaking:3};
-  let manager=null;
-  let installToken=0;
+  // ===== PREENCHER ESTAS 3 URLs QUANDO AS IMAGENS ESTIVEREM PRONTAS =====
+  // closed já usa a Emma atual como fallback seguro para não gerar 404.
+  const EMMA_FRAME_URLS={
+    closed:'/emma.jpg',          // depois: '/emma-fechada.png'
+    talking:'',                  // depois: '/emma-falando.png'
+    open:''                      // depois: '/emma-aberta.png'
+  };
 
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  // --mouth-open já é normalizado de 0 a 1 pelo AnalyserNode/RMS existente.
+  const SILENCE_THRESHOLD=0.035;
+  const OPEN_THRESHOLD=0.42;
 
-  class AvatarManager{
-    constructor(face){
-      this.face=face;
-      this.portrait=face.querySelector('#emmaPortrait');
-      this.canvas=null;
-      this.gl=null;
-      this.program=null;
-      this.texture=null;
-      this.raf=0;
-      this.lastHealthyFrame=0;
-      this.failed=false;
-      this.contextLost=false;
-      this.state='idle';
-      this.blinkTimer=null;
-      this.gazeTimer=null;
-      this.watchdog=null;
-      this.expressionTurbine=null;
-      this.token=++installToken;
-      this.uniforms={};
-    }
+  let raf=0;
+  let activeFace=null;
+  let activePortrait=null;
+  let currentState='';
+  let lastRequestedUrl='';
 
-    readState(){
-      if(!this.face?.isConnected)return 'idle';
-      if(this.face.classList.contains('avatar-speaking'))return 'speaking';
-      if(this.face.classList.contains('avatar-listening'))return 'listening';
-      const status=String(document.querySelector('#statusText')?.textContent||'').toLowerCase();
-      if(/processing|thinking|generating|transcrib/.test(status))return 'processing';
-      return 'idle';
-    }
+  function removeLegacyMouthArtifacts(face){
+    // Mata qualquer resto das versões CSS/v17/v18/v19 sem tocar no core de áudio.
+    document.getElementById('fns-pseudo-killer')?.remove();
+    document.getElementById('fns-override-v19')?.remove();
+    document.getElementById('fns-nova-boca-v19')?.remove();
 
-    readMouth(){
-      return clamp(Number.parseFloat(getComputedStyle(this.face).getPropertyValue('--mouth-open'))||0,0,1);
-    }
+    face?.querySelectorAll(
+      '.avatar-mouth-motion,.avatar-webgl-layer,.avatar-gaze,.avatar-eyelid'
+    ).forEach(node=>node.remove());
 
-    async warmTextureCache(){
-      if(!('caches' in window))return;
-      try{
-        const cache=await caches.open(CACHE_NAME);
-        if(await cache.match(TEXTURE_URL))return;
-        const response=await fetch(TEXTURE_URL,{cache:'force-cache'});
-        if(response.ok)await cache.put(TEXTURE_URL,response.clone());
-      }catch(e){}
-    }
+    // A camada facial antiga só existia para olhos/boca desenhados.
+    const fx=face?.querySelector('.avatar-fx-layer');
+    if(fx)fx.remove();
+  }
 
-    async ensurePortrait(){
-      const portrait=this.portrait;
-      if(!portrait)return false;
-      if(portrait.complete&&portrait.naturalWidth>0)return true;
-      return await new Promise(resolve=>{
-        let settled=false;
-        const done=ok=>{if(settled)return;settled=true;resolve(ok)};
-        portrait.addEventListener('load',()=>done(true),{once:true});
-        portrait.addEventListener('error',()=>done(false),{once:true});
-        setTimeout(()=>done(portrait.complete&&portrait.naturalWidth>0),4000);
-      });
-    }
+  function resolveFrameUrl(state){
+    const chosen=String(EMMA_FRAME_URLS[state]||'').trim();
+    return chosen || EMMA_FRAME_URLS.closed || '/emma.jpg';
+  }
 
-    injectCanvas(){
-      if(this.canvas?.isConnected)return;
-      const canvas=document.createElement('canvas');
-      canvas.className='avatar-webgl-layer';
-      canvas.setAttribute('aria-hidden','true');
-      canvas.setAttribute('data-avatar-webgl','emma-v3');
-      this.face.insertBefore(canvas,this.face.querySelector('.avatar-fx-layer'));
-      this.canvas=canvas;
-      canvas.addEventListener('webglcontextlost',event=>{
-        event.preventDefault();
-        this.contextLost=true;
-        this.useFallback('context-lost');
-        this.watchdog?.scheduleRecovery();
-      });
-      canvas.addEventListener('webglcontextrestored',()=>{
-        this.contextLost=false;
-        this.recover();
-      });
-    }
+  function preloadConfiguredFrames(){
+    Object.values(EMMA_FRAME_URLS).forEach(url=>{
+      if(!url)return;
+      const img=new Image();
+      img.decoding='async';
+      img.src=url;
+    });
+  }
 
-    compile(gl,type,source){
-      const shader=gl.createShader(type);
-      gl.shaderSource(shader,source);
-      gl.compileShader(shader);
-      if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS)){
-        const info=gl.getShaderInfoLog(shader)||'shader compile failed';
-        gl.deleteShader(shader);
-        throw new Error(info);
-      }
-      return shader;
-    }
+  function signalLevel(face){
+    const raw=getComputedStyle(face).getPropertyValue('--mouth-open');
+    const value=Number.parseFloat(raw);
+    if(!Number.isFinite(value))return 0;
+    return Math.max(0,Math.min(1,value));
+  }
 
-    initWebGL(){
-      if(!this.canvas||!this.portrait)return false;
-      const gl=this.canvas.getContext('webgl',{alpha:true,antialias:true,premultipliedAlpha:true,preserveDrawingBuffer:false});
-      if(!gl)return false;
+  function chooseState(level){
+    if(level<=SILENCE_THRESHOLD)return 'closed';
+    if(level>=OPEN_THRESHOLD)return 'open';
+    return 'talking';
+  }
 
-      const vs=`
-        attribute vec2 aPosition;
-        attribute vec2 aUv;
-        varying vec2 vUv;
-        uniform float uTime;
-        uniform float uState;
-        uniform float uMouth;
-        void main(){
-          float idle=sin(uTime*0.00105)*0.006;
-          float listen=sin(uTime*0.0022)*0.010;
-          float think=sin(uTime*0.0017)*0.013;
-          float talk=sin(uTime*0.0032)*0.010;
-          float motion=uState<0.5?idle:(uState<1.5?listen:(uState<2.5?think:talk));
-          float yaw=sin(uTime*(uState>1.5?0.00085:0.00048))*0.035;
-          if(uState>0.5&&uState<1.5)yaw+=0.012;
-          if(uState>1.5&&uState<2.5)yaw-=0.018;
-          float curve=(1.0-aPosition.x*aPosition.x)*0.060;
-          float z=curve;
-          float cy=cos(yaw),sy=sin(yaw);
-          float rx=aPosition.x*cy+z*sy;
-          float rz=-aPosition.x*sy+z*cy;
-          float perspective=1.0/(1.0+rz*0.22);
-          vec2 p=vec2(rx*perspective,(aPosition.y+motion)*perspective);
-          p.y-=uMouth*0.0015;
-          gl_Position=vec4(p,rz*0.08,1.0);
-          vUv=aUv;
-        }`;
+  function applyFrame(state){
+    if(!activePortrait)return;
+    const url=resolveFrameUrl(state);
 
-      const fs=`
-        precision mediump float;
-        varying vec2 vUv;
-        uniform sampler2D uTexture;
-        uniform float uState;
-        uniform float uMouth;
-        uniform float uViewportAspect;
-        uniform float uTextureAspect;
-        void main(){
-          vec2 uv=vUv;
-          if(uViewportAspect>uTextureAspect){
-            float scale=uTextureAspect/uViewportAspect;
-            uv.y=(uv.y-.5)*scale+.5;
-          }else{
-            float scale=uViewportAspect/uTextureAspect;
-            uv.x=(uv.x-.5)*scale+.5;
-          }
-          vec4 tex=texture2D(uTexture,uv);
-          vec3 c=tex.rgb;
-          float luma=dot(c,vec3(.299,.587,.114));
-          float levels=10.0;
-          c=floor(c*levels+.5)/levels;
-          c=mix(c,vec3(luma)*.10+c*.90,.16);
-          c=pow(c,vec3(.93));
-          if(uState>1.5&&uState<2.5)c*=vec3(.985,.995,1.035);
-          if(uState>2.5)c*=1.0+uMouth*.018;
-          float vignette=smoothstep(.80,.18,distance(vUv,vec2(.5,.48)));
-          c*=.93+.07*vignette;
-          gl_FragColor=vec4(c,1.0);
-        }`;
+    activePortrait.dataset.pngtuberState=state;
+    activePortrait.dataset.pngtuberLevel=signalLevel(activeFace).toFixed(3);
 
-      const program=gl.createProgram();
-      gl.attachShader(program,this.compile(gl,gl.VERTEX_SHADER,vs));
-      gl.attachShader(program,this.compile(gl,gl.FRAGMENT_SHADER,fs));
-      gl.linkProgram(program);
-      if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
+    if(state===currentState && url===lastRequestedUrl)return;
+    currentState=state;
+    lastRequestedUrl=url;
 
-      const positions=new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]);
-      const uvs=new Float32Array([0,1,1,1,0,0,0,0,1,1,1,0]);
-
-      gl.useProgram(program);
-      const pbuf=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,pbuf);
-      gl.bufferData(gl.ARRAY_BUFFER,positions,gl.STATIC_DRAW);
-      const aPosition=gl.getAttribLocation(program,'aPosition');
-      gl.enableVertexAttribArray(aPosition);
-      gl.vertexAttribPointer(aPosition,2,gl.FLOAT,false,0,0);
-
-      const ubuf=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,ubuf);
-      gl.bufferData(gl.ARRAY_BUFFER,uvs,gl.STATIC_DRAW);
-      const aUv=gl.getAttribLocation(program,'aUv');
-      gl.enableVertexAttribArray(aUv);
-      gl.vertexAttribPointer(aUv,2,gl.FLOAT,false,0,0);
-
-      const texture=gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D,texture);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.portrait);
-
-      this.gl=gl;
-      this.program=program;
-      this.texture=texture;
-      this.uniforms={
-        time:gl.getUniformLocation(program,'uTime'),
-        state:gl.getUniformLocation(program,'uState'),
-        mouth:gl.getUniformLocation(program,'uMouth'),
-        viewportAspect:gl.getUniformLocation(program,'uViewportAspect'),
-        textureAspect:gl.getUniformLocation(program,'uTextureAspect')
-      };
-      return true;
-    }
-
-    resize(){
-      if(!this.canvas||!this.gl)return;
-      const dpr=Math.min(window.devicePixelRatio||1,1.6);
-      const rect=this.face.getBoundingClientRect();
-      const width=Math.max(2,Math.round(rect.width*dpr));
-      const height=Math.max(2,Math.round(rect.height*dpr));
-      if(this.canvas.width!==width||this.canvas.height!==height){
-        this.canvas.width=width;
-        this.canvas.height=height;
-        this.gl.viewport(0,0,width,height);
-      }
-    }
-
-    render=(now)=>{
-      if(this.failed||!this.gl||!this.face?.isConnected)return;
-      this.resize();
-      this.state=this.readState();
-      this.face.dataset.avatarState=this.state;
-      const gl=this.gl;
-      gl.useProgram(this.program);
-      gl.uniform1f(this.uniforms.time,now);
-      gl.uniform1f(this.uniforms.state,STATE_INDEX[this.state]??0);
-      gl.uniform1f(this.uniforms.mouth,this.readMouth());
-      gl.uniform1f(this.uniforms.viewportAspect,this.canvas.width/Math.max(1,this.canvas.height));
-      gl.uniform1f(this.uniforms.textureAspect,(this.portrait.naturalWidth||1)/Math.max(1,this.portrait.naturalHeight||1));
-      gl.drawArrays(gl.TRIANGLES,0,6);
-      this.lastHealthyFrame=performance.now();
-      this.raf=requestAnimationFrame(this.render);
-    }
-
-    setBlink(amount){
-      this.face.querySelectorAll('.avatar-eyelid').forEach(el=>{
-        el.style.opacity=String(clamp(amount,0,1));
-        el.style.transform='scaleY('+Math.max(.06,amount)+')';
-      });
-    }
-
-    scheduleBlink(){
-      clearTimeout(this.blinkTimer);
-      const state=this.readState();
-      const baseDelay=state==='speaking'?2600:state==='listening'?3000:3400;
-      const spread=state==='speaking'?3000:3800;
-      this.blinkTimer=setTimeout(async()=>{
-        if(this.failed||!this.face?.isConnected)return;
-        this.setBlink(.68);await wait(48);
-        this.setBlink(1);await wait(46);
-        this.setBlink(.34);await wait(42);
-        this.setBlink(0);
-        if(Math.random()<.07){
-          await wait(145);
-          this.setBlink(.62);await wait(44);
-          this.setBlink(0);
-        }
-        this.scheduleBlink();
-      },baseDelay+Math.random()*spread);
-    }
-
-    scheduleGaze(){
-      clearTimeout(this.gazeTimer);
-      this.gazeTimer=setTimeout(()=>{
-        if(this.failed||!this.face?.isConnected)return;
-        const state=this.readState();
-        const span=state==='speaking'?1.18:state==='listening'?1.02:state==='processing'?.78:.72;
-        const x=((Math.random()*2)-1)*span;
-        const y=((Math.random()*2)-1)*span*.32;
-        this.face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
-        this.face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
-        this.face.style.setProperty('--cheek-lift',state==='speaking'?'1':'0');
-        this.scheduleGaze();
-      },1050+Math.random()*1750);
-    }
-
-    useFallback(reason='fallback'){
-      this.failed=true;
-      cancelAnimationFrame(this.raf);
-      this.raf=0;
-      if(this.canvas)this.canvas.classList.add('avatar-webgl-failed');
-      this.face.dataset.avatarVisualMode='fallback-2d';
-      this.face.dataset.avatarVisualReason=reason;
-      if(this.portrait){
-        this.portrait.style.display='block';
-        this.portrait.style.opacity='1';
-        this.portrait.style.visibility='visible';
-      }
-    }
-
-    async recover(){
-      if(!this.face?.isConnected)return false;
-      try{
-        this.failed=false;
-        this.contextLost=false;
-        this.canvas?.remove();
-        this.canvas=null;this.gl=null;this.program=null;this.texture=null;
-        this.injectCanvas();
-        if(!this.initWebGL())throw new Error('webgl unavailable');
-        this.canvas.classList.remove('avatar-webgl-failed');
-        this.face.dataset.avatarVisualMode='webgl';
-        this.lastHealthyFrame=performance.now();
-        this.raf=requestAnimationFrame(this.render);
-        return true;
-      }catch(error){
-        this.useFallback('recovery-failed');
-        return false;
-      }
-    }
-
-    destroy(){
-      cancelAnimationFrame(this.raf);
-      clearTimeout(this.blinkTimer);
-      clearTimeout(this.gazeTimer);
-      this.watchdog?.stop();
-      this.expressionTurbine?.stop();
-      this.canvas?.remove();
-      this.raf=0;
-    }
-
-    async start(){
-      await this.warmTextureCache();
-      const ready=await this.ensurePortrait();
-      if(!ready){this.useFallback('portrait-load-failed');return}
-      this.face.dataset.avatarReady='true';
-      this.face.dataset.fnsRig='active';
-      this.face.dataset.expressionRig='turbine-v17';
-      this.face.style.setProperty('--gaze-x','0px');
-      this.face.style.setProperty('--gaze-y','0px');
-      this.setBlink(0);
-      this.scheduleBlink();
-      this.scheduleGaze();
-      this.expressionTurbine=new ExpressionTurbine(this.face);
-      this.expressionTurbine.start();
-
-      this.injectCanvas();
-      try{
-        if(!this.initWebGL())throw new Error('webgl unavailable');
-        this.face.dataset.avatarVisualMode='webgl';
-        this.lastHealthyFrame=performance.now();
-        this.raf=requestAnimationFrame(this.render);
-      }catch(error){
-        this.useFallback('webgl-init-failed');
-      }
-
-      this.watchdog=new AvatarWatchdog(this);
-      this.watchdog.start();
-    }
-
-    static selfTest(){
-      const sequence=['idle','listening','processing','speaking','idle'];
-      let observed=0;
-      for(let turn=0;turn<20;turn++){
-        for(const state of sequence){
-          if(!(state in STATE_INDEX))return false;
-          observed++;
-        }
-      }
-      return observed===100;
+    // Quando talking/open ainda estiverem vazios, continua usando a imagem fechada.
+    // Assim o motor já pode ir ao ar antes das 3 PNGs definitivas existirem.
+    if(activePortrait.getAttribute('src')!==url){
+      activePortrait.src=url;
     }
   }
 
-
-  /* ===== Emma Expression Turbine v17 =====
-     Visual-only active rig. It reads the existing mouth amplitude and avatar
-     state, then owns the mouth SVG geometry with inline !important styles.
-     It never writes audio/STT/TTS/microphone/memory/turn state. */
-  class ExpressionTurbine{
-    constructor(face){
-      this.face=face;
-      this.mouth=null;
-      this.svg=null;
-      this.cavity=null;
-      this.teeth=null;
-      this.lip=null;
-      this.raf=0;
-      this.lastOpen=-1;
-      this.lastWide=-1;
-      this.styleNode=null;
-    }
-
-    ensure(){
-      if(!this.face?.isConnected)return false;
-      const mouth=this.face.querySelector('.avatar-mouth-motion');
-      if(!mouth)return false;
-
-      if(this.mouth!==mouth || !this.svg?.isConnected){
-        this.mouth=mouth;
-        mouth.dataset.expressionTurbine='v17';
-        mouth.replaceChildren();
-
-        const ns='http://www.w3.org/2000/svg';
-        const svg=document.createElementNS(ns,'svg');
-        svg.setAttribute('viewBox','0 0 136 44');
-        svg.setAttribute('preserveAspectRatio','none');
-        svg.setAttribute('aria-hidden','true');
-        svg.style.setProperty('position','absolute','important');
-        svg.style.setProperty('inset','0','important');
-        svg.style.setProperty('width','100%','important');
-        svg.style.setProperty('height','100%','important');
-        svg.style.setProperty('overflow','visible','important');
-        svg.style.setProperty('pointer-events','none','important');
-
-        const defs=document.createElementNS(ns,'defs');
-        const grad=document.createElementNS(ns,'linearGradient');
-        grad.id='emmaMouthV17Gradient';
-        grad.setAttribute('x1','0'); grad.setAttribute('y1','0');
-        grad.setAttribute('x2','0'); grad.setAttribute('y2','1');
-        const stops=[
-          ['0%','#4b111a'],['58%','#22060a'],['100%','#7f2840']
-        ];
-        for(const [offset,color] of stops){
-          const s=document.createElementNS(ns,'stop');
-          s.setAttribute('offset',offset); s.setAttribute('stop-color',color);
-          grad.appendChild(s);
-        }
-        defs.appendChild(grad);
-        svg.appendChild(defs);
-
-        const cavity=document.createElementNS(ns,'path');
-        cavity.setAttribute('fill','url(#emmaMouthV17Gradient)');
-        cavity.setAttribute('stroke','#8e3148');
-        cavity.setAttribute('stroke-width','1.25');
-        cavity.setAttribute('stroke-linejoin','round');
-
-        const teeth=document.createElementNS(ns,'path');
-        teeth.setAttribute('fill','#fffdfa');
-        teeth.setAttribute('opacity','.82');
-
-        const lip=document.createElementNS(ns,'path');
-        lip.setAttribute('fill','none');
-        lip.setAttribute('stroke','#a63d58');
-        lip.setAttribute('stroke-width','1.65');
-        lip.setAttribute('stroke-linecap','round');
-
-        svg.appendChild(cavity);
-        svg.appendChild(teeth);
-        svg.appendChild(lip);
-        mouth.appendChild(svg);
-
-        this.svg=svg;
-        this.cavity=cavity;
-        this.teeth=teeth;
-        this.lip=lip;
-
-        if(!document.querySelector('#emma-expression-turbine-v17-style')){
-          const st=document.createElement('style');
-          st.id='emma-expression-turbine-v17-style';
-          st.textContent=`
-            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion::before,
-            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion::after{
-              content:none!important;display:none!important;opacity:0!important;
-            }
-            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion{
-              animation:none!important;
-            }
-          `;
-          document.head.appendChild(st);
-          this.styleNode=st;
-        }
-      }
-      return true;
-    }
-
-    read(){
-      const cs=getComputedStyle(this.face);
-      const open=clamp(Number.parseFloat(cs.getPropertyValue('--mouth-open'))||0,0,1);
-      const wide=clamp(Number.parseFloat(cs.getPropertyValue('--mouth-wide'))||0,0,1);
-      return {open,wide};
-    }
-
-    forceBox(open,wide){
-      const m=this.mouth;
-      if(!m)return;
-      const speaking=this.face.classList.contains('avatar-speaking');
-      const active=Math.max(open,speaking?.18:0);
-      const width=13.6 + wide*1.45 + active*.65;
-      const height=8.8 + active*4.8;
-
-      m.style.setProperty('left','50%','important');
-      m.style.setProperty('top','58.05%','important');
-      m.style.setProperty('width',width.toFixed(2)+'%','important');
-      m.style.setProperty('height',height.toFixed(2)+'px','important');
-      m.style.setProperty('overflow','visible','important');
-      m.style.setProperty('background','transparent','important');
-      m.style.setProperty('box-shadow','none','important');
-      m.style.setProperty('border','0','important');
-      m.style.setProperty('border-radius','0','important');
-      m.style.setProperty('opacity',active>.015?'1':'0','important');
-      m.style.setProperty('transform','translate(-50%,-50%)','important');
-      m.style.setProperty('animation','none','important');
-      m.style.setProperty('transition','none','important');
-    }
-
-    draw(open,wide){
-      if(!this.cavity||!this.teeth||!this.lip)return;
-
-      const speaking=this.face.classList.contains('avatar-speaking');
-      const a=Math.max(open,speaking?.18:0);
-      const sideLift=9.0 + wide*1.5;     // corners move UP (smaller y)
-      const centerTop=20.0 + a*2.4;      // center stays lower than corners
-      const centerBottom=27.0 + a*10.5;  // light vertical opening
-      const bottomSide=23.5 + a*3.6;
-
-      const Lx=5, Rx=131, Cx=68;
-      const cornerY=sideLift;
-      const q1x=29, q2x=107;
-
-      /* Outer mouth: corners high, center lower => true upward smile. */
-      const cavity=[
-        'M',Lx,cornerY,
-        'Q',q1x,cornerY-1.2,Cx,centerTop,
-        'Q',q2x,cornerY-1.2,Rx,cornerY,
-        'Q',q2x,bottomSide,Cx,centerBottom,
-        'Q',q1x,bottomSide,Lx,cornerY,'Z'
-      ].join(' ');
-      this.cavity.setAttribute('d',cavity);
-
-      /* Upper teeth follow the same smile curve and never fill the cavity. */
-      const toothBottom=centerTop + 3.2 + a*1.4;
-      const teeth=[
-        'M',12,cornerY+2.6,
-        'Q',34,cornerY+1.2,Cx,centerTop+1.2,
-        'Q',102,cornerY+1.2,124,cornerY+2.6,
-        'Q',101,toothBottom,Cx,toothBottom+1.3,
-        'Q',35,toothBottom,12,cornerY+2.6,'Z'
-      ].join(' ');
-      this.teeth.setAttribute('d',teeth);
-      this.teeth.setAttribute('opacity',String(.52 + a*.26));
-
-      /* Lip contour explicitly rises at both sides. */
-      const lip=[
-        'M',Lx,cornerY-1.2,
-        'Q',29,cornerY-3.0,Cx,centerTop-1.2,
-        'Q',107,cornerY-3.0,Rx,cornerY-1.2
-      ].join(' ');
-      this.lip.setAttribute('d',lip);
-    }
-
-    tick=()=>{
-      if(!this.face?.isConnected){this.stop();return}
-      if(this.ensure()){
-        const {open,wide}=this.read();
-        this.face.dataset.expressionRig='turbine-v17';
-        this.forceBox(open,wide);
-        this.draw(open,wide);
-        this.lastOpen=open; this.lastWide=wide;
-      }
-      this.raf=requestAnimationFrame(this.tick);
-    }
-
-    start(){
-      this.stop();
-      this.ensure();
-      this.raf=requestAnimationFrame(this.tick);
-    }
-
-    stop(){
-      cancelAnimationFrame(this.raf);
-      this.raf=0;
-    }
-  }
-
-  class AvatarWatchdog{
-    constructor(manager){
-      this.manager=manager;
-      this.timer=0;
-      this.recoveryTimer=0;
-      this.failures=0;
-    }
-    start(){
-      this.stop();
-      this.timer=setInterval(()=>{
-        const m=this.manager;
-        if(!m.face?.isConnected){this.stop();return}
-        if(m.failed||m.contextLost)return;
-        if(m.raf&&performance.now()-m.lastHealthyFrame>4500){
-          m.useFallback('render-heartbeat');
-          this.scheduleRecovery();
-        }
-      },1800);
-    }
-    stop(){
-      clearInterval(this.timer);
-      clearTimeout(this.recoveryTimer);
-      this.timer=0;this.recoveryTimer=0;
-    }
-    scheduleRecovery(){
-      clearTimeout(this.recoveryTimer);
-      if(this.failures>=3)return;
-      this.recoveryTimer=setTimeout(async()=>{
-        this.failures++;
-        const ok=await this.manager.recover();
-        if(ok)this.failures=0;
-      },700+this.failures*900);
-    }
-  }
-
-  window.ExpressionTurbine=ExpressionTurbine;
-  window.AvatarManager=AvatarManager;
-  window.AvatarWatchdog=AvatarWatchdog;
-  window.__FNS_AVATAR_SELF_TEST__=()=>AvatarManager.selfTest();
-  window.__FNS_EXPRESSION_TURBINE_V17__=true;
-
-  function scan(){
+  function bindCurrentEmma(){
     const face=document.querySelector('#avatarFace.human-avatar');
-    if(face){
-      if(manager?.face===face&&face.dataset.avatarManager==='active')return;
-      manager?.destroy();
-      manager=new AvatarManager(face);
-      face.dataset.avatarManager='active';
-      manager.start();
-    }else if(manager){
-      manager.destroy();
-      manager=null;
+    if(!face)return false;
+    const portrait=face.querySelector('#emmaPortrait');
+    if(!portrait)return false;
+
+    if(face!==activeFace || portrait!==activePortrait){
+      activeFace=face;
+      activePortrait=portrait;
+      currentState='';
+      lastRequestedUrl='';
+      removeLegacyMouthArtifacts(face);
+
+      portrait.onerror=()=>{
+        const fallback=EMMA_FRAME_URLS.closed||'/emma.jpg';
+        if(portrait.getAttribute('src')!==fallback)portrait.src=fallback;
+      };
+
+      face.dataset.expressionRig='pngtuber-v1';
+      face.dataset.avatarVisualMode='image-swapping';
+      face.dataset.avatarReady='true';
+      applyFrame('closed');
     }
+    return true;
   }
 
-  const observer=new MutationObserver(scan);
-  observer.observe(document.documentElement,{childList:true,subtree:true});
-  document.addEventListener('visibilitychange',()=>{
-    if(document.hidden)return;
-    if(manager?.failed)manager.watchdog?.scheduleRecovery();
-    else scan();
-  });
-  scan();
+  function tick(){
+    if(bindCurrentEmma()){
+      // O valor vem diretamente do RMS do TTS já calculado em app.js.
+      const level=signalLevel(activeFace);
+      applyFrame(chooseState(level));
+    }else{
+      activeFace=null;
+      activePortrait=null;
+      currentState='';
+      lastRequestedUrl='';
+    }
+    raf=requestAnimationFrame(tick);
+  }
+
+  preloadConfiguredFrames();
+  raf=requestAnimationFrame(tick);
+
+  // Interface pequena para preencher/testar os frames sem mexer no áudio.
+  window.FNS_EMMA_PNGTUBER={
+    frameUrls:EMMA_FRAME_URLS,
+    thresholds:{silence:SILENCE_THRESHOLD,open:OPEN_THRESHOLD},
+    setFrames(next={}){
+      if(typeof next.closed==='string')EMMA_FRAME_URLS.closed=next.closed;
+      if(typeof next.talking==='string')EMMA_FRAME_URLS.talking=next.talking;
+      if(typeof next.open==='string')EMMA_FRAME_URLS.open=next.open;
+      preloadConfiguredFrames();
+      currentState='';
+      lastRequestedUrl='';
+      if(activeFace)applyFrame(chooseState(signalLevel(activeFace)));
+      return {...EMMA_FRAME_URLS};
+    },
+    getState(){
+      return {
+        state:currentState||'closed',
+        level:activeFace?signalLevel(activeFace):0,
+        frames:{...EMMA_FRAME_URLS}
+      };
+    }
+  };
 })();
