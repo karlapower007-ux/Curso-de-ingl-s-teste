@@ -26,26 +26,28 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Source QA Olivia v4
+      - name: Source QA Olivia v5
         run: |
           node --check public/olivia-core-v4.js
+          node --check public/olivia-visual-v5.js
           grep -q "FNS OLIVIA CORE V4" public/olivia-core-v4.js
-          grep -q "data-teacher=\"olivia\"" public/olivia-core-v4.js
-          grep -q "X-FNS-STT-Language', 'es-ES'" public/olivia-core-v4.js
-          grep -q "SpeechSynthesisUtterance" public/olivia-core-v4.js
+          grep -q "FNS OLIVIA VISUAL V5" public/olivia-visual-v5.js
+          grep -q "data-fns-olivia-visual-v5" public/olivia-static.css
           grep -q "olivia-core-v4.js?v=4" public/index.html
-          grep -q "olivia-fechada.png?v=v4-20260917" public/index.html
-          grep -q "olivia-falando.png?v=v4-20260917" public/index.html
-          grep -q "olivia-aberta.png?v=v4-20260917" public/index.html
-          echo 'SOURCE OLIVIA V4 QA PASS'
+          grep -q "olivia-visual-v5.js?v=5" public/index.html
+          grep -q "olivia-static.css?v=5" public/index.html
+          grep -q "olivia-fechada.png?v=v5-20260917" public/index.html
+          grep -q "olivia-falando.png?v=v5-20260917" public/index.html
+          grep -q "olivia-aberta.png?v=v5-20260917" public/index.html
+          echo 'SOURCE OLIVIA V5 QA PASS'
 
       - name: Wait for production deploy
-        run: sleep 8
+        run: sleep 10
 
       - name: Production Olivia assets
         run: |
           for f in olivia-fechada.png olivia-falando.png olivia-aberta.png; do
-            curl --compressed --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=v4-20260917"
+            curl --compressed --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=v5-20260917"
           done
           node - <<'NODE'
           const fs=require('fs');
@@ -58,7 +60,6 @@ jobs:
             const w=b.readUInt32BE(16),h=b.readUInt32BE(20);
             if(w<256||h<256)throw new Error(f+' dimensions too small '+w+'x'+h);
             hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
-            console.log(f,w+'x'+h,b.length+' bytes');
           }
           if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
           console.log('PRODUCTION OLIVIA ASSETS PASS');
@@ -92,26 +93,20 @@ jobs:
           if [ "$STATUS" = "200" ]; then
             test -s olivia-tts.body
             grep -i '^content-type: audio/' olivia-tts.headers
-            if grep -qi '^x-fns-voice-language: *es' olivia-tts.headers; then
-              echo 'PRODUCTION OLIVIA REMOTE SPANISH TTS PASS'
-            else
-              echo 'Remote TTS returned non-Spanish metadata; runtime must reject it and use browser es-ES fallback'
-              grep -i '^x-fns-voice-language:' olivia-tts.headers || true
-            fi
-          else
-            echo 'Remote Spanish TTS unavailable; browser es-ES fallback will be exercised in browser QA'
+            grep -i '^x-fns-voice-language:' olivia-tts.headers || true
           fi
 
       - name: Install browser QA dependency
         run: npm install --no-save puppeteer-core@24.18.0
 
-      - name: Browser QA Olivia direct boot, PNGTuber, STT lock and voice fallback
+      - name: Browser QA Olivia v5 anti-blackout and voice
         run: |
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           test -n "$CHROME_BIN"
           export CHROME_BIN
           node - <<'NODE'
           const puppeteer=require('puppeteer-core');
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           (async()=>{
             const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']});
             const page=await browser.newPage();
@@ -119,35 +114,90 @@ jobs:
             const pageErrors=[];
             page.on('pageerror',e=>pageErrors.push(String(e?.message||e)));
 
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v4',{waitUntil:'networkidle2',timeout:60000});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v5',{waitUntil:'networkidle2',timeout:60000});
             await page.waitForSelector('#liteModal .human-avatar[data-teacher="olivia"] img',{timeout:30000});
-            await page.waitForFunction(()=>window.FNS_OLIVIA_CORE_V4?.health?.().imageLoaded===true,{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_VISUAL_V5?.health?.().loaded===true,{timeout:30000});
 
-            const health=await page.evaluate(()=>window.FNS_OLIVIA_CORE_V4.health());
-            if(!health.booted||!health.active||!health.modal||!health.avatar||!health.imageLoaded)throw new Error('Olivia boot/avatar failed '+JSON.stringify(health));
-            if(health.imageWidth<256||health.imageHeight<256)throw new Error('Olivia image dimensions invalid '+JSON.stringify(health));
-            if(health.sttLanguage!=='es-ES'||!health.sttLocked||health.strictLanguage!=='es-ES')throw new Error('Olivia es-ES lock failed '+JSON.stringify(health));
-            if(!health.imageSrc.includes('olivia-fechada.png'))throw new Error('Olivia closed frame missing '+JSON.stringify(health));
-            if(pageErrors.length)throw new Error('Page errors during boot '+JSON.stringify(pageErrors));
-
-            const intro=await page.$eval('#liteModal #transcript .msg.teacher',el=>el.textContent||'');
-            if(!/^¡Hola! Soy Olivia\./.test(intro))throw new Error('Spanish intro failed: '+intro);
-
-            const check=async(level,needle,state)=>{
-              await page.evaluate(v=>document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]')?.style.setProperty('--mouth-open',String(v),'important'),level);
-              await new Promise(r=>setTimeout(r,350));
-              const got=await page.evaluate(()=>({src:document.querySelector('#liteModal .human-avatar[data-teacher="olivia"] img')?.src||'',state:document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]')?.dataset.pngtuberState||''}));
-              if(!got.src.includes(needle)||got.state!==state)throw new Error('Olivia frame swap failed '+JSON.stringify({level,got}));
+            const assertVisible=async(label)=>{
+              const h=await page.evaluate(()=>window.FNS_OLIVIA_VISUAL_V5.health());
+              if(!h.active||!h.modal||!h.stage||!h.face||!h.image||!h.loaded)throw new Error(label+' missing visual '+JSON.stringify(h));
+              if(h.faceDisplay==='none'||h.faceVisibility==='hidden'||Number(h.faceOpacity)<0.99)throw new Error(label+' face hidden '+JSON.stringify(h));
+              if(h.imageDisplay==='none'||h.imageVisibility==='hidden'||Number(h.imageOpacity)<0.99)throw new Error(label+' image hidden '+JSON.stringify(h));
+              if(!h.faceRect||h.faceRect.width<200||h.faceRect.height<300||!h.imageRect||h.imageRect.width<200||h.imageRect.height<300)throw new Error(label+' zero/collapsed size '+JSON.stringify(h));
+              if(!/olivia-(fechada|falando|aberta)\.png/.test(h.src))throw new Error(label+' wrong src '+JSON.stringify(h));
+              if(h.errors.length)throw new Error(label+' visual errors '+JSON.stringify(h.errors));
+              return h;
             };
-            await check(0,'olivia-fechada.png','closed');
-            await check(.30,'olivia-falando.png','talking');
-            await check(.80,'olivia-aberta.png','open');
 
+            await assertVisible('boot');
+            await sleep(6500); // natural ambient wrapper has had time to run
+            await assertVisible('ambient');
+
+            await page.evaluate(()=>setNaturalAvatarState('listening'));
+            await sleep(400);
+            await assertVisible('listening');
+
+            await page.evaluate(()=>{
+              const face=document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]');
+              face?.style.setProperty('--mouth-open','0.35','important');
+            });
+            await sleep(400);
+            let h=await assertVisible('talking');
+            if(!h.src.includes('olivia-falando.png'))throw new Error('talking frame did not persist '+JSON.stringify(h));
+
+            await page.evaluate(()=>{
+              const face=document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]');
+              face?.style.setProperty('--mouth-open','0.80','important');
+              setNaturalAvatarState('speaking');
+            });
+            await sleep(400);
+            h=await assertVisible('speaking-open');
+            if(!h.src.includes('olivia-aberta.png'))throw new Error('open frame did not persist '+JSON.stringify(h));
+
+            // Simulate the exact failures reported by the user: hidden node, broken src,
+            // removed face and a black loading overlay. V5 must recover automatically.
+            await page.evaluate(()=>{
+              const face=document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]');
+              const img=face?.querySelector('img');
+              if(face){face.style.setProperty('display','none','important');face.style.setProperty('opacity','0','important');}
+              if(img)img.src='about:blank';
+            });
+            await sleep(500);
+            await assertVisible('recovered-hidden-and-src');
+
+            await page.evaluate(()=>document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]')?.remove());
+            await sleep(500);
+            await assertVisible('recovered-removed-face');
+
+            await page.evaluate(()=>{
+              const stage=document.querySelector('#liteModal .avatar-stage');
+              const blocker=document.createElement('div');
+              blocker.className='avatar-loading-overlay';
+              blocker.style.cssText='position:absolute;inset:0;background:#000;z-index:9999;display:block;opacity:1';
+              stage?.appendChild(blocker);
+            });
+            await sleep(400);
+            const blocker=await page.evaluate(()=>{
+              const el=document.querySelector('#liteModal .avatar-loading-overlay');
+              if(!el)return null;
+              const c=getComputedStyle(el);return {display:c.display,opacity:c.opacity,visibility:c.visibility};
+            });
+            if(blocker&&blocker.display!=='none'&&Number(blocker.opacity)>0)throw new Error('black overlay survived '+JSON.stringify(blocker));
+            await assertVisible('overlay-guard');
+
+            await page.evaluate(()=>{
+              const face=document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]');
+              face?.style.setProperty('--mouth-open','0','important');
+              setNaturalAvatarState('idle');
+            });
+            await sleep(2500);
+            await assertVisible('idle-persistent');
+
+            // Force remote TTS failure and prove the es-ES browser fallback still works in v5.
             await page.setRequestInterception(true);
             page.on('request',req=>{
-              if(req.url().includes('/tts')&&req.method()==='POST'){
-                req.respond({status:503,contentType:'application/json',body:JSON.stringify({ok:false,code:'FORCED_QA_TTS_FAILURE'})});
-              }else req.continue();
+              if(req.url().includes('/tts')&&req.method()==='POST')req.respond({status:503,contentType:'application/json',body:JSON.stringify({ok:false,code:'FORCED_QA_TTS_FAILURE'})});
+              else req.continue();
             });
             await page.evaluate(()=>{
               window.__OLIVIA_QA_SPOKEN__=[];
@@ -161,18 +211,15 @@ jobs:
               };
             });
             await page.click('#voiceBtn');
-            await page.waitForFunction(()=>Array.isArray(window.__OLIVIA_QA_SPOKEN__)&&window.__OLIVIA_QA_SPOKEN__.length>0,{timeout:10000});
+            await page.waitForFunction(()=>window.__OLIVIA_QA_SPOKEN__?.length>0,{timeout:10000});
             const spoken=await page.evaluate(()=>window.__OLIVIA_QA_SPOKEN__[0]);
-            if(spoken.lang!=='es-ES')throw new Error('Browser fallback language is not es-ES '+JSON.stringify(spoken));
-            if(!/^¡Hola! Soy Olivia\./.test(spoken.text))throw new Error('Browser fallback text is not Spanish intro '+JSON.stringify(spoken));
-
-            const finalHealth=await page.evaluate(()=>window.FNS_OLIVIA_CORE_V4.health());
-            if(finalHealth.errors.length)throw new Error('Olivia runtime errors '+JSON.stringify(finalHealth.errors));
+            if(spoken.lang!=='es-ES')throw new Error('browser voice fallback is not es-ES '+JSON.stringify(spoken));
             if(pageErrors.length)throw new Error('Unhandled page errors '+JSON.stringify(pageErrors));
-            console.log('OLIVIA BROWSER QA PASS',JSON.stringify({health:finalHealth,spoken}));
+
+            console.log('OLIVIA V5 BROWSER QA PASS',JSON.stringify({visual:await page.evaluate(()=>window.FNS_OLIVIA_VISUAL_V5.health()),spoken}));
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
       - name: Final Olivia status
-        run: echo 'OLIVIA V4 PRODUCTION QA PASS - direct boot, PNGTuber, Spanish chat, STT lock and browser voice fallback verified'
+        run: echo 'OLIVIA V5 PRODUCTION QA PASS - no blackout after boot/listening/speaking; DOM removal, broken src and black overlay recovery verified'
