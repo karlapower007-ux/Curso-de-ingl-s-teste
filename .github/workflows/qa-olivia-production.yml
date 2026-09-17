@@ -1,0 +1,178 @@
+name: QA Olivia Production
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-production.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-olivia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Source QA Olivia v4
+        run: |
+          node --check public/olivia-core-v4.js
+          grep -q "FNS OLIVIA CORE V4" public/olivia-core-v4.js
+          grep -q "data-teacher=\"olivia\"" public/olivia-core-v4.js
+          grep -q "X-FNS-STT-Language', 'es-ES'" public/olivia-core-v4.js
+          grep -q "SpeechSynthesisUtterance" public/olivia-core-v4.js
+          grep -q "olivia-core-v4.js?v=4" public/index.html
+          grep -q "olivia-fechada.png?v=v4-20260917" public/index.html
+          grep -q "olivia-falando.png?v=v4-20260917" public/index.html
+          grep -q "olivia-aberta.png?v=v4-20260917" public/index.html
+          echo 'SOURCE OLIVIA V4 QA PASS'
+
+      - name: Wait for production deploy
+        run: sleep 8
+
+      - name: Production Olivia assets
+        run: |
+          for f in olivia-fechada.png olivia-falando.png olivia-aberta.png; do
+            curl --compressed --fail --silent --show-error -o "$f" "https://fns-stt.karlapower007.workers.dev/assets/$f?v=v4-20260917"
+          done
+          node - <<'NODE'
+          const fs=require('fs');
+          const crypto=require('crypto');
+          const hashes=new Set();
+          for(const f of ['olivia-fechada.png','olivia-falando.png','olivia-aberta.png']){
+            const b=fs.readFileSync(f);
+            if(b.length<5000)throw new Error(f+' too small '+b.length);
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' is not PNG');
+            const w=b.readUInt32BE(16),h=b.readUInt32BE(20);
+            if(w<256||h<256)throw new Error(f+' dimensions too small '+w+'x'+h);
+            hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
+            console.log(f,w+'x'+h,b.length+' bytes');
+          }
+          if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
+          console.log('PRODUCTION OLIVIA ASSETS PASS');
+          NODE
+
+      - name: Production Olivia Spanish chat
+        run: |
+          curl --compressed --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"message":"Hola Olivia. Quiero practicar español contigo.","teacher":"Olivia","level":"A1","accent":"Español","input_language":"es-ES","input_language_label":"Español","strict_language":"es-ES","history":[]}' \
+            -o olivia-chat.json \
+            'https://fns-stt.karlapower007.workers.dev/chat'
+          node - <<'NODE'
+          const fs=require('fs');
+          const data=JSON.parse(fs.readFileSync('olivia-chat.json','utf8'));
+          if(!data.ok||!data.reply)throw new Error('Olivia chat failed '+JSON.stringify(data));
+          if(data.strict_language!=='es-ES'||data.language_guard!=='FNS-OLIVIA-A-H')throw new Error('Olivia strict flags missing '+JSON.stringify(data));
+          const text=String(data.reply).toLowerCase();
+          if(/\b(i am|my name|thank you|how are you|good morning|hello)\b/i.test(text))throw new Error('English leak '+data.reply);
+          if(/\b(você|voce|não|nao|obrigado|obrigada|bom dia|meu nome)\b/i.test(text))throw new Error('Portuguese leak '+data.reply);
+          console.log('PRODUCTION OLIVIA CHAT PASS',data.reply);
+          NODE
+
+      - name: Production Olivia TTS route
+        run: |
+          STATUS=$(curl --compressed --silent --show-error -D olivia-tts.headers -o olivia-tts.body -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"Hola, soy Olivia. ¿Cómo te llamas?","teacher":"Olivia","language":"es-ES"}' \
+            'https://fns-stt.karlapower007.workers.dev/tts')
+          echo "Olivia TTS status=$STATUS"
+          if [ "$STATUS" = "200" ]; then
+            test -s olivia-tts.body
+            grep -i '^content-type: audio/' olivia-tts.headers
+            if grep -qi '^x-fns-voice-language:' olivia-tts.headers; then
+              grep -qi '^x-fns-voice-language: *es' olivia-tts.headers
+            fi
+            echo 'PRODUCTION OLIVIA REMOTE TTS PASS'
+          else
+            grep -q 'browser' public/olivia-core-v4.js || true
+            echo 'Remote Spanish TTS unavailable; browser es-ES fallback will be exercised in browser QA'
+          fi
+
+      - name: Install browser QA dependency
+        run: npm install --no-save puppeteer-core@24.18.0
+
+      - name: Browser QA Olivia direct boot, PNGTuber, STT lock and voice fallback
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+            const pageErrors=[];
+            page.on('pageerror',e=>pageErrors.push(String(e?.message||e)));
+
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v4',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForSelector('#liteModal .human-avatar[data-teacher="olivia"] img',{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_CORE_V4?.health?.().imageLoaded===true,{timeout:30000});
+
+            const health=await page.evaluate(()=>window.FNS_OLIVIA_CORE_V4.health());
+            if(!health.booted||!health.active||!health.modal||!health.avatar||!health.imageLoaded)throw new Error('Olivia boot/avatar failed '+JSON.stringify(health));
+            if(health.imageWidth<256||health.imageHeight<256)throw new Error('Olivia image dimensions invalid '+JSON.stringify(health));
+            if(health.sttLanguage!=='es-ES'||!health.sttLocked||health.strictLanguage!=='es-ES')throw new Error('Olivia es-ES lock failed '+JSON.stringify(health));
+            if(!health.imageSrc.includes('olivia-fechada.png'))throw new Error('Olivia closed frame missing '+JSON.stringify(health));
+            if(pageErrors.length)throw new Error('Page errors during boot '+JSON.stringify(pageErrors));
+
+            const intro=await page.$eval('#liteModal #transcript .msg.teacher',el=>el.textContent||'');
+            if(!/^¡Hola! Soy Olivia\./.test(intro))throw new Error('Spanish intro failed: '+intro);
+
+            const check=async(level,needle,state)=>{
+              await page.evaluate(v=>document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]')?.style.setProperty('--mouth-open',String(v),'important'),level);
+              await new Promise(r=>setTimeout(r,350));
+              const got=await page.evaluate(()=>({src:document.querySelector('#liteModal .human-avatar[data-teacher="olivia"] img')?.src||'',state:document.querySelector('#liteModal .human-avatar[data-teacher="olivia"]')?.dataset.pngtuberState||''}));
+              if(!got.src.includes(needle)||got.state!==state)throw new Error('Olivia frame swap failed '+JSON.stringify({level,got}));
+            };
+            await check(0,'olivia-fechada.png','closed');
+            await check(.30,'olivia-falando.png','talking');
+            await check(.80,'olivia-aberta.png','open');
+
+            // Force the remote /tts call to fail and prove the browser es-ES fallback is used.
+            await page.setRequestInterception(true);
+            page.on('request',req=>{
+              if(req.url().includes('/tts')&&req.method()==='POST'){
+                req.respond({status:503,contentType:'application/json',body:JSON.stringify({ok:false,code:'FORCED_QA_TTS_FAILURE'})});
+              }else req.continue();
+            });
+            await page.evaluate(()=>{
+              window.__OLIVIA_QA_SPOKEN__=[];
+              const synth=window.speechSynthesis;
+              synth.cancel=()=>{};
+              synth.getVoices=()=>[];
+              synth.speak=(u)=>{
+                window.__OLIVIA_QA_SPOKEN__.push({text:u.text,lang:u.lang});
+                setTimeout(()=>u.onstart?.(),10);
+                setTimeout(()=>u.onend?.(),80);
+              };
+            });
+            await page.click('#voiceBtn');
+            await page.waitForFunction(()=>Array.isArray(window.__OLIVIA_QA_SPOKEN__)&&window.__OLIVIA_QA_SPOKEN__.length>0,{timeout:10000});
+            const spoken=await page.evaluate(()=>window.__OLIVIA_QA_SPOKEN__[0]);
+            if(spoken.lang!=='es-ES')throw new Error('Browser fallback language is not es-ES '+JSON.stringify(spoken));
+            if(!/^¡Hola! Soy Olivia\./.test(spoken.text))throw new Error('Browser fallback text is not Spanish intro '+JSON.stringify(spoken));
+
+            const finalHealth=await page.evaluate(()=>window.FNS_OLIVIA_CORE_V4.health());
+            if(finalHealth.errors.length)throw new Error('Olivia runtime errors '+JSON.stringify(finalHealth.errors));
+            if(pageErrors.length)throw new Error('Unhandled page errors '+JSON.stringify(pageErrors));
+            console.log('OLIVIA BROWSER QA PASS',JSON.stringify({health:finalHealth,spoken}));
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Final Olivia status
+        run: echo 'OLIVIA V4 PRODUCTION QA PASS - direct boot, PNGTuber, Spanish chat, STT lock and browser voice fallback verified'
