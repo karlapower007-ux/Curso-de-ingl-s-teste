@@ -4,18 +4,107 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0d1117">
-  <title>Olivia — FNS Avatar V12</title>
-  <link rel="preload" as="image" href="/assets/olivia-fechada.png">
-  <link rel="stylesheet" href="/avatar.css?v=12-layout">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Olivia — FNS Avatar V13</title>
+
+  <script>
+    // FNS OLIVIA V13 CACHE KILLER
+    // Runs before the avatar engine. It only executes on this isolated Olivia document.
+    (() => {
+      const marker = 'fns-olivia-v13-cache-killed';
+      const cleanOnce = async () => {
+        let changed = false;
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            if (registrations.length) changed = true;
+            await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            if (keys.length) changed = true;
+            await Promise.all(keys.map((key) => caches.delete(key).catch(() => false)));
+          }
+        } catch (_) {}
+
+        let already = false;
+        try { already = sessionStorage.getItem(marker) === '1'; } catch (_) {}
+        if (!already) {
+          try { sessionStorage.setItem(marker, '1'); } catch (_) {}
+          if (changed && !new URL(location.href).searchParams.has('nocache')) {
+            const next = new URL(location.href);
+            next.searchParams.set('nocache', '1');
+            next.searchParams.set('v', '13');
+            location.replace(next.toString());
+          }
+        }
+      };
+      void cleanOnce();
+    })();
+  </script>
+
+  <link rel="preload" as="image" href="/assets/olivia-fechada.png?v=v13-shell">
+
+  <style>
+    /* FNS OLIVIA V13 — CSS 100% inline. No stylesheet dependency. */
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:dark;background:#0d1117;color:#f6f8fa}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;padding:0;background:#0d1117;overflow:hidden}
+    button,input,select{font:inherit}
+    body{min-height:100vh}
+    #root{display:flex;width:100vw;height:100vh;overflow:hidden;background:#0d1117}
+
+    #avatar-stage{flex:1 1 50%;min-width:0;height:100%;display:flex;align-items:center;justify-content:center;background:#000;position:relative;overflow:hidden;border-right:1px solid rgba(255,255,255,.08)}
+    #avatar-stage::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 38%,rgba(31,48,84,.30),transparent 52%);pointer-events:none}
+    #olivia-avatar-img{position:relative;z-index:2;display:block;width:min(90%,720px);height:auto;max-width:94%;max-height:94%;min-width:280px;object-fit:contain;object-position:center center;visibility:visible!important;opacity:1!important;transform:none!important;filter:none!important;user-select:none;-webkit-user-drag:none}
+    .avatar-badge{position:absolute;z-index:4;left:22px;top:22px;display:flex;flex-direction:column;gap:2px;padding:11px 14px;border-radius:16px;background:rgba(10,13,18,.72);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(12px);box-shadow:0 12px 34px rgba(0,0,0,.24)}
+    .avatar-badge strong{font-size:18px}.avatar-badge span{font-size:13px;opacity:.72}
+    .avatar-mode{position:absolute;z-index:4;left:22px;bottom:22px;padding:8px 11px;border-radius:999px;background:rgba(10,13,18,.72);border:1px solid rgba(255,255,255,.1);font-size:12px;opacity:.85}
+
+    #interaction-panel{flex:1 1 50%;min-width:0;height:100%;display:flex;flex-direction:column;padding:24px;background:#161b22;overflow:hidden}
+    .interaction-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:2px 2px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+    .interaction-header>div{display:flex;flex-direction:column;gap:3px}.interaction-header strong{font-size:20px}.interaction-header span{font-size:13px;opacity:.72}
+    .v13-pill{padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:#0d1117;opacity:1!important;font-weight:700;letter-spacing:.02em}
+    #chat-history{flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px 2px 16px;display:flex;flex-direction:column;gap:12px;scrollbar-width:thin}
+    .chat-empty{margin:auto;text-align:center;max-width:340px;color:#8b949e;line-height:1.5}
+    .chat-message{max-width:82%;padding:12px 14px;border-radius:16px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 8px 20px rgba(0,0,0,.12)}
+    .chat-message.user{align-self:flex-end;background:#1f6feb;color:white;border-bottom-right-radius:6px}
+    .chat-message.assistant{align-self:flex-start;background:#21262d;border:1px solid rgba(255,255,255,.08);border-bottom-left-radius:6px}
+    .chat-message .chat-role{display:block;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;opacity:.68;margin-bottom:5px}
+    .status-line{min-height:22px;padding:0 2px 10px;color:#8b949e;font-size:13px}
+    #controls-bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)}
+    #controls-bar input,#controls-bar select,.control-btn{min-height:48px;border-radius:13px;border:1px solid rgba(255,255,255,.12);background:#0d1117;color:#f6f8fa}
+    #controls-bar input{flex:1 1 auto;min-width:90px;padding:0 14px;outline:none}#controls-bar input:focus{border-color:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.12)}
+    #controls-bar select{flex:0 0 78px;padding:0 10px;cursor:pointer}
+    .control-btn{flex:0 0 auto;padding:0 14px;cursor:pointer;font-weight:750;white-space:nowrap}.control-btn:hover:not(:disabled){background:#21262d}.control-btn:disabled{opacity:.42;cursor:not-allowed}
+    .audio-btn{min-width:106px}.send-btn{min-width:88px;background:#238636;border-color:#2ea043}.send-btn:hover:not(:disabled){background:#2ea043}
+    #root #avatar-stage #olivia-avatar-img{inset:auto!important;margin:0!important;clip:auto!important;clip-path:none!important;border-radius:0!important}
+
+    @media(max-width:900px){
+      #root{flex-direction:column;overflow:auto}
+      #avatar-stage{flex:0 0 52vh;width:100%;height:52vh;border-right:0;border-bottom:1px solid rgba(255,255,255,.08)}
+      #olivia-avatar-img{width:min(92%,640px);min-width:220px;max-width:96%;max-height:96%}
+      #interaction-panel{flex:1 0 auto;width:100%;min-height:48vh;height:auto;padding:16px}
+      #controls-bar{display:grid;grid-template-columns:1fr 1fr 84px;gap:9px}
+      #textInput{grid-column:1/-1;grid-row:1}
+      #micBtn{grid-column:1}.audio-btn{min-width:0}
+      #replayBtn{grid-column:2}
+      #voiceTurbine{grid-column:3;grid-row:2;width:100%}
+      #sendBtn{grid-column:1/-1;grid-row:3}
+    }
+    @media(max-width:520px){.avatar-badge{left:12px;top:12px}.avatar-mode{left:12px;bottom:12px}.interaction-header{padding-bottom:12px}.chat-message{max-width:92%}}
+  </style>
 </head>
 <body>
-  <div id="root" data-fns-avatar-root="isolated-v12">
+  <div id="root" data-fns-avatar-root="isolated-v12" data-fns-ui-version="v13-cache-killer">
     <section id="avatar-stage" aria-label="Palco visual da Olivia">
       <div class="avatar-badge">
         <strong id="avatar-name">Olivia</strong>
         <span id="avatar-subtitle">Profesora de español</span>
       </div>
-      <img id="olivia-avatar-img" src="/assets/olivia-fechada.png" alt="Olivia" draggable="false" decoding="async" fetchpriority="high">
+      <img id="olivia-avatar-img" src="/assets/olivia-fechada.png?v=v13-shell" alt="Olivia" draggable="false" decoding="sync" fetchpriority="high">
       <div id="avatar-mode" class="avatar-mode" aria-live="polite">Lista</div>
     </section>
 
@@ -25,7 +114,7 @@
           <strong id="panel-title">Olivia</strong>
           <span id="panel-language">Español · A1</span>
         </div>
-        <span class="v12-pill">FNS V12</span>
+        <span class="v13-pill">FNS V13</span>
       </header>
 
       <div id="chat-history" aria-live="polite">
@@ -45,6 +134,6 @@
   </div>
 
   <script>window.__FNS_AVATAR_BOOTSTRAP__ = null;</script>
-  <script src="/avatar-core.js?v=12-layout" defer></script>
+  <script src="/avatar-core.js?v=13-cache-killer-20260917" defer></script>
 </body>
 </html>
