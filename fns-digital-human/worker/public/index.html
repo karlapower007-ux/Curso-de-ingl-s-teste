@@ -11,4 +11,61 @@
   </script>
   <link rel="preload" as="image" href="/emma.jpg?v=valid4"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070b18"><title>Estudos Profundos FNS Idiomas</title><link rel="stylesheet" href="style.css?v=12"><link rel="stylesheet" href="natural-v2.css?v=2"><link rel="stylesheet" href="emma-static.css?v=18"></head><body>
 <header><div><b>FNS</b><span>ESTUDOS PROFUNDOS FNS IDIOMAS</span></div><nav><button data-view="home">Início</button><button data-view="course">Curso A1–C2</button><button data-view="live">Prática ao vivo</button><button data-view="cards">Flashcards</button><button data-view="library">Biblioteca</button><button data-view="progress">Progresso</button></nav></header>
-<main id="app"></main><script src="app.js?v=14"></script><script src="natural-state.js?v=2"></script><script src="natural-turns.js?v=2"></script><script src="emma-static.js?v=18"></script><script src="emma-turbine-v19.js?v=1900"></script></body></html>
+<main id="app"></main><script src="app.js?v=14"></script><script src="natural-state.js?v=2"></script><script src="natural-turns.js?v=2"></script><script src="emma-static.js?v=18"></script><script src="emma-turbine-v19.js?v=1900"></script>
+<!-- FNS FIX: TRAVA ANTI-RISCO E PROPORÇÃO DO SORRISO --> 
+<style id="fns-smile-proportions"> 
+    /* 1. TRAVA AS MEDIDAS EXATAS PROPORCIONAIS AO ROSTO */ 
+    html body .human-avatar .avatar-mouth-motion { 
+        width: 13.6% !important; 
+        height: 10px !important; /* Altura base para não sumir */ 
+        left: 50% !important; 
+        top: 58.1% !important; 
+         
+        /* Fundo real da boca e dentes sem buraco preto */ 
+        background: linear-gradient(180deg, #fffdfa 0%, #f4f1ed 20%, #2b080d 30%, #b23f59 100%) !important; 
+         
+        /* Base do sorriso: cantos arredondados embaixo */ 
+        border-radius: 10% 10% 60% 60% !important; 
+        box-shadow: none !important; 
+    } 
+ 
+    /* 2. LINHA DO LÁBIO SUPERIOR (Desenha o sorriso para cima) */ 
+    html body .human-avatar .avatar-mouth-motion::after { 
+        content: "" !important; 
+        position: absolute !important; 
+        top: -4px !important; 
+        left: -5% !important; 
+        width: 110% !important; 
+        height: 14px !important; 
+        border-top: 3px solid rgba(150, 42, 63, 0.9) !important; 
+        border-radius: 50% 50% 0 0 / 100% 100% 0 0 !important; 
+        pointer-events: none !important; 
+    } 
+</style> 
+ 
+<script> 
+    // 3. TRAVA MATEMÁTICA: Impede que o core esmague a boca e vire um risco 
+    (function() { 
+        function preventMouthCollapse() { 
+            const mouth = document.querySelector('.human-avatar .avatar-mouth-motion'); 
+            if (mouth && mouth.style.transform) { 
+                const currentTransform = mouth.style.transform; 
+                 
+                // Intercepta e reescreve a transformação do core em tempo real 
+                mouth.style.transform = currentTransform 
+                    // Impede que o scaleY (altura) caia abaixo de 0.40 (NUNCA VIRA UM RISCO) 
+                    .replace(/scaleY\([^)]+\)/, function(match) { 
+                        const val = parseFloat(match.replace(/[^\d.]/g, '')); 
+                        return 'scaleY(' + Math.max(0.40, val) + ')';  
+                    }) 
+                    // Trava a largura (scaleX) para não desproporcionar do rosto 
+                    .replace(/scaleX\([^)]+\)/, 'scaleX(1.05)'); 
+            } 
+            requestAnimationFrame(preventMouthCollapse); 
+        } 
+         
+        // Inicia o monitoramento a 60fps 
+        requestAnimationFrame(preventMouthCollapse); 
+    })(); 
+</script>  
+</body></html>
