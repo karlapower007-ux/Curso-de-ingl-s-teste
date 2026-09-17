@@ -7,6 +7,8 @@ on:
     paths:
       - 'fns-digital-human/worker/**'
       - '.github/workflows/qa-olivia-v6-staging.yml'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
   workflow_dispatch:
 
 jobs:
@@ -27,6 +29,7 @@ jobs:
         run: npm install
       - name: Syntax and architecture
         run: |
+          set -euo pipefail
           node --check public/app.js
           node --check public/natural-state.js
           node --check public/natural-turns.js
@@ -40,9 +43,11 @@ jobs:
           ! grep -q 'olivia-core-v4.js' public/index.html
           ! grep -q 'olivia-visual-v5.js' public/index.html
           grep -q 'id="oliviaAvatarIsland"' public/olivia-core-v6.js
+          grep -q 'new MutationObserver' public/olivia-core-v6.js
           grep -q 'noGlobalAvatar' public/olivia-core-v6.js
           grep -q "body.input_language=selectedSttLanguage()" public/olivia-core-v6.js
           grep -q "headers.set('X-FNS-STT-Language',selectedSttLanguage())" public/olivia-core-v6.js
+          grep -q 'olivia-v6-fast-fallback' public/olivia-core-v6.js
           grep -q 'professora de espanhol para alunos brasileiros' src/strict-output-v6.js
           grep -q "history_purged:false" src/strict-output-v6.js
           grep -q "client-bilingual-es-pt" src/strict-output-v6.js
@@ -64,6 +69,14 @@ jobs:
           if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
           console.log('OLIVIA V6 ASSET PASS');
           NODE
+      - name: Validate production pipelines are V6-aware
+        run: |
+          grep -q 'src/strict-output-v6.js' ../../.github/workflows/deploy-fns-worker.yml
+          grep -q 'olivia-core-v6.js' ../../.github/workflows/deploy-fns-worker.yml
+          grep -q 'PRODUCTION OLIVIA DOM + MIC HOOK QA PASS' ../../.github/workflows/deploy-fns-worker.yml
+          grep -q 'Source QA Olivia V6' ../../.github/workflows/qa-olivia-production.yml
+          ! grep -q 'Source QA Olivia v5' ../../.github/workflows/qa-olivia-production.yml
+          echo 'PRODUCTION PIPELINES V6 PASS'
       - name: Wrangler bundle dry run
         run: npx wrangler deploy --dry-run --outdir /tmp/fns-v6-dist
       - name: Final staging status
