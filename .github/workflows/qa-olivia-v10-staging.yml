@@ -1,0 +1,148 @@
+name: QA Olivia V10 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v10-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-v10-staging.yml'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-v10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: V10 source locks
+        run: |
+          set -euo pipefail
+          node --check public/olivia-v10-singleton.js
+          node --check public/olivia-core-v8.js
+          node --check public/app.js
+          node --check src/index.js
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+          grep -q 'olivia-v10-singleton.js?v=10' public/index.html
+          grep -q 'olivia-core-v8.js?v=8' public/index.html
+          grep -q 'if (window.oliviaIsBooted)' public/olivia-v10-singleton.js
+          grep -q 'window.oliviaIsBooted = true' public/olivia-v10-singleton.js
+          grep -q 'z-index: 2147483647 !important' public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('play', onAudioPlayCapture, true)" public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('pause', onAudioPauseCapture, true)" public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('ended', onAudioEndedCapture, true)" public/olivia-v10-singleton.js
+          ! grep -q 'MutationObserver' public/olivia-v10-singleton.js
+          echo 'V10 SOURCE + CORE LOCK PASS'
+      - name: Turbines A-O stay intact
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const front=fs.readFileSync('public/olivia-core-v8.js','utf8');
+          const back=fs.readFileSync('src/strict-output-v7.js','utf8');
+          for(const letter of 'ABCDEFGHIJKLMNO'){
+            if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
+            if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
+          }
+          if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 Spanish missing');
+          if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('lossless Hi-Fi turbines missing');
+          console.log('A-O PASS');
+          NODE
+      - name: Bundle gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v10-dist
+      - name: Real browser V10 z-index and global audio capture QA
+        run: |
+          npm install --no-save puppeteer-core@24.18.0
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          python3 -m http.server 8799 -d public >/tmp/fns-v10-http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          sleep 1
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+            await page.goto('http://127.0.0.1:8799/?olivia=v10&qa=staging',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V10?.health?.().imageLoaded===true,{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V10?.health?.().engineV8===true,{timeout:30000});
+            await page.waitForSelector('#liteModal[data-olivia-v10="true"]',{timeout:30000});
+
+            const boot=await page.evaluate(()=>window.FNS_OLIVIA_V10.health());
+            if(!boot.globalLock||!boot.singleton||!boot.singletonBodyChild||!boot.singletonOutsideApp||!boot.singletonOutsideModal||!boot.visible||!boot.imageLoaded)throw new Error('V10 boot failed '+JSON.stringify(boot));
+            if(boot.zIndex!=='2147483647'||boot.position!=='fixed'||boot.turbines!==15||boot.stats.createCount!==1)throw new Error('V10 lock failed '+JSON.stringify(boot));
+
+            const hostile=await page.evaluate(async()=>{
+              const node=document.getElementById('olivia-standalone-node');
+              const modal=document.getElementById('liteModal');
+              if(modal)modal.style.cssText+=';z-index:2147483646 !important;';
+              const s=document.createElement('style');
+              s.textContent='#olivia-standalone-node{z-index:-1 !important;visibility:hidden !important;opacity:0 !important;display:none !important;}';
+              document.head.appendChild(s);
+              node.style.zIndex='1'; node.style.visibility='hidden'; node.style.opacity='0';
+              window.FNS_OLIVIA_V10.forceContainerCss();
+              await new Promise(r=>setTimeout(r,60));
+              const cs=getComputedStyle(node);
+              return {z:cs.zIndex,visibility:cs.visibility,opacity:cs.opacity,display:cs.display};
+            });
+            if(hostile.z!=='2147483647'||hostile.visibility!=='visible'||Number(hostile.opacity)!==1||hostile.display==='none')throw new Error('V10 hostile CSS defeated lock '+JSON.stringify(hostile));
+
+            const capture=await page.evaluate(async()=>{
+              const node=document.getElementById('olivia-standalone-node');
+              const img=document.getElementById('olivia-avatar-img');
+              const first=node;
+              const audio=document.createElement('audio');
+              document.body.appendChild(audio);
+              const out=[];
+              audio.dispatchEvent(new Event('play',{bubbles:false}));
+              await new Promise(r=>setTimeout(r,60)); out.push({state:img.dataset.frame,src:img.src});
+              audio.dispatchEvent(new Event('pause',{bubbles:false}));
+              await new Promise(r=>setTimeout(r,60)); out.push({state:img.dataset.frame,src:img.src});
+              audio.dispatchEvent(new Event('play',{bubbles:false}));
+              await new Promise(r=>setTimeout(r,60)); out.push({state:img.dataset.frame,src:img.src});
+              audio.dispatchEvent(new Event('ended',{bubbles:false}));
+              await new Promise(r=>setTimeout(r,60)); out.push({state:img.dataset.frame,src:img.src});
+              return {same:first===document.getElementById('olivia-standalone-node'),out,health:window.FNS_OLIVIA_V10.health()};
+            });
+            if(!capture.same)throw new Error('V10 singleton replaced '+JSON.stringify(capture));
+            if(capture.out[0].state!=='talking'||!capture.out[0].src.includes('olivia-aberta.png'))throw new Error('capture play failed '+JSON.stringify(capture));
+            if(capture.out[1].state!=='idle'||!capture.out[1].src.includes('olivia-fechada.png'))throw new Error('capture pause failed '+JSON.stringify(capture));
+            if(capture.out[2].state!=='talking'||!capture.out[2].src.includes('olivia-aberta.png'))throw new Error('capture play2 failed '+JSON.stringify(capture));
+            if(capture.out[3].state!=='idle'||!capture.out[3].src.includes('olivia-fechada.png'))throw new Error('capture ended failed '+JSON.stringify(capture));
+            if(capture.health.stats.audioCapturePlays<2||capture.health.stats.audioCaptureStops<2)throw new Error('capture counters failed '+JSON.stringify(capture.health));
+
+            const engine=await page.evaluate(async()=>{
+              const img=document.getElementById('olivia-avatar-img');
+              const fire=(type)=>window.dispatchEvent(new CustomEvent('fns:olivia:v8:visual',{detail:{type,source:'qa:v10-engine'}}));
+              fire('speaking-start'); await new Promise(r=>setTimeout(r,60)); const talk={state:img.dataset.frame,src:img.src};
+              fire('speaking-stop'); await new Promise(r=>setTimeout(r,60)); const idle={state:img.dataset.frame,src:img.src};
+              return {talk,idle};
+            });
+            if(engine.talk.state!=='talking'||!engine.talk.src.includes('olivia-aberta.png')||engine.idle.state!=='idle')throw new Error('engine bridge failed '+JSON.stringify(engine));
+
+            const emma=await page.evaluate(()=>({pngtuber:!!window.FNS_EMMA_PNGTUBER,strict:!!window.FNS_EMMA_STRICT_OUTPUT}));
+            if(!emma.pngtuber||!emma.strict)throw new Error('Emma guards missing '+JSON.stringify(emma));
+            await page.screenshot({path:'/tmp/olivia-v10-staging.png',fullPage:true});
+            console.log('V10 REAL BROWSER PASS',boot,hostile,capture,engine,emma);
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Final staging status
+        run: echo 'OLIVIA V10 STAGING PASS - max z-index important lock + document capture play/pause/ended + engine bridge + Emma/core locked'
