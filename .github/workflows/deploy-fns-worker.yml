@@ -416,7 +416,19 @@ jobs:
             });
 
             const live=await page.$('button[data-view="live"]');
-            if(live) await live.click();
+            if(!live) throw new Error('Live navigation button not found');
+            await live.click();
+
+            await page.waitForSelector('.card.teacher',{timeout:30000});
+            const emmaOpened=await page.evaluate(()=>{
+              const cards=[...document.querySelectorAll('.card.teacher')];
+              const card=cards.find(x=>x.querySelector('h3')?.textContent?.trim()==='Emma');
+              const button=card?.querySelector('button.primary');
+              if(!button) return false;
+              button.click();
+              return true;
+            });
+            if(!emmaOpened) throw new Error('Emma teacher card could not be opened');
 
             await page.waitForSelector('.human-avatar',{timeout:30000});
             await page.waitForFunction(()=>!!document.getElementById('fns-nova-boca-v19'),{timeout:30000});
