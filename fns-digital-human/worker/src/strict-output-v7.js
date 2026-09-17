@@ -1,7 +1,10 @@
 import v6Core from './strict-output-v6.js';
+import strictCore from './strict-output.js';
 
 // FNS OLIVIA V7 — 15 isolated TTS turbines A-O.
 // Emma is delegated untouched through strict-output-v6 -> strict-output.
+// Olivia V15 chat is routed directly through the strict Spanish guard so the
+// legacy bilingual V6 path cannot leak Portuguese/English into this room.
 // A-J: regional low-latency Aura-2 Spanish profiles.
 // K-O: lossless/high-fidelity Aura-2 Spanish profiles (WAV/linear16).
 
@@ -9,6 +12,7 @@ const OLIVIA_V7_GUARD='FNS-OLIVIA-V7-TURBINES-A-O';
 const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V15';
 const AURA_MODEL='@cf/deepgram/aura-2-es';
 const RAW_ASSET_BASE='https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/';
+const OLIVIA_V15_SYSTEM_PROMPT="CRITICAL RULE: You are Olivia, the Spanish teacher. Reply exclusively in Spanish (es-ES). Never inherit Emma's English profile. Do not mix Portuguese or English unless the user explicitly asks for a translation.";
 
 const TURBINES=Object.freeze({
   A:{speaker:'nestor',  locale:'es-ES',region:'España',        gender:'masculina',tier:'regional',encoding:'mp3'},
@@ -122,6 +126,7 @@ async function oliviaV7Tts(request,env,ctx){
   }
 
   // Portuguese pedagogical explanations keep the already-proven v6 PT voice path.
+  // V15 chat itself is strict Spanish; this remains only as a compatibility fallback.
   if(looksPortuguese(text))return v6Core.fetch(request,env,ctx);
 
   const turbine=normalizeTurbine(body?.voice_turbine);
@@ -145,6 +150,33 @@ async function oliviaV7Tts(request,env,ctx){
   }
 }
 
+async function oliviaV15Chat(request,env,ctx){
+  const clone=request.clone();
+  const body=await clone.json().catch(()=>({}));
+  if(!isOlivia(body))return v6Core.fetch(request,env,ctx);
+
+  const forcedBody={
+    ...body,
+    teacher:'Olivia',
+    level:String(body?.level||'A1').slice(0,12),
+    accent:'Español neutral',
+    input_language:'es-ES',
+    input_language_label:'Español',
+    system_prompt:OLIVIA_V15_SYSTEM_PROMPT
+  };
+  const forwarded=new Request(request.url,{
+    method:'POST',
+    headers:request.headers,
+    body:JSON.stringify(forcedBody)
+  });
+  const response=await strictCore.fetch(forwarded,env,ctx);
+  if(!(response instanceof Response))return response;
+  const headers=new Headers(response.headers);
+  headers.set('X-FNS-V15-Route','olivia-strict-spanish');
+  headers.set('X-FNS-Avatar-Language','es-ES');
+  return new Response(response.body,{status:response.status,headers});
+}
+
 async function assetFetch(env,requestUrl,requestHeaders){
   if(!env?.ASSETS?.fetch)throw new Error('FNS_ASSETS_BINDING_UNAVAILABLE');
   return env.ASSETS.fetch(new Request(requestUrl,{method:'GET',headers:requestHeaders}));
@@ -166,7 +198,7 @@ function lockOliviaConfig(source={}){
       open:RAW_ASSET_BASE+'olivia-aberta.png'
     },
     thresholds:{talking:0.15,open:0.60},
-    systemPrompt:"CRITICAL RULE: You are Olivia, the Spanish teacher. Reply exclusively in Spanish (es-ES). Never inherit Emma's English profile. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
+    systemPrompt:OLIVIA_V15_SYSTEM_PROMPT,
     ui:{
       ...(source?.ui||{}),
       title:'Olivia',
@@ -237,6 +269,7 @@ export default {
       if(env?.ASSETS?.fetch)return env.ASSETS.fetch(request);
     }
 
+    if(url.pathname==='/chat'&&request.method==='POST')return oliviaV15Chat(request,env,ctx);
     if(url.pathname==='/tts'&&request.method==='POST')return oliviaV7Tts(request,env,ctx);
     return v6Core.fetch(request,env,ctx);
   }
