@@ -1,4 +1,4 @@
-name: QA Olivia V6 Production Gate
+name: QA Olivia V7 Production Gate
 
 on:
   push:
@@ -11,72 +11,60 @@ on:
   workflow_dispatch:
 
 jobs:
-  qa-olivia-v6:
+  qa-olivia-v7:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     defaults:
       run:
         working-directory: fns-digital-human/worker
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
       - name: Install
         run: npm install
-
-      - name: Source QA Olivia V6
+      - name: Source QA Olivia V7
         run: |
           set -euo pipefail
-          node --check public/olivia-core-v6.js
+          node --check public/olivia-core-v7.js
+          node --check src/strict-output-v7.js
           node --check src/strict-output-v6.js
           node --check src/strict-output.js
           node --check src/index.js
           node --check public/app.js
-          node --check public/natural-turns.js
-
-          grep -q '"main": "src/strict-output-v6.js"' wrangler.jsonc
-          grep -q 'olivia-core-v6.js?v=6' public/index.html
-          grep -q 'olivia-v6.css?v=6' public/index.html
-          ! grep -q 'olivia-core-v4.js' public/index.html
-          ! grep -q 'olivia-visual-v5.js' public/index.html
-
-          grep -q 'FNS OLIVIA CORE V6' public/olivia-core-v6.js
-          grep -q 'id="oliviaAvatarIsland"' public/olivia-core-v6.js
-          grep -q 'new MutationObserver' public/olivia-core-v6.js
-          grep -q 'olivia-v6-fast-fallback' public/olivia-core-v6.js
-          grep -q "headers.set('X-FNS-STT-Language',selectedSttLanguage())" public/olivia-core-v6.js
-          grep -q "body.input_language=selectedSttLanguage()" public/olivia-core-v6.js
-          grep -q 'professora de espanhol para alunos brasileiros' src/strict-output-v6.js
-          grep -q "history_purged:false" src/strict-output-v6.js
-          grep -q "client-bilingual-es-pt" src/strict-output-v6.js
-
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
           grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
-
+          grep -q '"main": "src/strict-output-v7.js"' wrangler.jsonc
+          grep -q 'olivia-core-v7.js?v=7' public/index.html
+          grep -q 'olivia-v7.css?v=7' public/index.html
+          ! grep -q 'olivia-core-v6.js?v=6' public/index.html
+          ! grep -q 'MutationObserver' public/olivia-core-v7.js
+          grep -q "document.body.appendChild(p)" public/olivia-core-v7.js
+          echo 'OLIVIA V7 SOURCE + EMMA BLINDAGEM PASS'
+      - name: Turbine registry QA
+        run: |
           node - <<'NODE'
-          const fs=require('fs'),crypto=require('crypto');
-          const files=['olivia-fechada.png','olivia-falando.png','olivia-aberta.png'];
-          const hashes=new Set();
-          for(const f of files){
-            const b=fs.readFileSync('public/assets/'+f);
-            if(b.length<5000)throw new Error(f+' too small');
-            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid PNG');
-            hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
+          const fs=require('fs');
+          const front=fs.readFileSync('public/olivia-core-v7.js','utf8');
+          const back=fs.readFileSync('src/strict-output-v7.js','utf8');
+          for(const letter of 'ABCDEFGHIJKLMNO'){
+            if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
+            if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
           }
-          if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
-          console.log('OLIVIA V6 PRODUCTION SOURCE GATE PASS');
+          const hifi=(back.match(/tier:'hifi'/g)||[]).length;
+          if(hifi!==5)throw new Error('Expected 5 Hi-Fi turbines, found '+hifi);
+          const regional=(back.match(/tier:'regional'/g)||[]).length;
+          if(regional!==10)throw new Error('Expected 10 regional turbines, found '+regional);
+          if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 model missing');
+          if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('lossless Hi-Fi path missing');
+          console.log('A-O REGISTRY PASS: 10 regional + 5 Hi-Fi');
           NODE
-
-      - name: Wrangler bundle dry run
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v6-prod-gate
-
-      - name: Final status
-        run: echo 'OLIVIA V6 PRODUCTION GATE PASS - Emma core unchanged'
+      - name: Bundle gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v7-gate
+      - name: Final gate
+        run: echo 'OLIVIA V7 PRODUCTION GATE PASS'
