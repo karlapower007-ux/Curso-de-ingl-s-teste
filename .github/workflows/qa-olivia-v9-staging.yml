@@ -45,6 +45,8 @@ jobs:
           grep -q "avatarImg.id = 'olivia-avatar-img'" public/olivia-v9-singleton.js
           grep -q 'document.body.appendChild(container)' public/olivia-v9-singleton.js
           grep -q "window.addEventListener('fns:olivia:v8:visual', onEngineVisual)" public/olivia-v9-singleton.js
+          grep -q "typeof teachers !== 'undefined'" public/olivia-v9-singleton.js
+          grep -q "typeof openLiteTeacher === 'function'" public/olivia-v9-singleton.js
           ! grep -q 'MutationObserver' public/olivia-v9-singleton.js
           echo 'V9 SOURCE SINGLETON + EMMA CORE LOCK PASS'
       - name: Turbines A-O remain in isolated Olivia engine
@@ -62,7 +64,7 @@ jobs:
           NODE
       - name: Bundle gate
         run: npx wrangler deploy --dry-run --outdir /tmp/fns-v9-dist
-      - name: Real browser V9 singleton and state QA
+      - name: Real browser V9 singleton direct boot and state QA
         run: |
           npm install --no-save puppeteer-core@24.18.0
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
@@ -81,8 +83,10 @@ jobs:
             await page.goto('http://127.0.0.1:8799/?olivia=v9&qa=staging',{waitUntil:'networkidle2',timeout:60000});
             await page.waitForFunction(()=>window.FNS_OLIVIA_V9?.health?.().imageLoaded===true,{timeout:30000});
             await page.waitForFunction(()=>!!window.FNS_OLIVIA_V8,{timeout:30000});
-            const boot=await page.evaluate(()=>window.FNS_OLIVIA_V9.health());
-            if(!boot.globalLock||!boot.singleton||!boot.singletonBodyChild||!boot.singletonOutsideApp||!boot.imageLoaded||!boot.visible)throw new Error('V9 boot failed '+JSON.stringify(boot));
+            await page.waitForSelector('#liteModal[data-olivia-v8="true"][data-olivia-v9="true"]',{timeout:30000});
+            const boot=await page.evaluate(()=>({health:window.FNS_OLIVIA_V9.health(),title:document.querySelector('#liteModal h2')?.textContent||'',options:[...document.querySelectorAll('#voiceTurbineSel option')].map(o=>o.value).join('')}));
+            if(!boot.health.globalLock||!boot.health.singleton||!boot.health.singletonBodyChild||!boot.health.singletonOutsideApp||!boot.health.singletonOutsideModal||!boot.health.imageLoaded||!boot.health.visible)throw new Error('V9 direct boot failed '+JSON.stringify(boot));
+            if(boot.health.turbines!==15||boot.options!=='ABCDEFGHIJKLMNO'||!boot.title.includes('V9'))throw new Error('V9 room/turbines failed '+JSON.stringify(boot));
             const singleton=await page.evaluate(async()=>{
               const first=document.getElementById('olivia-standalone-node');
               const id=first?.dataset.instanceId;
@@ -109,9 +113,9 @@ jobs:
             if(states[3].state!=='idle'||!states[3].src.includes('olivia-fechada.png'))throw new Error('idle after TTS failed '+JSON.stringify(states));
             const emma=await page.evaluate(()=>({pngtuber:!!window.FNS_EMMA_PNGTUBER,strict:!!window.FNS_EMMA_STRICT_OUTPUT}));
             if(!emma.pngtuber||!emma.strict)throw new Error('Emma guards missing '+JSON.stringify(emma));
-            console.log('V9 REAL BROWSER PASS',boot,singleton,states,emma);
+            console.log('V9 REAL BROWSER DIRECT BOOT PASS',boot,singleton,states,emma);
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
       - name: Final staging status
-        run: echo 'OLIVIA V9 STAGING PASS - absolute global singleton, forced preload, direct STT/TTS image states, Emma/core locked'
+        run: echo 'OLIVIA V9 STAGING PASS - absolute global singleton, forced preload, direct room boot, STT/TTS image states, Emma/core locked'
