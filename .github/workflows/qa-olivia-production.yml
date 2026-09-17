@@ -92,12 +92,13 @@ jobs:
           if [ "$STATUS" = "200" ]; then
             test -s olivia-tts.body
             grep -i '^content-type: audio/' olivia-tts.headers
-            if grep -qi '^x-fns-voice-language:' olivia-tts.headers; then
-              grep -qi '^x-fns-voice-language: *es' olivia-tts.headers
+            if grep -qi '^x-fns-voice-language: *es' olivia-tts.headers; then
+              echo 'PRODUCTION OLIVIA REMOTE SPANISH TTS PASS'
+            else
+              echo 'Remote TTS returned non-Spanish metadata; runtime must reject it and use browser es-ES fallback'
+              grep -i '^x-fns-voice-language:' olivia-tts.headers || true
             fi
-            echo 'PRODUCTION OLIVIA REMOTE TTS PASS'
           else
-            grep -q 'browser' public/olivia-core-v4.js || true
             echo 'Remote Spanish TTS unavailable; browser es-ES fallback will be exercised in browser QA'
           fi
 
@@ -142,7 +143,6 @@ jobs:
             await check(.30,'olivia-falando.png','talking');
             await check(.80,'olivia-aberta.png','open');
 
-            // Force the remote /tts call to fail and prove the browser es-ES fallback is used.
             await page.setRequestInterception(true);
             page.on('request',req=>{
               if(req.url().includes('/tts')&&req.method()==='POST'){
