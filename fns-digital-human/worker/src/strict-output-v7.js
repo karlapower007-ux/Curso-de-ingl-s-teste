@@ -1,0 +1,152 @@
+import v6Core from './strict-output-v6.js';
+
+// FNS OLIVIA V7 — 15 isolated TTS turbines A-O.
+// Emma is delegated untouched through strict-output-v6 -> strict-output.
+// A-J: regional low-latency Aura-2 Spanish profiles.
+// K-O: lossless/high-fidelity Aura-2 Spanish profiles (WAV/linear16).
+
+const OLIVIA_V7_GUARD='FNS-OLIVIA-V7-TURBINES-A-O';
+const AURA_MODEL='@cf/deepgram/aura-2-es';
+
+const TURBINES=Object.freeze({
+  A:{speaker:'nestor',  locale:'es-ES',region:'España',        gender:'masculina',tier:'regional',encoding:'mp3'},
+  B:{speaker:'carina',  locale:'es-ES',region:'España',        gender:'femenina', tier:'regional',encoding:'mp3'},
+  C:{speaker:'sirio',   locale:'es-MX',region:'México',        gender:'masculina',tier:'regional',encoding:'mp3'},
+  D:{speaker:'estrella',locale:'es-MX',region:'México',        gender:'femenina', tier:'regional',encoding:'mp3'},
+  E:{speaker:'javier',  locale:'es-MX',region:'México',        gender:'masculina',tier:'regional',encoding:'mp3'},
+  F:{speaker:'celeste', locale:'es-CO',region:'Colombia',      gender:'femenina', tier:'regional',encoding:'mp3'},
+  G:{speaker:'aquila',  locale:'es-419',region:'Latinoamérica',gender:'masculina',tier:'regional',encoding:'mp3'},
+  H:{speaker:'selena',  locale:'es-419',region:'Latinoamérica',gender:'femenina', tier:'regional',encoding:'mp3'},
+  I:{speaker:'alvaro',  locale:'es-ES',region:'España',        gender:'masculina',tier:'regional',encoding:'mp3'},
+  J:{speaker:'diana',   locale:'es-ES',region:'España',        gender:'femenina', tier:'regional',encoding:'mp3'},
+  K:{speaker:'celeste', locale:'es-CO',region:'Colombia',      gender:'femenina', tier:'hifi',encoding:'linear16',container:'wav'},
+  L:{speaker:'estrella',locale:'es-MX',region:'México',        gender:'femenina', tier:'hifi',encoding:'linear16',container:'wav'},
+  M:{speaker:'nestor',  locale:'es-ES',region:'España',        gender:'masculina',tier:'hifi',encoding:'linear16',container:'wav'},
+  N:{speaker:'diana',   locale:'es-ES',region:'España',        gender:'femenina', tier:'hifi',encoding:'linear16',container:'wav'},
+  O:{speaker:'selena',  locale:'es-419',region:'Latinoamérica',gender:'femenina', tier:'hifi',encoding:'linear16',container:'wav'}
+});
+
+function cors(origin='*'){
+  return {
+    'Access-Control-Allow-Origin':origin||'*',
+    'Access-Control-Allow-Methods':'POST, OPTIONS, GET',
+    'Access-Control-Allow-Headers':'Content-Type, X-FNS-STT-Language',
+    'Access-Control-Max-Age':'86400',
+    'Cache-Control':'no-store'
+  };
+}
+
+function isOlivia(body){
+  return String(body?.teacher||'').trim().toLowerCase()==='olivia';
+}
+
+function normalizeTurbine(value){
+  const key=String(value||'K').trim().toUpperCase();
+  return TURBINES[key]?key:'K';
+}
+
+function sanitizeText(input){
+  return String(input||'')
+    .replace(/```[\s\S]*?```/g,' ')
+    .replace(/[*_~^#>|`]/g,' ')
+    .replace(/[\[\]{}<>]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,2200);
+}
+
+function looksPortuguese(text){
+  const s=String(text||'').toLowerCase();
+  let pt=0,es=0;
+  if(/[ãõçáâêô]/u.test(s))pt+=4;
+  if(/[ñ¿¡]/u.test(s))es+=4;
+  for(const w of s.match(/\p{L}+/gu)||[]){
+    if(['você','voce','não','nao','português','portugues','obrigado','obrigada','também','tambem','estou','quero','preciso','explique','diferença','diferenca','minha','meu'].includes(w))pt++;
+    if(['usted','tú','tu','español','espanol','gracias','también','tambien','estoy','quiero','necesito','hoy','ahora'].includes(w))es++;
+  }
+  return pt>es&&pt>=2;
+}
+
+async function runAuraTurbine(env,text,origin,key){
+  const cfg=TURBINES[key];
+  const input={text,speaker:cfg.speaker,encoding:cfg.encoding};
+  if(cfg.container)input.container=cfg.container;
+
+  let raw;
+  try{
+    raw=await env.AI.run(AURA_MODEL,input,{returnRawResponse:true});
+  }catch(error){
+    throw new Error('OLIVIA_V7_AURA_RUN_FAILED '+String(error?.message||error));
+  }
+
+  if(!(raw instanceof Response)||!raw.ok){
+    const detail=raw instanceof Response?await raw.text().catch(()=>''):'';
+    throw new Error('OLIVIA_V7_AURA_HTTP_'+(raw instanceof Response?raw.status:502)+' '+detail.slice(0,220));
+  }
+
+  const headers=new Headers(raw.headers);
+  headers.set('Access-Control-Allow-Origin',origin||'*');
+  headers.set('Access-Control-Allow-Methods','POST, OPTIONS, GET');
+  headers.set('Access-Control-Allow-Headers','Content-Type, X-FNS-STT-Language');
+  headers.set('Cache-Control','no-store');
+  if(!headers.get('Content-Type'))headers.set('Content-Type',cfg.tier==='hifi'?'audio/wav':'audio/mpeg');
+  headers.set('X-FNS-Voice-Engine','aura-2-es-v7-'+cfg.speaker+(cfg.tier==='hifi'?'-hifi':''));
+  headers.set('X-FNS-Voice-Language',cfg.locale);
+  headers.set('X-FNS-Voice-Turbine',key);
+  headers.set('X-FNS-Voice-Speaker',cfg.speaker);
+  headers.set('X-FNS-Voice-Region',cfg.region);
+  headers.set('X-FNS-Voice-Gender',cfg.gender);
+  headers.set('X-FNS-Turbine-Tier',cfg.tier);
+  headers.set('X-FNS-Voice-Guard',OLIVIA_V7_GUARD);
+  headers.set('X-FNS-Fallback-Eligible','speechSynthesis');
+
+  return new Response(raw.body,{status:200,headers});
+}
+
+async function oliviaV7Tts(request,env,ctx){
+  const origin=request.headers.get('Origin')||'*';
+  const clone=request.clone();
+  const body=await clone.json().catch(()=>({}));
+
+  if(!isOlivia(body))return v6Core.fetch(request,env,ctx);
+
+  const text=sanitizeText(body?.text);
+  if(!text){
+    return Response.json({ok:false,error:'Texto vacío.'},{status:400,headers:cors(origin)});
+  }
+
+  // Portuguese pedagogical explanations keep the already-proven v6 PT voice path.
+  if(looksPortuguese(text))return v6Core.fetch(request,env,ctx);
+
+  const turbine=normalizeTurbine(body?.voice_turbine);
+  try{
+    return await runAuraTurbine(env,text,origin,turbine);
+  }catch(error){
+    // Server-side safety net: reuse the v6 Spanish cascade. The browser still owns
+    // the fast 1.5-2.2s SpeechSynthesis fallback if remote audio is slow/unavailable.
+    const fallbackRequest=new Request(request.url,{
+      method:'POST',
+      headers:request.headers,
+      body:JSON.stringify({...body,text,teacher:'Olivia'})
+    });
+    const response=await v6Core.fetch(fallbackRequest,env,ctx);
+    if(response instanceof Response){
+      const headers=new Headers(response.headers);
+      headers.set('X-FNS-Voice-Turbine',turbine);
+      headers.set('X-FNS-V7-Remote-Fallback','v6-cascade');
+      headers.set('X-FNS-Voice-Guard',OLIVIA_V7_GUARD);
+      return new Response(response.body,{status:response.status,headers});
+    }
+    throw error;
+  }
+}
+
+export default {
+  async fetch(request,env,ctx){
+    const url=new URL(request.url);
+    if(url.pathname==='/tts'&&request.method==='POST')return oliviaV7Tts(request,env,ctx);
+    return v6Core.fetch(request,env,ctx);
+  }
+};
+
+export {TURBINES,OLIVIA_V7_GUARD,normalizeTurbine};
