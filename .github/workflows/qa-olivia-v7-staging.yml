@@ -7,6 +7,8 @@ on:
     paths:
       - 'fns-digital-human/worker/**'
       - '.github/workflows/qa-olivia-v7-staging.yml'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
   workflow_dispatch:
 
 jobs:
@@ -41,7 +43,7 @@ jobs:
           ! grep -q 'olivia-core-v6.js?v=6' public/index.html
           ! grep -q 'MutationObserver' public/olivia-core-v7.js
           grep -q "document.body.appendChild(p)" public/olivia-core-v7.js
-          grep -q "id='oliviaAvatarPortalV7'\|id=\"oliviaAvatarPortalV7\"\|p.id='oliviaAvatarPortalV7'" public/olivia-core-v7.js
+          grep -q "p.id='oliviaAvatarPortalV7'" public/olivia-core-v7.js
           grep -q "portalBodyChild" public/olivia-core-v7.js
           echo 'OLIVIA V7 BODY PORTAL SOURCE PASS'
       - name: Validate turbines A-O
@@ -54,6 +56,8 @@ jobs:
             if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
             if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
           }
+          if((back.match(/tier:'regional'/g)||[]).length!==10)throw new Error('Expected 10 regional turbines');
+          if((back.match(/tier:'hifi'/g)||[]).length!==5)throw new Error('Expected 5 Hi-Fi turbines');
           if(!front.includes("turbineCount:Object.keys(TURBINES).length"))throw new Error('health turbine count missing');
           if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('Hi-Fi lossless path missing');
           if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 Spanish premium model missing');
@@ -70,6 +74,15 @@ jobs:
           grep -q 'emma-falando.png' public/index.html
           grep -q 'emma-aberta.png' public/index.html
           echo 'EMMA + CORE BLINDAGEM PASS'
+      - name: Validate production pipelines are V7-aware
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          grep -q 'validate Olivia V7' .github/workflows/deploy-fns-worker.yml
+          grep -q 'olivia-core-v7.js?v=7' .github/workflows/deploy-fns-worker.yml
+          grep -q 'TURBINES A-O PASS' .github/workflows/deploy-fns-worker.yml
+          grep -q 'QA Olivia V7 Production Gate' .github/workflows/qa-olivia-production.yml
+          grep -q 'A-O REGISTRY PASS' .github/workflows/qa-olivia-production.yml
+          echo 'PRODUCTION PIPELINE V7 PASS'
       - name: Validate Olivia PNG assets
         run: |
           node - <<'NODE'
@@ -83,4 +96,4 @@ jobs:
       - name: Wrangler bundle dry run
         run: npx wrangler deploy --dry-run --outdir /tmp/fns-v7-dist
       - name: Final staging status
-        run: echo 'OLIVIA V7 STAGING QA PASS - body portal stable, A-O present, Emma/core locked'
+        run: echo 'OLIVIA V7 STAGING QA PASS - body portal stable, A-O present, production gates ready, Emma/core locked'
