@@ -35,9 +35,45 @@ jobs:
         run: |
           node --check src/index.js
           node --check public/app.js
+          node --check public/natural-turns.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           echo "CORE LOCK PASS: app.js and src/index.js unchanged"
+
+      - name: QA multilingual STT post-processing lock
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const app=fs.readFileSync('public/app.js','utf8');
+          const worker=fs.readFileSync('src/index.js','utf8');
+          const turns=fs.readFileSync('public/natural-turns.js','utf8');
+          const fail=m=>{throw new Error(m)};
+
+          for(const token of [
+            'r.lang=browserRecognitionLanguage();',
+            "'X-FNS-STT-Language':selectedSttLanguage()",
+            'recoverTranscriptCandidate',
+            'repairTranscriptWithLLM'
+          ]) if(!app.includes(token)) fail('Frontend STT invariant missing: '+token);
+
+          for(const token of [
+            'task:"transcribe"',
+            'sttOptions.language=requestedLanguage',
+            'sttOptions.initial_prompt=whisperInitialPrompt(requestedLanguage)',
+            'sttOptions.temperature=0.1'
+          ]) if(!worker.includes(token)) fail('Whisper language lock missing: '+token);
+
+          for(const token of [
+            'FNS STT POST-PROCESS LANGUAGE LOCK v1',
+            "new Set(['en-US','pt-BR','es-ES'])",
+            "kind:'manual-direct'",
+            "kind:'manual-regex-bypass'",
+            'repair rejected because language drifted',
+            'post-processing language leak blocked'
+          ]) if(!turns.includes(token)) fail('Post-STT language guard missing: '+token);
+
+          console.log('QA STT LANGUAGE LOCK PASS: recognition + header + Whisper + post-processing guard present');
+          NODE
 
       - name: QA Emma PNGTuber final architecture
         run: |
@@ -78,7 +114,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: QA production PNGTuber
+      - name: QA production PNGTuber and multilingual STT guard
         run: |
           sleep 5
           for f in emma-fechada.png emma-falando.png emma-aberta.png; do
@@ -148,9 +184,46 @@ jobs:
             console.log('closed',await check(0,'emma-fechada.png','closed'));
             console.log('talking',await check(0.30,'emma-falando.png','talking'));
             console.log('open',await check(0.80,'emma-aberta.png','open'));
+
+            const stt=await page.evaluate(async()=>{
+              const select=document.querySelector('#sttLangSel');
+              if(!select||!window.FNS_STT_LANGUAGE_GUARD)throw new Error('STT language guard unavailable');
+              const cases=[
+                ['en-US','My name is Fabiano and I want to practice English.'],
+                ['pt-BR','Meu nome é Fabiano e quero conversar em português.'],
+                ['es-ES','Me llamo Fabiano y quiero practicar español.']
+              ];
+              const results=[];
+              for(const [code,text] of cases){
+                select.value=code;
+                const recovered=await recoverTranscriptCandidate(text,1,{targetLanguage:code});
+                results.push({code,text:recovered?.text||'',kind:recovered?.kind||'',language:recovered?.language||''});
+              }
+              select.value='en-US';
+              const falsePositive=await recoverTranscriptCandidate('Please call Mr. Para at reception.',1,{targetLanguage:'en-US'});
+              return {
+                results,
+                falsePositive,
+                blocksPortugueseAsEnglish:!window.FNS_STT_LANGUAGE_GUARD.sameLanguageOrNeutral('Meu nome é Fabiano e eu estou na portaria.','en-US'),
+                blocksEnglishAsSpanish:!window.FNS_STT_LANGUAGE_GUARD.sameLanguageOrNeutral('My name is Fabiano and I am at reception.','es-ES')
+              };
+            });
+
+            for(const r of stt.results){
+              if(r.text!==({
+                'en-US':'My name is Fabiano and I want to practice English.',
+                'pt-BR':'Meu nome é Fabiano e quero conversar em português.',
+                'es-ES':'Me llamo Fabiano y quiero practicar español.'
+              })[r.code]) throw new Error('Manual STT language preservation failed '+JSON.stringify(r));
+              if(r.kind!=='manual-direct'||r.language!==r.code) throw new Error('Manual direct bypass failed '+JSON.stringify(r));
+            }
+            if(stt.falsePositive?.text!=='Please call Mr. Para at reception.') throw new Error('English false-positive bypass failed '+JSON.stringify(stt.falsePositive));
+            if(!stt.blocksPortugueseAsEnglish||!stt.blocksEnglishAsSpanish) throw new Error('Language drift detector failed '+JSON.stringify(stt));
+            console.log('PRODUCTION STT LANGUAGE QA PASS',stt);
+
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
       - name: Final status
-        run: echo "DEPLOY PASS - protected core intact; Emma PNGTuber final active"
+        run: echo "DEPLOY PASS - protected core intact; Emma PNGTuber unchanged; multilingual STT guard active"
