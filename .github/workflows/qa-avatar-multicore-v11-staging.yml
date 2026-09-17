@@ -1,0 +1,73 @@
+name: QA Avatar Multi-Core V11 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v11-dual-core-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-avatar-multicore-v11-staging.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-multicore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Source architecture gate
+        run: |
+          set -euo pipefail
+          node --check public/avatar-core.js
+          node --check src/strict-output-v7.js
+          node --check src/index.js
+          node --check public/app.js
+          node -e "const c=require('./src/avatar-config.json'); if(!c.avatars.olivia) process.exit(1); if(c.avatars.olivia.voice.turbines.length!==15) process.exit(2);"
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'avatar-multicore-v11' public/avatar.html
+          grep -q 'id="root"' public/avatar.html
+          grep -q 'avatar-core.js?v=11-multicore' public/avatar.html
+          ! grep -q 'app.js' public/avatar.html
+          ! grep -q 'olivia-v11-singleton' public/avatar.html
+          grep -q 'run_worker_first": true' wrangler.jsonc
+          grep -q "url.searchParams.get('avatar')" src/strict-output-v7.js
+          grep -q "path==='/avatar/runtime-config'" src/strict-output-v7.js
+          grep -q "path==='/avatar/chat'" src/strict-output-v7.js
+          grep -q "path==='/avatar/tts'" src/strict-output-v7.js
+          echo 'MULTI-CORE SOURCE PASS'
+      - name: Bundle gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-multicore-v11
+      - name: Local Worker routing gate
+        run: |
+          set -euo pipefail
+          npx wrangler dev --local --port 8787 > /tmp/wrangler-multicore.log 2>&1 &
+          PID=$!
+          trap 'kill $PID || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS 'http://127.0.0.1:8787/health' >/tmp/health.json 2>/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS -D /tmp/avatar.headers 'http://127.0.0.1:8787/?avatar=olivia' -o /tmp/avatar.html
+          grep -q 'avatar-multicore-v11' /tmp/avatar.html
+          grep -q 'avatar-core.js?v=11-multicore' /tmp/avatar.html
+          ! grep -q 'app.js' /tmp/avatar.html
+          grep -iq '^x-fns-entry-point: avatar:olivia' /tmp/avatar.headers
+          curl -fsS 'http://127.0.0.1:8787/avatar/runtime-config?avatar=olivia' -o /tmp/config.json
+          node -e "const c=require('/tmp/config.json'); if(c.avatar.id!=='olivia'||c.avatar.voice.turbines.length!==15) process.exit(1);"
+          curl -fsS 'http://127.0.0.1:8787/' -o /tmp/default.html
+          grep -q 'app.js?v=14' /tmp/default.html
+          echo 'LOCAL ROUTING ISOLATION PASS'
+      - name: Final staging status
+        run: echo 'V11 MULTI-CORE STAGING PASS - Emma default isolated; avatar route owns independent root'
