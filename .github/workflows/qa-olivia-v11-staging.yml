@@ -1,0 +1,125 @@
+name: QA Olivia V11 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v11-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-v11-staging.yml'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-v11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: V11 source architecture
+        run: |
+          set -euo pipefail
+          node --check public/olivia-v11-singleton.js
+          node --check public/olivia-v11-engine-events.js
+          node --check public/olivia-core-v8.js
+          node --check public/app.js
+          node --check src/index.js
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+          grep -q 'olivia-v11-singleton.js?v=11' public/index.html
+          grep -q 'olivia-v11-engine-events.js?v=11' public/index.html
+          grep -q 'olivia-core-v8.js?v=8' public/index.html
+          grep -q 'setInterval(checkAvatar,100)' public/olivia-v11-singleton.js
+          grep -q "window.addEventListener('olivia-talking'" public/olivia-v11-singleton.js
+          grep -q "window.addEventListener('olivia-idle'" public/olivia-v11-singleton.js
+          grep -q "utterance.addEventListener('start'" public/olivia-v11-engine-events.js
+          grep -q "utterance.addEventListener('end'" public/olivia-v11-engine-events.js
+          grep -q "if(type==='speaking-start') fire('olivia-talking'" public/olivia-v11-engine-events.js
+          grep -q "if(type==='speaking-stop'||type==='idle') fire('olivia-idle'" public/olivia-v11-engine-events.js
+          ! grep -q "document.addEventListener('play'" public/olivia-v11-singleton.js
+          echo 'V11 WATCHER + NATIVE/CUSTOM EVENT ARCHITECTURE PASS'
+      - name: Turbines A-O intact
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const front=fs.readFileSync('public/olivia-core-v8.js','utf8');
+          const back=fs.readFileSync('src/strict-output-v7.js','utf8');
+          for(const letter of 'ABCDEFGHIJKLMNO'){
+            if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
+            if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
+          }
+          if(!back.includes('@cf/deepgram/aura-2-es'))throw new Error('Aura-2 missing');
+          console.log('A-O PASS');
+          NODE
+      - name: Bundle gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v11-dist
+      - name: Browser watcher and mouth movement QA
+        run: |
+          npm install --no-save puppeteer-core@24.18.0
+          python3 -m http.server 8788 -d public >/tmp/fns-v11-http.log 2>&1 &
+          HTTP_PID=$!
+          trap 'kill $HTTP_PID || true' EXIT
+          sleep 2
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1280,height:900});
+            await page.goto('http://127.0.0.1:8788/?olivia=v11&qa=watcher',{waitUntil:'networkidle0',timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V11?.health?.().imageLoaded===true,{timeout:15000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V11_ENGINE_EVENTS?.health?.().installed===true,{timeout:15000});
+            const boot=await page.evaluate(()=>window.FNS_OLIVIA_V11.health());
+            if(!boot.singleton||!boot.singletonBodyChild||!boot.visible||boot.zIndex!=='2147483647')throw new Error('boot failed '+JSON.stringify(boot));
+
+            const watcher=await page.evaluate(async()=>{
+              const before=window.FNS_OLIVIA_V11.health();
+              const removedAt=performance.now();
+              document.getElementById('olivia-standalone-node')?.remove();
+              while(!document.getElementById('olivia-standalone-node') && performance.now()-removedAt<500){await new Promise(r=>setTimeout(r,10));}
+              const elapsed=performance.now()-removedAt;
+              const after=window.FNS_OLIVIA_V11.health();
+              return {elapsed,before,after};
+            });
+            if(!watcher.after.singleton||!watcher.after.singletonBodyChild||watcher.elapsed>180||watcher.after.stats.reinjections<1)throw new Error('watcher reinjection failed '+JSON.stringify(watcher));
+
+            const mouth=await page.evaluate(async()=>{
+              window.dispatchEvent(new CustomEvent('fns:olivia:v8:visual',{detail:{type:'speaking-start',source:'audio:onplay'}}));
+              const samples=[];
+              for(let i=0;i<10;i++){
+                await new Promise(r=>setTimeout(r,70));
+                const h=window.FNS_OLIVIA_V11.health();
+                samples.push({frame:h.frame,src:h.src,visible:h.visible,z:h.zIndex});
+                if(i===3) document.getElementById('olivia-standalone-node')?.remove();
+              }
+              window.dispatchEvent(new CustomEvent('fns:olivia:v8:visual',{detail:{type:'speaking-stop',source:'audio:onended'}}));
+              await new Promise(r=>setTimeout(r,150));
+              return {samples,final:window.FNS_OLIVIA_V11.health()};
+            });
+            const frames=new Set(mouth.samples.map(x=>x.frame));
+            const srcs=new Set(mouth.samples.map(x=>x.src.split('?')[0]));
+            if(!frames.has('listening')||!frames.has('talking')||srcs.size<2)throw new Error('mouth did not animate '+JSON.stringify(mouth));
+            if(mouth.samples.some(x=>!x.visible||x.z!=='2147483647'))throw new Error('visibility/z-index flicker '+JSON.stringify(mouth));
+            if(mouth.final.mode!=='idle'||!mouth.final.src.includes('olivia-fechada.png'))throw new Error('idle recovery failed '+JSON.stringify(mouth.final));
+            if(mouth.final.stats.reinjections<2)throw new Error('watcher did not recover during talking '+JSON.stringify(mouth.final));
+            console.log('V11 BROWSER WATCHER + MOUTH PASS',watcher.elapsed,mouth.final.stats);
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Final staging status
+        run: echo 'OLIVIA V11 STAGING PASS - 100ms DOM watcher + dedicated talking events + native SpeechSynthesis hooks; Emma/core unchanged'
