@@ -389,6 +389,110 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: QA browser v19 production DOM
+        run: |
+          npm install --no-save puppeteer-core@24.18.0
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const fs=require('fs');
+          const puppeteer=require('puppeteer-core');
+
+          (async()=>{
+            const consoleLogs=[];
+            const browser=await puppeteer.launch({
+              headless:true,
+              executablePath:process.env.CHROME_BIN,
+              args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']
+            });
+            const page=await browser.newPage();
+            await page.setViewport({width:1440,height:1100,deviceScaleFactor:1});
+            page.on('console',msg=>consoleLogs.push(msg.text()));
+
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?qa=v19-browser', {
+              waitUntil:'networkidle2',
+              timeout:60000
+            });
+
+            const live=await page.$('button[data-view="live"]');
+            if(live) await live.click();
+
+            await page.waitForSelector('.human-avatar',{timeout:30000});
+            await page.waitForFunction(()=>!!document.getElementById('fns-nova-boca-v19'),{timeout:30000});
+
+            await page.evaluate(()=>{
+              const avatar=document.querySelector('.human-avatar');
+              avatar.style.setProperty('--mouth-open','0.78','important');
+              avatar.style.setProperty('--mouth-wide','0.90','important');
+              avatar.classList.add('avatar-speaking');
+            });
+
+            await new Promise(resolve=>setTimeout(resolve,500));
+
+            const state=await page.evaluate(()=>{
+              const avatar=document.querySelector('.human-avatar');
+              const nativeMouth=document.querySelector('.human-avatar .avatar-mouth-motion');
+              const fake=document.getElementById('fns-nova-boca-v19');
+              const fakeStyle=fake?getComputedStyle(fake):null;
+              const nativeStyle=nativeMouth?getComputedStyle(nativeMouth):null;
+              const rect=fake?fake.getBoundingClientRect():null;
+              return {
+                avatarExists:!!avatar,
+                fakeExists:!!fake,
+                nativeExists:!!nativeMouth,
+                nativeDisplay:nativeStyle?.display||null,
+                nativeVisibility:nativeStyle?.visibility||null,
+                fakeOpacity:fakeStyle?.opacity||null,
+                fakeClipPath:fakeStyle?.clipPath||null,
+                fakeWidth:rect?.width||0,
+                fakeHeight:rect?.height||0,
+                mouthOpen:getComputedStyle(avatar).getPropertyValue('--mouth-open').trim(),
+                mouthWide:getComputedStyle(avatar).getPropertyValue('--mouth-wide').trim()
+              };
+            });
+
+            const bootLog=consoleLogs.some(x=>x.includes('[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA'));
+            const injectedLog=consoleLogs.some(x=>x.includes('[FNS TURBINE v19] BOCA V19 INJETADA NO DOM'));
+
+            if(!bootLog) throw new Error('Browser console missing v19 boot log');
+            if(!injectedLog) throw new Error('Browser console missing v19 injected-mouth log');
+            if(!state.fakeExists) throw new Error('Injected v19 mouth is absent from production DOM');
+            if(state.nativeDisplay!=='none') throw new Error('Native mouth is still visible: '+state.nativeDisplay);
+            if(!(parseFloat(state.fakeOpacity)>0.5)) throw new Error('Injected mouth is not visibly opaque: '+state.fakeOpacity);
+            if(!String(state.fakeClipPath).includes('polygon')) throw new Error('Injected mouth smile polygon is not active: '+state.fakeClipPath);
+            if(!(state.fakeWidth>20 && state.fakeHeight>1)) throw new Error('Injected mouth has invalid geometry: '+JSON.stringify(state));
+
+            await page.screenshot({path:'v19-production-page.png',fullPage:true});
+            const avatarEl=await page.$('.human-avatar');
+            if(!avatarEl) throw new Error('Avatar element disappeared before screenshot');
+            await avatarEl.screenshot({path:'v19-production-avatar.png'});
+
+            const evidence={
+              bootLog,
+              injectedLog,
+              state,
+              consoleLogs:consoleLogs.filter(x=>x.includes('[FNS TURBINE v19]'))
+            };
+            fs.writeFileSync('v19-browser-qa.json',JSON.stringify(evidence,null,2));
+            console.log('QA BROWSER V19 PASS',JSON.stringify(evidence));
+            await browser.close();
+          })().catch(err=>{
+            console.error(err);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload v19 browser evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-v19-browser-evidence
+          path: |
+            fns-digital-human/worker/v19-production-avatar.png
+            fns-digital-human/worker/v19-production-page.png
+            fns-digital-human/worker/v19-browser-qa.json
+          if-no-files-found: error
+
       - name: QA resilient multilingual TTS
         run: |
           sleep 5
