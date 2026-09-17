@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Materialize Olivia V16 avatar frames
+      - name: Materialize frozen Olivia V16 avatar frames
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -54,34 +54,82 @@ jobs:
             file "$dst" | grep -q JPEG
             test -s "$dst"
           done
-          echo 'OLIVIA V16 MATERIALIZATION PASS'
+          echo 'FROZEN OLIVIA VISUAL MATERIALIZATION PASS'
 
-      - name: Protect Emma core + validate Olivia V16
+      - name: Protect frozen visual/core + validate Olivia V17 behavior
         run: |
           set -euo pipefail
           node --check src/index.js
           node --check src/strict-output.js
           node --check src/strict-output-v7.js
           node --check src/strict-output-v16.js
+          node --check src/strict-output-v17.js
           node --check public/app.js
           node --check public/avatar-core.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
-          grep -q '"main": "src/strict-output-v16.js"' wrangler.jsonc
+          grep -q '"main": "src/strict-output-v17.js"' wrangler.jsonc
           grep -q "language:'es-ES'" src/strict-output-v7.js
           grep -q "languageLabel:'Español'" src/strict-output-v7.js
           grep -q "subtitle:'Profesora de español'" src/strict-output-v7.js
-          grep -q 'X-FNS-QA-Mock' src/strict-output-v16.js
           grep -q 'olivia-fechada-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-falando-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-aberta-v16.jpg' src/strict-output-v16.js
-          echo 'CORE LOCK + OLIVIA V16 SOURCE PASS'
+          grep -q 'FNS-OLIVIA-V17-DYNAMIC-CHAT' src/strict-output-v17.js
+          grep -q 'Array.isArray(body?.messages)' src/strict-output-v17.js
+          grep -q 'Array.isArray(body?.history)' src/strict-output-v17.js
+          grep -q 'static_fallback:false' src/strict-output-v17.js
+          ! grep -q 'Claro. Sigamos en español. Cuéntame un poco más sobre eso.' src/strict-output-v17.js
+          echo 'FROZEN VISUAL + CORE LOCK + OLIVIA V17 SOURCE PASS'
+
+      - name: V17 dynamic chat contract — fake AI only
+        run: |
+          node --input-type=module <<'NODE'
+          import worker from './src/strict-output-v17.js';
+          const seen=[];
+          const env={
+            AI:{
+              async run(model,input){
+                seen.push({model,messages:structuredClone(input.messages)});
+                const last=[...input.messages].reverse().find(x=>x.role==='user')?.content||'';
+                if(/te amo mucho/i.test(last)) return {response:'Gracias por decírmelo. Me alegra hablar contigo. ¿Cómo estás hoy?'};
+                return {response:'¡Hola! Me alegra verte. ¿Cómo estás hoy?'};
+              }
+            }
+          };
+          const first=new Request('https://qa.local/chat',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({teacher:'Olivia',level:'A1',message:'Hola',history:[]})
+          });
+          const r1=await worker.fetch(first,env,{});
+          const j1=await r1.json();
+          if(!r1.ok||!/Hola/i.test(j1.reply||'')||j1.static_fallback!==false) throw new Error('V17 first turn failed '+JSON.stringify(j1));
+
+          const second=new Request('https://qa.local/chat',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              teacher:'Olivia',level:'A1',message:'Te amo mucho',
+              messages:[
+                {role:'user',content:'Hola'},
+                {role:'assistant',content:j1.reply}
+              ]
+            })
+          });
+          const r2=await worker.fetch(second,env,{});
+          const j2=await r2.json();
+          if(!r2.ok||!/Gracias/i.test(j2.reply||'')||j2.reply===j1.reply) throw new Error('V17 contextual turn failed '+JSON.stringify(j2));
+          const finalMessages=seen.at(-1)?.messages||[];
+          if(!finalMessages.some(x=>x.role==='user'&&x.content==='Hola')) throw new Error('prior user turn missing');
+          if(!finalMessages.some(x=>x.role==='assistant'&&x.content===j1.reply)) throw new Error('prior assistant turn missing');
+          if(!finalMessages.some(x=>x.role==='user'&&x.content==='Te amo mucho')) throw new Error('current user turn missing');
+          console.log('V17 DYNAMIC CHAT PASS — full context delivered, distinct contextual replies, no canned fallback');
+          NODE
 
       - name: Local mock contract — never touch Workers AI
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v16.js';
+          import worker from './src/strict-output-v17.js';
           const env = new Proxy({}, { get(){ throw new Error('AI/env access forbidden in QA mock'); } });
           for (const path of ['/tts','/chat','/stt']) {
             const req = new Request('https://qa.local'+path, {
@@ -96,7 +144,7 @@ jobs:
           NODE
 
       - name: Wrangler bundle dry run
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v16-dist
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v17-dist
 
       - name: Deploy Worker
         run: npx wrangler deploy
@@ -104,7 +152,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Production HTML/assets smoke — no AI endpoints
+      - name: Production HTML/assets smoke — frozen visuals, no AI endpoints
         run: |
           set -euo pipefail
           sleep 5
@@ -119,9 +167,9 @@ jobs:
             curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=16"
             file "$f" | grep -q JPEG
           done
-          echo 'PRODUCTION V16 HTML + GENERATED IMAGE ASSETS PASS — NO TTS/STT/CHAT CALLED'
+          echo 'PRODUCTION FROZEN V16 VISUAL PASS — NO TTS/STT/CHAT CALLED'
 
-      - name: Pixel-visible browser QA — screenshot pixels, zero AI calls
+      - name: Pixel-visible browser QA — frozen V16 screenshot, zero AI calls
         run: |
           npm install --no-save puppeteer-core@24.18.0 pngjs@7.0.0
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
@@ -181,18 +229,18 @@ jobs:
             const total=png.width*png.height;
             const pixels={nonBlack,bright,dynamicRange:max-min,total,nonBlackRatio:nonBlack/total,brightRatio:bright/total};
             if(pixels.nonBlackRatio<0.35||pixels.brightRatio<0.10||pixels.dynamicRange<120)throw new Error('avatar rendered black/blank '+JSON.stringify({result,pixels}));
-            await page.screenshot({path:'olivia-v16-visible.png',fullPage:true});
-            console.log('OLIVIA V16 PIXEL QA PASS',result,pixels);
+            await page.screenshot({path:'olivia-v17-visible-frozen-v16.png',fullPage:true});
+            console.log('OLIVIA V17 FROZEN VISUAL PIXEL QA PASS',result,pixels);
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
-      - name: Upload V16 proof
+      - name: Upload frozen visual proof
         uses: actions/upload-artifact@v4
         with:
-          name: olivia-v16-visible-proof
-          path: fns-digital-human/worker/olivia-v16-visible.png
+          name: olivia-v17-frozen-v16-visual-proof
+          path: fns-digital-human/worker/olivia-v17-visible-frozen-v16.png
           retention-days: 30
 
       - name: Final status
-        run: echo 'DEPLOY V16 PASS — generated Olivia frames, Spanish profile, visible avatar pixels, quota-safe mock QA; Emma core unchanged'
+        run: echo 'DEPLOY V17 PASS — dynamic contextual chat only; V16 visual/HTML/CSS/assets frozen; Emma/core unchanged'
