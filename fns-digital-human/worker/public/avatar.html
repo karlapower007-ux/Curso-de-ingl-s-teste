@@ -3,13 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#05070b">
-  <title>FNS Avatar</title>
-  <link rel="stylesheet" href="/avatar.css?v=11-factory">
+  <meta name="theme-color" content="#0d1117">
+  <title>Olivia — FNS Avatar V12</title>
+  <link rel="preload" as="image" href="/assets/olivia-fechada.png">
+  <link rel="stylesheet" href="/avatar.css?v=12-layout">
 </head>
 <body>
-  <div id="root" data-fns-avatar-root="isolated-v11"></div>
+  <div id="root" data-fns-avatar-root="isolated-v12">
+    <section id="avatar-stage" aria-label="Palco visual da Olivia">
+      <div class="avatar-badge">
+        <strong id="avatar-name">Olivia</strong>
+        <span id="avatar-subtitle">Profesora de español</span>
+      </div>
+      <img id="olivia-avatar-img" src="/assets/olivia-fechada.png" alt="Olivia" draggable="false" decoding="async" fetchpriority="high">
+      <div id="avatar-mode" class="avatar-mode" aria-live="polite">Lista</div>
+    </section>
+
+    <section id="interaction-panel" aria-label="Chat e controles da Olivia">
+      <header class="interaction-header">
+        <div>
+          <strong id="panel-title">Olivia</strong>
+          <span id="panel-language">Español · A1</span>
+        </div>
+        <span class="v12-pill">FNS V12</span>
+      </header>
+
+      <div id="chat-history" aria-live="polite">
+        <div id="chat-empty" class="chat-empty">Habla o escribe para comenzar la conversación.</div>
+      </div>
+
+      <div id="status" class="status-line" role="status">Listo.</div>
+
+      <form id="controls-bar" autocomplete="off">
+        <button id="micBtn" class="control-btn audio-btn" type="button" title="Iniciar o detener micrófono">🎙️ <span>Hablar</span></button>
+        <button id="replayBtn" class="control-btn audio-btn" type="button" title="Repetir la última respuesta" disabled>🔊 <span>Repetir</span></button>
+        <input id="textInput" type="text" inputmode="text" placeholder="Escribe en español…" aria-label="Mensaje">
+        <select id="voiceTurbine" aria-label="Turbina de voz"></select>
+        <button id="sendBtn" class="control-btn send-btn" type="submit">Enviar</button>
+      </form>
+    </section>
+  </div>
+
   <script>window.__FNS_AVATAR_BOOTSTRAP__ = null;</script>
-  <script src="/avatar-core.js?v=11-factory" defer></script>
+  <script src="/avatar-core.js?v=12-layout" defer></script>
 </body>
 </html>

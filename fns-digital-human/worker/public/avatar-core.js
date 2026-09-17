@@ -1,13 +1,16 @@
 (() => {
   'use strict';
 
-  const FACTORY_GUARD = 'FNS-AVATAR-FACTORY-V11';
+  // FNS OLIVIA V12 — isolated visual engine + JSON factory config.
+  // This file deliberately does not import, execute or depend on Emma's app.js.
+  const FACTORY_GUARD = 'FNS-AVATAR-FACTORY-V12';
   const root = document.getElementById('root');
   if (!root) return;
 
   const params = new URLSearchParams(location.search);
   const injected = window.__FNS_AVATAR_BOOTSTRAP__ || {};
-  const slug = String(injected.slug || params.get('avatar') || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 48);
+  const slug = String(injected.slug || params.get('avatar') || 'olivia')
+    .toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 48);
 
   const state = {
     slug,
@@ -28,21 +31,16 @@
     history: [],
     lastTranscript: '',
     lastReply: '',
-    turbine: ''
+    turbine: '',
+    imageRetry: 0
   };
 
-  const $ = (selector) => root.querySelector(selector);
+  const el = (id) => document.getElementById(id);
 
   function emit(type, detail = {}) {
-    window.dispatchEvent(new CustomEvent('fns:avatar:v11', {
+    window.dispatchEvent(new CustomEvent('fns:avatar:v12', {
       detail: { guard: FACTORY_GUARD, avatar: state.slug, type, ...detail }
     }));
-  }
-
-  function esc(value) {
-    return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    })[ch]);
   }
 
   function sessionId() {
@@ -69,87 +67,149 @@
     return state.config;
   }
 
-  function render() {
+  function setStatus(text) {
+    const node = el('status');
+    if (node) node.textContent = String(text || '');
+  }
+
+  function setModeLabel(text) {
+    const node = el('avatar-mode');
+    if (node) node.textContent = String(text || '');
+  }
+
+  function frameUrl(path) {
+    const raw = String(path || '');
+    if (!raw) return '';
+    return `${raw}${raw.includes('?') ? '&' : '?'}v=v12-20260917`;
+  }
+
+  function setFrame(name) {
     const cfg = state.config;
-    const turbines = Array.isArray(cfg.availableTurbines) ? cfg.availableTurbines : [];
-    const options = turbines.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join('');
+    const image = el('olivia-avatar-img');
+    if (!cfg || !image) return;
+    const map = cfg.images || {};
+    const path = map[name] || map.closed;
+    if (!path) return;
+    const next = frameUrl(path);
+    if (image.getAttribute('src') !== next) image.setAttribute('src', next);
+    image.style.visibility = 'visible';
+    image.style.opacity = '1';
+    image.style.transform = 'none';
+    state.frame = name;
+  }
+
+  function installImageGuard() {
+    const image = el('olivia-avatar-img');
+    if (!image) throw new Error('V12 skeleton missing #olivia-avatar-img');
+
+    image.addEventListener('load', () => {
+      state.imageRetry = 0;
+      image.dataset.loaded = 'true';
+      image.style.visibility = 'visible';
+      image.style.opacity = '1';
+      emit('image-loaded', { width: image.naturalWidth, height: image.naturalHeight, frame: state.frame });
+    });
+
+    image.addEventListener('error', () => {
+      image.dataset.loaded = 'false';
+      if (state.imageRetry < 1 && state.config?.images?.closed) {
+        state.imageRetry += 1;
+        image.src = `${state.config.images.closed}?v=v12-retry-${Date.now()}`;
+        return;
+      }
+      setStatus('No se pudo cargar la imagen de Olivia.');
+      emit('image-error', { src: image.currentSrc || image.src });
+    });
+  }
+
+  function hydrateLayout() {
+    const cfg = state.config;
     const ui = cfg.ui || {};
+    const required = ['avatar-stage','olivia-avatar-img','interaction-panel','chat-history','controls-bar','micBtn','replayBtn','textInput','voiceTurbine','sendBtn'];
+    for (const id of required) if (!el(id)) throw new Error(`V12 skeleton missing #${id}`);
 
-    root.innerHTML = `
-      <main class="fns-avatar-shell" data-avatar="${esc(state.slug)}" data-guard="${FACTORY_GUARD}">
-        <section class="fns-avatar-stage" aria-label="${esc(cfg.name)}">
-          <div class="fns-avatar-badge"><strong>${esc(ui.title || cfg.name)}</strong><span>${esc(ui.subtitle || cfg.languageLabel || '')}</span></div>
-          <img id="avatarImage" class="fns-avatar-image" src="${esc(cfg.images.closed)}" alt="${esc(cfg.name)}" draggable="false">
-        </section>
-        <section class="fns-avatar-panel">
-          <div id="status" class="fns-avatar-status">Listo.</div>
-          <div id="transcript" class="fns-avatar-transcript"></div>
-          <div id="reply" class="fns-avatar-reply"></div>
-          <form id="textForm" class="fns-avatar-controls" autocomplete="off">
-            <button id="micBtn" type="button">${esc(ui.startListening || 'Hablar')}</button>
-            <input id="textInput" type="text" inputmode="text" placeholder="${esc(ui.placeholder || 'Escribe…')}" aria-label="Mensaje">
-            <select id="voiceTurbine" aria-label="Turbina de voz">${options}</select>
-            <button id="sendBtn" type="submit">Enviar</button>
-          </form>
-        </section>
-      </main>`;
+    root.dataset.fnsAvatarRoot = 'isolated-v12';
+    root.dataset.avatar = state.slug;
+    root.dataset.guard = FACTORY_GUARD;
 
-    const savedTurbine = (() => {
-      try { return localStorage.getItem(`fns-avatar-turbine-${state.slug}`) || ''; } catch (_) { return ''; }
-    })();
+    if (el('avatar-name')) el('avatar-name').textContent = ui.title || cfg.name || 'Olivia';
+    if (el('avatar-subtitle')) el('avatar-subtitle').textContent = ui.subtitle || cfg.languageLabel || 'Español';
+    if (el('panel-title')) el('panel-title').textContent = ui.title || cfg.name || 'Olivia';
+    if (el('panel-language')) el('panel-language').textContent = `${cfg.languageLabel || 'Español'} · ${cfg.level || 'A1'}`;
+    if (el('textInput')) el('textInput').placeholder = ui.placeholder || 'Escribe en español…';
+    if (el('micBtn')) el('micBtn').querySelector('span').textContent = ui.startListening || 'Hablar';
+
+    const turbines = Array.isArray(cfg.availableTurbines) ? cfg.availableTurbines : [];
+    const select = el('voiceTurbine');
+    select.replaceChildren(...turbines.map((item) => {
+      const option = document.createElement('option');
+      option.value = item;
+      option.textContent = item;
+      return option;
+    }));
+
+    let savedTurbine = '';
+    try { savedTurbine = localStorage.getItem(`fns-avatar-turbine-${state.slug}`) || ''; } catch (_) {}
     state.turbine = turbines.includes(savedTurbine) ? savedTurbine : (cfg.voiceTurbine || turbines[0] || '');
-    if ($('#voiceTurbine')) $('#voiceTurbine').value = state.turbine;
+    select.value = state.turbine;
 
-    $('#textForm')?.addEventListener('submit', (event) => {
+    // Paint the idle PNG immediately into the visible left-hand stage.
+    setFrame('closed');
+    installImageGuard();
+
+    el('controls-bar').addEventListener('submit', (event) => {
       event.preventDefault();
-      const input = $('#textInput');
+      const input = el('textInput');
       const text = String(input?.value || '').trim();
       if (!text) return;
       input.value = '';
       void sendMessage(text);
     });
 
-    $('#micBtn')?.addEventListener('click', () => {
+    el('micBtn').addEventListener('click', () => {
       if (state.recording) void stopRecording();
       else void startRecording();
     });
 
-    $('#voiceTurbine')?.addEventListener('change', (event) => {
+    el('replayBtn').addEventListener('click', () => {
+      if (state.lastReply && !state.busy) void speak(state.lastReply);
+    });
+
+    select.addEventListener('change', (event) => {
       state.turbine = String(event.target.value || cfg.voiceTurbine || '');
       try { localStorage.setItem(`fns-avatar-turbine-${state.slug}`, state.turbine); } catch (_) {}
       emit('turbine-change', { turbine: state.turbine });
     });
   }
 
-  function setStatus(text) {
-    const node = $('#status');
-    if (node) node.textContent = String(text || '');
-  }
-
-  function setText(selector, text) {
-    const node = $(selector);
-    if (node) node.textContent = String(text || '');
+  function appendMessage(role, text) {
+    const history = el('chat-history');
+    if (!history) return;
+    el('chat-empty')?.remove();
+    const bubble = document.createElement('div');
+    bubble.className = `chat-message ${role}`;
+    const roleNode = document.createElement('span');
+    roleNode.className = 'chat-role';
+    roleNode.textContent = role === 'user' ? 'Tú' : (state.config?.name || 'Olivia');
+    const textNode = document.createElement('span');
+    textNode.textContent = String(text || '');
+    bubble.append(roleNode, textNode);
+    history.appendChild(bubble);
+    history.scrollTop = history.scrollHeight;
   }
 
   function setBusy(value) {
     state.busy = !!value;
-    const send = $('#sendBtn');
-    if (send) send.disabled = state.busy;
-  }
-
-  function setFrame(name) {
-    const cfg = state.config;
-    const image = $('#avatarImage');
-    if (!cfg || !image) return;
-    const map = cfg.images || {};
-    const next = map[name] || map.closed;
-    if (!next) return;
-    if (image.getAttribute('src') !== next) image.setAttribute('src', next);
-    state.frame = name;
+    if (el('sendBtn')) el('sendBtn').disabled = state.busy;
+    if (el('replayBtn')) el('replayBtn').disabled = state.busy || !state.lastReply;
   }
 
   function setMode(mode, detail = {}) {
     state.mode = mode;
+    const labels = {
+      idle: 'Lista', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', booting: 'Iniciando'
+    };
+    setModeLabel(labels[mode] || mode);
     if (mode === 'idle' || mode === 'listening' || mode === 'thinking') setFrame('closed');
     emit(mode, detail);
   }
@@ -274,8 +334,7 @@
     setBusy(true);
     setMode('thinking');
     state.lastTranscript = text;
-    setText('#transcript', `Tú: ${text}`);
-    setText('#reply', '');
+    appendMessage('user', text);
     setStatus('Pensando…');
 
     const cfg = state.config;
@@ -303,7 +362,8 @@
       remember('user', text);
       remember('assistant', payload.reply);
       state.lastReply = String(payload.reply);
-      setText('#reply', `${cfg.name}: ${state.lastReply}`);
+      appendMessage('assistant', state.lastReply);
+      if (el('replayBtn')) el('replayBtn').disabled = false;
       setStatus('Preparando voz…');
       await speak(state.lastReply);
     } catch (error) {
@@ -337,8 +397,8 @@
       recorder.start();
       setMode('listening');
       setStatus('Escuchando…');
-      const btn = $('#micBtn');
-      if (btn) btn.textContent = state.config?.ui?.stopListening || 'Detener';
+      const btnText = el('micBtn')?.querySelector('span');
+      if (btnText) btnText.textContent = state.config?.ui?.stopListening || 'Detener';
       emit('recording-start');
     } catch (error) {
       state.recording = false;
@@ -351,8 +411,8 @@
     if (!state.recording || !state.recorder) return;
     state.recording = false;
     setStatus('Transcribiendo…');
-    const btn = $('#micBtn');
-    if (btn) btn.textContent = state.config?.ui?.startListening || 'Hablar';
+    const btnText = el('micBtn')?.querySelector('span');
+    if (btnText) btnText.textContent = state.config?.ui?.startListening || 'Hablar';
     try { state.recorder.stop(); } catch (_) { await finishRecording(); }
   }
 
@@ -388,17 +448,29 @@
   }
 
   function health() {
+    const image = el('olivia-avatar-img');
+    const rootStyle = getComputedStyle(root);
+    const stageStyle = el('avatar-stage') ? getComputedStyle(el('avatar-stage')) : null;
+    const panelStyle = el('interaction-panel') ? getComputedStyle(el('interaction-panel')) : null;
     return {
       guard: FACTORY_GUARD,
       avatar: state.slug,
-      isolatedRoot: root.dataset.fnsAvatarRoot === 'isolated-v11',
+      isolatedRoot: root.dataset.fnsAvatarRoot === 'isolated-v12',
       emmaAppLoaded: !!document.querySelector('script[src*="/app.js"]'),
+      layout: rootStyle.display,
+      stagePresent: !!el('avatar-stage'),
+      panelPresent: !!el('interaction-panel'),
+      stageWidth: stageStyle?.width || '',
+      panelWidth: panelStyle?.width || '',
       mode: state.mode,
       frame: state.frame,
       language: state.config?.language || '',
       turbine: state.turbine,
       thresholds: state.config?.thresholds || null,
-      image: $('#avatarImage')?.getAttribute('src') || '',
+      image: image?.getAttribute('src') || '',
+      imageLoaded: !!(image?.complete && image?.naturalWidth > 0),
+      imageNaturalWidth: image?.naturalWidth || 0,
+      imageNaturalHeight: image?.naturalHeight || 0,
       recording: state.recording,
       busy: state.busy
     };
@@ -408,9 +480,10 @@
     try {
       await loadConfig();
       state.sessionId = sessionId();
-      render();
+      hydrateLayout();
       setMode('idle');
-      emit('ready', { language: state.config.language, turbine: state.turbine });
+      setStatus('Listo.');
+      emit('ready', { language: state.config.language, turbine: state.turbine, layout: 'two-column-v12' });
       window.FNS_AVATAR_CORE = Object.freeze({
         guard: FACTORY_GUARD,
         health,
@@ -421,10 +494,11 @@
         setFrame
       });
     } catch (error) {
-      root.innerHTML = `<div class="fns-avatar-error"><strong>FNS Avatar Factory</strong><br>${esc(error?.message || error)}</div>`;
+      root.innerHTML = `<div style="padding:24px;color:white;background:#1a0c10;font-family:sans-serif"><strong>FNS Avatar V12</strong><br>${String(error?.message || error)}</div>`;
       emit('boot-error', { error: String(error?.message || error) });
     }
   }
 
+  // HTML already contains /assets/olivia-fechada.png, so Olivia is visible even before boot finishes.
   void boot();
 })();
