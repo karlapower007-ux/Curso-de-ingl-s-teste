@@ -1,4 +1,4 @@
-name: QA Olivia V8 Production Gate
+name: QA Olivia V10 Production Gate
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  qa-olivia-v8:
+  qa-olivia-v10:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     defaults:
@@ -26,9 +26,10 @@ jobs:
           node-version: '22'
       - name: Install
         run: npm install
-      - name: Source QA Olivia V8
+      - name: Source QA Olivia V10
         run: |
           set -euo pipefail
+          node --check public/olivia-v10-singleton.js
           node --check public/olivia-core-v8.js
           node --check src/strict-output-v7.js
           node --check src/strict-output-v6.js
@@ -40,12 +41,14 @@ jobs:
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
           grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
           grep -q '"main": "src/strict-output-v7.js"' wrangler.jsonc
+          grep -q 'olivia-v10-singleton.js?v=10' public/index.html
           grep -q 'olivia-core-v8.js?v=8' public/index.html
-          grep -q 'olivia-v8.css?v=8' public/index.html
-          ! grep -q 'MutationObserver' public/olivia-core-v8.js
-          grep -q "STANDALONE_ID='olivia-standalone-node'" public/olivia-core-v8.js
-          grep -q 'if(node)return node;' public/olivia-core-v8.js
-          echo 'OLIVIA V8 SOURCE + EMMA BLINDAGEM PASS'
+          grep -q 'z-index: 2147483647 !important' public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('play', onAudioPlayCapture, true)" public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('pause', onAudioPauseCapture, true)" public/olivia-v10-singleton.js
+          grep -q "document.addEventListener('ended', onAudioEndedCapture, true)" public/olivia-v10-singleton.js
+          ! grep -q 'MutationObserver' public/olivia-v10-singleton.js
+          echo 'OLIVIA V10 SOURCE + EMMA BLINDAGEM PASS'
       - name: Turbine registry QA
         run: |
           node - <<'NODE'
@@ -63,6 +66,6 @@ jobs:
           console.log('A-O REGISTRY PASS');
           NODE
       - name: Bundle gate
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v8-gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v10-gate
       - name: Final gate
-        run: echo 'OLIVIA V8 PRODUCTION SOURCE GATE PASS'
+        run: echo 'OLIVIA V10 PRODUCTION SOURCE GATE PASS'
