@@ -35,7 +35,7 @@ jobs:
             const page=await browser.newPage();
             await page.setViewport({width:1440,height:1100,deviceScaleFactor:1});
             page.on('console',msg=>console.log('BROWSER',msg.type(),msg.text()));
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?qa=emma-anatomical-stress',{waitUntil:'networkidle2',timeout:60000});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?qa=emma-anatomical-stress-final',{waitUntil:'networkidle2',timeout:60000});
             await page.click('button[data-view="live"]');
             await page.waitForSelector('.card.teacher',{timeout:30000});
             const opened=await page.evaluate(()=>{
@@ -50,14 +50,10 @@ jobs:
             await page.waitForSelector('.human-avatar .avatar-mouth-motion',{timeout:30000});
             await new Promise(r=>setTimeout(r,800));
 
-            // Enable voice so typed stress prompts produce real TTS turns when available.
             const voice=await page.$('#voiceBtn');
             if(voice){
               await voice.click();
-              await page.waitForFunction(()=>{
-                const t=document.querySelector('#statusText')?.textContent||'';
-                return /Ready/i.test(t);
-              },{timeout:30000}).catch(()=>{});
+              await page.waitForFunction(()=>/Ready/i.test(document.querySelector('#statusText')?.textContent||''),{timeout:30000}).catch(()=>{});
             }
 
             const phrases=[
@@ -107,8 +103,11 @@ jobs:
                 const send=document.querySelector('#sendBtn');
                 return input && send && !input.disabled && !send.disabled;
               },{timeout:30000});
-              await page.focus('#chatInput');
-              await page.evaluate((text)=>{const el=document.querySelector('#chatInput');el.value=text;el.dispatchEvent(new Event('input',{bubbles:true}));},phrases[i]);
+              await page.evaluate((text)=>{
+                const el=document.querySelector('#chatInput');
+                el.value=text;
+                el.dispatchEvent(new Event('input',{bubbles:true}));
+              },phrases[i]);
               await page.click('#sendBtn');
 
               const started=await page.waitForFunction(()=>{
@@ -122,13 +121,12 @@ jobs:
                 const avatarEl=await page.$('.human-avatar');
                 await avatarEl.screenshot({path:`emma-anatomical-${i+1}.png`});
                 await page.waitForFunction(()=>!document.querySelector('.human-avatar')?.classList.contains('avatar-speaking'),{timeout:45000}).catch(()=>{});
-              } else {
+              }else{
                 evidence.push(await sampleState('phrase-'+(i+1)+'-no-speaking-detected'));
               }
-              await new Promise(r=>setTimeout(r,500));
+              await new Promise(r=>setTimeout(r,700));
             }
 
-            // Stability sampling across competing RAF loops.
             const stability=[];
             for(let i=0;i<40;i++){
               stability.push(await sampleState('stability-'+i));
@@ -142,11 +140,13 @@ jobs:
               s.borderRadius!=='0px' && String(s.boxShadow).includes('inset') &&
               !s.fakeV19Exists && !s.ghostV19StyleExists;
             const validCount=stability.filter(valid).length;
-            const result={phrases,evidence,stabilityValid:validCount,stabilityTotal:stability.length,final:stability.at(-1)};
+            const speakingValid=evidence.filter(s=>s.speaking && valid(s)).length;
+            const result={phrases,evidence,speakingValid,stabilityValid:validCount,stabilityTotal:stability.length,final:stability.at(-1)};
             fs.writeFileSync('emma-anatomical-state.json',JSON.stringify(result,null,2));
             await page.screenshot({path:'emma-anatomical-page.png',fullPage:true});
             console.log('ANATOMICAL_RESULT',JSON.stringify(result));
             if(validCount<36) throw new Error('Anatomical cavity not stable against core resets: '+validCount+'/'+stability.length+' samples valid');
+            if(speakingValid<1) throw new Error('No valid speaking-state anatomical sample captured');
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
@@ -160,3 +160,5 @@ jobs:
             emma-anatomical-*.png
             emma-anatomical-state.json
           if-no-files-found: warn
+
+# rerun after post-core observer lock
