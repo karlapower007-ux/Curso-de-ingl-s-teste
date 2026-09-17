@@ -196,7 +196,6 @@ jobs:
           const worker=fs.readFileSync('src/index.js','utf8');
           const avatar=fs.readFileSync('public/emma-static.js','utf8');
           const css=fs.readFileSync('public/emma-static.css','utf8');
-          const turbine=fs.readFileSync('public/emma-turbine-v19.js','utf8');
           const fail=m=>{throw new Error(m)};
 
           if(!app.includes("dataset.fnsMessageKey")) fail('Chat visual dedupe guard missing');
@@ -312,6 +311,7 @@ jobs:
           const fs=require('fs');
           const avatar=fs.readFileSync('public/emma-static.js','utf8');
           const css=fs.readFileSync('public/emma-static.css','utf8');
+          const turbine=fs.readFileSync('public/emma-turbine-v19.js','utf8');
           const fail=m=>{throw new Error(m)};
 
           for(const token of [
