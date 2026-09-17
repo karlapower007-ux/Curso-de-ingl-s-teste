@@ -65,10 +65,21 @@ async function repairOliviaHtml(response) {
   const type = response.headers.get('Content-Type') || '';
   if (!/text\/html/i.test(type)) return response;
   let html = await response.text();
+
+  // Repair literal absolute URLs already present in HTML/bootstrap.
   for (const [broken, fixed] of Object.entries(IMAGE_REPAIRS)) html = html.split(broken).join(fixed);
+
+  // avatar.html's V15 front-door script builds the old raw URLs dynamically
+  // from RAW_BASE + filename. Replace those expressions too, otherwise it
+  // overwrites the repaired bootstrap after the page loads.
   html = html
+    .replaceAll("RAW_BASE + 'olivia-fechada.png'", "'/assets/olivia-fechada-v15.jpg'")
+    .replaceAll("RAW_BASE + 'olivia-falando.png'", "'/assets/olivia-falando-v15.jpg'")
+    .replaceAll("RAW_BASE + 'olivia-aberta.png'", "'/assets/olivia-aberta-v15.jpg'")
+    .replaceAll("WORKER_BASE + 'olivia-fechada.png'", "'/assets/olivia-fechada-v15.jpg'")
     .replaceAll('FNS-AVATAR-FACTORY-V14', 'FNS-AVATAR-FACTORY-V15')
     .replaceAll('v14-20260917', 'v15-20260917');
+
   const headers = new Headers(response.headers);
   headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   headers.set('Content-Language', 'es-ES');
