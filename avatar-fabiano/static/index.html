@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Estudos Profundos FNS — Avatar Fabiano</title>
+  <style>
+    :root{--bg:#080a10;--surface:#11151f;--surface2:#1a1f2c;--accent:#d6b36a;--accent2:#f0d9a0;--text:#f1f1f1;--muted:#a7adbb;--danger:#ff8d8d}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 0%,#22283b 0,transparent 35%),radial-gradient(circle at 100% 100%,#201a10 0,transparent 30%),var(--bg);color:var(--text);font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;padding:22px}
+    .shell{max-width:980px;margin:0 auto;display:grid;grid-template-columns:280px 1fr;gap:22px}.card{background:rgba(17,21,31,.94);border:1px solid #303646;border-radius:20px;box-shadow:0 24px 65px rgba(0,0,0,.38)}
+    .avatar-panel{padding:22px;text-align:center;align-self:start;position:sticky;top:20px}.avatar-frame{width:210px;height:210px;margin:0 auto 18px;border-radius:50%;overflow:hidden;border:3px solid var(--accent);background:linear-gradient(135deg,#232938,#11151f);box-shadow:0 0 0 7px rgba(214,179,106,.08),0 12px 30px rgba(0,0,0,.4);display:grid;place-items:center}
+    .avatar-frame img{width:100%;height:100%;object-fit:cover;display:block;transition:opacity .18s,transform .22s}.avatar-fallback{display:none;font-size:72px;font-weight:800;color:var(--accent)}.eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent2)}
+    h1{font-size:28px;margin:7px 0 8px}.tagline{font-size:14px;color:var(--muted);line-height:1.55}.status{margin-top:16px;padding:8px 11px;border-radius:999px;background:#161c27;border:1px solid #333b4d;color:var(--accent2);font-size:12px;display:inline-flex;gap:7px;align-items:center}.dot{width:8px;height:8px;border-radius:50%;background:#6bd58d;box-shadow:0 0 10px #6bd58d}
+    .main{padding:28px}.main h2{font-size:24px;margin:0 0 8px}.intro{color:var(--muted);line-height:1.6;margin:0 0 22px}textarea{width:100%;height:130px;resize:vertical;background:var(--surface2);color:white;border:1px solid #3a4253;border-radius:12px;padding:15px;font-size:16px;line-height:1.45;outline:none}textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(214,179,106,.1)}
+    .actions{display:flex;gap:10px;align-items:center;margin-top:12px}button{border:0;border-radius:11px;padding:13px 18px;font-weight:800;font-size:15px;cursor:pointer;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#17140f}button:disabled{opacity:.55;cursor:not-allowed}.hint{font-size:12px;color:#858c9c}
+    .answer{margin-top:22px;padding:21px;border-radius:14px;background:#151a24;border-left:4px solid var(--accent);line-height:1.68;white-space:pre-wrap;display:none;text-align:left}.error{color:var(--danger)}audio{width:100%;margin-top:16px;display:none}.sources{margin-top:18px;display:none}.sources h3{font-size:14px;color:var(--accent2);margin:0 0 8px}.source{padding:11px 12px;background:#121721;border:1px solid #2c3443;border-radius:10px;margin:8px 0}.source b{font-size:13px}.source small{display:block;color:var(--muted);line-height:1.45;margin-top:5px}.footer{margin-top:16px;font-size:11px;color:#707887}
+    @media(max-width:760px){body{padding:12px}.shell{grid-template-columns:1fr}.avatar-panel{position:static}.avatar-frame{width:160px;height:160px}.main{padding:20px}.actions{align-items:stretch;flex-direction:column}button{width:100%}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="card avatar-panel">
+      <div class="avatar-frame"><img id="avatarImg" src="/static/avatar-fabiano-perfil.png" alt="Avatar Fabiano"><div id="avatarFallback" class="avatar-fallback">F</div></div>
+      <div class="eyebrow">Estudos Profundos FNS</div><h1>Avatar Fabiano</h1><div class="tagline">Livre Pensador • Pesquisa independente • História, escrituras e teologia</div><div class="status"><span class="dot"></span><span id="statusText">Pronto para analisar</span></div>
+    </aside>
+    <main class="card main">
+      <h2>O Debatedor Crítico</h2><p class="intro">Questione dogmas, confronte interpretações e peça análises fundamentadas nos PDFs da biblioteca do projeto.</p>
+      <textarea id="perguntaInput" placeholder="Digite sua pergunta doutrinária, teológica ou histórica..."></textarea>
+      <div class="actions"><button id="sendBtn" type="button">Iniciar Análise Crítica</button><span class="hint">Ctrl + Enter para enviar</span></div>
+      <div id="respostaArea" class="answer"></div><audio id="audioPlayer" controls></audio>
+      <section id="fontesArea" class="sources"><h3>Fontes recuperadas pelo RAG</h3><div id="fontesLista"></div></section>
+      <div class="footer">A análise depende do conteúdo efetivamente indexado. Hipótese não é tratada como evidência documental.</div>
+    </main>
+  </div>
+<script>
+const input=document.getElementById('perguntaInput'),respostaArea=document.getElementById('respostaArea'),audioPlayer=document.getElementById('audioPlayer'),sendBtn=document.getElementById('sendBtn'),avatarImg=document.getElementById('avatarImg'),avatarFallback=document.getElementById('avatarFallback'),statusText=document.getElementById('statusText'),fontesArea=document.getElementById('fontesArea'),fontesLista=document.getElementById('fontesLista');
+const perfil='/static/avatar-fabiano-perfil.png',debatendo='/static/avatar-fabiano-debatendo.png';
+function useFallback(){avatarImg.style.display='none';avatarFallback.style.display='block'}avatarImg.addEventListener('error',useFallback);
+function setAvatar(src){avatarFallback.style.display='none';avatarImg.style.display='block';avatarImg.src=src+'?v=3'}
+function setLoading(v){sendBtn.disabled=v;sendBtn.textContent=v?'Analisando...':'Iniciar Análise Crítica';statusText.textContent=v?'Consultando a biblioteca...':'Pronto para analisar';if(v)setAvatar(debatendo)}
+function renderSources(fontes){fontesLista.innerHTML='';if(!Array.isArray(fontes)||!fontes.length){fontesArea.style.display='none';return}for(const fonte of fontes){const item=document.createElement('div');item.className='source';const titulo=document.createElement('b');titulo.textContent=fonte.arquivo+(fonte.pagina?` — página ${fonte.pagina}`:'');const trecho=document.createElement('small');trecho.textContent=fonte.trecho||'';item.append(titulo,trecho);fontesLista.appendChild(item)}fontesArea.style.display='block'}
+async function enviarPergunta(){const pergunta=input.value.trim();if(!pergunta)return;respostaArea.classList.remove('error');respostaArea.style.display='block';respostaArea.textContent='Analisando fontes, cruzando documentos e estruturando a argumentação...';audioPlayer.pause();audioPlayer.removeAttribute('src');audioPlayer.style.display='none';fontesArea.style.display='none';setLoading(true);try{const response=await fetch('/perguntar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pergunta})});let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||`Falha HTTP ${response.status}`);respostaArea.textContent=data.resposta;renderSources(data.fontes);if(data.audio_url){audioPlayer.src=data.audio_url+'?t='+Date.now();audioPlayer.style.display='block';try{await audioPlayer.play()}catch(_){}}statusText.textContent='Análise concluída'}catch(error){respostaArea.classList.add('error');respostaArea.textContent='Erro: '+error.message;statusText.textContent='Falha na análise'}finally{sendBtn.disabled=false;sendBtn.textContent='Iniciar Análise Crítica'}}
+sendBtn.addEventListener('click',enviarPergunta);input.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')enviarPergunta()});audioPlayer.addEventListener('ended',()=>setAvatar(perfil));setAvatar(perfil);
+</script>
+</body></html>
