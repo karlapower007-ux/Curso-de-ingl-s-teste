@@ -1,0 +1,111 @@
+name: QA Emma Inline 3D Mouth Evidence
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - '.github/workflows/qa-emma-inline-temp.yml'
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Capture production Emma inline 3D mouth
+        run: |
+          npm install --no-save puppeteer-core@24.18.0
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          node - <<'NODE'
+          const fs=require('fs');
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1440,height:1100,deviceScaleFactor:1});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?qa=emma-inline-3d-proof',{waitUntil:'networkidle2',timeout:60000});
+            const live=await page.$('button[data-view="live"]');
+            if(!live) throw new Error('Live navigation button not found');
+            await live.click();
+            await page.waitForSelector('.card.teacher',{timeout:30000});
+            const opened=await page.evaluate(()=>{
+              const cards=[...document.querySelectorAll('.card.teacher')];
+              const card=cards.find(x=>x.querySelector('h3')?.textContent?.trim()==='Emma');
+              const button=card?.querySelector('button.primary');
+              if(!button)return false;
+              button.click();
+              return true;
+            });
+            if(!opened) throw new Error('Emma teacher card could not be opened');
+            await page.waitForSelector('.human-avatar .avatar-mouth-motion',{timeout:30000});
+            await page.evaluate(()=>{
+              const avatar=document.querySelector('.human-avatar');
+              avatar.style.setProperty('--mouth-open','0.78','important');
+              avatar.style.setProperty('--mouth-wide','0.90','important');
+              avatar.classList.add('avatar-speaking');
+            });
+            await new Promise(r=>setTimeout(r,1200));
+            const state=await page.evaluate(()=>{
+              const avatar=document.querySelector('.human-avatar');
+              const mouth=document.querySelector('.human-avatar .avatar-mouth-motion');
+              const s=getComputedStyle(mouth);
+              const before=getComputedStyle(mouth,'::before');
+              const after=getComputedStyle(mouth,'::after');
+              const rect=mouth.getBoundingClientRect();
+              const aRect=avatar.getBoundingClientRect();
+              return {
+                fakeV19Exists:!!document.getElementById('fns-nova-boca-v19'),
+                ghostV19StyleExists:!!document.getElementById('fns-override-v19'),
+                pseudoKillerExists:!!document.getElementById('fns-pseudo-killer'),
+                display:s.display,visibility:s.visibility,opacity:s.opacity,
+                width:s.width,height:s.height,top:s.top,left:s.left,
+                renderedWidth:rect.width,renderedHeight:rect.height,
+                renderedWidthPct:aRect.width?rect.width/aRect.width*100:0,
+                backgroundImage:s.backgroundImage,
+                borderRadius:s.borderRadius,
+                boxShadow:s.boxShadow,
+                border:s.border,
+                transform:s.transform,
+                beforeDisplay:before.display,
+                afterDisplay:after.display,
+                inlineBackground:mouth.style.getPropertyValue('background'),
+                inlineBackgroundPriority:mouth.style.getPropertyPriority('background'),
+                inlineRadius:mouth.style.getPropertyValue('border-radius'),
+                inlineRadiusPriority:mouth.style.getPropertyPriority('border-radius'),
+                inlineShadow:mouth.style.getPropertyValue('box-shadow'),
+                inlineShadowPriority:mouth.style.getPropertyPriority('box-shadow')
+              };
+            });
+            if(state.fakeV19Exists||state.ghostV19StyleExists) throw new Error('v19 residue found: '+JSON.stringify(state));
+            if(!state.pseudoKillerExists) throw new Error('Pseudo killer missing');
+            if(state.display==='none'||state.visibility==='hidden'||parseFloat(state.opacity)<0.9) throw new Error('Mouth hidden: '+JSON.stringify(state));
+            if(!String(state.backgroundImage).includes('linear-gradient')) throw new Error('3D gradient not computed: '+JSON.stringify(state));
+            if(!String(state.boxShadow).includes('inset')) throw new Error('Inset shadow not computed: '+JSON.stringify(state));
+            if(!state.borderRadius || state.borderRadius==='0px') throw new Error('Rounded geometry not computed: '+JSON.stringify(state));
+            if(state.beforeDisplay!=='none'||state.afterDisplay!=='none') throw new Error('Pseudo-element lines visible: '+JSON.stringify(state));
+            if(state.inlineBackgroundPriority!=='important'||state.inlineRadiusPriority!=='important'||state.inlineShadowPriority!=='important') throw new Error('Inline important not active: '+JSON.stringify(state));
+            await page.screenshot({path:'emma-inline-3d-page.png',fullPage:true});
+            const avatarEl=await page.$('.human-avatar');
+            await avatarEl.screenshot({path:'emma-inline-3d-avatar.png'});
+            fs.writeFileSync('emma-inline-3d-state.json',JSON.stringify(state,null,2));
+            console.log('INLINE 3D MOUTH PASS',JSON.stringify(state));
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-inline-3d-mouth-evidence
+          path: |
+            emma-inline-3d-avatar.png
+            emma-inline-3d-page.png
+            emma-inline-3d-state.json
+          if-no-files-found: error
