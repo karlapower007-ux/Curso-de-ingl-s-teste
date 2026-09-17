@@ -1,111 +1,16 @@
-name: QA Olivia V15 Visual Screenshot
+name: QA Olivia V15 Visual Screenshot (Manual)
 
+# Pixel-level V15 QA now runs inside deploy-fns-worker.yml after deployment.
+# Keeping this workflow manual avoids duplicate production browsers and removes
+# the old naturalWidth-only test that missed a visually black avatar.
 on:
-  push:
-    branches:
-      - fns-digital-human
-    paths:
-      - 'fns-digital-human/worker/**'
-      - '.github/workflows/qa-olivia-v15-visual.yml'
   workflow_dispatch:
 
 jobs:
-  screenshot:
+  info:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install browser driver
-        run: npm install --no-save puppeteer-core@24.18.0
-
-      - name: Wait for V15 production and capture screenshot
-        env:
-          TARGET: https://fns-stt.karlapower007.workers.dev/?avatar=olivia&v=15&visualqa=1
+      - name: V15 visual QA location
         run: |
-          set -euo pipefail
-          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
-          test -n "$CHROME_BIN"
-          export CHROME_BIN
-          node - <<'NODE'
-          const fs=require('fs');
-          const puppeteer=require('puppeteer-core');
-          const target=process.env.TARGET;
-          const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
-          (async()=>{
-            const browser=await puppeteer.launch({
-              headless:true,
-              executablePath:process.env.CHROME_BIN,
-              args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']
-            });
-            let page;
-            let info=null;
-            for(let attempt=1;attempt<=12;attempt++){
-              if(page) await page.close().catch(()=>{});
-              page=await browser.newPage();
-              await page.setViewport({width:1763,height:844,deviceScaleFactor:1});
-              const url=target+'&attempt='+attempt+'&t='+Date.now();
-              try{
-                await page.goto(url,{waitUntil:'networkidle2',timeout:60000});
-                await sleep(1800);
-                info=await page.evaluate(()=>{
-                  const img=document.getElementById('olivia-avatar-img');
-                  const panel=document.getElementById('panel-language');
-                  const pill=document.querySelector('.v15-pill');
-                  const rect=img?.getBoundingClientRect();
-                  const style=img?getComputedStyle(img):null;
-                  const stage=document.getElementById('avatar-stage');
-                  const stageStyle=stage?getComputedStyle(stage):null;
-                  return {
-                    title:document.title,
-                    htmlLang:document.documentElement.lang,
-                    pill:pill?.textContent||'',
-                    panelLanguage:panel?.textContent||'',
-                    subtitle:document.getElementById('avatar-subtitle')?.textContent||'',
-                    placeholder:document.getElementById('textInput')?.getAttribute('placeholder')||'',
-                    imageSrc:img?.currentSrc||img?.src||'',
-                    imageComplete:!!img?.complete,
-                    imageNaturalWidth:img?.naturalWidth||0,
-                    imageNaturalHeight:img?.naturalHeight||0,
-                    imageRect:rect?{x:rect.x,y:rect.y,width:rect.width,height:rect.height}:null,
-                    imageDisplay:style?.display||'',
-                    imageVisibility:style?.visibility||'',
-                    imageOpacity:style?.opacity||'',
-                    stageBackgroundImage:stageStyle?.backgroundImage||'',
-                    bootstrapLanguage:window.__FNS_AVATAR_BOOTSTRAP__?.config?.language||'',
-                    bootstrapLanguageLabel:window.__FNS_AVATAR_BOOTSTRAP__?.config?.languageLabel||'',
-                    health:window.FNS_AVATAR_CORE?.health?.()||null
-                  };
-                });
-                if(info.pill==='FNS V15' && info.panelLanguage==='Español · A1' && info.imageNaturalWidth>0) break;
-              }catch(error){
-                info={attempt,error:String(error?.message||error)};
-              }
-              await sleep(5000);
-            }
-            fs.writeFileSync('olivia-v15-diagnostics.json',JSON.stringify(info,null,2));
-            await page.screenshot({path:'olivia-v15-production.png',fullPage:true});
-            await browser.close();
-            if(!info || info.pill!=='FNS V15') throw new Error('V15 not visible in production: '+JSON.stringify(info));
-            if(info.panelLanguage!=='Español · A1' || info.bootstrapLanguage!=='es-ES' || info.bootstrapLanguageLabel!=='Español') throw new Error('Spanish lock failed: '+JSON.stringify(info));
-            if(!(info.imageNaturalWidth>0 && info.imageNaturalHeight>0)) throw new Error('Olivia PNG did not load: '+JSON.stringify(info));
-            console.log('V15 VISUAL SOURCE PASS',info);
-          })().catch(e=>{console.error(e);process.exit(1)});
-          NODE
-
-      - name: Upload V15 screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: olivia-v15-production-screenshot
-          path: |
-            olivia-v15-production.png
-            olivia-v15-diagnostics.json
-            fns-digital-human/worker/public/assets/olivia-fechada.png
-          if-no-files-found: warn
+          echo 'The authoritative Olivia V15 pixel test is part of Deploy FNS Worker.'
+          echo 'It verifies real rendered pixels and blocks /tts, /stt and /chat during visual QA.'
