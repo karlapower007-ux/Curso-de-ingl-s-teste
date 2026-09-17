@@ -102,14 +102,22 @@ function strictSystem(level='A1',accent='American'){
   ].join(' ');
 }
 
-async function generateEnglish(env,messages,{temperature=0.25,max_tokens=220}={}){
-  const result=await env.AI.run('@cf/openai/gpt-oss-120b',{
+function withTimeout(promise,ms=7000){
+  let timer;
+  const timeout=new Promise((_,reject)=>{
+    timer=setTimeout(()=>reject(new Error('strict-english-llm-timeout')),ms);
+  });
+  return Promise.race([promise,timeout]).finally(()=>clearTimeout(timer));
+}
+
+async function generateEnglish(env,messages,{temperature=0.25,max_tokens=220,timeoutMs=7000}={}){
+  const result=await withTimeout(env.AI.run('@cf/openai/gpt-oss-120b',{
     messages,
     max_tokens,
     temperature,
     top_p:0.75
     // logit_bias intentionally omitted: Workers AI does not expose stable tokenizer IDs here.
-  });
+  }),timeoutMs);
   return extractText(result);
 }
 
@@ -136,7 +144,7 @@ async function strictEmmaChat(request,env){
   let firstDraft='';
   try{
     attempt=1;
-    firstDraft=await generateEnglish(env,baseMessages,{temperature:0.25,max_tokens:220});
+    firstDraft=await generateEnglish(env,baseMessages,{temperature:0.25,max_tokens:220,timeoutMs:7000});
     reply=firstDraft;
 
     if(!strictEnglishPass(reply)){
@@ -150,7 +158,7 @@ async function strictEmmaChat(request,env){
         },
         {role:'user',content:'Original user message: '+message+'\nPrevious draft: '+String(firstDraft||'').slice(0,1200)+'\n'+USER_SUFFIX}
       ];
-      reply=await generateEnglish(env,retryMessages,{temperature:0.10,max_tokens:220});
+      reply=await generateEnglish(env,retryMessages,{temperature:0.10,max_tokens:220,timeoutMs:5000});
     }
   }catch(error){
     reply='';
