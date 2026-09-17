@@ -14,7 +14,7 @@ services:
       - key: ADMIN_TOKEN
         generateValue: true
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.8-flash
       - key: EMBEDDING_MODEL
         value: gemini-embedding-2
       - key: EMBEDDING_DIM
@@ -23,3 +23,5 @@ services:
         value: pt-BR-AntonioNeural
       - key: AUTO_INDEX_ON_STARTUP
         value: "1"
+      - key: CORS_ORIGINS
+        value: https://estudos-profundos-fns.karlapower007.chatgpt.site
