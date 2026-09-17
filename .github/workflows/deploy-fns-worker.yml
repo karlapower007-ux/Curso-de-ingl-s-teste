@@ -1,0 +1,174 @@
+name: Deploy FNS Worker
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Protect Emma core and validate Olivia V6
+        run: |
+          set -euo pipefail
+          node --check src/index.js
+          node --check src/strict-output.js
+          node --check src/strict-output-v6.js
+          node --check public/app.js
+          node --check public/natural-state.js
+          node --check public/natural-turns.js
+          node --check public/olivia-core-v6.js
+
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+
+          grep -q '"main": "src/strict-output-v6.js"' wrangler.jsonc
+          grep -q "import strictCore from './strict-output.js'" src/strict-output-v6.js
+          grep -q "import rawCore from './index.js'" src/strict-output-v6.js
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'professora de espanhol para alunos brasileiros' src/strict-output-v6.js
+          grep -q "history_purged:false" src/strict-output-v6.js
+          grep -q "client-bilingual-es-pt" src/strict-output-v6.js
+
+          grep -q 'olivia-core-v6.js?v=6' public/index.html
+          grep -q 'olivia-v6.css?v=6' public/index.html
+          ! grep -q 'olivia-core-v4.js' public/index.html
+          ! grep -q 'olivia-visual-v5.js' public/index.html
+          grep -q 'id="oliviaAvatarIsland"' public/olivia-core-v6.js
+          grep -q 'new MutationObserver' public/olivia-core-v6.js
+          grep -q "headers.set('X-FNS-STT-Language',selectedSttLanguage())" public/olivia-core-v6.js
+          grep -q "body.input_language=selectedSttLanguage()" public/olivia-core-v6.js
+          grep -q 'olivia-v6-fast-fallback' public/olivia-core-v6.js
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          for(const prefix of ['emma','olivia']){
+            const files=[`${prefix}-fechada.png`,`${prefix}-falando.png`,`${prefix}-aberta.png`];
+            const hashes=new Set();
+            for(const f of files){
+              const b=fs.readFileSync('public/assets/'+f);
+              if(b.length<5000)throw new Error(f+' too small');
+              if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid PNG');
+              hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
+            }
+            if(hashes.size!==3)throw new Error(prefix+' frames are not distinct');
+          }
+          console.log('EMMA CORE LOCK + OLIVIA V6 SOURCE QA PASS');
+          NODE
+
+      - name: Wrangler bundle dry run
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v6-dist
+
+      - name: Deploy Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: QA production Olivia V6 and Emma lock
+        run: |
+          set -euo pipefail
+          sleep 6
+          BASE='https://fns-stt.karlapower007.workers.dev'
+
+          curl --compressed --fail --silent --show-error "$BASE/?olivia=v6&qa=$(date +%s)" -o production.html
+          grep -q 'olivia-core-v6.js?v=6' production.html
+          grep -q 'olivia-v6.css?v=6' production.html
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' production.html
+
+          for f in olivia-fechada.png olivia-falando.png olivia-aberta.png; do
+            curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=v6-20260917"
+          done
+
+          curl --compressed --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"message":"Explique em português a diferença entre ser e estar e depois dê dois exemplos em espanhol.","teacher":"Olivia","level":"A1","history":[]}' \
+            -o olivia-chat.json \
+            "$BASE/chat"
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const data=JSON.parse(fs.readFileSync('olivia-chat.json','utf8'));
+          if(!data.ok||!data.reply)throw new Error('Olivia chat failed '+JSON.stringify(data));
+          if(data.teacher!=='Olivia'||data.language_mode!=='es-ES+pt-BR'||data.language_guard!=='FNS-OLIVIA-BILINGUAL-V6')throw new Error('Olivia v6 flags missing '+JSON.stringify(data));
+          if(/\b(i am|i'm|thank you|how are you|please explain|you should|you can)\b/i.test(String(data.reply)))throw new Error('English leak in Olivia reply: '+data.reply);
+          console.log('PRODUCTION OLIVIA CHAT V6 PASS',data.output_attempt,String(data.reply).slice(0,180));
+          NODE
+
+          curl --compressed --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"message":"Tell me about your day.","teacher":"Emma","level":"A1","accent":"American","input_language":"en-US","input_language_label":"English","strict_language":"en-US","history":[]}' \
+            -o emma-chat.json \
+            "$BASE/chat"
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const data=JSON.parse(fs.readFileSync('emma-chat.json','utf8'));
+          if(!data.ok||!data.reply)throw new Error('Emma chat failed '+JSON.stringify(data));
+          if(data.strict_language!=='en-US'||data.language_guard!=='FNS-OUTPUT-A-H')throw new Error('Emma strict flags missing '+JSON.stringify(data));
+          console.log('PRODUCTION EMMA LOCK PASS',data.output_attempt,String(data.reply).slice(0,180));
+          NODE
+
+          npm install --no-save puppeteer-core@24.18.0
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+
+          node - <<'NODE'
+          const puppeteer=require('puppeteer-core');
+          (async()=>{
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+            const page=await browser.newPage();
+            await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v6&qa=dom',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForSelector('#liteModal[data-olivia-v6="true"] #oliviaAvatarIsland img',{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V6?.health?.().imageLoaded===true,{timeout:30000});
+
+            const before=await page.evaluate(()=>window.FNS_OLIVIA_V6.health());
+            if(!before.active||!before.island||!before.imageLoaded||before.noGlobalAvatar!==true)throw new Error('Olivia island health failed '+JSON.stringify(before));
+
+            await page.evaluate(()=>document.querySelector('#oliviaAvatarIsland')?.remove());
+            await page.waitForFunction(()=>!!document.querySelector('#oliviaAvatarIsland'),{timeout:5000});
+            const repaired=await page.evaluate(()=>window.FNS_OLIVIA_V6.health());
+            if(!repaired.island||repaired.repairs<1)throw new Error('Olivia DOM repair failed '+JSON.stringify(repaired));
+
+            const languages=await page.evaluate(()=>{
+              const s=document.querySelector('#sttLangSel');
+              s.value='pt-BR'; const pt=selectedSttLanguage();
+              s.value='es-ES'; const es=selectedSttLanguage();
+              return {pt,es,toggleMic:typeof window.FNS_OLIVIA_V6.toggleMic,unlockVoice:typeof window.FNS_OLIVIA_V6.unlockVoice};
+            });
+            if(languages.pt!=='pt-BR'||languages.es!=='es-ES'||languages.toggleMic!=='function'||languages.unlockVoice!=='function')throw new Error('Olivia mic/language hooks failed '+JSON.stringify(languages));
+
+            console.log('PRODUCTION OLIVIA DOM + MIC HOOK QA PASS',repaired,languages);
+            await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Final status
+        run: echo 'DEPLOY PASS - Emma core protected; Olivia V6 DOM island, bilingual PT/ES, microphone hooks and fast voice fallback active'
