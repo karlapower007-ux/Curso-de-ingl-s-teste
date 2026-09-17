@@ -29,6 +29,7 @@ window.FNS_EMMA_VISUAL_RIG=true;
       this.blinkTimer=null;
       this.gazeTimer=null;
       this.watchdog=null;
+      this.expressionTurbine=null;
       this.token=++installToken;
       this.uniforms={};
     }
@@ -322,6 +323,7 @@ window.FNS_EMMA_VISUAL_RIG=true;
       clearTimeout(this.blinkTimer);
       clearTimeout(this.gazeTimer);
       this.watchdog?.stop();
+      this.expressionTurbine?.stop();
       this.canvas?.remove();
       this.raf=0;
     }
@@ -332,12 +334,14 @@ window.FNS_EMMA_VISUAL_RIG=true;
       if(!ready){this.useFallback('portrait-load-failed');return}
       this.face.dataset.avatarReady='true';
       this.face.dataset.fnsRig='active';
-      this.face.dataset.expressionRig='natural-v13';
+      this.face.dataset.expressionRig='turbine-v17';
       this.face.style.setProperty('--gaze-x','0px');
       this.face.style.setProperty('--gaze-y','0px');
       this.setBlink(0);
       this.scheduleBlink();
       this.scheduleGaze();
+      this.expressionTurbine=new ExpressionTurbine(this.face);
+      this.expressionTurbine.start();
 
       this.injectCanvas();
       try{
@@ -363,6 +367,207 @@ window.FNS_EMMA_VISUAL_RIG=true;
         }
       }
       return observed===100;
+    }
+  }
+
+
+  /* ===== Emma Expression Turbine v17 =====
+     Visual-only active rig. It reads the existing mouth amplitude and avatar
+     state, then owns the mouth SVG geometry with inline !important styles.
+     It never writes audio/STT/TTS/microphone/memory/turn state. */
+  class ExpressionTurbine{
+    constructor(face){
+      this.face=face;
+      this.mouth=null;
+      this.svg=null;
+      this.cavity=null;
+      this.teeth=null;
+      this.lip=null;
+      this.raf=0;
+      this.lastOpen=-1;
+      this.lastWide=-1;
+      this.styleNode=null;
+    }
+
+    ensure(){
+      if(!this.face?.isConnected)return false;
+      const mouth=this.face.querySelector('.avatar-mouth-motion');
+      if(!mouth)return false;
+
+      if(this.mouth!==mouth || !this.svg?.isConnected){
+        this.mouth=mouth;
+        mouth.dataset.expressionTurbine='v17';
+        mouth.replaceChildren();
+
+        const ns='http://www.w3.org/2000/svg';
+        const svg=document.createElementNS(ns,'svg');
+        svg.setAttribute('viewBox','0 0 136 44');
+        svg.setAttribute('preserveAspectRatio','none');
+        svg.setAttribute('aria-hidden','true');
+        svg.style.setProperty('position','absolute','important');
+        svg.style.setProperty('inset','0','important');
+        svg.style.setProperty('width','100%','important');
+        svg.style.setProperty('height','100%','important');
+        svg.style.setProperty('overflow','visible','important');
+        svg.style.setProperty('pointer-events','none','important');
+
+        const defs=document.createElementNS(ns,'defs');
+        const grad=document.createElementNS(ns,'linearGradient');
+        grad.id='emmaMouthV17Gradient';
+        grad.setAttribute('x1','0'); grad.setAttribute('y1','0');
+        grad.setAttribute('x2','0'); grad.setAttribute('y2','1');
+        const stops=[
+          ['0%','#4b111a'],['58%','#22060a'],['100%','#7f2840']
+        ];
+        for(const [offset,color] of stops){
+          const s=document.createElementNS(ns,'stop');
+          s.setAttribute('offset',offset); s.setAttribute('stop-color',color);
+          grad.appendChild(s);
+        }
+        defs.appendChild(grad);
+        svg.appendChild(defs);
+
+        const cavity=document.createElementNS(ns,'path');
+        cavity.setAttribute('fill','url(#emmaMouthV17Gradient)');
+        cavity.setAttribute('stroke','#8e3148');
+        cavity.setAttribute('stroke-width','1.25');
+        cavity.setAttribute('stroke-linejoin','round');
+
+        const teeth=document.createElementNS(ns,'path');
+        teeth.setAttribute('fill','#fffdfa');
+        teeth.setAttribute('opacity','.82');
+
+        const lip=document.createElementNS(ns,'path');
+        lip.setAttribute('fill','none');
+        lip.setAttribute('stroke','#a63d58');
+        lip.setAttribute('stroke-width','1.65');
+        lip.setAttribute('stroke-linecap','round');
+
+        svg.appendChild(cavity);
+        svg.appendChild(teeth);
+        svg.appendChild(lip);
+        mouth.appendChild(svg);
+
+        this.svg=svg;
+        this.cavity=cavity;
+        this.teeth=teeth;
+        this.lip=lip;
+
+        if(!document.querySelector('#emma-expression-turbine-v17-style')){
+          const st=document.createElement('style');
+          st.id='emma-expression-turbine-v17-style';
+          st.textContent=`
+            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion::before,
+            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion::after{
+              content:none!important;display:none!important;opacity:0!important;
+            }
+            #avatarFace[data-expression-rig="turbine-v17"] .avatar-mouth-motion{
+              animation:none!important;
+            }
+          `;
+          document.head.appendChild(st);
+          this.styleNode=st;
+        }
+      }
+      return true;
+    }
+
+    read(){
+      const cs=getComputedStyle(this.face);
+      const open=clamp(Number.parseFloat(cs.getPropertyValue('--mouth-open'))||0,0,1);
+      const wide=clamp(Number.parseFloat(cs.getPropertyValue('--mouth-wide'))||0,0,1);
+      return {open,wide};
+    }
+
+    forceBox(open,wide){
+      const m=this.mouth;
+      if(!m)return;
+      const speaking=this.face.classList.contains('avatar-speaking');
+      const active=Math.max(open,speaking?.18:0);
+      const width=13.6 + wide*1.45 + active*.65;
+      const height=8.8 + active*4.8;
+
+      m.style.setProperty('left','50%','important');
+      m.style.setProperty('top','58.05%','important');
+      m.style.setProperty('width',width.toFixed(2)+'%','important');
+      m.style.setProperty('height',height.toFixed(2)+'px','important');
+      m.style.setProperty('overflow','visible','important');
+      m.style.setProperty('background','transparent','important');
+      m.style.setProperty('box-shadow','none','important');
+      m.style.setProperty('border','0','important');
+      m.style.setProperty('border-radius','0','important');
+      m.style.setProperty('opacity',active>.015?'1':'0','important');
+      m.style.setProperty('transform','translate(-50%,-50%)','important');
+      m.style.setProperty('animation','none','important');
+      m.style.setProperty('transition','none','important');
+    }
+
+    draw(open,wide){
+      if(!this.cavity||!this.teeth||!this.lip)return;
+
+      const speaking=this.face.classList.contains('avatar-speaking');
+      const a=Math.max(open,speaking?.18:0);
+      const sideLift=9.0 + wide*1.5;     // corners move UP (smaller y)
+      const centerTop=20.0 + a*2.4;      // center stays lower than corners
+      const centerBottom=27.0 + a*10.5;  // light vertical opening
+      const bottomSide=23.5 + a*3.6;
+
+      const Lx=5, Rx=131, Cx=68;
+      const cornerY=sideLift;
+      const q1x=29, q2x=107;
+
+      /* Outer mouth: corners high, center lower => true upward smile. */
+      const cavity=[
+        'M',Lx,cornerY,
+        'Q',q1x,cornerY-1.2,Cx,centerTop,
+        'Q',q2x,cornerY-1.2,Rx,cornerY,
+        'Q',q2x,bottomSide,Cx,centerBottom,
+        'Q',q1x,bottomSide,Lx,cornerY,'Z'
+      ].join(' ');
+      this.cavity.setAttribute('d',cavity);
+
+      /* Upper teeth follow the same smile curve and never fill the cavity. */
+      const toothBottom=centerTop + 3.2 + a*1.4;
+      const teeth=[
+        'M',12,cornerY+2.6,
+        'Q',34,cornerY+1.2,Cx,centerTop+1.2,
+        'Q',102,cornerY+1.2,124,cornerY+2.6,
+        'Q',101,toothBottom,Cx,toothBottom+1.3,
+        'Q',35,toothBottom,12,cornerY+2.6,'Z'
+      ].join(' ');
+      this.teeth.setAttribute('d',teeth);
+      this.teeth.setAttribute('opacity',String(.52 + a*.26));
+
+      /* Lip contour explicitly rises at both sides. */
+      const lip=[
+        'M',Lx,cornerY-1.2,
+        'Q',29,cornerY-3.0,Cx,centerTop-1.2,
+        'Q',107,cornerY-3.0,Rx,cornerY-1.2
+      ].join(' ');
+      this.lip.setAttribute('d',lip);
+    }
+
+    tick=()=>{
+      if(!this.face?.isConnected){this.stop();return}
+      if(this.ensure()){
+        const {open,wide}=this.read();
+        this.face.dataset.expressionRig='turbine-v17';
+        this.forceBox(open,wide);
+        this.draw(open,wide);
+        this.lastOpen=open; this.lastWide=wide;
+      }
+      this.raf=requestAnimationFrame(this.tick);
+    }
+
+    start(){
+      this.stop();
+      this.ensure();
+      this.raf=requestAnimationFrame(this.tick);
+    }
+
+    stop(){
+      cancelAnimationFrame(this.raf);
+      this.raf=0;
     }
   }
 
@@ -401,9 +606,11 @@ window.FNS_EMMA_VISUAL_RIG=true;
     }
   }
 
+  window.ExpressionTurbine=ExpressionTurbine;
   window.AvatarManager=AvatarManager;
   window.AvatarWatchdog=AvatarWatchdog;
   window.__FNS_AVATAR_SELF_TEST__=()=>AvatarManager.selfTest();
+  window.__FNS_EXPRESSION_TURBINE_V17__=true;
 
   function scan(){
     const face=document.querySelector('#avatarFace.human-avatar');
