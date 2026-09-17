@@ -527,13 +527,13 @@ jobs:
 
       - name: QA AvatarManager v3 production
         run: |
-          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=natural-v12"
+          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=17"
           curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
           node - <<'NODE'
           const fs=require('fs');
           const avatar=fs.readFileSync('avatar-prod.js','utf8');
           const app=fs.readFileSync('app-prod.js','utf8');
-          for(const token of ['class AvatarManager','class AvatarWatchdog','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
+          for(const token of ['class AvatarManager','class AvatarWatchdog','class ExpressionTurbine','__FNS_EXPRESSION_TURBINE_V17__','data-expression-rig','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
             if(!avatar.includes(token)) throw new Error('Production AvatarManager missing: '+token);
           }
           if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
@@ -544,7 +544,7 @@ jobs:
       - name: QA desktop microphone and mouth production
         run: |
           curl --fail --silent --show-error -o desktop-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=natural-v12"
+          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=17"
           node - <<'NODE'
           const fs=require('fs');
           const app=fs.readFileSync('desktop-app.js','utf8');
