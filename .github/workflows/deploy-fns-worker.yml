@@ -35,7 +35,7 @@ jobs:
           node --check src/index.js
           node --check public/app.js
           node --check public/emma-static.js
-          node --check public/emma-turbine-v18.js
+          node --check public/emma-turbine-v19.js
 
       - name: QA turn state machine
         run: |
@@ -196,6 +196,7 @@ jobs:
           const worker=fs.readFileSync('src/index.js','utf8');
           const avatar=fs.readFileSync('public/emma-static.js','utf8');
           const css=fs.readFileSync('public/emma-static.css','utf8');
+          const turbine=fs.readFileSync('public/emma-turbine-v19.js','utf8');
           const fail=m=>{throw new Error(m)};
 
           if(!app.includes("dataset.fnsMessageKey")) fail('Chat visual dedupe guard missing');
@@ -305,7 +306,7 @@ jobs:
           console.log('QA LANGUAGE LOCK G-P PASS');
           NODE
 
-      - name: QA Emma natural facial refinement v12
+      - name: QA Emma visual compatibility for turbine v19
         run: |
           node - <<'NODE'
           const fs=require('fs');
@@ -314,9 +315,9 @@ jobs:
           const fail=m=>{throw new Error(m)};
 
           for(const token of [
-            "dataset.expressionRig='natural-v12'",
+            "dataset.expressionRig='turbine-v17'",
             "const baseDelay=state==='speaking'?2600",
-            "const span=state==='speaking'?.58",
+            "const span=state==='speaking'?1.18",
             "Math.random()<.07"
           ]) if(!avatar.includes(token)) fail('Natural eye rig missing: '+token);
 
@@ -339,7 +340,11 @@ jobs:
             if(avatar.includes(forbidden)) fail('Visual rig illegally touches protected core: '+forbidden);
           }
 
-          console.log('QA NATURAL FACE V12 PASS: subtle mouth/teeth/cheeks + organic blink/gaze; core untouched');
+          for(const token of ['[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA','fns-override-v19','#fns-nova-boca-v19','clip-path: polygon(','BOCA V19 INJETADA NO DOM','requestAnimationFrame(loop)']){
+            if(!turbine.includes(token)) fail('Turbine v19 invariant missing: '+token);
+          }
+
+          console.log('QA EMMA V19 PASS: organic blink/gaze preserved; scorched-earth mouth override present; core untouched');
           NODE
 
       - name: Guard visual-only patch
@@ -529,18 +534,18 @@ jobs:
       - name: QA AvatarManager v3 production
         run: |
           curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=18"
-          curl --fail --silent --show-error -o turbine-v18-prod.js "https://fns-stt.karlapower007.workers.dev/emma-turbine-v18.js?v=1801"
+          curl --fail --silent --show-error -o turbine-v19-prod.js "https://fns-stt.karlapower007.workers.dev/emma-turbine-v19.js?v=1900"
           curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
           node - <<'NODE'
           const fs=require('fs');
           const avatar=fs.readFileSync('avatar-prod.js','utf8');
-          const turbine=fs.readFileSync('turbine-v18-prod.js','utf8');
+          const turbine=fs.readFileSync('turbine-v19-prod.js','utf8');
           const app=fs.readFileSync('app-prod.js','utf8');
           for(const token of ['class AvatarManager','class AvatarWatchdog','class ExpressionTurbine','__FNS_EXPRESSION_TURBINE_V17__','data-expression-rig','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
             if(!avatar.includes(token)) throw new Error('Production AvatarManager missing: '+token);
           }
-          for(const token of ['MutationObserver','fns-override-v18','fns-emma-mouth-svg-v18','z-index','ATIVA E RODANDO','__FNS_EMMA_TURBINE_V18__']){
-            if(!turbine.includes(token)) throw new Error('Production turbine v18 missing: '+token);
+          for(const token of ['[FNS TURBINE v19] BOOT STRATEGY: TERRA ARRASADA INICIADA','fns-override-v19','fns-nova-boca-v19','display: none !important','z-index: 2147483647','BOCA V19 INJETADA NO DOM','requestAnimationFrame(loop)']){
+            if(!turbine.includes(token)) throw new Error('Production turbine v19 missing: '+token);
           }
           if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
           if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=60')) throw new Error('Production memory+ frontend missing');
