@@ -1,4 +1,4 @@
-name: QA Olivia V17 Dynamic Chat Gate
+name: QA Olivia V18 End-to-End Chat Gate
 
 on:
   push:
@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  qa-olivia-v17:
+  qa-olivia-v18:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: fns-digital-human/worker
@@ -42,9 +42,10 @@ jobs:
             file "$dst" | grep -q JPEG
           done
 
-      - name: Frozen visual/core + V17 source gate
+      - name: Frozen visual/core + V18 source gate
         run: |
           set -euo pipefail
+          node --check src/strict-output-v18.js
           node --check src/strict-output-v17.js
           node --check src/strict-output-v16.js
           node --check src/strict-output-v7.js
@@ -53,61 +54,86 @@ jobs:
           node --check public/app.js
           node --check public/avatar-core.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object public/avatar-core.js)" = "eae5d60c405daf911a6e1828b30d62668e341c23"
+          test "$(git hash-object public/avatar.html)" = "1192f6e04eac2e474e8bd261bb7e1db2ea40fac7"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
-          grep -q '"main": "src/strict-output-v17.js"' wrangler.jsonc
-          grep -q 'FNS-OLIVIA-V17-DYNAMIC-CHAT' src/strict-output-v17.js
-          grep -q 'Array.isArray(body?.messages)' src/strict-output-v17.js
-          grep -q 'Array.isArray(body?.history)' src/strict-output-v17.js
-          grep -q 'static_fallback:false' src/strict-output-v17.js
-          ! grep -q 'Claro. Sigamos en español. Cuéntame un poco más sobre eso.' src/strict-output-v17.js
+          test "$(git hash-object src/strict-output-v16.js)" = "bc35e9edfa35bcce85e905c5cac49609cc518340"
+          grep -q '"main": "src/strict-output-v18.js"' wrangler.jsonc
+          grep -q 'FNS-OLIVIA-V18-END-TO-END' src/strict-output-v18.js
+          grep -q 'pollinations-openai' src/strict-output-v18.js
+          grep -q 'hf-free-ai-chat' src/strict-output-v18.js
+          grep -q 'static_fallback:false' src/strict-output-v18.js
+          ! grep -q "reply:STATIC_CANNED" src/strict-output-v18.js
           grep -q 'olivia-fechada-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-falando-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-aberta-v16.jpg' src/strict-output-v16.js
-          echo 'V17 SOURCE PASS — behavior only, frozen V16 visuals intact'
+          echo 'V18 SOURCE PASS — V16 visual engine byte-frozen; behavior-only recovery active'
 
-      - name: Multi-turn context QA with fake AI
+      - name: V18 primary multi-turn context QA — fake AI
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v17.js';
+          import worker from './src/strict-output-v18.js';
           const captures=[];
           const env={AI:{async run(model,input){
             captures.push(structuredClone(input.messages));
             const last=[...input.messages].reverse().find(x=>x.role==='user')?.content||'';
             return {response:/te amo mucho/i.test(last)
               ?'Gracias por decírmelo. Me alegra hablar contigo. ¿Cómo estás hoy?'
-              :'¡Hola! Me alegra verte. ¿Cómo estás hoy?'};
+              :'¡Hola! Estoy muy bien. ¿Cómo estás tú?'};
           }}};
-
           const req1=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',message:'Hola',level:'A1',history:[]})});
           const res1=await worker.fetch(req1,env,{}); const j1=await res1.json();
-          if(!res1.ok||!j1.reply)throw new Error('turn1 failed '+JSON.stringify(j1));
+          if(!res1.ok||!j1.reply||j1.fallback!==false)throw new Error('turn1 failed '+JSON.stringify(j1));
 
           const req2=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',message:'Te amo mucho',level:'A1',messages:[{role:'user',content:'Hola'},{role:'assistant',content:j1.reply}]})});
           const res2=await worker.fetch(req2,env,{}); const j2=await res2.json();
           if(!res2.ok||!j2.reply||j2.reply===j1.reply||j2.static_fallback!==false)throw new Error('turn2 failed '+JSON.stringify(j2));
-
           const sent=captures.at(-1)||[];
-          for(const expected of [
-            ['user','Hola'],
-            ['assistant',j1.reply],
-            ['user','Te amo mucho']
-          ]){
+          for(const expected of [['user','Hola'],['assistant',j1.reply],['user','Te amo mucho']]){
             if(!sent.some(x=>x.role===expected[0]&&x.content===expected[1]))throw new Error('missing context '+JSON.stringify(expected));
           }
-          console.log('V17 MULTI-TURN PASS — full context reaches model and replies vary by input');
+          console.log('V18 PRIMARY PASS — full context reaches model and replies vary by input');
           NODE
 
-      - name: Quota-safe mock boundary — zero Workers AI calls
+      - name: V18 quota failover QA — fake public provider
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v17.js';
+          import worker from './src/strict-output-v18.js';
+          const originalFetch=globalThis.fetch;
+          let publicCalls=0;
+          globalThis.fetch=async (url,options={})=>{
+            const target=String(url);
+            if(target==='https://text.pollinations.ai/openai'){
+              publicCalls++;
+              const body=JSON.parse(String(options.body||'{}'));
+              const history=body.messages||[];
+              if(!history.some(x=>x.role==='user'&&x.content==='Hola'))throw new Error('public provider lost prior turn');
+              if(!history.some(x=>x.role==='user'&&x.content==='¿Qué haces hoy?'))throw new Error('public provider lost current turn');
+              return Response.json({choices:[{message:{content:'Hoy hablo contigo y te ayudo con español. ¿Qué quieres practicar?'}}]},{status:200});
+            }
+            throw new Error('Unexpected public URL '+target);
+          };
+          try{
+            const env={AI:{async run(){throw new Error('4006 daily free allocation used up your neurons')}}};
+            const req=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',level:'A1',message:'¿Qué haces hoy?',history:[{role:'user',content:'Hola'},{role:'assistant',content:'¡Hola! ¿Cómo estás?'}]})});
+            const res=await worker.fetch(req,env,{}); const json=await res.json();
+            if(!res.ok||!json.reply||json.fallback!==true||json.provider!=='pollinations-openai'||json.cloudflare_quota!==true)throw new Error('quota failover failed '+JSON.stringify(json));
+            if(publicCalls!==1)throw new Error('expected one public call, got '+publicCalls);
+            console.log('V18 QUOTA FAILOVER PASS — contextual reply survives Workers AI exhaustion');
+          }finally{globalThis.fetch=originalFetch;}
+          NODE
+
+      - name: Quota-safe mock boundary — zero AI/provider calls
+        run: |
+          node --input-type=module <<'NODE'
+          import worker from './src/strict-output-v18.js';
           const env=new Proxy({}, {get(){throw new Error('QA tried to touch production env/AI')}});
           for(const path of ['/tts','/chat','/stt']){
             const req=new Request('https://qa.local'+path,{method:'POST',headers:{'Content-Type':'application/json','X-FNS-QA-Mock':'1'},body:JSON.stringify({teacher:'Olivia',text:'Hola'})});
             const res=await worker.fetch(req,env,{});
             if(!res.ok||res.headers.get('X-FNS-QA-Mock')!=='1')throw new Error(path+' escaped QA mock boundary');
           }
-          console.log('LOCAL MOCK PASS — 0 Workers AI calls');
+          console.log('LOCAL MOCK PASS — 0 Workers AI/public-provider calls');
           NODE
 
       - name: Turbine registry unchanged
@@ -121,7 +147,7 @@ jobs:
           NODE
 
       - name: Bundle gate only
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v17-gate
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v18-gate
 
       - name: Final gate
-        run: echo 'OLIVIA V17 DYNAMIC CHAT GATE PASS — V16 visual frozen and untouched'
+        run: echo 'OLIVIA V18 END-TO-END SOURCE GATE PASS — V16 visuals frozen, V17 context retained, quota failover active'
