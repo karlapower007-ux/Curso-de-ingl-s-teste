@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 3,
-  "factory": "FNS Avatar Factory V15",
+  "schemaVersion": 4,
+  "factory": "FNS Avatar Factory V16",
   "defaultAvatar": "olivia",
   "avatars": {
     "olivia": {
@@ -14,9 +14,9 @@
       "voiceTurbine": "K",
       "availableTurbines": ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"],
       "images": {
-        "closed": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-fechada.png",
-        "talking": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-falando.png",
-        "open": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-aberta.png"
+        "closed": "/assets/olivia-fechada-v15.jpg",
+        "talking": "/assets/olivia-falando-v15.jpg",
+        "open": "/assets/olivia-aberta-v15.jpg"
       },
       "thresholds": {
         "talking": 0.15,

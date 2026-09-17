@@ -9,180 +9,57 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Olivia — FNS Avatar V15</title>
-
-  <script>
-    // FNS OLIVIA V15 CACHE KILLER — isolated route only.
-    (() => {
-      const marker = 'fns-olivia-v15-cache-killed';
-      const cleanOnce = async () => {
-        let changed = false;
-        try {
-          if ('serviceWorker' in navigator) {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (registrations.length) changed = true;
-            await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
-          }
-          if ('caches' in window) {
-            const keys = await caches.keys();
-            if (keys.length) changed = true;
-            await Promise.all(keys.map((key) => caches.delete(key).catch(() => false)));
-          }
-        } catch (_) {}
-
-        let already = false;
-        try { already = sessionStorage.getItem(marker) === '1'; } catch (_) {}
-        if (!already) {
-          try { sessionStorage.setItem(marker, '1'); } catch (_) {}
-          if (changed && !new URL(location.href).searchParams.has('nocache')) {
-            const next = new URL(location.href);
-            next.searchParams.set('nocache', '1');
-            next.searchParams.set('v', '15');
-            location.replace(next.toString());
-          }
-        }
-      };
-      void cleanOnce();
-    })();
-  </script>
-
-  <link rel="preload" as="image" href="https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-fechada.png">
-
+  <title>Olivia — FNS Avatar V16</title>
+  <link rel="preload" as="image" href="/assets/olivia-fechada-v15.jpg?v=16">
+  <link rel="preload" as="image" href="/assets/olivia-falando-v15.jpg?v=16">
+  <link rel="preload" as="image" href="/assets/olivia-aberta-v15.jpg?v=16">
   <style>
-    /* FNS OLIVIA V15 — all layout CSS inline; no external stylesheet dependency. */
     :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:dark;background:#0d1117;color:#f6f8fa}
     *{box-sizing:border-box}
-    html,body{width:100%;height:100%;margin:0;padding:0;background:#0d1117;overflow:hidden}
+    html,body{width:100%;height:100%;margin:0;background:#0d1117;overflow:hidden}
     button,input,select{font:inherit}
-    body{min-height:100vh}
     #root{display:flex;width:100vw;height:100vh;overflow:hidden;background:#0d1117}
-
-    #avatar-stage{flex:1 1 50%;min-width:0;height:100%;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;border-right:1px solid rgba(255,255,255,.08);background-color:#000;background-image:url('https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-fechada.png'),url('https://fns-stt.karlapower007.workers.dev/assets/olivia-fechada.png');background-position:center center,center center;background-size:contain,contain;background-repeat:no-repeat,no-repeat}
-    #avatar-stage::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 38%,rgba(31,48,84,.20),transparent 56%);pointer-events:none;z-index:1}
-    #olivia-avatar-img{position:relative;z-index:2;display:block!important;width:min(78%,720px)!important;height:auto!important;max-width:94%!important;max-height:94%!important;min-width:280px;object-fit:contain!important;object-position:center center!important;visibility:visible!important;opacity:1!important;transform:none!important;filter:none!important;user-select:none;-webkit-user-drag:none}
-    .avatar-badge{position:absolute;z-index:4;left:22px;top:22px;display:flex;flex-direction:column;gap:2px;padding:11px 14px;border-radius:16px;background:rgba(10,13,18,.76);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(12px);box-shadow:0 12px 34px rgba(0,0,0,.24)}
+    #avatar-stage{flex:1 1 50%;min-width:0;height:100%;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;border-right:1px solid rgba(255,255,255,.08);background:#090d14}
+    #avatar-stage::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 38%,rgba(31,48,84,.24),transparent 58%);pointer-events:none;z-index:1}
+    #olivia-avatar-img{position:relative;z-index:2;display:block!important;width:min(72%,560px)!important;height:auto!important;max-width:92%!important;max-height:92%!important;min-width:280px;object-fit:contain!important;object-position:center!important;visibility:visible!important;opacity:1!important;transform:none!important;filter:none!important;user-select:none;-webkit-user-drag:none}
+    .avatar-badge{position:absolute;z-index:4;left:22px;top:22px;display:flex;flex-direction:column;gap:2px;padding:11px 14px;border-radius:16px;background:rgba(10,13,18,.78);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(12px)}
     .avatar-badge strong{font-size:18px}.avatar-badge span{font-size:13px;opacity:.72}
-    .avatar-mode{position:absolute;z-index:4;left:22px;bottom:22px;padding:8px 11px;border-radius:999px;background:rgba(10,13,18,.76);border:1px solid rgba(255,255,255,.1);font-size:12px;opacity:.9}
-
+    .avatar-mode{position:absolute;z-index:4;left:22px;bottom:22px;padding:8px 11px;border-radius:999px;background:rgba(10,13,18,.78);border:1px solid rgba(255,255,255,.1);font-size:12px}
     #interaction-panel{flex:1 1 50%;min-width:0;height:100%;display:flex;flex-direction:column;padding:24px;background:#161b22;overflow:hidden}
     .interaction-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:2px 2px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
     .interaction-header>div{display:flex;flex-direction:column;gap:3px}.interaction-header strong{font-size:20px}.interaction-header span{font-size:13px;opacity:.72}
-    .v15-pill{padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:#0d1117;opacity:1!important;font-weight:700;letter-spacing:.02em}
-    #chat-history{flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px 2px 16px;display:flex;flex-direction:column;gap:12px;scrollbar-width:thin}
+    .v16-pill{padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:#0d1117;font-weight:700}
+    #chat-history{flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px 2px 16px;display:flex;flex-direction:column;gap:12px}
     .chat-empty{margin:auto;text-align:center;max-width:360px;color:#8b949e;line-height:1.5}
-    .chat-message{max-width:82%;padding:12px 14px;border-radius:16px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 8px 20px rgba(0,0,0,.12)}
-    .chat-message.user{align-self:flex-end;background:#1f6feb;color:white;border-bottom-right-radius:6px}
-    .chat-message.assistant{align-self:flex-start;background:#21262d;border:1px solid rgba(255,255,255,.08);border-bottom-left-radius:6px}
-    .chat-message .chat-role{display:block;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;opacity:.68;margin-bottom:5px}
-    .status-line{min-height:22px;padding:0 2px 10px;color:#8b949e;font-size:13px;line-height:1.35}
+    .chat-message{max-width:82%;padding:12px 14px;border-radius:16px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}.chat-message.user{align-self:flex-end;background:#1f6feb}.chat-message.assistant{align-self:flex-start;background:#21262d;border:1px solid rgba(255,255,255,.08)}.chat-message .chat-role{display:block;font-size:11px;font-weight:800;text-transform:uppercase;opacity:.68;margin-bottom:5px}
+    .status-line{min-height:22px;padding:0 2px 10px;color:#8b949e;font-size:13px}
     #controls-bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)}
     #controls-bar input,#controls-bar select,.control-btn{min-height:48px;border-radius:13px;border:1px solid rgba(255,255,255,.12);background:#0d1117;color:#f6f8fa}
-    #controls-bar input{flex:1 1 auto;min-width:90px;padding:0 14px;outline:none}#controls-bar input:focus{border-color:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.12)}
-    #controls-bar select{flex:0 0 78px;padding:0 10px;cursor:pointer}
-    .control-btn{flex:0 0 auto;padding:0 14px;cursor:pointer;font-weight:750;white-space:nowrap}.control-btn:hover:not(:disabled){background:#21262d}.control-btn:disabled{opacity:.42;cursor:not-allowed}
-    .audio-btn{min-width:106px}.send-btn{min-width:88px;background:#238636;border-color:#2ea043}.send-btn:hover:not(:disabled){background:#2ea043}
-    #root #avatar-stage #olivia-avatar-img{inset:auto!important;margin:0!important;clip:auto!important;clip-path:none!important;border-radius:0!important}
-
-    @media(max-width:900px){
-      #root{flex-direction:column;overflow:auto}
-      #avatar-stage{flex:0 0 52vh;width:100%;height:52vh;border-right:0;border-bottom:1px solid rgba(255,255,255,.08)}
-      #olivia-avatar-img{width:min(84%,640px)!important;min-width:220px;max-width:96%!important;max-height:96%!important}
-      #interaction-panel{flex:1 0 auto;width:100%;min-height:48vh;height:auto;padding:16px}
-      #controls-bar{display:grid;grid-template-columns:1fr 1fr 84px;gap:9px}
-      #textInput{grid-column:1/-1;grid-row:1}
-      #micBtn{grid-column:1}.audio-btn{min-width:0}
-      #replayBtn{grid-column:2}
-      #voiceTurbine{grid-column:3;grid-row:2;width:100%}
-      #sendBtn{grid-column:1/-1;grid-row:3}
-    }
-    @media(max-width:520px){.avatar-badge{left:12px;top:12px}.avatar-mode{left:12px;bottom:12px}.interaction-header{padding-bottom:12px}.chat-message{max-width:92%}}
+    #controls-bar input{flex:1 1 auto;min-width:90px;padding:0 14px;outline:none}#controls-bar select{flex:0 0 78px;padding:0 10px}.control-btn{padding:0 14px;font-weight:750}.control-btn:disabled{opacity:.42}.audio-btn{min-width:106px}.send-btn{min-width:88px;background:#238636;border-color:#2ea043}
+    @media(max-width:900px){#root{flex-direction:column;overflow:auto}#avatar-stage{flex:0 0 52vh;width:100%;height:52vh;border-right:0;border-bottom:1px solid rgba(255,255,255,.08)}#olivia-avatar-img{width:min(82%,500px)!important;min-width:220px;max-width:94%!important;max-height:94%!important}#interaction-panel{flex:1 0 auto;width:100%;min-height:48vh;height:auto;padding:16px}#controls-bar{display:grid;grid-template-columns:1fr 1fr 84px;gap:9px}#textInput{grid-column:1/-1}#voiceTurbine{width:100%}#sendBtn{grid-column:1/-1}}
   </style>
 </head>
 <body class="notranslate" translate="no">
-  <!-- Legacy CI compatibility marker only: data-fns-avatar-root="isolated-v12" -->
-  <div id="root" class="notranslate" translate="no" data-fns-avatar-root="isolated-v14" data-fns-ui-version="v15-spanish-avatar-fix">
+  <div id="root" class="notranslate" translate="no" data-fns-avatar-root="isolated-v14" data-fns-ui-version="v16-clean-avatar">
     <section id="avatar-stage" aria-label="Palco visual de Olivia">
-      <div class="avatar-badge notranslate" translate="no">
-        <strong id="avatar-name">Olivia</strong>
-        <span id="avatar-subtitle">Profesora de español</span>
-      </div>
-      <img id="olivia-avatar-img" src="https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-fechada.png" alt="Olivia" draggable="false" decoding="sync" fetchpriority="high" referrerpolicy="no-referrer">
-      <div id="avatar-mode" class="avatar-mode notranslate" translate="no" aria-live="polite">Lista</div>
+      <div class="avatar-badge"><strong id="avatar-name">Olivia</strong><span id="avatar-subtitle">Profesora de español</span></div>
+      <img id="olivia-avatar-img" src="/assets/olivia-fechada-v15.jpg?v=16" alt="Olivia" draggable="false" decoding="sync" fetchpriority="high">
+      <div id="avatar-mode" class="avatar-mode" aria-live="polite">Lista</div>
     </section>
-
     <section id="interaction-panel" aria-label="Chat y controles de Olivia">
-      <header class="interaction-header notranslate" translate="no">
-        <div>
-          <strong id="panel-title">Olivia</strong>
-          <span id="panel-language">Español · A1</span>
-        </div>
-        <span class="v15-pill">FNS V15</span>
-      </header>
-
-      <div id="chat-history" class="notranslate" translate="no" aria-live="polite">
-        <div id="chat-empty" class="chat-empty">Habla o escribe para comenzar la conversación. La interfaz y el avatar permanecen activos aunque la voz en la nube no esté disponible.</div>
-      </div>
-
-      <div id="status" class="status-line notranslate" translate="no" role="status">Cargando Olivia…</div>
-
-      <form id="controls-bar" class="notranslate" translate="no" autocomplete="off">
-        <button id="micBtn" class="control-btn audio-btn" type="button" title="Iniciar o detener micrófono">🎙️ <span>Hablar</span></button>
-        <button id="replayBtn" class="control-btn audio-btn" type="button" title="Repetir la última respuesta" disabled>🔊 <span>Repetir</span></button>
+      <header class="interaction-header"><div><strong id="panel-title">Olivia</strong><span id="panel-language">Español · A1</span></div><span class="v16-pill">FNS V16</span></header>
+      <div id="chat-history" aria-live="polite"><div id="chat-empty" class="chat-empty">Habla o escribe para comenzar la conversación. Olivia permanece visible aunque la voz en la nube no esté disponible.</div></div>
+      <div id="status" class="status-line" role="status">Cargando Olivia…</div>
+      <form id="controls-bar" autocomplete="off">
+        <button id="micBtn" class="control-btn audio-btn" type="button">🎙️ <span>Hablar</span></button>
+        <button id="replayBtn" class="control-btn audio-btn" type="button" disabled>🔊 <span>Repetir</span></button>
         <input id="textInput" type="text" inputmode="text" placeholder="Escribe en español…" aria-label="Mensaje">
         <select id="voiceTurbine" aria-label="Turbina de voz"></select>
         <button id="sendBtn" class="control-btn send-btn" type="submit">Enviar</button>
       </form>
     </section>
   </div>
-
   <script>window.__FNS_AVATAR_BOOTSTRAP__ = null;</script>
-  <script>
-    // V15 front-door lock: Olivia can never inherit Emma/English settings.
-    (() => {
-      const RAW_BASE = 'https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/';
-      const WORKER_BASE = 'https://fns-stt.karlapower007.workers.dev/assets/';
-      const bootstrap = window.__FNS_AVATAR_BOOTSTRAP__;
-      if (bootstrap && String(bootstrap.slug || '').toLowerCase() === 'olivia') {
-        bootstrap.config = {
-          ...(bootstrap.config || {}),
-          name: 'Olivia',
-          teacher: 'Olivia',
-          language: 'es-ES',
-          languageLabel: 'Español',
-          sttLanguage: 'es-ES',
-          level: 'A1',
-          accent: 'Español neutral',
-          images: {
-            closed: RAW_BASE + 'olivia-fechada.png',
-            talking: RAW_BASE + 'olivia-falando.png',
-            open: RAW_BASE + 'olivia-aberta.png'
-          },
-          systemPrompt: "CRITICAL RULE: You are Olivia, the Spanish teacher. Reply exclusively in Spanish (es-ES). Never inherit Emma's English profile. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
-          ui: {
-            ...(bootstrap.config?.ui || {}),
-            title: 'Olivia',
-            subtitle: 'Profesora de español',
-            placeholder: 'Escribe en español…',
-            startListening: 'Hablar',
-            stopListening: 'Detener'
-          }
-        };
-      }
-
-      const img = document.getElementById('olivia-avatar-img');
-      if (img) {
-        const sources = [RAW_BASE + 'olivia-fechada.png', WORKER_BASE + 'olivia-fechada.png'];
-        let index = 0;
-        img.onerror = () => {
-          index += 1;
-          if (index < sources.length) img.src = sources[index] + '?v=v15-fallback-' + Date.now();
-        };
-        img.style.display = 'block';
-        img.style.visibility = 'visible';
-        img.style.opacity = '1';
-      }
-    })();
-  </script>
-  <script src="/avatar-core.js?v=v15-20260917" defer></script>
+  <script src="/avatar-core.js?v=v16-20260917" defer></script>
 </body>
 </html>
