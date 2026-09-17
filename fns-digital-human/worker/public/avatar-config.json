@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "factory": "FNS Avatar Factory V14",
+  "schemaVersion": 3,
+  "factory": "FNS Avatar Factory V15",
   "defaultAvatar": "olivia",
   "avatars": {
     "olivia": {
@@ -14,15 +14,15 @@
       "voiceTurbine": "K",
       "availableTurbines": ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"],
       "images": {
-        "closed": "https://fns-stt.karlapower007.workers.dev/assets/olivia-fechada.png",
-        "talking": "https://fns-stt.karlapower007.workers.dev/assets/olivia-falando.png",
-        "open": "https://fns-stt.karlapower007.workers.dev/assets/olivia-aberta.png"
+        "closed": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-fechada.png",
+        "talking": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-falando.png",
+        "open": "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/olivia-aberta.png"
       },
       "thresholds": {
         "talking": 0.15,
         "open": 0.60
       },
-      "systemPrompt": "CRITICAL RULE: You are Olivia. Reply exclusively in Spanish. Keep the conversation natural, clear and suitable for the learner's CEFR level. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
+      "systemPrompt": "CRITICAL RULE: You are Olivia, the Spanish teacher. Reply exclusively in Spanish (es-ES). Keep the conversation natural, clear and suitable for the learner's CEFR level. Never inherit Emma's English profile. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
       "ui": {
         "title": "Olivia",
         "subtitle": "Profesora de español",
