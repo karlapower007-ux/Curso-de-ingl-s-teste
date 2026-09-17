@@ -1,0 +1,16 @@
+/* FNS OLIVIA V7 — body-level avatar portal. The avatar is never a child of #app or the room panels. */
+.olivia-v7-modal{display:flex!important;visibility:visible!important;opacity:1!important}
+.olivia-v7-room{position:relative!important;display:block!important;visibility:visible!important;opacity:1!important}
+.olivia-v7-stage{position:relative!important;display:block!important;min-height:520px!important;overflow:hidden!important;background:linear-gradient(180deg,#17264d,#0a1021)!important;border:1px solid #ffffff18!important;isolation:isolate!important}
+.olivia-v7-anchor{position:absolute!important;inset:0!important;display:block!important;pointer-events:none!important;visibility:hidden!important}
+#oliviaAvatarPortalV7{position:fixed!important;display:block!important;visibility:visible!important;opacity:1!important;overflow:hidden!important;z-index:2147482000!important;background:#0a1020!important;border-radius:18px!important;pointer-events:none!important;transform:none!important;filter:none!important;clip-path:none!important;mask:none!important;-webkit-mask:none!important;contain:layout paint style!important}
+#oliviaAvatarPortalV7 .olivia-avatar-image-v7{position:absolute!important;inset:0!important;display:block!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center center!important;visibility:visible!important;opacity:1!important;z-index:2!important;transform:none!important;filter:none!important;clip-path:none!important;mask:none!important;-webkit-mask:none!important;mix-blend-mode:normal!important;image-rendering:auto!important;user-select:none!important;-webkit-user-drag:none!important}
+#oliviaAvatarPortalV7 .olivia-live-badge-v7{position:absolute!important;top:14px!important;left:14px!important;display:block!important;visibility:visible!important;opacity:1!important;z-index:4!important;font-size:11px!important;font-weight:800!important;letter-spacing:.08em!important;padding:7px 9px!important;border-radius:999px!important;background:#090d18d9!important;border:1px solid #ffffff24!important;backdrop-filter:blur(8px)!important}
+#oliviaAvatarPortalV7 .olivia-portal-label-v7{position:absolute!important;left:16px!important;right:16px!important;bottom:14px!important;z-index:5!important;padding:10px 12px!important;border-radius:14px!important;background:#07101fdd!important;border:1px solid #ffffff18!important;backdrop-filter:blur(8px)!important;line-height:1.35!important;text-shadow:0 1px 2px #000!important}
+#oliviaAvatarPortalV7 .olivia-portal-label-v7 b{font-size:17px!important}
+#oliviaAvatarPortalV7 .olivia-portal-label-v7 span{font-size:11px!important;opacity:.86!important}
+.olivia-v7-modal #sttLangSel{min-width:195px}
+.olivia-v7-modal #voiceTurbineSel{min-width:275px;max-width:100%}
+.olivia-v7-modal #statusText{white-space:nowrap}
+.olivia-v7-voice-note{margin-top:6px}
+@media(max-width:820px){.olivia-v7-stage{min-height:420px!important}.olivia-v7-modal #voiceTurbineSel{min-width:0;width:100%}#oliviaAvatarPortalV7 .olivia-avatar-image-v7{object-fit:contain!important;object-position:center center!important}}
