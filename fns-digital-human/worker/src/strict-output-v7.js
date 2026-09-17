@@ -6,6 +6,7 @@ import v6Core from './strict-output-v6.js';
 // K-O: lossless/high-fidelity Aura-2 Spanish profiles (WAV/linear16).
 
 const OLIVIA_V7_GUARD='FNS-OLIVIA-V7-TURBINES-A-O';
+const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V11';
 const AURA_MODEL='@cf/deepgram/aura-2-es';
 
 const TURBINES=Object.freeze({
@@ -43,6 +44,10 @@ function isOlivia(body){
 function normalizeTurbine(value){
   const key=String(value||'K').trim().toUpperCase();
   return TURBINES[key]?key:'K';
+}
+
+function normalizeAvatarSlug(value){
+  return String(value||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48);
 }
 
 function sanitizeText(input){
@@ -141,12 +146,66 @@ async function oliviaV7Tts(request,env,ctx){
   }
 }
 
+async function assetFetch(env,requestUrl,requestHeaders){
+  if(!env?.ASSETS?.fetch)throw new Error('FNS_ASSETS_BINDING_UNAVAILABLE');
+  return env.ASSETS.fetch(new Request(requestUrl,{method:'GET',headers:requestHeaders}));
+}
+
+async function serveAvatarFactory(request,env,slug){
+  const originUrl=new URL(request.url);
+  const configUrl=new URL('/avatar-config.json',originUrl.origin);
+  const configResponse=await assetFetch(env,configUrl.toString(),request.headers);
+  if(!configResponse.ok){
+    return Response.json({ok:false,error:'Avatar config unavailable',guard:AVATAR_FACTORY_GUARD},{status:503,headers:{'Cache-Control':'no-store'}});
+  }
+
+  const catalog=await configResponse.json().catch(()=>null);
+  const config=catalog?.avatars?.[slug];
+  if(!config){
+    return Response.json({ok:false,error:'Avatar not configured',avatar:slug,guard:AVATAR_FACTORY_GUARD},{status:404,headers:{'Cache-Control':'no-store'}});
+  }
+
+  const templateUrl=new URL('/avatar.html',originUrl.origin);
+  const templateResponse=await assetFetch(env,templateUrl.toString(),request.headers);
+  if(!templateResponse.ok){
+    return Response.json({ok:false,error:'Avatar entry unavailable',guard:AVATAR_FACTORY_GUARD},{status:503,headers:{'Cache-Control':'no-store'}});
+  }
+
+  const bootstrap={
+    guard:AVATAR_FACTORY_GUARD,
+    schemaVersion:Number(catalog?.schemaVersion||1),
+    slug,
+    config
+  };
+  const bootstrapJson=JSON.stringify(bootstrap).replace(/</g,'\\u003c');
+  const template=await templateResponse.text();
+  const html=template.replace(
+    'window.__FNS_AVATAR_BOOTSTRAP__ = null;',
+    'window.__FNS_AVATAR_BOOTSTRAP__ = '+bootstrapJson+';'
+  );
+
+  const headers=new Headers(templateResponse.headers);
+  headers.set('Content-Type','text/html; charset=UTF-8');
+  headers.set('Cache-Control','no-store, no-cache, must-revalidate');
+  headers.set('X-FNS-Avatar-Route','isolated-v11-factory');
+  headers.set('X-FNS-Avatar',slug);
+  headers.set('X-FNS-Avatar-Guard',AVATAR_FACTORY_GUARD);
+  return new Response(html,{status:200,headers});
+}
+
 export default {
   async fetch(request,env,ctx){
     const url=new URL(request.url);
+
+    if(request.method==='GET'&&url.pathname==='/'){
+      const avatar=normalizeAvatarSlug(url.searchParams.get('avatar'));
+      if(avatar)return serveAvatarFactory(request,env,avatar);
+      if(env?.ASSETS?.fetch)return env.ASSETS.fetch(request);
+    }
+
     if(url.pathname==='/tts'&&request.method==='POST')return oliviaV7Tts(request,env,ctx);
     return v6Core.fetch(request,env,ctx);
   }
 };
 
-export {TURBINES,OLIVIA_V7_GUARD,normalizeTurbine};
+export {TURBINES,OLIVIA_V7_GUARD,AVATAR_FACTORY_GUARD,normalizeTurbine,normalizeAvatarSlug};

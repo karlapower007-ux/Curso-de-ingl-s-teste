@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "factory": "FNS Avatar Factory V11",
+  "defaultAvatar": "olivia",
+  "avatars": {
+    "olivia": {
+      "name": "Olivia",
+      "teacher": "Olivia",
+      "language": "es-ES",
+      "languageLabel": "Español",
+      "sttLanguage": "es-ES",
+      "level": "A1",
+      "accent": "Español neutral",
+      "voiceTurbine": "K",
+      "availableTurbines": ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"],
+      "images": {
+        "closed": "/assets/olivia-fechada.png",
+        "talking": "/assets/olivia-falando.png",
+        "open": "/assets/olivia-aberta.png"
+      },
+      "thresholds": {
+        "talking": 0.15,
+        "open": 0.60
+      },
+      "systemPrompt": "CRITICAL RULE: You are Olivia. Reply exclusively in Spanish. Keep the conversation natural, clear and suitable for the learner's CEFR level. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
+      "ui": {
+        "title": "Olivia",
+        "subtitle": "Profesora de español",
+        "placeholder": "Escribe en español…",
+        "startListening": "Hablar",
+        "stopListening": "Detener"
+      }
+    }
+  }
+}
