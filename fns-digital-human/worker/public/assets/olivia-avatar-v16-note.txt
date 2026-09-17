@@ -1,0 +1,1 @@
+Olivia visual avatar refreshed from the generated three-state set (closed/talking/open). Binary assets are committed through Git blobs; this marker exists only to document the visual refresh without touching Emma core.
