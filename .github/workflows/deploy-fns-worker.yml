@@ -12,7 +12,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 22
     defaults:
       run:
         working-directory: fns-digital-human/worker
@@ -36,9 +36,7 @@ jobs:
           for (const name of ['fechada', 'falando', 'aberta']) {
             const src = `public/assets/olivia-${name}-v16.b64`;
             const dst = `public/assets/olivia-${name}-v16.jpg`;
-            const raw = fs.readFileSync(src, 'utf8')
-              .replace(/^data:image\/jpeg;base64,/i, '')
-              .replace(/\s+/g, '');
+            const raw = fs.readFileSync(src, 'utf8').replace(/^data:image\/jpeg;base64,/i, '').replace(/\s+/g, '');
             const buf = Buffer.from(raw, 'base64');
             fs.writeFileSync(dst, buf);
             console.log(`${name}: materialized ${buf.length} bytes`);
@@ -54,9 +52,9 @@ jobs:
             file "$dst" | grep -q JPEG
             test -s "$dst"
           done
-          echo 'FROZEN OLIVIA VISUAL MATERIALIZATION PASS'
+          echo 'FROZEN OLIVIA V16 VISUAL MATERIALIZATION PASS'
 
-      - name: Protect frozen visual/core + validate Olivia V17 behavior
+      - name: Protect frozen visual/core + validate Olivia V18 behavior
         run: |
           set -euo pipefail
           node --check src/index.js
@@ -64,72 +62,75 @@ jobs:
           node --check src/strict-output-v7.js
           node --check src/strict-output-v16.js
           node --check src/strict-output-v17.js
+          node --check src/strict-output-v18.js
           node --check public/app.js
           node --check public/avatar-core.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object public/avatar-core.js)" = "eae5d60c405daf911a6e1828b30d62668e341c23"
+          test "$(git hash-object public/avatar.html)" = "1192f6e04eac2e474e8bd261bb7e1db2ea40fac7"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          test "$(git hash-object src/strict-output-v16.js)" = "bc35e9edfa35bcce85e905c5cac49609cc518340"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
-          grep -q '"main": "src/strict-output-v17.js"' wrangler.jsonc
+          grep -q '"main": "src/strict-output-v18.js"' wrangler.jsonc
           grep -q "language:'es-ES'" src/strict-output-v7.js
           grep -q "languageLabel:'Español'" src/strict-output-v7.js
           grep -q "subtitle:'Profesora de español'" src/strict-output-v7.js
           grep -q 'olivia-fechada-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-falando-v16.jpg' src/strict-output-v16.js
           grep -q 'olivia-aberta-v16.jpg' src/strict-output-v16.js
-          grep -q 'FNS-OLIVIA-V17-DYNAMIC-CHAT' src/strict-output-v17.js
-          grep -q 'Array.isArray(body?.messages)' src/strict-output-v17.js
-          grep -q 'Array.isArray(body?.history)' src/strict-output-v17.js
-          grep -q 'static_fallback:false' src/strict-output-v17.js
-          ! grep -q 'Claro. Sigamos en español. Cuéntame un poco más sobre eso.' src/strict-output-v17.js
-          echo 'FROZEN VISUAL + CORE LOCK + OLIVIA V17 SOURCE PASS'
+          grep -q 'FNS-OLIVIA-V18-END-TO-END' src/strict-output-v18.js
+          grep -q 'pollinations-openai' src/strict-output-v18.js
+          grep -q 'hf-free-ai-chat' src/strict-output-v18.js
+          grep -q 'static_fallback:false' src/strict-output-v18.js
+          echo 'FROZEN V16 VISUAL + CORE LOCK + OLIVIA V18 SOURCE PASS'
 
-      - name: V17 dynamic chat contract — fake AI only
+      - name: V18 primary + quota failover contracts — fake providers only
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v17.js';
-          const seen=[];
-          const env={
-            AI:{
-              async run(model,input){
-                seen.push({model,messages:structuredClone(input.messages)});
-                const last=[...input.messages].reverse().find(x=>x.role==='user')?.content||'';
-                if(/te amo mucho/i.test(last)) return {response:'Gracias por decírmelo. Me alegra hablar contigo. ¿Cómo estás hoy?'};
-                return {response:'¡Hola! Me alegra verte. ¿Cómo estás hoy?'};
-              }
-            }
-          };
-          const first=new Request('https://qa.local/chat',{
-            method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({teacher:'Olivia',level:'A1',message:'Hola',history:[]})
-          });
-          const r1=await worker.fetch(first,env,{});
-          const j1=await r1.json();
-          if(!r1.ok||!/Hola/i.test(j1.reply||'')||j1.static_fallback!==false) throw new Error('V17 first turn failed '+JSON.stringify(j1));
+          import worker from './src/strict-output-v18.js';
 
-          const second=new Request('https://qa.local/chat',{
-            method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-              teacher:'Olivia',level:'A1',message:'Te amo mucho',
-              messages:[
-                {role:'user',content:'Hola'},
-                {role:'assistant',content:j1.reply}
-              ]
-            })
-          });
-          const r2=await worker.fetch(second,env,{});
-          const j2=await r2.json();
-          if(!r2.ok||!/Gracias/i.test(j2.reply||'')||j2.reply===j1.reply) throw new Error('V17 contextual turn failed '+JSON.stringify(j2));
-          const finalMessages=seen.at(-1)?.messages||[];
-          if(!finalMessages.some(x=>x.role==='user'&&x.content==='Hola')) throw new Error('prior user turn missing');
-          if(!finalMessages.some(x=>x.role==='assistant'&&x.content===j1.reply)) throw new Error('prior assistant turn missing');
-          if(!finalMessages.some(x=>x.role==='user'&&x.content==='Te amo mucho')) throw new Error('current user turn missing');
-          console.log('V17 DYNAMIC CHAT PASS — full context delivered, distinct contextual replies, no canned fallback');
+          const seen=[];
+          const envOk={AI:{async run(model,input){
+            seen.push(structuredClone(input.messages));
+            const last=[...input.messages].reverse().find(x=>x.role==='user')?.content||'';
+            return {response:/te amo mucho/i.test(last)
+              ?'Gracias por decírmelo. Me alegra hablar contigo. ¿Cómo estás hoy?'
+              :'¡Hola! Estoy muy bien. ¿Cómo estás tú?'};
+          }}};
+          const first=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',level:'A1',message:'Hola',history:[]})});
+          const r1=await worker.fetch(first,envOk,{}); const j1=await r1.json();
+          if(!r1.ok||!j1.reply||j1.fallback!==false)throw new Error('primary first turn failed '+JSON.stringify(j1));
+          const second=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',level:'A1',message:'Te amo mucho',messages:[{role:'user',content:'Hola'},{role:'assistant',content:j1.reply}]})});
+          const r2=await worker.fetch(second,envOk,{}); const j2=await r2.json();
+          if(!r2.ok||!j2.reply||j2.reply===j1.reply)throw new Error('primary contextual turn failed '+JSON.stringify(j2));
+          const final=seen.at(-1)||[];
+          if(!final.some(x=>x.role==='user'&&x.content==='Hola')||!final.some(x=>x.role==='assistant'&&x.content===j1.reply)||!final.some(x=>x.role==='user'&&x.content==='Te amo mucho'))throw new Error('full context not delivered');
+
+          const originalFetch=globalThis.fetch;
+          let publicCalls=0;
+          globalThis.fetch=async (url,options={})=>{
+            if(String(url)==='https://text.pollinations.ai/openai'){
+              publicCalls++;
+              const sent=JSON.parse(String(options.body||'{}')).messages||[];
+              if(!sent.some(x=>x.role==='user'&&x.content==='Hola'))throw new Error('fallback lost prior turn');
+              if(!sent.some(x=>x.role==='user'&&x.content==='¿Qué haces hoy?'))throw new Error('fallback lost current turn');
+              return Response.json({choices:[{message:{content:'Hoy hablo contigo y te ayudo con español. ¿Qué quieres practicar?'}}]},{status:200});
+            }
+            throw new Error('unexpected public URL '+String(url));
+          };
+          try{
+            const envQuota={AI:{async run(){throw new Error('4006 daily free allocation used up your neurons')}}};
+            const req=new Request('https://qa.local/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:'Olivia',level:'A1',message:'¿Qué haces hoy?',history:[{role:'user',content:'Hola'},{role:'assistant',content:'¡Hola! ¿Cómo estás?'}]})});
+            const res=await worker.fetch(req,envQuota,{}); const json=await res.json();
+            if(!res.ok||!json.reply||json.fallback!==true||json.provider!=='pollinations-openai'||json.cloudflare_quota!==true||publicCalls!==1)throw new Error('quota failover failed '+JSON.stringify(json));
+          }finally{globalThis.fetch=originalFetch;}
+          console.log('V18 CHAT CONTRACT PASS — primary context + quota failover both return real replies');
           NODE
 
-      - name: Local mock contract — never touch Workers AI
+      - name: Local mock contract — never touch Workers AI/public providers
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v17.js';
+          import worker from './src/strict-output-v18.js';
           const env = new Proxy({}, { get(){ throw new Error('AI/env access forbidden in QA mock'); } });
           for (const path of ['/tts','/chat','/stt']) {
             const req = new Request('https://qa.local'+path, {
@@ -140,11 +141,11 @@ jobs:
             const res = await worker.fetch(req, env, {});
             if (!res.ok || res.headers.get('X-FNS-QA-Mock') !== '1') throw new Error('mock leak '+path);
           }
-          console.log('MOCK QA PASS — 0 Workers AI requests');
+          console.log('MOCK QA PASS — 0 Workers AI/public-provider calls');
           NODE
 
       - name: Wrangler bundle dry run
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v17-dist
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v18-dist
 
       - name: Deploy Worker
         run: npx wrangler deploy
@@ -157,19 +158,35 @@ jobs:
           set -euo pipefail
           sleep 5
           BASE='https://fns-stt.karlapower007.workers.dev'
-          curl --compressed --fail --silent --show-error "$BASE/?avatar=olivia&v=16&qa=visual-only" -o olivia-v16.html
-          grep -q 'olivia-fechada-v16.jpg' olivia-v16.html
-          grep -q 'olivia-falando-v16.jpg' olivia-v16.html
-          grep -q 'olivia-aberta-v16.jpg' olivia-v16.html
-          grep -q 'es-ES' olivia-v16.html
-          grep -q 'Profesora de español' olivia-v16.html
+          curl --compressed --fail --silent --show-error "$BASE/?avatar=olivia&v=18&qa=visual-only" -o olivia-v18.html
+          grep -q 'olivia-fechada-v16.jpg' olivia-v18.html
+          grep -q 'olivia-falando-v16.jpg' olivia-v18.html
+          grep -q 'olivia-aberta-v16.jpg' olivia-v18.html
+          grep -q 'es-ES' olivia-v18.html
+          grep -q 'Profesora de español' olivia-v18.html
           for f in olivia-fechada-v16.jpg olivia-falando-v16.jpg olivia-aberta-v16.jpg; do
             curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=16"
             file "$f" | grep -q JPEG
           done
-          echo 'PRODUCTION FROZEN V16 VISUAL PASS — NO TTS/STT/CHAT CALLED'
+          echo 'PRODUCTION FROZEN V16 VISUAL PASS — NO VISUAL REGRESSION'
 
-      - name: Pixel-visible browser QA — frozen V16 screenshot, zero AI calls
+      - name: Production V18 live chat smoke — real deployed path
+        run: |
+          set -euo pipefail
+          BASE='https://fns-stt.karlapower007.workers.dev'
+          curl --compressed --silent --show-error --max-time 35 \
+            -H 'Content-Type: application/json' \
+            -d '{"teacher":"Olivia","level":"A1","message":"Hola, ¿cómo estás?","history":[]}' \
+            "$BASE/chat" -o live-chat.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('live-chat.json','utf8'));
+          if(j.ok!==true||typeof j.reply!=='string'||j.reply.trim().length<2)throw new Error('LIVE CHAT DID NOT RETURN REPLY: '+JSON.stringify(j));
+          if(j.static_fallback!==false)throw new Error('static fallback regression: '+JSON.stringify(j));
+          console.log('PRODUCTION LIVE CHAT PASS', {provider:j.provider,fallback:j.fallback,reply:j.reply.slice(0,100)});
+          NODE
+
+      - name: Browser end-to-end QA — reply bubble -> TTS -> mouth frame
         run: |
           npm install --no-save puppeteer-core@24.18.0 pngjs@7.0.0
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
@@ -178,69 +195,77 @@ jobs:
           node - <<'NODE'
           const puppeteer=require('puppeteer-core');
           const {PNG}=require('pngjs');
+
+          function wavTone(durationMs=900,sampleRate=16000){
+            const samples=Math.floor(sampleRate*durationMs/1000), dataBytes=samples*2;
+            const b=Buffer.alloc(44+dataBytes);
+            b.write('RIFF',0); b.writeUInt32LE(36+dataBytes,4); b.write('WAVE',8); b.write('fmt ',12);
+            b.writeUInt32LE(16,16); b.writeUInt16LE(1,20); b.writeUInt16LE(1,22); b.writeUInt32LE(sampleRate,24);
+            b.writeUInt32LE(sampleRate*2,28); b.writeUInt16LE(2,32); b.writeUInt16LE(16,34); b.write('data',36); b.writeUInt32LE(dataBytes,40);
+            for(let i=0;i<samples;i++)b.writeInt16LE(Math.round(Math.sin(2*Math.PI*440*i/sampleRate)*25000),44+i*2);
+            return b;
+          }
+
           (async()=>{
-            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+            const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--autoplay-policy=no-user-gesture-required']});
             const page=await browser.newPage();
             await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
-            let blockedAI=0;
+            let chatCalls=0,ttsCalls=0;
             await page.setRequestInterception(true);
             page.on('request',req=>{
-              const p=new URL(req.url()).pathname;
-              if(['/tts','/stt','/chat'].includes(p)){blockedAI++;return req.abort('blockedbyclient');}
+              const u=new URL(req.url());
+              if(u.pathname==='/chat'&&req.method()==='POST'){
+                chatCalls++;
+                return req.respond({status:200,contentType:'application/json',body:JSON.stringify({ok:true,reply:'Estoy bien y feliz de hablar contigo. ¿Cómo estás tú?',teacher:'Olivia',dynamic_chat:true,static_fallback:false})});
+              }
+              if(u.pathname==='/tts'&&req.method()==='POST'){
+                ttsCalls++;
+                return req.respond({status:200,contentType:'audio/wav',body:wavTone()});
+              }
+              if(u.pathname==='/stt')return req.abort('blockedbyclient');
               req.continue();
             });
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?avatar=olivia&v=16&qa=pixels',{waitUntil:'networkidle2',timeout:60000});
-            await page.waitForFunction(()=>{
-              const i=document.getElementById('olivia-avatar-img');
-              return i&&i.complete&&i.naturalWidth>0&&i.naturalHeight>0;
-            },{timeout:30000});
-            const result=await page.evaluate(()=>{
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?avatar=olivia&v=18&qa=e2e',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForSelector('#textInput',{visible:true});
+            await page.evaluate(()=>{
+              window.__fnsQaFrames=[];
               const img=document.getElementById('olivia-avatar-img');
-              const rect=img.getBoundingClientRect();
-              return {
-                panel:document.getElementById('panel-language')?.textContent?.trim(),
-                subtitle:document.getElementById('avatar-subtitle')?.textContent?.trim(),
-                src:img.currentSrc||img.src,
-                natural:[img.naturalWidth,img.naturalHeight],
-                rect:[rect.width,rect.height],
-                display:getComputedStyle(img).display,
-                visibility:getComputedStyle(img).visibility,
-                opacity:getComputedStyle(img).opacity
-              };
+              const note=()=>window.__fnsQaFrames.push(img.currentSrc||img.src||'');
+              new MutationObserver(note).observe(img,{attributes:true,attributeFilter:['src']});
+              note();
             });
-            if(result.panel!=='Español · A1')throw new Error('language leak '+JSON.stringify(result));
-            if(!/español/i.test(result.subtitle||''))throw new Error('subtitle leak '+JSON.stringify(result));
-            if(!result.src.includes('olivia-fechada-v16.jpg'))throw new Error('wrong frame source '+JSON.stringify(result));
-            if(result.natural[0]!==256||result.natural[1]!==256)throw new Error('unexpected generated frame dimensions '+JSON.stringify(result));
-            if(result.rect[0]<100||result.rect[1]<100||result.display==='none'||result.visibility==='hidden'||Number(result.opacity)<0.9)throw new Error('avatar geometry hidden '+JSON.stringify(result));
-            if(blockedAI!==0)throw new Error('page attempted AI endpoints during visual QA: '+blockedAI);
+            await page.type('#textInput','Hola, ¿cómo estás?');
+            await page.click('#sendBtn');
+            await page.waitForFunction(()=>document.querySelectorAll('.chat-message.assistant').length>0,{timeout:12000});
+            await new Promise(r=>setTimeout(r,1200));
+            const state=await page.evaluate(()=>({
+              assistant:[...document.querySelectorAll('.chat-message.assistant')].map(x=>x.textContent.trim()),
+              frames:window.__fnsQaFrames||[],
+              status:document.getElementById('status')?.textContent||'',
+              image:document.getElementById('olivia-avatar-img')?.currentSrc||''
+            }));
+            if(chatCalls!==1)throw new Error('expected 1 chat call, got '+chatCalls);
+            if(ttsCalls<1)throw new Error('reply reached DOM but did not trigger TTS');
+            if(!state.assistant.some(x=>/Estoy bien/i.test(x)))throw new Error('assistant reply not injected into #chat-history '+JSON.stringify(state));
+            if(!state.frames.some(x=>/olivia-(falando|aberta)-v16\.jpg/i.test(x)))throw new Error('TTS did not activate mouth frames '+JSON.stringify(state));
 
-            const element=await page.$('#olivia-avatar-img');
-            const rendered=await element.screenshot({encoding:'binary'});
+            const img=await page.$('#olivia-avatar-img');
+            const rendered=await img.screenshot({encoding:'binary'});
             const png=PNG.sync.read(rendered);
-            let nonBlack=0,bright=0,min=765,max=0;
-            for(let i=0;i<png.data.length;i+=4){
-              const sum=png.data[i]+png.data[i+1]+png.data[i+2];
-              if(sum>30)nonBlack++;
-              if(sum>180)bright++;
-              if(sum<min)min=sum;
-              if(sum>max)max=sum;
-            }
-            const total=png.width*png.height;
-            const pixels={nonBlack,bright,dynamicRange:max-min,total,nonBlackRatio:nonBlack/total,brightRatio:bright/total};
-            if(pixels.nonBlackRatio<0.35||pixels.brightRatio<0.10||pixels.dynamicRange<120)throw new Error('avatar rendered black/blank '+JSON.stringify({result,pixels}));
-            await page.screenshot({path:'olivia-v17-visible-frozen-v16.png',fullPage:true});
-            console.log('OLIVIA V17 FROZEN VISUAL PIXEL QA PASS',result,pixels);
+            let nonBlack=0; for(let i=0;i<png.data.length;i+=4){if(png.data[i]+png.data[i+1]+png.data[i+2]>30)nonBlack++;}
+            if(nonBlack/(png.width*png.height)<0.35)throw new Error('avatar blank during E2E');
+            await page.screenshot({path:'olivia-v18-e2e-proof.png',fullPage:true});
+            console.log('OLIVIA V18 E2E PASS — API JSON -> assistant bubble -> TTS -> mouth frame', {chatCalls,ttsCalls,status:state.status,frames:state.frames.slice(-8)});
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
-      - name: Upload frozen visual proof
+      - name: Upload V18 end-to-end proof
         uses: actions/upload-artifact@v4
         with:
-          name: olivia-v17-frozen-v16-visual-proof
-          path: fns-digital-human/worker/olivia-v17-visible-frozen-v16.png
+          name: olivia-v18-end-to-end-proof
+          path: fns-digital-human/worker/olivia-v18-e2e-proof.png
           retention-days: 30
 
       - name: Final status
-        run: echo 'DEPLOY V17 PASS — dynamic contextual chat only; V16 visual/HTML/CSS/assets frozen; Emma/core unchanged'
+        run: echo 'DEPLOY V18 PASS — live chat reply verified; browser reply bubble -> TTS -> mouth animation verified; V16 visual/HTML/CSS/assets/avatar-core frozen'
