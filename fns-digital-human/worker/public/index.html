@@ -12,71 +12,71 @@
   <link rel="preload" as="image" href="/emma.jpg?v=valid4"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070b18"><title>Estudos Profundos FNS Idiomas</title><link rel="stylesheet" href="style.css?v=12"><link rel="stylesheet" href="natural-v2.css?v=2"><link rel="stylesheet" href="emma-static.css?v=18"></head><body>
 <header><div><b>FNS</b><span>ESTUDOS PROFUNDOS FNS IDIOMAS</span></div><nav><button data-view="home">Início</button><button data-view="course">Curso A1–C2</button><button data-view="live">Prática ao vivo</button><button data-view="cards">Flashcards</button><button data-view="library">Biblioteca</button><button data-view="progress">Progresso</button></nav></header>
 <main id="app"></main><script src="app.js?v=14"></script><script src="natural-state.js?v=2"></script><script src="natural-turns.js?v=2"></script><script src="emma-static.js?v=18"></script>
-<!-- FNS FIX DEFINITIVO: ESTÉTICA 3D + TRAVA ANTI-RISCO + CAÇA-FANTASMAS --> 
-<style id="fns-smile-proportions"> 
-    /* 1. GEOMETRIA 3D E CURVATURA NATURAL (O SORRISO) */ 
-    html body .human-avatar .avatar-mouth-motion { 
-        display: block !important; 
-        visibility: visible !important; 
-        opacity: 1 !important; 
+<!-- FNS FIX DEFINITIVO: INJEÇÃO INLINE A 60FPS (VENCE O CORE) -->
+<script>
+    (function() {
+        // 1. INJETA CSS SÓ PARA MATAR OS PSEUDO-ELEMENTOS (Risco duplo)
+        let styleTag = document.getElementById('fns-pseudo-killer');
+        if (!styleTag) {
+            styleTag = document.createElement('style');
+            styleTag.id = 'fns-pseudo-killer';
+            styleTag.innerHTML = `
+                html body .human-avatar .avatar-mouth-motion::after, 
+                html body .human-avatar .avatar-mouth-motion::before { 
+                    display: none !important; 
+                }
+            `;
+            document.head.appendChild(styleTag);
+        }
+
+        // 2. MOTOR DE SOBREPOSIÇÃO (ESMAGA O CORE)
+        function nukeCoreStyles() {
+            // Caça fantasmas residuais
+            const ghostStyle = document.getElementById('fns-override-v19');
+            if (ghostStyle) ghostStyle.remove();
+            const ghostMouth = document.getElementById('fns-nova-boca-v19');
+            if (ghostMouth) ghostMouth.remove();
+
+            const mouth = document.querySelector('.human-avatar .avatar-mouth-motion');
+            
+            if (mouth) {
+                // AQUI ESTÁ A LIÇÃO: Forçamos o estilo inline a cada frame
+                mouth.style.setProperty('display', 'block', 'important');
+                mouth.style.setProperty('visibility', 'visible', 'important');
+                mouth.style.setProperty('opacity', '1', 'important');
+                
+                // Medidas
+                mouth.style.setProperty('width', '12.8%', 'important');
+                mouth.style.setProperty('height', '12px', 'important');
+                mouth.style.setProperty('left', '50%', 'important');
+                mouth.style.setProperty('top', '58.1%', 'important');
+                
+                // Força o 3D absoluto por cima do background: none do core
+                mouth.style.setProperty('background', 'linear-gradient(180deg, #ffffff 0%, #e8e3dc 22%, #2b080d 45%, #9e334a 100%)', 'important');
+                mouth.style.setProperty('border-radius', '15% 15% 70% 70% / 30% 30% 90% 90%', 'important');
+                mouth.style.setProperty('box-shadow', 'inset 0px 4px 6px rgba(0, 0, 0, 0.6)', 'important');
+                mouth.style.setProperty('border', 'none', 'important');
+
+                // Mantém a trava anti-risco viva
+                if (mouth.style.transform) {
+                    if (mouth.style.transform.includes('scale(0)')) {
+                        mouth.style.transform = mouth.style.transform.replace('scale(0)', 'scale(1)');
+                    }
+                    const currentTransform = mouth.style.transform;
+                    mouth.style.transform = currentTransform
+                        .replace(/scaleY\([^)]+\)/, function(match) {
+                            const val = parseFloat(match.replace(/[^\d.]/g, ''));
+                            return 'scaleY(' + Math.max(0.40, val) + ')'; 
+                        })
+                        .replace(/scaleX\([^)]+\)/, 'scaleX(1.05)');
+                }
+            }
+            
+            // Roda infinitamente
+            requestAnimationFrame(nukeCoreStyles);
+        }
          
-        width: 12.8% !important; /* Encaixe anatômico perfeito no rosto */ 
-        height: 12px !important; /* Altura mínima para o efeito 3D não sumir */ 
-        left: 50% !important; 
-        top: 58.1% !important; 
-         
-        /* Dentes no topo, cavidade escura no meio, língua embaixo */ 
-        background: linear-gradient(180deg, #ffffff 0%, #e8e3dc 22%, #2b080d 45%, #9e334a 100%) !important; 
-         
-        /* Curva em U suave (cantos para cima, centro para baixo) */ 
-        border-radius: 15% 15% 70% 70% / 30% 30% 90% 90% !important; 
-         
-        /* Ilusão 3D de cavidade realística (sombra interna) */ 
-        box-shadow: inset 0px 4px 6px rgba(0, 0, 0, 0.6) !important; 
-        border: none !important; 
-    } 
- 
-    /* 2. ANIQUILA O RISCO DUPLO FEIO */ 
-    html body .human-avatar .avatar-mouth-motion::after, 
-    html body .human-avatar .avatar-mouth-motion::before { 
-        display: none !important; 
-    } 
-</style> 
- 
-<script> 
-    /* 3. MOTOR DE BLINDAGEM E TRAVA MATEMÁTICA */ 
-    (function() { 
-        function forceCorrectionAndCleanup() { 
-            // Garante que o lixo invisível da v19 continue morto 
-            const ghostStyle = document.getElementById('fns-override-v19'); 
-            if (ghostStyle) ghostStyle.remove(); 
-             
-            const ghostMouth = document.getElementById('fns-nova-boca-v19'); 
-            if (ghostMouth) ghostMouth.remove(); 
- 
-            // Intercepta e corrige a boca em tempo real a 60fps 
-            const mouth = document.querySelector('.human-avatar .avatar-mouth-motion'); 
-            if (mouth && mouth.style.transform) { 
-                // Ressuscita se o core tentar dar scale(0) 
-                if (mouth.style.transform.includes('scale(0)')) { 
-                    mouth.style.transform = mouth.style.transform.replace('scale(0)', 'scale(1)'); 
-                } 
- 
-                // TRAVA ANTI-RISCO: Proíbe o sistema de esmagar a altura para menos de 0.40 
-                const currentTransform = mouth.style.transform; 
-                mouth.style.transform = currentTransform 
-                    .replace(/scaleY\([^)]+\)/, function(match) { 
-                        const val = parseFloat(match.replace(/[^\d.]/g, '')); 
-                        return 'scaleY(' + Math.max(0.40, val) + ')';  
-                    }) 
-                    // Trava a proporção lateral para não deformar 
-                    .replace(/scaleX\([^)]+\)/, 'scaleX(1.05)');  
-            } 
-             
-            requestAnimationFrame(forceCorrectionAndCleanup); 
-        } 
-         
-        requestAnimationFrame(forceCorrectionAndCleanup); 
-    })(); 
-</script>  
+        requestAnimationFrame(nukeCoreStyles);
+    })();
+</script>
 </body></html>
