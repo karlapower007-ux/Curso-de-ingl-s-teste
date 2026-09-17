@@ -250,15 +250,22 @@ window.FNS_EMMA_VISUAL_RIG=true;
 
     scheduleBlink(){
       clearTimeout(this.blinkTimer);
+      const state=this.readState();
+      const baseDelay=state==='speaking'?2600:state==='listening'?3000:3400;
+      const spread=state==='speaking'?3000:3800;
       this.blinkTimer=setTimeout(async()=>{
         if(this.failed||!this.face?.isConnected)return;
-        this.setBlink(.82);await wait(58);
-        this.setBlink(1);await wait(52);
-        this.setBlink(.25);await wait(46);
+        this.setBlink(.68);await wait(48);
+        this.setBlink(1);await wait(46);
+        this.setBlink(.34);await wait(42);
         this.setBlink(0);
-        if(Math.random()<.16){await wait(120);this.setBlink(.78);await wait(52);this.setBlink(0)}
+        if(Math.random()<.07){
+          await wait(145);
+          this.setBlink(.62);await wait(44);
+          this.setBlink(0);
+        }
         this.scheduleBlink();
-      },2200+Math.random()*3800);
+      },baseDelay+Math.random()*spread);
     }
 
     scheduleGaze(){
@@ -266,11 +273,14 @@ window.FNS_EMMA_VISUAL_RIG=true;
       this.gazeTimer=setTimeout(()=>{
         if(this.failed||!this.face?.isConnected)return;
         const state=this.readState();
-        const span=state==='speaking'?.9:state==='listening'?1.0:state==='processing'?.65:.48;
-        this.face.style.setProperty('--gaze-x',(((Math.random()*2)-1)*span).toFixed(2)+'px');
-        this.face.style.setProperty('--gaze-y',(((Math.random()*2)-1)*span*.45).toFixed(2)+'px');
+        const span=state==='speaking'?.58:state==='listening'?.52:state==='processing'?.40:.30;
+        const x=((Math.random()*2)-1)*span;
+        const y=((Math.random()*2)-1)*span*.32;
+        this.face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
+        this.face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
+        this.face.style.setProperty('--cheek-lift',state==='speaking'?'1':'0');
         this.scheduleGaze();
-      },1200+Math.random()*2200);
+      },1750+Math.random()*2600);
     }
 
     useFallback(reason='fallback'){
@@ -322,6 +332,7 @@ window.FNS_EMMA_VISUAL_RIG=true;
       if(!ready){this.useFallback('portrait-load-failed');return}
       this.face.dataset.avatarReady='true';
       this.face.dataset.fnsRig='active';
+      this.face.dataset.expressionRig='natural-v12';
       this.face.style.setProperty('--gaze-x','0px');
       this.face.style.setProperty('--gaze-y','0px');
       this.setBlink(0);

@@ -240,13 +240,13 @@ jobs:
           if(!css.includes('top:60.0%;')) fail('Desktop mouth was not lowered');
           if(!css.includes('top:59.6%!important;')) fail('Mobile mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) fail('Maximum analyser mouth opening missing');
-          if(!css.includes("var(--mouth-open,0) * 4.95")) fail('Full CSS mouth opening missing');
-          if(!css.includes("scaleY(4.95)")) fail('Full simulated mouth fallback missing');
+          if(!css.includes("var(--mouth-open,0) * 1.55")) fail('Natural CSS mouth amplitude missing');
+          if(!css.includes("scaleY(1.75)")) fail('Natural simulated mouth fallback missing');
           if(!css.includes('.avatar-mouth-motion::before')) fail('Visible teeth layer missing');
           if(!css.includes('#fffefa')) fail('Teeth fill missing');
           if(!css.includes('Emma sharp portrait mode v2')) fail('Sharp portrait mode v2 missing');
           if(!css.includes("content:url('/emma.jpg?v=valid4')!important")) fail('Restored portrait cache-bust missing');
-          console.log('QA DESKTOP MIC/MOUTH PASS: mouth lowered; PC capture constraints + MIME fallback + one-shot browser STT active');
+          console.log('QA DESKTOP MIC/MOUTH PASS: natural mouth limits active; PC capture + STT core preserved');
           NODE
 
 
@@ -303,6 +303,44 @@ jobs:
           if(!worker.includes('O usuário falou em ${inputLanguage.label}'))fail('Invisible language tag missing');
           console.log('QA LANGUAGE LOCK G-P PASS');
           NODE
+
+      - name: QA Emma natural facial refinement v12
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const avatar=fs.readFileSync('public/emma-static.js','utf8');
+          const css=fs.readFileSync('public/emma-static.css','utf8');
+          const fail=m=>{throw new Error(m)};
+
+          for(const token of [
+            "dataset.expressionRig='natural-v12'",
+            "const baseDelay=state==='speaking'?2600",
+            "const span=state==='speaking'?.58",
+            "Math.random()<.07"
+          ]) if(!avatar.includes(token)) fail('Natural eye rig missing: '+token);
+
+          for(const token of [
+            'Emma natural facial refinement v12',
+            'var(--mouth-open,0) * 1.55',
+            'scaleY(1.75)',
+            'emmaMouthNaturalFallback',
+            '.avatar-fx-layer::before',
+            '.avatar-fx-layer::after',
+            'var(--mouth-open,0) * .72',
+            'transition:transform 680ms'
+          ]) if(!css.includes(token)) fail('Natural facial CSS missing: '+token);
+
+          for(const forbidden of ['4.95','4.55','2.90']){
+            if(css.includes(forbidden)) fail('Exaggerated legacy mouth amplitude still active in CSS: '+forbidden);
+          }
+
+          for(const forbidden of ['MediaRecorder','SpeechRecognition','webkitSpeechRecognition','.play(','.pause(','stopRecognition','setFlowState(','/stt','/tts','/chat']){
+            if(avatar.includes(forbidden)) fail('Visual rig illegally touches protected core: '+forbidden);
+          }
+
+          console.log('QA NATURAL FACE V12 PASS: subtle mouth/teeth/cheeks + organic blink/gaze; core untouched');
+          NODE
+
       - name: Guard visual-only patch
         run: |
           APP_HASH=$(git hash-object public/app.js)
@@ -516,10 +554,13 @@ jobs:
           }
           if(!css.includes('top:60.0%;')) throw new Error('Production mouth alignment missing');
           if(!app.includes("Math.min(1,(rms-.008)/.075)")) throw new Error('Production analyser mouth opening gain missing');
-          if(!css.includes("var(--mouth-open,0) * 4.95")) throw new Error('Production full mouth opening missing');
+          if(!css.includes("var(--mouth-open,0) * 1.55")) throw new Error('Production natural mouth amplitude missing');
           if(!css.includes('.avatar-mouth-motion::before')) throw new Error('Production teeth layer missing');
           if(!css.includes('Emma sharp portrait mode v2')) throw new Error('Production sharp portrait mode v2 missing');
-          console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS');
+          if(!css.includes('Emma natural facial refinement v12')) throw new Error('Production natural facial refinement v12 missing');
+          if(!css.includes('emmaMouthNaturalFallback')) throw new Error('Production natural mouth fallback missing');
+          if(css.includes('4.95')||css.includes('4.55')||css.includes('2.90')) throw new Error('Production exaggerated mouth amplitude returned');
+          console.log('QA DESKTOP MIC/MOUTH PRODUCTION PASS: natural facial refinement deployed');
           NODE
 
       - name: QA production portrait and brain fallback
