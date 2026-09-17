@@ -27,6 +27,7 @@ if (window.oliviaIsBooted) {
         state: 'idle',
         stateChanges: 0,
         eventBinds: 0,
+        bootAttempts: 0,
         lastEvent: 'boot',
         lastSource: 'boot',
         directV9
@@ -148,15 +149,23 @@ if (window.oliviaIsBooted) {
 
     function bootV9Room() {
         if (!directV9) return;
+        stats.bootAttempts++;
         try {
-            if (!Array.isArray(window.teachers) || typeof window.openLiteTeacher !== 'function') {
+            // app.js expõe teachers/openLiteTeacher/live no escopo global lexical de scripts clássicos,
+            // não necessariamente como propriedades de window. Use acesso lexical direto.
+            const teacherList = typeof teachers !== 'undefined' ? teachers : null;
+            const opener = typeof openLiteTeacher === 'function' ? openLiteTeacher : null;
+            if (!Array.isArray(teacherList) || !opener || !window.FNS_OLIVIA_V8) {
                 setTimeout(bootV9Room, 25);
                 return;
             }
-            const i = window.teachers.findIndex(t => String(t?.name || '').trim().toLowerCase() === 'olivia');
-            if (i < 0) return;
-            if (typeof window.live === 'function') window.live();
-            window.openLiteTeacher(i, 'A1', 'conversation', 'General conversation');
+            const i = teacherList.findIndex(t => String(t?.name || '').trim().toLowerCase() === 'olivia');
+            if (i < 0) {
+                setTimeout(bootV9Room, 50);
+                return;
+            }
+            if (typeof live === 'function') live();
+            opener(i, 'A1', 'conversation', 'General conversation');
             showAvatar();
             setAvatarState('idle', 'v9-direct-boot');
             queueMicrotask(() => {
