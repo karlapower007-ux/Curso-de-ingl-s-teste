@@ -6,7 +6,7 @@ import v6Core from './strict-output-v6.js';
 // K-O: lossless/high-fidelity Aura-2 Spanish profiles (WAV/linear16).
 
 const OLIVIA_V7_GUARD='FNS-OLIVIA-V7-TURBINES-A-O';
-const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V11';
+const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V13';
 const AURA_MODEL='@cf/deepgram/aura-2-es';
 
 const TURBINES=Object.freeze({
@@ -186,9 +186,13 @@ async function serveAvatarFactory(request,env,slug){
 
   const headers=new Headers(templateResponse.headers);
   headers.set('Content-Type','text/html; charset=UTF-8');
-  headers.set('Cache-Control','no-store, no-cache, must-revalidate');
-  headers.set('X-FNS-Avatar-Route','isolated-v11-factory');
-  headers.set('X-FNS-Avatar',slug);
+  headers.set('Cache-Control','no-store, no-cache, must-revalidate, max-age=0');
+  headers.set('Pragma','no-cache');
+  headers.set('Expires','0');
+  headers.set('Surrogate-Control','no-store');
+  headers.set('CDN-Cache-Control','no-store');
+  headers.set('X-FNS-Avatar-Route','isolated-v13-cache-killer');
+  headers.set('X-FNS-Avatar','olivia');
   headers.set('X-FNS-Avatar-Guard',AVATAR_FACTORY_GUARD);
   return new Response(html,{status:200,headers});
 }
