@@ -5,20 +5,23 @@
   <script>
   (()=>{try{
     if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister().catch(()=>{}))).catch(()=>{});}
-    if('caches' in window){caches.keys().then(keys=>Promise.all(keys.filter(k=>/fns|emma|avatar|visual|static|pngtuber/i.test(k)).map(k=>caches.delete(k)))).catch(()=>{});}
+    if('caches' in window){caches.keys().then(keys=>Promise.all(keys.filter(k=>/fns|emma|olivia|avatar|visual|static|pngtuber/i.test(k)).map(k=>caches.delete(k)))).catch(()=>{});}
     console.warn('[FNS PNGTUBER FINAL] cache bypass ativo');
   }catch(e){console.warn('[FNS PNGTUBER FINAL] bootstrap warning',e)}})();
   </script>
   <link rel="preload" as="image" href="./assets/emma-fechada.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-falando.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-aberta.png?v=pngtuber-final-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-fechada.png?v=olivia-pngtuber-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-falando.png?v=olivia-pngtuber-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-aberta.png?v=olivia-pngtuber-20260917">
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#070b18">
   <title>Estudos Profundos FNS Idiomas</title>
   <link rel="stylesheet" href="style.css?v=12">
   <link rel="stylesheet" href="natural-v2.css?v=2">
   <link rel="stylesheet" href="emma-static.css?v=21">
-  <link rel="stylesheet" href="olivia-static.css?v=1">
+  <link rel="stylesheet" href="olivia-static.css?v=2">
 </head><body>
 <header><div><b>FNS</b><span>ESTUDOS PROFUNDOS FNS IDIOMAS</span></div><nav><button data-view="home">Início</button><button data-view="course">Curso A1–C2</button><button data-view="live">Prática ao vivo</button><button data-view="cards">Flashcards</button><button data-view="library">Biblioteca</button><button data-view="progress">Progresso</button></nav></header>
 <main id="app"></main>
@@ -39,6 +42,10 @@
         const p2 = new Image(); p2.src = IMG_FALANDO;
         const p3 = new Image(); p3.src = IMG_ABERTA;
 
+        function emmaAvatar() {
+            return document.querySelector('.human-avatar:not([data-teacher="olivia"])');
+        }
+
         function limparLegado(avatarContainer) {
             document.getElementById('fns-pseudo-killer')?.remove();
             document.getElementById('fns-override-v19')?.remove();
@@ -53,7 +60,7 @@
         }
 
         function loopPNGTuber() {
-            const avatarContainer = document.querySelector('.human-avatar');
+            const avatarContainer = emmaAvatar();
 
             if (avatarContainer) {
                 limparLegado(avatarContainer);
@@ -97,7 +104,7 @@
             frames: {closed: IMG_FECHADA, talking: IMG_FALANDO, open: IMG_ABERTA},
             thresholds: {talking: 0.15, open: 0.60},
             getState: function() {
-                const face = document.querySelector('.human-avatar');
+                const face = emmaAvatar();
                 return face ? {
                     state: face.dataset.pngtuberState || 'closed',
                     level: parseFloat(getComputedStyle(face).getPropertyValue('--mouth-open')) || 0,
@@ -109,5 +116,5 @@
         requestAnimationFrame(loopPNGTuber);
     })();
 </script>
-<script src="olivia-pngtuber.js?v=1"></script>
+<script src="olivia-pngtuber.js?v=2"></script>
 </body></html>
