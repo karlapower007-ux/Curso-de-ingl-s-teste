@@ -28,32 +28,45 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Protect Emma core + validate Olivia V15
+      - name: Materialize Olivia V16 avatar frames
+        run: |
+          set -euo pipefail
+          base64 -d public/assets/olivia-fechada-v16.b64 > public/assets/olivia-fechada-v16.jpg
+          base64 -d public/assets/olivia-falando-v16.b64 > public/assets/olivia-falando-v16.jpg
+          base64 -d public/assets/olivia-aberta-v16.b64 > public/assets/olivia-aberta-v16.jpg
+          file public/assets/olivia-fechada-v16.jpg | grep -q JPEG
+          file public/assets/olivia-falando-v16.jpg | grep -q JPEG
+          file public/assets/olivia-aberta-v16.jpg | grep -q JPEG
+          echo 'f7e90163f5fba287dbea7c6aa3daad04700c7946b1479c5f89df68f6040b8b3  public/assets/olivia-fechada-v16.jpg' | sha256sum -c -
+          echo '922b62af403a5298a7b4aad171bb584b15e37a7dfbcfc024729f95bbd614feeb  public/assets/olivia-falando-v16.jpg' | sha256sum -c -
+          echo '2e313e08c167b1e1631bcbbd1cbda0a0e676316292685f11c3af6956ce30f7e6  public/assets/olivia-aberta-v16.jpg' | sha256sum -c -
+
+      - name: Protect Emma core + validate Olivia V16
         run: |
           set -euo pipefail
           node --check src/index.js
           node --check src/strict-output.js
           node --check src/strict-output-v7.js
-          node --check src/strict-output-v15.js
+          node --check src/strict-output-v16.js
           node --check public/app.js
           node --check public/avatar-core.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
-          grep -q '"main": "src/strict-output-v15.js"' wrangler.jsonc
+          grep -q '"main": "src/strict-output-v16.js"' wrangler.jsonc
           grep -q "language:'es-ES'" src/strict-output-v7.js
           grep -q "languageLabel:'Español'" src/strict-output-v7.js
           grep -q "subtitle:'Profesora de español'" src/strict-output-v7.js
-          grep -q 'X-FNS-QA-Mock' src/strict-output-v15.js
-          file public/assets/olivia-fechada-v15.jpg | grep -q JPEG
-          file public/assets/olivia-falando-v15.jpg | grep -q JPEG
-          file public/assets/olivia-aberta-v15.jpg | grep -q JPEG
-          echo 'CORE LOCK + OLIVIA V15 SOURCE PASS'
+          grep -q 'X-FNS-QA-Mock' src/strict-output-v16.js
+          grep -q 'olivia-fechada-v16.jpg' src/strict-output-v16.js
+          grep -q 'olivia-falando-v16.jpg' src/strict-output-v16.js
+          grep -q 'olivia-aberta-v16.jpg' src/strict-output-v16.js
+          echo 'CORE LOCK + OLIVIA V16 SOURCE PASS'
 
       - name: Local mock contract — never touch Workers AI
         run: |
           node --input-type=module <<'NODE'
-          import worker from './src/strict-output-v15.js';
+          import worker from './src/strict-output-v16.js';
           const env = new Proxy({}, { get(){ throw new Error('AI/env access forbidden in QA mock'); } });
           for (const path of ['/tts','/chat','/stt']) {
             const req = new Request('https://qa.local'+path, {
@@ -68,7 +81,7 @@ jobs:
           NODE
 
       - name: Wrangler bundle dry run
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v15-dist
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v16-dist
 
       - name: Deploy Worker
         run: npx wrangler deploy
@@ -81,17 +94,17 @@ jobs:
           set -euo pipefail
           sleep 5
           BASE='https://fns-stt.karlapower007.workers.dev'
-          curl --compressed --fail --silent --show-error "$BASE/?avatar=olivia&v=15&qa=visual-only" -o olivia-v15.html
-          grep -q 'olivia-fechada-v15.jpg' olivia-v15.html
-          grep -q 'olivia-falando-v15.jpg' olivia-v15.html
-          grep -q 'olivia-aberta-v15.jpg' olivia-v15.html
-          grep -q 'es-ES' olivia-v15.html
-          grep -q 'Profesora de español' olivia-v15.html
-          for f in olivia-fechada-v15.jpg olivia-falando-v15.jpg olivia-aberta-v15.jpg; do
-            curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=15"
+          curl --compressed --fail --silent --show-error "$BASE/?avatar=olivia&v=16&qa=visual-only" -o olivia-v16.html
+          grep -q 'olivia-fechada-v16.jpg' olivia-v16.html
+          grep -q 'olivia-falando-v16.jpg' olivia-v16.html
+          grep -q 'olivia-aberta-v16.jpg' olivia-v16.html
+          grep -q 'es-ES' olivia-v16.html
+          grep -q 'Profesora de español' olivia-v16.html
+          for f in olivia-fechada-v16.jpg olivia-falando-v16.jpg olivia-aberta-v16.jpg; do
+            curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=16"
             file "$f" | grep -q JPEG
           done
-          echo 'PRODUCTION V15 HTML + IMAGE ASSETS PASS — NO TTS/STT/CHAT CALLED'
+          echo 'PRODUCTION V16 HTML + GENERATED IMAGE ASSETS PASS — NO TTS/STT/CHAT CALLED'
 
       - name: Pixel-visible browser QA — screenshot pixels, zero AI calls
         run: |
@@ -113,7 +126,7 @@ jobs:
               if(['/tts','/stt','/chat'].includes(p)){blockedAI++;return req.abort('blockedbyclient');}
               req.continue();
             });
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?avatar=olivia&v=15&qa=pixels',{waitUntil:'networkidle2',timeout:60000});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?avatar=olivia&v=16&qa=pixels',{waitUntil:'networkidle2',timeout:60000});
             await page.waitForFunction(()=>{
               const i=document.getElementById('olivia-avatar-img');
               return i&&i.complete&&i.naturalWidth>0&&i.naturalHeight>0;
@@ -134,7 +147,8 @@ jobs:
             });
             if(result.panel!=='Español · A1')throw new Error('language leak '+JSON.stringify(result));
             if(!/español/i.test(result.subtitle||''))throw new Error('subtitle leak '+JSON.stringify(result));
-            if(!result.src.includes('olivia-fechada-v15.jpg'))throw new Error('wrong frame source '+JSON.stringify(result));
+            if(!result.src.includes('olivia-fechada-v16.jpg'))throw new Error('wrong frame source '+JSON.stringify(result));
+            if(result.natural[0]!==256||result.natural[1]!==256)throw new Error('unexpected generated frame dimensions '+JSON.stringify(result));
             if(result.rect[0]<100||result.rect[1]<100||result.display==='none'||result.visibility==='hidden'||Number(result.opacity)<0.9)throw new Error('avatar geometry hidden '+JSON.stringify(result));
             if(blockedAI!==0)throw new Error('page attempted AI endpoints during visual QA: '+blockedAI);
 
@@ -152,18 +166,18 @@ jobs:
             const total=png.width*png.height;
             const pixels={nonBlack,bright,dynamicRange:max-min,total,nonBlackRatio:nonBlack/total,brightRatio:bright/total};
             if(pixels.nonBlackRatio<0.35||pixels.brightRatio<0.10||pixels.dynamicRange<120)throw new Error('avatar rendered black/blank '+JSON.stringify({result,pixels}));
-            await page.screenshot({path:'olivia-v15-visible.png',fullPage:true});
-            console.log('OLIVIA V15 PIXEL QA PASS',result,pixels);
+            await page.screenshot({path:'olivia-v16-visible.png',fullPage:true});
+            console.log('OLIVIA V16 PIXEL QA PASS',result,pixels);
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
-      - name: Upload V15 proof
+      - name: Upload V16 proof
         uses: actions/upload-artifact@v4
         with:
-          name: olivia-v15-visible-proof
-          path: fns-digital-human/worker/olivia-v15-visible.png
+          name: olivia-v16-visible-proof
+          path: fns-digital-human/worker/olivia-v16-visible.png
           retention-days: 30
 
       - name: Final status
-        run: echo 'DEPLOY V15 PASS — Spanish profile, visible avatar pixels, quota-safe mock QA; Emma core unchanged'
+        run: echo 'DEPLOY V16 PASS — generated Olivia frames, Spanish profile, visible avatar pixels, quota-safe mock QA; Emma core unchanged'
