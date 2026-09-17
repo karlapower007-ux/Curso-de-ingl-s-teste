@@ -12,20 +12,22 @@
   <link rel="preload" as="image" href="./assets/emma-fechada.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-falando.png?v=pngtuber-final-20260917">
   <link rel="preload" as="image" href="./assets/emma-aberta.png?v=pngtuber-final-20260917">
-  <link rel="preload" as="image" href="./assets/olivia-fechada.png?v=olivia-pngtuber-20260917-v3">
-  <link rel="preload" as="image" href="./assets/olivia-falando.png?v=olivia-pngtuber-20260917-v3">
-  <link rel="preload" as="image" href="./assets/olivia-aberta.png?v=olivia-pngtuber-20260917-v3">
+  <link rel="preload" as="image" href="./assets/olivia-fechada.png?v=v4-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-falando.png?v=v4-20260917">
+  <link rel="preload" as="image" href="./assets/olivia-aberta.png?v=v4-20260917">
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#070b18">
   <title>Estudos Profundos FNS Idiomas</title>
   <link rel="stylesheet" href="style.css?v=12">
   <link rel="stylesheet" href="natural-v2.css?v=2">
   <link rel="stylesheet" href="emma-static.css?v=21">
-  <link rel="stylesheet" href="olivia-static.css?v=2">
+  <link rel="stylesheet" href="olivia-static.css?v=4">
 </head><body>
 <header><div><b>FNS</b><span>ESTUDOS PROFUNDOS FNS IDIOMAS</span></div><nav><button data-view="home">Início</button><button data-view="course">Curso A1–C2</button><button data-view="live">Prática ao vivo</button><button data-view="cards">Flashcards</button><button data-view="library">Biblioteca</button><button data-view="progress">Progresso</button></nav></header>
 <main id="app"></main>
 <script src="app.js?v=14"></script>
+<!-- Olivia v4 must patch the generic room BEFORE natural-state/natural-turns capture core functions. -->
+<script src="olivia-core-v4.js?v=4"></script>
 <script src="natural-state.js?v=2"></script>
 <script src="natural-turns.js?v=2"></script>
 
@@ -116,5 +118,4 @@
         requestAnimationFrame(loopPNGTuber);
     })();
 </script>
-<script src="olivia-pngtuber.js?v=3"></script>
 </body></html>
