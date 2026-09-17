@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "fns-stt",
-  "main": "src/strict-output-v6.js",
+  "main": "src/strict-output-v7.js",
   "compatibility_date": "2026-09-15",
   "ai": {
     "binding": "AI"
