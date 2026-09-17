@@ -1,0 +1,71 @@
+name: Deploy FNS Worker V6
+
+on:
+  push:
+    branches:
+      - fns-digital-human
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/deploy-fns-worker-v6.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install
+      - name: Protect Emma and core while enabling Olivia v6
+        run: |
+          node --check public/app.js
+          node --check public/natural-state.js
+          node --check public/natural-turns.js
+          node --check public/olivia-core-v6.js
+          node --check src/index.js
+          node --check src/strict-output.js
+          node --check src/strict-output-v6.js
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q '"main": "src/strict-output-v6.js"' wrangler.jsonc
+          grep -q 'olivia-core-v6.js?v=6' public/index.html
+          grep -q 'olivia-v6.css?v=6' public/index.html
+          ! grep -q 'olivia-core-v4.js' public/index.html
+          ! grep -q 'olivia-visual-v5.js' public/index.html
+          echo 'V6 SOURCE LOCK PASS: Emma/core unchanged; Olivia v6 wrapper active'
+      - name: Wrangler bundle dry run
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v6-dist
+      - name: Deploy Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Smoke production v6
+        run: |
+          for i in $(seq 1 20); do
+            HTML=$(curl --compressed --silent --show-error 'https://fns-stt.karlapower007.workers.dev/?olivia=v6&deploy-check=1' || true)
+            if echo "$HTML" | grep -q 'olivia-core-v6.js?v=6'; then
+              echo 'Production v6 HTML detected'
+              break
+            fi
+            if [ "$i" = "20" ]; then echo 'v6 HTML did not reach production'; exit 1; fi
+            sleep 3
+          done
+          curl --compressed --fail --silent --show-error -o /tmp/olivia.png 'https://fns-stt.karlapower007.workers.dev/assets/olivia-fechada.png?v=v6-20260917'
+          node - <<'NODE'
+          const fs=require('fs');const b=fs.readFileSync('/tmp/olivia.png');if(b.length<5000||b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error('Olivia production PNG invalid');console.log('PRODUCTION V6 ASSET PASS');
+          NODE
+      - name: Final deploy status
+        run: echo 'DEPLOY FNS WORKER V6 PASS'
