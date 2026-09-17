@@ -35,6 +35,7 @@ jobs:
           node --check src/index.js
           node --check public/app.js
           node --check public/emma-static.js
+          node --check public/emma-turbine-v18.js
 
       - name: QA turn state machine
         run: |
@@ -527,14 +528,19 @@ jobs:
 
       - name: QA AvatarManager v3 production
         run: |
-          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=17"
+          curl --fail --silent --show-error -o avatar-prod.js "https://fns-stt.karlapower007.workers.dev/emma-static.js?v=18"
+          curl --fail --silent --show-error -o turbine-v18-prod.js "https://fns-stt.karlapower007.workers.dev/emma-turbine-v18.js?v=1801"
           curl --fail --silent --show-error -o app-prod.js "https://fns-stt.karlapower007.workers.dev/app.js"
           node - <<'NODE'
           const fs=require('fs');
           const avatar=fs.readFileSync('avatar-prod.js','utf8');
+          const turbine=fs.readFileSync('turbine-v18-prod.js','utf8');
           const app=fs.readFileSync('app-prod.js','utf8');
           for(const token of ['class AvatarManager','class AvatarWatchdog','class ExpressionTurbine','__FNS_EXPRESSION_TURBINE_V17__','data-expression-rig','webglcontextlost','scheduleRecovery','for(let turn=0;turn<20;turn++)']){
             if(!avatar.includes(token)) throw new Error('Production AvatarManager missing: '+token);
+          }
+          for(const token of ['MutationObserver','fns-override-v18','fns-emma-mouth-svg-v18','z-index','ATIVA E RODANDO','__FNS_EMMA_TURBINE_V18__']){
+            if(!turbine.includes(token)) throw new Error('Production turbine v18 missing: '+token);
           }
           if(!app.includes('dataset.fnsMessageKey')) throw new Error('Production chat dedupe guard missing');
           if(!app.includes('const FNS_MEMORY_MAX_MESSAGES=60')) throw new Error('Production memory+ frontend missing');
@@ -544,7 +550,7 @@ jobs:
       - name: QA desktop microphone and mouth production
         run: |
           curl --fail --silent --show-error -o desktop-app.js "https://fns-stt.karlapower007.workers.dev/app.js"
-          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=17"
+          curl --fail --silent --show-error -o desktop-emma.css "https://fns-stt.karlapower007.workers.dev/emma-static.css?v=18"
           node - <<'NODE'
           const fs=require('fs');
           const app=fs.readFileSync('desktop-app.js','utf8');
