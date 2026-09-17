@@ -1,0 +1,109 @@
+name: QA Olivia V8 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v8-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-v8-staging.yml'
+      - '.github/workflows/deploy-fns-worker.yml'
+      - '.github/workflows/qa-olivia-production.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-v8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Syntax and V8 singleton architecture
+        run: |
+          set -euo pipefail
+          node --check public/app.js
+          node --check public/natural-state.js
+          node --check public/natural-turns.js
+          node --check public/olivia-core-v8.js
+          node --check src/index.js
+          node --check src/strict-output.js
+          node --check src/strict-output-v6.js
+          node --check src/strict-output-v7.js
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+          grep -q 'olivia-core-v8.js?v=8' public/index.html
+          grep -q 'olivia-v8.css?v=8' public/index.html
+          ! grep -q 'olivia-core-v7.js?v=7' public/index.html
+          ! grep -q 'MutationObserver' public/olivia-core-v8.js
+          echo 'V8 SOURCE + EMMA CORE LOCK PASS'
+      - name: Validate singleton and direct visual wiring
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=fs.readFileSync('public/olivia-core-v8.js','utf8');
+          const must=[
+            "STANDALONE_ID='olivia-standalone-node'",
+            'if(node)return node;',
+            'document.body.appendChild(node)',
+            'ensureStandalone();',
+            "window.addEventListener(VISUAL_EVENT,handleVisualEvent)",
+            "emitVisual('speaking-start','audio:onplay')",
+            "emitVisual('speaking-stop','audio:onended')",
+            "emitVisual('speaking-start','speechSynthesis:onstart')",
+            "emitVisual('speaking-stop','speechSynthesis:onend')",
+            "emitVisual('listening-start','stt:startRecording')",
+            "emitVisual('listening-stop','stt:transcribe')",
+            "setFrame('talking')",
+            "setFrame('closed')"
+          ];
+          for(const x of must)if(!s.includes(x))throw new Error('V8 visual invariant missing: '+x);
+          if(s.includes('removeStandalone')||s.includes("document.getElementById(STANDALONE_ID)?.remove"))throw new Error('Singleton removal path detected');
+          console.log('V8 SINGLETON + VANILLA VISUAL EVENT PASS');
+          NODE
+      - name: Validate turbines A-O remain isolated
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const front=fs.readFileSync('public/olivia-core-v8.js','utf8');
+          const back=fs.readFileSync('src/strict-output-v7.js','utf8');
+          for(const letter of 'ABCDEFGHIJKLMNO'){
+            if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
+            if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
+          }
+          if((back.match(/tier:'hifi'/g)||[]).length!==5)throw new Error('Expected 5 Hi-Fi turbines');
+          if((back.match(/tier:'regional'/g)||[]).length!==10)throw new Error('Expected 10 regional turbines');
+          if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 Spanish missing');
+          if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('lossless Hi-Fi path missing');
+          if(!front.includes("browser-fallback-"))throw new Error('browser fallback missing');
+          console.log('A-O + FALLBACK PASS');
+          NODE
+      - name: Validate Olivia PNG assets
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const files=['olivia-fechada.png','olivia-falando.png','olivia-aberta.png'];
+          const hashes=new Set();
+          for(const f of files){
+            const b=fs.readFileSync('public/assets/'+f);
+            if(b.length<5000)throw new Error(f+' too small');
+            if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid PNG');
+            hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
+          }
+          if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
+          console.log('OLIVIA V8 ASSETS PASS');
+          NODE
+      - name: Wrangler bundle dry run
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v8-dist
+      - name: Final staging status
+        run: echo 'OLIVIA V8 STAGING PASS - singleton, direct visual events, A-O, Emma/core locked'
