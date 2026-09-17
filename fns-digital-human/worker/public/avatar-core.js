@@ -1,9 +1,10 @@
 (() => {
   'use strict';
 
-  // FNS OLIVIA V12 — isolated visual engine + JSON factory config.
-  // This file deliberately does not import, execute or depend on Emma's app.js.
-  const FACTORY_GUARD = 'FNS-AVATAR-FACTORY-V12';
+  // FNS OLIVIA V14 — resilient isolated avatar engine.
+  // Visual rendering is independent from Cloudflare AI availability.
+  const FACTORY_GUARD = 'FNS-AVATAR-FACTORY-V14';
+  const VERSION = 'v14-20260917';
   const root = document.getElementById('root');
   if (!root) return;
 
@@ -21,27 +22,79 @@
     busy: false,
     recording: false,
     recorder: null,
+    recognition: null,
     stream: null,
     chunks: [],
     audio: null,
     audioContext: null,
     analyser: null,
     lipRaf: 0,
+    localSpeechTimer: 0,
     sessionId: '',
     history: [],
     lastTranscript: '',
     lastReply: '',
     turbine: '',
-    imageRetry: 0
+    imageRetry: 0,
+    cloudVoiceUnavailable: false
   };
 
   const el = (id) => document.getElementById(id);
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
   function emit(type, detail = {}) {
-    window.dispatchEvent(new CustomEvent('fns:avatar:v12', {
+    window.dispatchEvent(new CustomEvent('fns:avatar:v14', {
       detail: { guard: FACTORY_GUARD, avatar: state.slug, type, ...detail }
     }));
   }
+
+  function textOfError(error) {
+    return String(error?.message || error || 'Error desconocido');
+  }
+
+  function isQuotaError(value) {
+    return /\b4006\b|daily free allocation|10,000 neurons|workers paid plan|used up your daily/i.test(String(value || ''));
+  }
+
+  function setStatus(text) {
+    const node = el('status');
+    if (node) node.textContent = String(text || '');
+  }
+
+  function setModeLabel(text) {
+    const node = el('avatar-mode');
+    if (node) node.textContent = String(text || '');
+  }
+
+  function protectVisuals(message = '') {
+    const image = el('olivia-avatar-img');
+    if (image) {
+      image.style.display = 'block';
+      image.style.visibility = 'visible';
+      image.style.opacity = '1';
+      image.style.transform = 'none';
+    }
+    if (message) setStatus(message);
+  }
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const message = textOfError(event.reason);
+    if (isQuotaError(message)) {
+      event.preventDefault();
+      state.cloudVoiceUnavailable = true;
+      protectVisuals('La cuota de voz en la nube se agotó. Olivia sigue activa; usando alternativas del navegador.');
+      setMode('idle', { degraded: true, reason: 'cloudflare-4006' });
+      emit('quota-fallback', { message });
+      return;
+    }
+    protectVisuals();
+    emit('unhandled-rejection', { message });
+  });
+
+  window.addEventListener('error', (event) => {
+    protectVisuals();
+    emit('window-error', { message: String(event?.message || '') });
+  });
 
   function sessionId() {
     const key = `fns-avatar-session-${state.slug || 'default'}`;
@@ -58,7 +111,7 @@
 
   async function loadConfig() {
     if (state.config) return state.config;
-    const response = await fetch('/avatar-config.json', { cache: 'no-store' });
+    const response = await fetch(`/avatar-config.json?v=${VERSION}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Config HTTP ${response.status}`);
     const catalog = await response.json();
     state.catalogVersion = catalog.schemaVersion || 0;
@@ -67,20 +120,11 @@
     return state.config;
   }
 
-  function setStatus(text) {
-    const node = el('status');
-    if (node) node.textContent = String(text || '');
-  }
-
-  function setModeLabel(text) {
-    const node = el('avatar-mode');
-    if (node) node.textContent = String(text || '');
-  }
-
   function frameUrl(path) {
     const raw = String(path || '');
     if (!raw) return '';
-    return `${raw}${raw.includes('?') ? '&' : '?'}v=v12-20260917`;
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}v=${VERSION}`;
   }
 
   function setFrame(name) {
@@ -91,7 +135,8 @@
     const path = map[name] || map.closed;
     if (!path) return;
     const next = frameUrl(path);
-    if (image.getAttribute('src') !== next) image.setAttribute('src', next);
+    if (image.src !== next && image.getAttribute('src') !== next) image.src = next;
+    image.style.display = 'block';
     image.style.visibility = 'visible';
     image.style.opacity = '1';
     image.style.transform = 'none';
@@ -100,24 +145,30 @@
 
   function installImageGuard() {
     const image = el('olivia-avatar-img');
-    if (!image) throw new Error('V12 skeleton missing #olivia-avatar-img');
+    if (!image) return;
 
     image.addEventListener('load', () => {
       state.imageRetry = 0;
       image.dataset.loaded = 'true';
-      image.style.visibility = 'visible';
-      image.style.opacity = '1';
-      emit('image-loaded', { width: image.naturalWidth, height: image.naturalHeight, frame: state.frame });
+      protectVisuals();
+      emit('image-loaded', {
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        src: image.currentSrc || image.src,
+        frame: state.frame
+      });
     });
 
     image.addEventListener('error', () => {
       image.dataset.loaded = 'false';
-      if (state.imageRetry < 1 && state.config?.images?.closed) {
+      const absoluteClosed = state.config?.images?.closed || 'https://fns-stt.karlapower007.workers.dev/assets/olivia-fechada.png';
+      if (state.imageRetry < 2) {
         state.imageRetry += 1;
-        image.src = `${state.config.images.closed}?v=v12-retry-${Date.now()}`;
+        image.src = `${absoluteClosed}${absoluteClosed.includes('?') ? '&' : '?'}v=${VERSION}-retry-${state.imageRetry}-${Date.now()}`;
+        protectVisuals('Recargando la imagen de Olivia…');
         return;
       }
-      setStatus('No se pudo cargar la imagen de Olivia.');
+      protectVisuals('La interfaz sigue activa, pero la imagen de Olivia no respondió desde el servidor.');
       emit('image-error', { src: image.currentSrc || image.src });
     });
   }
@@ -126,9 +177,9 @@
     const cfg = state.config;
     const ui = cfg.ui || {};
     const required = ['avatar-stage','olivia-avatar-img','interaction-panel','chat-history','controls-bar','micBtn','replayBtn','textInput','voiceTurbine','sendBtn'];
-    for (const id of required) if (!el(id)) throw new Error(`V12 skeleton missing #${id}`);
+    for (const id of required) if (!el(id)) throw new Error(`V14 skeleton missing #${id}`);
 
-    root.dataset.fnsAvatarRoot = 'isolated-v12';
+    root.dataset.fnsAvatarRoot = 'isolated-v14';
     root.dataset.avatar = state.slug;
     root.dataset.guard = FACTORY_GUARD;
 
@@ -137,7 +188,7 @@
     if (el('panel-title')) el('panel-title').textContent = ui.title || cfg.name || 'Olivia';
     if (el('panel-language')) el('panel-language').textContent = `${cfg.languageLabel || 'Español'} · ${cfg.level || 'A1'}`;
     if (el('textInput')) el('textInput').placeholder = ui.placeholder || 'Escribe en español…';
-    if (el('micBtn')) el('micBtn').querySelector('span').textContent = ui.startListening || 'Hablar';
+    if (el('micBtn')?.querySelector('span')) el('micBtn').querySelector('span').textContent = ui.startListening || 'Hablar';
 
     const turbines = Array.isArray(cfg.availableTurbines) ? cfg.availableTurbines : [];
     const select = el('voiceTurbine');
@@ -153,9 +204,8 @@
     state.turbine = turbines.includes(savedTurbine) ? savedTurbine : (cfg.voiceTurbine || turbines[0] || '');
     select.value = state.turbine;
 
-    // Paint the idle PNG immediately into the visible left-hand stage.
-    setFrame('closed');
     installImageGuard();
+    setFrame('closed');
 
     el('controls-bar').addEventListener('submit', (event) => {
       event.preventDefault();
@@ -206,17 +256,18 @@
 
   function setMode(mode, detail = {}) {
     state.mode = mode;
-    const labels = {
-      idle: 'Lista', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', booting: 'Iniciando'
-    };
+    const labels = { idle: 'Lista', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', booting: 'Iniciando' };
     setModeLabel(labels[mode] || mode);
     if (mode === 'idle' || mode === 'listening' || mode === 'thinking') setFrame('closed');
+    protectVisuals();
     emit(mode, detail);
   }
 
   function stopLipSync() {
     if (state.lipRaf) cancelAnimationFrame(state.lipRaf);
     state.lipRaf = 0;
+    if (state.localSpeechTimer) clearInterval(state.localSpeechTimer);
+    state.localSpeechTimer = 0;
     state.analyser = null;
     setFrame('closed');
   }
@@ -293,34 +344,101 @@
     audio.addEventListener('error', () => {
       stopLipSync();
       setMode('idle', { source: 'audio-error' });
-      setStatus('No se pudo reproducir la voz.');
       URL.revokeObjectURL(url);
     }, { once: true });
 
     await audio.play();
   }
 
-  async function speak(text) {
-    const cfg = state.config;
-    const response = await fetch('/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        teacher: cfg.teacher || cfg.name,
-        language: cfg.language,
-        voice_turbine: state.turbine || cfg.voiceTurbine
-      })
+  function speakLocal(text) {
+    return new Promise((resolve, reject) => {
+      if (!('speechSynthesis' in window) || !window.SpeechSynthesisUtterance) {
+        reject(new Error('SpeechSynthesis no disponible'));
+        return;
+      }
+
+      try { speechSynthesis.cancel(); } catch (_) {}
+      const utterance = new SpeechSynthesisUtterance(String(text || ''));
+      utterance.lang = state.config?.language || 'es-ES';
+      utterance.rate = 0.96;
+      utterance.pitch = 1;
+      const voices = speechSynthesis.getVoices?.() || [];
+      const voice = voices.find((v) => /^es(-|_)/i.test(v.lang)) || voices.find((v) => /^es/i.test(v.lang));
+      if (voice) utterance.voice = voice;
+
+      utterance.onstart = () => {
+        setMode('speaking', { source: 'browser-speechSynthesis' });
+        setStatus('Olivia está hablando con la voz del navegador…');
+        let flip = false;
+        state.localSpeechTimer = window.setInterval(() => {
+          flip = !flip;
+          setFrame(flip ? 'open' : 'talking');
+        }, 150);
+      };
+      utterance.onend = () => {
+        stopLipSync();
+        setMode('idle', { source: 'browser-speechSynthesis' });
+        setStatus(state.cloudVoiceUnavailable ? 'Voz local activa. La cuota de Cloudflare no afecta la interfaz.' : 'Listo.');
+        resolve();
+      };
+      utterance.onerror = (event) => {
+        stopLipSync();
+        setMode('idle', { source: 'browser-speechSynthesis-error' });
+        reject(new Error(event?.error || 'SpeechSynthesis falló'));
+      };
+      speechSynthesis.speak(utterance);
     });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail.slice(0, 140)}` : ''}`);
+  }
+
+  async function remoteSpeak(text) {
+    const cfg = state.config;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          text,
+          teacher: cfg.teacher || cfg.name,
+          language: cfg.language,
+          voice_turbine: state.turbine || cfg.voiceTurbine
+        })
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`TTS HTTP ${response.status}${detail ? `: ${detail.slice(0, 220)}` : ''}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (!/^audio\//i.test(contentType) && !/octet-stream/i.test(contentType)) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`TTS inválido: ${contentType || 'sin content-type'} ${detail.slice(0, 160)}`);
+      }
+      await playAudioBlob(await response.blob());
+    } finally {
+      clearTimeout(timer);
     }
-    const contentType = response.headers.get('content-type') || '';
-    if (!/^audio\//i.test(contentType) && !/octet-stream/i.test(contentType)) {
-      throw new Error(`TTS devolvió ${contentType || 'contenido desconocido'}`);
+  }
+
+  async function speak(text) {
+    try {
+      if (!state.cloudVoiceUnavailable) {
+        await remoteSpeak(text);
+        return;
+      }
+    } catch (error) {
+      const message = textOfError(error);
+      if (isQuotaError(message)) state.cloudVoiceUnavailable = true;
+      emit('tts-fallback', { message });
     }
-    await playAudioBlob(await response.blob());
+
+    try {
+      await speakLocal(text);
+    } catch (error) {
+      setMode('idle', { error: true });
+      setStatus(`La respuesta está escrita arriba. Voz no disponible: ${textOfError(error)}`);
+    }
   }
 
   function remember(role, content) {
@@ -354,9 +472,11 @@
           system_prompt: cfg.systemPrompt || ''
         })
       });
-      const payload = await response.json().catch(() => ({}));
+      const raw = await response.text();
+      let payload = {};
+      try { payload = JSON.parse(raw); } catch (_) {}
       if (!response.ok || !payload?.reply) {
-        throw new Error(payload?.message || payload?.error || `Chat HTTP ${response.status}`);
+        throw new Error(payload?.message || payload?.error || raw || `Chat HTTP ${response.status}`);
       }
 
       remember('user', text);
@@ -367,10 +487,70 @@
       setStatus('Preparando voz…');
       await speak(state.lastReply);
     } catch (error) {
+      const message = textOfError(error);
       setMode('idle', { error: true });
-      setStatus(`Error: ${String(error?.message || error)}`);
+      if (isQuotaError(message)) {
+        state.cloudVoiceUnavailable = true;
+        setStatus('La cuota de Cloudflare se agotó hoy. Olivia y su imagen siguen activas; el chat en la nube volverá cuando la cuota se restablezca.');
+      } else {
+        setStatus(`Chat no disponible: ${message}`);
+      }
     } finally {
       setBusy(false);
+      protectVisuals();
+    }
+  }
+
+  function startBrowserRecognition() {
+    const recognition = new Recognition();
+    state.recognition = recognition;
+    state.recording = true;
+    let finalText = '';
+
+    recognition.lang = state.config?.sttLanguage || state.config?.language || 'es-ES';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setMode('listening', { source: 'browser-SpeechRecognition' });
+      setStatus('Escuchando con el reconocimiento del navegador…');
+      const span = el('micBtn')?.querySelector('span');
+      if (span) span.textContent = state.config?.ui?.stopListening || 'Detener';
+    };
+
+    recognition.onresult = (event) => {
+      finalText = Array.from(event.results || [])
+        .map((result) => result?.[0]?.transcript || '')
+        .join(' ')
+        .trim();
+    };
+
+    recognition.onerror = (event) => {
+      const code = String(event?.error || 'speech-recognition-error');
+      if (code !== 'aborted' && code !== 'no-speech') setStatus(`Reconocimiento del navegador: ${code}. También puedes escribir.`);
+    };
+
+    recognition.onend = () => {
+      state.recording = false;
+      state.recognition = null;
+      const span = el('micBtn')?.querySelector('span');
+      if (span) span.textContent = state.config?.ui?.startListening || 'Hablar';
+      setMode('idle', { source: 'browser-SpeechRecognition' });
+      if (finalText) {
+        emit('transcript', { text: finalText, source: 'browser-SpeechRecognition' });
+        void sendMessage(finalText);
+      } else if (!state.busy) {
+        setStatus('No se detectó una frase. Inténtalo otra vez o escribe el mensaje.');
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (error) {
+      state.recording = false;
+      state.recognition = null;
+      throw error;
     }
   }
 
@@ -379,41 +559,54 @@
     return candidates.find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || '';
   }
 
+  async function startMediaRecording() {
+    await ensureAudioContext();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = mediaMime();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    state.stream = stream;
+    state.recorder = recorder;
+    state.chunks = [];
+    state.recording = true;
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size) state.chunks.push(event.data);
+    });
+    recorder.addEventListener('stop', () => void finishRecording(), { once: true });
+    recorder.start();
+    setMode('listening', { source: 'MediaRecorder-cloud-STT' });
+    setStatus('Escuchando…');
+    const span = el('micBtn')?.querySelector('span');
+    if (span) span.textContent = state.config?.ui?.stopListening || 'Detener';
+  }
+
   async function startRecording() {
     if (state.busy || state.recording) return;
     try {
-      await ensureAudioContext();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = mediaMime();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      state.stream = stream;
-      state.recorder = recorder;
-      state.chunks = [];
-      state.recording = true;
-      recorder.addEventListener('dataavailable', (event) => {
-        if (event.data?.size) state.chunks.push(event.data);
-      });
-      recorder.addEventListener('stop', () => void finishRecording(), { once: true });
-      recorder.start();
-      setMode('listening');
-      setStatus('Escuchando…');
-      const btnText = el('micBtn')?.querySelector('span');
-      if (btnText) btnText.textContent = state.config?.ui?.stopListening || 'Detener';
-      emit('recording-start');
+      if (Recognition) {
+        startBrowserRecognition();
+        return;
+      }
+      await startMediaRecording();
     } catch (error) {
       state.recording = false;
       setMode('idle', { error: true });
-      setStatus(`Micrófono no disponible: ${String(error?.message || error)}`);
+      setStatus(`Micrófono no disponible: ${textOfError(error)}`);
     }
   }
 
   async function stopRecording() {
-    if (!state.recording || !state.recorder) return;
+    if (!state.recording) return;
+    const span = el('micBtn')?.querySelector('span');
+    if (span) span.textContent = state.config?.ui?.startListening || 'Hablar';
+
+    if (state.recognition) {
+      try { state.recognition.stop(); } catch (_) {}
+      return;
+    }
+
     state.recording = false;
     setStatus('Transcribiendo…');
-    const btnText = el('micBtn')?.querySelector('span');
-    if (btnText) btnText.textContent = state.config?.ui?.startListening || 'Hablar';
-    try { state.recorder.stop(); } catch (_) { await finishRecording(); }
+    try { state.recorder?.stop(); } catch (_) { await finishRecording(); }
   }
 
   async function finishRecording() {
@@ -421,7 +614,9 @@
     const stream = state.stream;
     state.stream = null;
     state.recorder = null;
+    state.recording = false;
     if (stream) stream.getTracks().forEach((track) => track.stop());
+
     if (!chunks.length) {
       setMode('idle');
       setStatus('No se detectó audio.');
@@ -435,15 +630,23 @@
         headers: { 'X-FNS-STT-Language': state.config.sttLanguage || state.config.language || 'es-ES' },
         body: await blob.arrayBuffer()
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !String(payload?.text || '').trim()) {
-        throw new Error(payload?.error || `STT HTTP ${response.status}`);
-      }
-      emit('transcript', { text: payload.text });
-      await sendMessage(payload.text);
+      const raw = await response.text();
+      let payload = {};
+      try { payload = JSON.parse(raw); } catch (_) {}
+      const transcript = String(payload?.text || '').trim();
+      if (!response.ok || !transcript) throw new Error(payload?.error || raw || `STT HTTP ${response.status}`);
+      emit('transcript', { text: transcript, source: 'cloud-STT' });
+      await sendMessage(transcript);
     } catch (error) {
+      const message = textOfError(error);
       setMode('idle', { error: true });
-      setStatus(`Transcripción falló: ${String(error?.message || error)}`);
+      if (isQuotaError(message)) {
+        state.cloudVoiceUnavailable = true;
+        setStatus('La cuota STT de Cloudflare se agotó. La interfaz y Olivia siguen activas; escribe el mensaje o usa reconocimiento del navegador cuando esté disponible.');
+      } else {
+        setStatus(`Transcripción no disponible: ${message}`);
+      }
+      protectVisuals();
     }
   }
 
@@ -454,8 +657,9 @@
     const panelStyle = el('interaction-panel') ? getComputedStyle(el('interaction-panel')) : null;
     return {
       guard: FACTORY_GUARD,
+      version: VERSION,
       avatar: state.slug,
-      isolatedRoot: root.dataset.fnsAvatarRoot === 'isolated-v12',
+      isolatedRoot: root.dataset.fnsAvatarRoot === 'isolated-v14',
       emmaAppLoaded: !!document.querySelector('script[src*="/app.js"]'),
       layout: rootStyle.display,
       stagePresent: !!el('avatar-stage'),
@@ -466,11 +670,14 @@
       frame: state.frame,
       language: state.config?.language || '',
       turbine: state.turbine,
-      thresholds: state.config?.thresholds || null,
       image: image?.getAttribute('src') || '',
+      imageCurrentSrc: image?.currentSrc || '',
       imageLoaded: !!(image?.complete && image?.naturalWidth > 0),
       imageNaturalWidth: image?.naturalWidth || 0,
       imageNaturalHeight: image?.naturalHeight || 0,
+      browserSpeechRecognition: !!Recognition,
+      browserSpeechSynthesis: 'speechSynthesis' in window,
+      cloudVoiceUnavailable: state.cloudVoiceUnavailable,
       recording: state.recording,
       busy: state.busy
     };
@@ -482,8 +689,8 @@
       state.sessionId = sessionId();
       hydrateLayout();
       setMode('idle');
-      setStatus('Listo.');
-      emit('ready', { language: state.config.language, turbine: state.turbine, layout: 'two-column-v12' });
+      setStatus(Recognition ? 'Listo. Voz del navegador preparada como respaldo.' : 'Listo.');
+      emit('ready', { language: state.config.language, turbine: state.turbine, layout: 'two-column-v14' });
       window.FNS_AVATAR_CORE = Object.freeze({
         guard: FACTORY_GUARD,
         health,
@@ -494,11 +701,13 @@
         setFrame
       });
     } catch (error) {
-      root.innerHTML = `<div style="padding:24px;color:white;background:#1a0c10;font-family:sans-serif"><strong>FNS Avatar V12</strong><br>${String(error?.message || error)}</div>`;
-      emit('boot-error', { error: String(error?.message || error) });
+      // Never destroy the static V14 HTML or the avatar image on boot failure.
+      state.mode = 'idle';
+      protectVisuals(`Inicialización parcial: ${textOfError(error)}. La interfaz visual permanece activa.`);
+      emit('boot-error', { error: textOfError(error) });
     }
   }
 
-  // HTML already contains /assets/olivia-fechada.png, so Olivia is visible even before boot finishes.
+  // The HTML paints the absolute Olivia PNG before this script boots.
   void boot();
 })();
