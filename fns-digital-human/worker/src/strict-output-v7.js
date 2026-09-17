@@ -6,8 +6,9 @@ import v6Core from './strict-output-v6.js';
 // K-O: lossless/high-fidelity Aura-2 Spanish profiles (WAV/linear16).
 
 const OLIVIA_V7_GUARD='FNS-OLIVIA-V7-TURBINES-A-O';
-const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V13';
+const AVATAR_FACTORY_GUARD='FNS-AVATAR-FACTORY-V15';
 const AURA_MODEL='@cf/deepgram/aura-2-es';
+const RAW_ASSET_BASE='https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/fns-digital-human/fns-digital-human/worker/public/assets/';
 
 const TURBINES=Object.freeze({
   A:{speaker:'nestor',  locale:'es-ES',region:'España',        gender:'masculina',tier:'regional',encoding:'mp3'},
@@ -127,8 +128,6 @@ async function oliviaV7Tts(request,env,ctx){
   try{
     return await runAuraTurbine(env,text,origin,turbine);
   }catch(error){
-    // Server-side safety net: reuse the v6 Spanish cascade. The browser still owns
-    // the fast 1.5-2.2s SpeechSynthesis fallback if remote audio is slow/unavailable.
     const fallbackRequest=new Request(request.url,{
       method:'POST',
       headers:request.headers,
@@ -151,6 +150,34 @@ async function assetFetch(env,requestUrl,requestHeaders){
   return env.ASSETS.fetch(new Request(requestUrl,{method:'GET',headers:requestHeaders}));
 }
 
+function lockOliviaConfig(source={}){
+  return {
+    ...source,
+    name:'Olivia',
+    teacher:'Olivia',
+    language:'es-ES',
+    languageLabel:'Español',
+    sttLanguage:'es-ES',
+    level:'A1',
+    accent:'Español neutral',
+    images:{
+      closed:RAW_ASSET_BASE+'olivia-fechada.png',
+      talking:RAW_ASSET_BASE+'olivia-falando.png',
+      open:RAW_ASSET_BASE+'olivia-aberta.png'
+    },
+    thresholds:{talking:0.15,open:0.60},
+    systemPrompt:"CRITICAL RULE: You are Olivia, the Spanish teacher. Reply exclusively in Spanish (es-ES). Never inherit Emma's English profile. Do not mix Portuguese or English unless the user explicitly asks for a translation.",
+    ui:{
+      ...(source?.ui||{}),
+      title:'Olivia',
+      subtitle:'Profesora de español',
+      placeholder:'Escribe en español…',
+      startListening:'Hablar',
+      stopListening:'Detener'
+    }
+  };
+}
+
 async function serveAvatarFactory(request,env,slug){
   const originUrl=new URL(request.url);
   const configUrl=new URL('/avatar-config.json',originUrl.origin);
@@ -160,10 +187,11 @@ async function serveAvatarFactory(request,env,slug){
   }
 
   const catalog=await configResponse.json().catch(()=>null);
-  const config=catalog?.avatars?.[slug];
-  if(!config){
+  const sourceConfig=catalog?.avatars?.[slug];
+  if(!sourceConfig){
     return Response.json({ok:false,error:'Avatar not configured',avatar:slug,guard:AVATAR_FACTORY_GUARD},{status:404,headers:{'Cache-Control':'no-store'}});
   }
+  const config=slug==='olivia'?lockOliviaConfig(sourceConfig):sourceConfig;
 
   const templateUrl=new URL('/avatar.html',originUrl.origin);
   const templateResponse=await assetFetch(env,templateUrl.toString(),request.headers);
@@ -186,13 +214,15 @@ async function serveAvatarFactory(request,env,slug){
 
   const headers=new Headers(templateResponse.headers);
   headers.set('Content-Type','text/html; charset=UTF-8');
+  headers.set('Content-Language','es-ES');
   headers.set('Cache-Control','no-store, no-cache, must-revalidate, max-age=0');
   headers.set('Pragma','no-cache');
   headers.set('Expires','0');
   headers.set('Surrogate-Control','no-store');
   headers.set('CDN-Cache-Control','no-store');
-  headers.set('X-FNS-Avatar-Route','isolated-v13-cache-killer');
-  headers.set('X-FNS-Avatar','olivia');
+  headers.set('X-FNS-Avatar-Route','isolated-v15-spanish-avatar-fix');
+  headers.set('X-FNS-Avatar',slug);
+  headers.set('X-FNS-Avatar-Language',config.language||'');
   headers.set('X-FNS-Avatar-Guard',AVATAR_FACTORY_GUARD);
   return new Response(html,{status:200,headers});
 }
