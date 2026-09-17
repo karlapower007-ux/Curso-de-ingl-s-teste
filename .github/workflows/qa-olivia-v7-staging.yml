@@ -1,0 +1,86 @@
+name: QA Olivia V7 Staging
+
+on:
+  push:
+    branches:
+      - fns-digital-human-v7-staging
+    paths:
+      - 'fns-digital-human/worker/**'
+      - '.github/workflows/qa-olivia-v7-staging.yml'
+  workflow_dispatch:
+
+jobs:
+  qa-v7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: fns-digital-human/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Syntax and v7 architecture
+        run: |
+          node --check public/app.js
+          node --check public/natural-state.js
+          node --check public/natural-turns.js
+          node --check public/olivia-core-v7.js
+          node --check src/index.js
+          node --check src/strict-output.js
+          node --check src/strict-output-v6.js
+          node --check src/strict-output-v7.js
+          grep -q '"main": "src/strict-output-v7.js"' wrangler.jsonc
+          grep -q 'olivia-core-v7.js?v=7' public/index.html
+          grep -q 'olivia-v7.css?v=7' public/index.html
+          ! grep -q 'olivia-core-v6.js?v=6' public/index.html
+          ! grep -q 'MutationObserver' public/olivia-core-v7.js
+          grep -q "document.body.appendChild(p)" public/olivia-core-v7.js
+          grep -q "id='oliviaAvatarPortalV7'\|id=\"oliviaAvatarPortalV7\"\|p.id='oliviaAvatarPortalV7'" public/olivia-core-v7.js
+          grep -q "portalBodyChild" public/olivia-core-v7.js
+          echo 'OLIVIA V7 BODY PORTAL SOURCE PASS'
+      - name: Validate turbines A-O
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const front=fs.readFileSync('public/olivia-core-v7.js','utf8');
+          const back=fs.readFileSync('src/strict-output-v7.js','utf8');
+          for(const letter of 'ABCDEFGHIJKLMNO'){
+            if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
+            if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
+          }
+          if(!front.includes("turbineCount:Object.keys(TURBINES).length"))throw new Error('health turbine count missing');
+          if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('Hi-Fi lossless path missing');
+          if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 Spanish premium model missing');
+          if(!front.includes("browser-fallback-"))throw new Error('SpeechSynthesis fallback marker missing');
+          console.log('OLIVIA V7 TURBINES A-O PASS');
+          NODE
+      - name: Protect Emma and blind core
+        run: |
+          test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
+          test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
+          grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
+          grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
+          grep -q 'emma-fechada.png' public/index.html
+          grep -q 'emma-falando.png' public/index.html
+          grep -q 'emma-aberta.png' public/index.html
+          echo 'EMMA + CORE BLINDAGEM PASS'
+      - name: Validate Olivia PNG assets
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const files=['olivia-fechada.png','olivia-falando.png','olivia-aberta.png'];
+          const hashes=new Set();
+          for(const f of files){const b=fs.readFileSync('public/assets/'+f);if(b.length<5000)throw new Error(f+' too small');if(b[0]!==0x89||b[1]!==0x50||b[2]!==0x4e||b[3]!==0x47)throw new Error(f+' invalid PNG');hashes.add(crypto.createHash('sha256').update(b).digest('hex'));}
+          if(hashes.size!==3)throw new Error('Olivia frames are not distinct');
+          console.log('OLIVIA V7 ASSET PASS');
+          NODE
+      - name: Wrangler bundle dry run
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v7-dist
+      - name: Final staging status
+        run: echo 'OLIVIA V7 STAGING QA PASS - body portal stable, A-O present, Emma/core locked'
