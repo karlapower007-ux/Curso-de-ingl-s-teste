@@ -31,9 +31,9 @@ jobs:
           file public/assets/olivia-fechada-v16.jpg | grep -q JPEG
           file public/assets/olivia-falando-v16.jpg | grep -q JPEG
           file public/assets/olivia-aberta-v16.jpg | grep -q JPEG
-          echo 'f7e90163f5fba287dbea7c6aa3daad04700c7946b1479c5f89df68f6040b8b3  public/assets/olivia-fechada-v16.jpg' | sha256sum -c -
+          echo 'f7e90163f5fba287dbea7c6aa3daad04700c7946b1479c5f89df68f6040b8b3b  public/assets/olivia-fechada-v16.jpg' | sha256sum -c -
           echo '922b62af403a5298a7b4aad171bb584b15e37a7dfbcfc024729f95bbd614feeb  public/assets/olivia-falando-v16.jpg' | sha256sum -c -
-          echo '2e313e08c167b1e1631bcbbd1cbda0a0e676316292685f11c3af6956ce30f7e6  public/assets/olivia-aberta-v16.jpg' | sha256sum -c -
+          echo '93d51844b313267957bf56952264359dff1f4c5bbdbcbf061e07d9fd6ff43fac  public/assets/olivia-aberta-v16.jpg' | sha256sum -c -
       - name: Core blindagem + V16 source
         run: |
           set -euo pipefail
