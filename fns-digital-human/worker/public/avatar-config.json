@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "factory": "FNS Avatar Factory V11",
+  "schemaVersion": 2,
+  "factory": "FNS Avatar Factory V14",
   "defaultAvatar": "olivia",
   "avatars": {
     "olivia": {
@@ -14,9 +14,9 @@
       "voiceTurbine": "K",
       "availableTurbines": ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"],
       "images": {
-        "closed": "/assets/olivia-fechada.png",
-        "talking": "/assets/olivia-falando.png",
-        "open": "/assets/olivia-aberta.png"
+        "closed": "https://fns-stt.karlapower007.workers.dev/assets/olivia-fechada.png",
+        "talking": "https://fns-stt.karlapower007.workers.dev/assets/olivia-falando.png",
+        "open": "https://fns-stt.karlapower007.workers.dev/assets/olivia-aberta.png"
       },
       "thresholds": {
         "talking": 0.15,
