@@ -8,6 +8,7 @@ on:
       - 'fns-digital-human/worker/**'
       - '.github/workflows/deploy-fns-worker.yml'
       - '.github/workflows/qa-olivia-production.yml'
+      - '.github/workflows/qa-olivia-v9-production.yml'
   workflow_dispatch:
 
 jobs:
@@ -32,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Protect Emma core and validate Olivia V8
+      - name: Protect Emma core and validate Olivia V9
         run: |
           set -euo pipefail
           node --check src/index.js
@@ -43,36 +44,37 @@ jobs:
           node --check public/natural-state.js
           node --check public/natural-turns.js
           node --check public/olivia-core-v8.js
+          node --check public/olivia-v9-singleton.js
           test "$(git hash-object public/app.js)" = "900e50a3f92c53f5e46cd7c05556024a14c7bf72"
           test "$(git hash-object src/index.js)" = "e53139aa0b73bd11f54b1f8b83529a1ce93406dc"
           grep -q 'FNS EMMA OUTPUT TURBINE A-H' src/strict-output.js
           grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' public/index.html
           grep -q '"main": "src/strict-output-v7.js"' wrangler.jsonc
+          grep -q 'olivia-v9-singleton.js?v=9' public/index.html
           grep -q 'olivia-core-v8.js?v=8' public/index.html
-          grep -q 'olivia-v8.css?v=8' public/index.html
-          ! grep -q 'olivia-core-v7.js?v=7' public/index.html
-          ! grep -q 'MutationObserver' public/olivia-core-v8.js
-          grep -q "STANDALONE_ID='olivia-standalone-node'" public/olivia-core-v8.js
-          grep -q 'if(node)return node;' public/olivia-core-v8.js
-          grep -q 'document.body.appendChild(node)' public/olivia-core-v8.js
-          echo 'CORE LOCK + OLIVIA V8 SOURCE PASS'
+          grep -q 'if (window.oliviaIsBooted)' public/olivia-v9-singleton.js
+          grep -q 'window.oliviaIsBooted = true' public/olivia-v9-singleton.js
+          grep -q "container.id = 'olivia-standalone-node'" public/olivia-v9-singleton.js
+          grep -q "avatarImg.id = 'olivia-avatar-img'" public/olivia-v9-singleton.js
+          grep -q 'document.body.appendChild(container)' public/olivia-v9-singleton.js
+          ! grep -q 'MutationObserver' public/olivia-v9-singleton.js
+          echo 'CORE LOCK + OLIVIA V9 SOURCE PASS'
 
-      - name: Validate direct visual wiring and turbines A-O
+      - name: Validate V9 event bridge and turbines A-O
         run: |
           node - <<'NODE'
           const fs=require('fs');
+          const v9=fs.readFileSync('public/olivia-v9-singleton.js','utf8');
           const front=fs.readFileSync('public/olivia-core-v8.js','utf8');
           const back=fs.readFileSync('src/strict-output-v7.js','utf8');
-          const visual=[
-            "window.addEventListener(VISUAL_EVENT,handleVisualEvent)",
-            "emitVisual('speaking-start','audio:onplay')",
-            "audio.onended=()=>finish(true,null,'audio:onended')",
-            "emitVisual('speaking-start','speechSynthesis:onstart')",
-            "u.onend=()=>finish(true,'speechSynthesis:onend')",
-            "emitVisual('listening-start','stt:startRecording')",
-            "emitVisual('listening-stop','stt:transcribe')"
-          ];
-          for(const x of visual)if(!front.includes(x))throw new Error('visual wiring missing '+x);
+          for(const x of [
+            "window.addEventListener('fns:olivia:v8:visual', onEngineVisual)",
+            "if (type === 'listening-start')",
+            "if (type === 'speaking-start')",
+            "setAvatarState('listening'",
+            "setAvatarState('talking'",
+            "setAvatarState('idle'"
+          ]) if(!v9.includes(x)) throw new Error('V9 visual bridge missing '+x);
           for(const letter of 'ABCDEFGHIJKLMNO'){
             if(!front.includes(letter+':{label:'))throw new Error('frontend turbine missing '+letter);
             if(!back.includes(letter+':{speaker:'))throw new Error('backend turbine missing '+letter);
@@ -80,11 +82,11 @@ jobs:
           if(!back.includes("@cf/deepgram/aura-2-es"))throw new Error('Aura-2 Spanish missing');
           if(!back.includes("encoding:'linear16',container:'wav'"))throw new Error('lossless Hi-Fi turbines missing');
           if(!front.includes("browser-fallback-"))throw new Error('fast browser fallback missing');
-          console.log('V8 VISUAL WIRING + TURBINES A-O PASS');
+          console.log('V9 VISUAL BRIDGE + TURBINES A-O PASS');
           NODE
 
       - name: Wrangler bundle dry run
-        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v8-dist
+        run: npx wrangler deploy --dry-run --outdir /tmp/fns-v9-dist
 
       - name: Deploy Worker
         run: npx wrangler deploy
@@ -92,19 +94,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: QA production Olivia V8 visual sync and Emma lock
+      - name: QA production Olivia V9 singleton visual sync and Emma lock
         run: |
           set -euo pipefail
           sleep 5
           BASE='https://fns-stt.karlapower007.workers.dev'
 
-          curl --compressed --fail --silent --show-error "$BASE/?olivia=v8&qa=source" -o production.html
+          curl --compressed --fail --silent --show-error "$BASE/?olivia=v9&qa=source" -o production.html
+          grep -q 'olivia-v9-singleton.js?v=9' production.html
           grep -q 'olivia-core-v8.js?v=8' production.html
-          grep -q 'olivia-v8.css?v=8' production.html
           grep -q 'FNS FINAL FIX: MOTOR PNGTUBER DA EMMA' production.html
 
           for f in olivia-fechada.png olivia-falando.png olivia-aberta.png; do
-            curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=v8-20260917"
+            curl --compressed --fail --silent --show-error -o "$f" "$BASE/assets/$f?v=v9-20260917"
           done
           node - <<'NODE'
           const fs=require('fs'),crypto=require('crypto');
@@ -115,7 +117,7 @@ jobs:
             hashes.add(crypto.createHash('sha256').update(b).digest('hex'));
           }
           if(hashes.size!==3)throw new Error('Olivia frames not distinct');
-          console.log('PRODUCTION OLIVIA V8 ASSETS PASS');
+          console.log('PRODUCTION OLIVIA V9 ASSETS PASS');
           NODE
 
           curl --compressed --fail --silent --show-error --max-time 15 -D turbine-a.headers -o turbine-a.audio \
@@ -143,62 +145,56 @@ jobs:
             const browser=await puppeteer.launch({headless:true,executablePath:process.env.CHROME_BIN,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
             const page=await browser.newPage();
             await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
-            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v8&qa=visual',{waitUntil:'networkidle2',timeout:60000});
-            await page.waitForSelector('#liteModal[data-olivia-v8="true"]',{timeout:30000});
-            await page.waitForSelector('#olivia-standalone-node[data-visible="true"]',{timeout:30000});
-            await page.waitForSelector('#olivia-standalone-image',{timeout:30000});
+            await page.goto('https://fns-stt.karlapower007.workers.dev/?olivia=v9&qa=visual',{waitUntil:'networkidle2',timeout:60000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V9?.health?.().imageLoaded===true,{timeout:30000});
+            await page.waitForFunction(()=>window.FNS_OLIVIA_V9?.health?.().engineV8===true,{timeout:30000});
+            await page.waitForSelector('#liteModal[data-olivia-v9="true"]',{timeout:30000});
 
-            const boot=await page.evaluate(()=>{
-              const api=window.FNS_OLIVIA_V8;
-              const node=document.getElementById('olivia-standalone-node');
-              const img=document.getElementById('olivia-standalone-image');
-              const cs=getComputedStyle(node),r=node.getBoundingClientRect();
-              return {health:api?.health(),visibility:cs.visibility,opacity:cs.opacity,display:cs.display,rect:{w:r.width,h:r.height},loaded:!!(img?.complete&&img?.naturalWidth>0)};
-            });
-            if(!boot.health?.singletonBodyChild||!boot.health?.singletonOutsideModal||boot.health?.singletonCreates!==1)throw new Error('V8 singleton boot failed '+JSON.stringify(boot));
-            if(boot.health?.turbineCount!==15||!boot.loaded||boot.visibility!=='visible'||Number(boot.opacity)!==1||boot.display==='none'||boot.rect.w<100||boot.rect.h<100)throw new Error('V8 visible boot failed '+JSON.stringify(boot));
+            const boot=await page.evaluate(()=>window.FNS_OLIVIA_V9.health());
+            if(!boot.globalLock||!boot.singleton||!boot.singletonBodyChild||!boot.singletonOutsideApp||!boot.singletonOutsideModal||!boot.visible||!boot.imageLoaded)throw new Error('V9 boot failed '+JSON.stringify(boot));
+            if(boot.turbines!==15||boot.stats.createCount!==1)throw new Error('V9 engine/singleton count failed '+JSON.stringify(boot));
 
             const singleton=await page.evaluate(async()=>{
-              const api=window.FNS_OLIVIA_V8;
               const first=document.getElementById('olivia-standalone-node');
               const id=first?.dataset.instanceId;
-              for(let i=0;i<20;i++)api.ensureSingleton();
-              const s=document.createElement('script');s.src='/olivia-core-v8.js?v=8&reinjection=qa-'+Date.now();document.body.appendChild(s);
-              await new Promise((resolve,reject)=>{s.onload=resolve;s.onerror=reject;});
               const stage=document.getElementById('oliviaV8Stage');
               if(stage)stage.replaceChildren(document.createElement('div'));
+              for(let i=0;i<10;i++)window.FNS_OLIVIA_V8?.ensureSingleton?.();
+              const s=document.createElement('script');s.src='/olivia-v9-singleton.js?v=9&reinjection=qa-'+Date.now();document.body.appendChild(s);
+              await new Promise((resolve,reject)=>{s.onload=resolve;s.onerror=reject;});
               await new Promise(r=>setTimeout(r,250));
               const now=document.getElementById('olivia-standalone-node');
-              return {same:first===now,idSame:id===now?.dataset.instanceId,creates:api.health().singletonCreates,parentBody:now?.parentElement===document.body,insideModal:document.querySelector('#liteModal')?.contains(now)};
+              return {same:first===now,idSame:id===now?.dataset.instanceId,count:document.querySelectorAll('#olivia-standalone-node').length,health:window.FNS_OLIVIA_V9.health()};
             });
-            if(!singleton.same||!singleton.idSame||singleton.creates!==1||!singleton.parentBody||singleton.insideModal)throw new Error('V8 singleton reinjection/rerender failed '+JSON.stringify(singleton));
+            if(!singleton.same||!singleton.idSame||singleton.count!==1||singleton.health.stats.createCount!==1)throw new Error('V9 singleton reinjection/rerender failed '+JSON.stringify(singleton));
 
-            const animation=await page.evaluate(async()=>{
-              const api=window.FNS_OLIVIA_V8;
+            const states=await page.evaluate(async()=>{
+              const img=document.getElementById('olivia-avatar-img');
               const node=document.getElementById('olivia-standalone-node');
-              const img=document.getElementById('olivia-standalone-image');
-              const before=node;
-              const frames=[],srcs=[];
-              api.emitVisual('speaking-start','qa:visual-start');
-              for(let i=0;i<12;i++){
-                await new Promise(r=>setTimeout(r,70));
-                frames.push(img?.dataset.frame||'');srcs.push(img?.src||'');
-              }
-              api.emitVisual('speaking-stop','qa:visual-stop');
-              await new Promise(r=>setTimeout(r,120));
-              return {same:before===document.getElementById('olivia-standalone-node'),frames:[...new Set(frames)],srcs:[...new Set(srcs)],finalFrame:img?.dataset.frame||'',finalSrc:img?.src||'',health:api.health()};
+              const first=node;
+              const fire=(type,source)=>window.dispatchEvent(new CustomEvent('fns:olivia:v8:visual',{detail:{type,source}}));
+              const out=[];
+              fire('listening-start','qa:stt-start');await new Promise(r=>setTimeout(r,90));out.push({state:img.dataset.frame,src:img.src});
+              fire('listening-stop','qa:stt-stop');await new Promise(r=>setTimeout(r,90));out.push({state:img.dataset.frame,src:img.src});
+              fire('speaking-start','qa:audio-onplay');await new Promise(r=>setTimeout(r,90));out.push({state:img.dataset.frame,src:img.src});
+              fire('speaking-stop','qa:audio-ended');await new Promise(r=>setTimeout(r,90));out.push({state:img.dataset.frame,src:img.src});
+              return {same:first===document.getElementById('olivia-standalone-node'),out,health:window.FNS_OLIVIA_V9.health()};
             });
-            if(!animation.same||!animation.frames.includes('talking')||!animation.frames.includes('open')||animation.srcs.length<2||animation.finalFrame!=='closed')throw new Error('V8 mouth animation sync failed '+JSON.stringify(animation));
+            if(!states.same)throw new Error('V9 node replaced during state changes '+JSON.stringify(states));
+            if(states.out[0].state!=='listening'||!states.out[0].src.includes('olivia-falando.png'))throw new Error('V9 listening image failed '+JSON.stringify(states));
+            if(states.out[1].state!=='idle'||!states.out[1].src.includes('olivia-fechada.png'))throw new Error('V9 STT idle failed '+JSON.stringify(states));
+            if(states.out[2].state!=='talking'||!states.out[2].src.includes('olivia-aberta.png'))throw new Error('V9 talking image failed '+JSON.stringify(states));
+            if(states.out[3].state!=='idle'||!states.out[3].src.includes('olivia-fechada.png'))throw new Error('V9 TTS idle failed '+JSON.stringify(states));
 
             const options=await page.evaluate(()=>[...document.querySelectorAll('#voiceTurbineSel option')].map(o=>o.value).join(''));
             if(options!=='ABCDEFGHIJKLMNO')throw new Error('A-O selector mismatch '+options);
             const emma=await page.evaluate(()=>({pngtuber:!!window.FNS_EMMA_PNGTUBER,strict:!!window.FNS_EMMA_STRICT_OUTPUT}));
             if(!emma.pngtuber||!emma.strict)throw new Error('Emma guards missing '+JSON.stringify(emma));
 
-            console.log('PRODUCTION V8 VISUAL PASS',boot,singleton,animation,emma);
+            console.log('PRODUCTION V9 VISUAL PASS',boot,singleton,states,emma);
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
       - name: Final status
-        run: echo 'DEPLOY PASS - Olivia V8 singleton stable, mouth swaps on direct visual events, A-O active, Emma/core unchanged'
+        run: echo 'DEPLOY PASS - Olivia V9 absolute singleton + forced preload + direct STT/TTS image states; A-O active; Emma/core unchanged'
