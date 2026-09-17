@@ -205,12 +205,12 @@ remoteSpeak=async function(text){
     if(!emmaStrict())return;
     const select=document.querySelector('#sttLangSel');
     if(!select)return;
-    select.value='en-US';
-    select.disabled=true;
-    select.dataset.fnsStrictLanguage='en-US';
-    select.title='Emma • English Only';
+    if(select.value!=='en-US')select.value='en-US';
+    if(!select.disabled)select.disabled=true;
+    if(select.dataset.fnsStrictLanguage!=='en-US')select.dataset.fnsStrictLanguage='en-US';
+    if(select.title!=='Emma • English Only')select.title='Emma • English Only';
     const option=[...select.options].find(x=>x.value==='en-US');
-    if(option)option.textContent='🇺🇸 English Only • Emma';
+    if(option&&option.textContent!=='🇺🇸 English Only • Emma')option.textContent='🇺🇸 English Only • Emma';
   }
 
   const FNS_outputCoreOpenLiteTeacher=openLiteTeacher;
@@ -223,11 +223,6 @@ remoteSpeak=async function(text){
   document.addEventListener('change',event=>{
     if(event.target?.id==='sttLangSel'&&emmaStrict())enforceEnglishUi();
   },true);
-
-  const uiObserver=new MutationObserver(()=>{
-    if(emmaStrict())enforceEnglishUi();
-  });
-  uiObserver.observe(document.documentElement,{childList:true,subtree:true});
 
   const FNS_outputCoreLanguageLock=languageLockForTranscript;
   languageLockForTranscript=function(input){
