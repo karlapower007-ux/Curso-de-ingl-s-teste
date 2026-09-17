@@ -1,0 +1,67 @@
+/* FNS Olivia PNGTuber — overlay visual sem tocar na Emma */
+
+.human-avatar[data-teacher="olivia"]{
+  position:relative!important;
+  display:block!important;
+  overflow:hidden!important;
+  isolation:isolate!important;
+  background:#0a1020!important;
+  opacity:1!important;
+  visibility:visible!important;
+  animation:none!important;
+  transform:none!important;
+}
+
+.human-avatar[data-teacher="olivia"] .avatar-photo-base,
+.human-avatar[data-teacher="olivia"][data-avatar-ready="false"] .avatar-photo-base,
+.human-avatar[data-teacher="olivia"][data-avatar-ready="true"] .avatar-photo-base,
+.human-avatar[data-teacher="olivia"][data-avatar-visual-mode="image-swapping"] .avatar-photo-base{
+  position:absolute!important;
+  inset:0!important;
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  opacity:1!important;
+  visibility:visible!important;
+  z-index:2!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  transform:none!important;
+  clip-path:none!important;
+  mask:none!important;
+  -webkit-mask:none!important;
+  mix-blend-mode:normal!important;
+  image-rendering:auto!important;
+  user-select:none!important;
+  -webkit-user-drag:none!important;
+  pointer-events:none!important;
+}
+
+.human-avatar[data-teacher="olivia"] .avatar-live-badge{
+  z-index:3!important;
+}
+
+.human-avatar[data-teacher="olivia"].avatar-listening,
+.human-avatar[data-teacher="olivia"].avatar-speaking,
+.human-avatar[data-teacher="olivia"].avatar-talking,
+.human-avatar[data-teacher="olivia"].avatar-mouth-simulated{
+  animation:none!important;
+  transform:none!important;
+}
+
+.fns-olivia-lock{
+  display:inline-block;
+  margin-top:4px;
+  font-weight:600;
+}
+
+@media(max-width:820px){
+  .human-avatar[data-teacher="olivia"] .avatar-photo-base{
+    object-fit:contain!important;
+    object-position:center center!important;
+  }
+}
