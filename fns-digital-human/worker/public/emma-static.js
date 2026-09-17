@@ -273,14 +273,14 @@ window.FNS_EMMA_VISUAL_RIG=true;
       this.gazeTimer=setTimeout(()=>{
         if(this.failed||!this.face?.isConnected)return;
         const state=this.readState();
-        const span=state==='speaking'?.58:state==='listening'?.52:state==='processing'?.40:.30;
+        const span=state==='speaking'?1.18:state==='listening'?1.02:state==='processing'?.78:.72;
         const x=((Math.random()*2)-1)*span;
         const y=((Math.random()*2)-1)*span*.32;
         this.face.style.setProperty('--gaze-x',x.toFixed(2)+'px');
         this.face.style.setProperty('--gaze-y',y.toFixed(2)+'px');
         this.face.style.setProperty('--cheek-lift',state==='speaking'?'1':'0');
         this.scheduleGaze();
-      },1750+Math.random()*2600);
+      },1050+Math.random()*1750);
     }
 
     useFallback(reason='fallback'){
@@ -332,7 +332,7 @@ window.FNS_EMMA_VISUAL_RIG=true;
       if(!ready){this.useFallback('portrait-load-failed');return}
       this.face.dataset.avatarReady='true';
       this.face.dataset.fnsRig='active';
-      this.face.dataset.expressionRig='natural-v12';
+      this.face.dataset.expressionRig='natural-v13';
       this.face.style.setProperty('--gaze-x','0px');
       this.face.style.setProperty('--gaze-y','0px');
       this.setBlink(0);
