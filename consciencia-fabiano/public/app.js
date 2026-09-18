@@ -263,8 +263,12 @@
       rec.maxAlternatives = 1;
       $("micBtn").textContent = "🎧 Ouvindo…";
       $("avatarState").textContent = "Ouvindo";
-      rec.onresult = e => {
-        $("questionInput").value = e.results?.[0]?.[0]?.transcript || "";
+      rec.onresult = async e => {
+        const text = e.results?.[0]?.[0]?.transcript || "";
+        $("questionInput").value = text;
+        if (text.trim() && $("autoSendVoice")?.checked) {
+          await sendQuestion();
+        }
       };
       rec.onend = () => {
         $("micBtn").textContent = "🎙️ Falar";
@@ -305,6 +309,9 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || "STT indisponível");
         $("questionInput").value = data.text || "";
+        if ((data.text || "").trim() && $("autoSendVoice")?.checked) {
+          await sendQuestion();
+        }
       } catch (e) {
         appendMessage("assistant", "Não consegui transcrever sua voz: " + e.message);
       }
@@ -414,6 +421,13 @@
   $("micBtn").onclick = () => startVoice().catch(e => appendMessage("assistant", "Microfone indisponível: " + e.message));
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
+  $("clearChatBtn").onclick = () => {
+    if (!confirm("Limpar todo o histórico desta conversa?")) return;
+    history = [];
+    saveHistory();
+    renderHistory();
+    setAvatar("closed");
+  };
 
   const fragment = new URLSearchParams(location.hash.replace(/^#/, ""));
   const magic = fragment.get("access");
