@@ -4,30 +4,54 @@ const base = process.env.BASE_URL || "https://consciencia-fabiano.focoeepoder2.w
 const oidc = process.env.OIDC_TOKEN || "";
 if (!oidc) throw new Error("OIDC_TOKEN ausente");
 
-function makePdf(runCode, paddingBytes = 0) {
-  const text = "BT /F1 14 Tf 72 720 Td (Visual UI test document. Code " + runCode + ".) Tj ET";
+function makePdf(runCode, pageCount = 100, paddingBytes = 0) {
   const enc = new TextEncoder();
-  const objs = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Length " + enc.encode(text).length + " >>\nstream\n" + text + "\nendstream",
-  ];
-  if (paddingBytes > 0) {
-    const payload = "Z".repeat(Math.max(0, paddingBytes));
-    objs.push("<< /Length " + payload.length + " >>\nstream\n" + payload + "\nendstream");
+  const esc = s => String(s).replaceAll("\\","\\\\").replaceAll("(","\\(").replaceAll(")","\\)");
+  const objects = [null];
+  const pageObjectNumbers = [];
+
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+  for (let i = 0; i < pageCount; i++) {
+    const pageObj = 4 + (i * 2);
+    const contentObj = pageObj + 1;
+    pageObjectNumbers.push(pageObj);
+
+    const text1 = "Visual Matrix 100 Turbines page " + (i + 1) + " of " + pageCount + ".";
+    const text2 = "Code " + runCode + ". Extraction squad 50 and embedding squad 50.";
+    const stream =
+      "BT /F1 11 Tf 72 720 Td (" + esc(text1) + ") Tj " +
+      "0 -22 Td (" + esc(text2) + ") Tj ET";
+
+    objects[pageObj] =
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
+      "/Resources << /Font << /F1 3 0 R >> >> /Contents " + contentObj + " 0 R >>";
+    objects[contentObj] =
+      "<< /Length " + enc.encode(stream).length + " >>\nstream\n" + stream + "\nendstream";
   }
+
+  objects[2] =
+    "<< /Type /Pages /Kids [" + pageObjectNumbers.map(n => n + " 0 R").join(" ") + "] /Count " + pageCount + " >>";
+
+  if (paddingBytes > 0) {
+    const padObj = objects.length;
+    const payload = "Z".repeat(paddingBytes);
+    objects[padObj] = "<< /Length " + payload.length + " >>\nstream\n" + payload + "\nendstream";
+  }
+
   let out = "%PDF-1.4\n";
   const offsets = [0];
-  for (let i = 0; i < objs.length; i++) {
-    offsets.push(enc.encode(out).length);
-    out += (i + 1) + " 0 obj\n" + objs[i] + "\nendobj\n";
+  for (let i = 1; i < objects.length; i++) {
+    offsets[i] = enc.encode(out).length;
+    out += i + " 0 obj\n" + objects[i] + "\nendobj\n";
   }
   const xref = enc.encode(out).length;
-  out += "xref\n0 " + (objs.length + 1) + "\n0000000000 65535 f \n";
-  for (const off of offsets.slice(1)) out += String(off).padStart(10, "0") + " 00000 n \n";
-  out += "trailer\n<< /Size " + (objs.length + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
+  out += "xref\n0 " + objects.length + "\n0000000000 65535 f \n";
+  for (let i = 1; i < objects.length; i++) {
+    out += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+  }
+  out += "trailer\n<< /Size " + objects.length + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
   return Buffer.from(out);
 }
 
@@ -94,7 +118,7 @@ try {
   await page.locator("#pdfInput").setInputFiles({
     name: uiFilename,
     mimeType: "application/pdf",
-    buffer: makePdf(uiRunCode, 4 * 1024 * 1024),
+    buffer: makePdf(uiRunCode, 100, 4 * 1024 * 1024),
   });
 
   await page.locator("#uploadBtn").click();
@@ -116,8 +140,10 @@ try {
 
   const statusText = await page.locator("#adminStatus").textContent();
   if (!/PDF indexado:/.test(statusText || "")) throw new Error("mensagem visual de sucesso ausente");
+  const backendAfter = await backendText.textContent();
+  if (!/Matriz 100 turbinas/i.test(backendAfter || "")) throw new Error("telemetria visual da Matriz 100 ausente");
 
-  const appJs = await page.evaluate(() => fetch("/app.js?v=9").then(r => r.text()));
+  const appJs = await page.evaluate(() => fetch("/app.js?v=10").then(r => r.text()));
   if (!appJs.includes('u.lang = "pt-BR"')) throw new Error("frontend sem pt-BR explícito");
   if (!appJs.includes("voiceschanged")) throw new Error("frontend não aguarda vozes naturais");
   if (!appJs.includes('/api/trigger-index')) throw new Error("frontend não chama trigger-index");
@@ -180,6 +206,7 @@ try {
   await page.screenshot({ path: "ui-e2e-after-index.png", fullPage: true });
 
 
+  console.log("UI_MATRIX_100_HEAVY_PDF_PASS=yes");
   console.log("UI_VISUAL_UPLOAD_PASS=yes");
   console.log("UI_VISUAL_COUNTER_PASS=yes");
   console.log("UI_TRIGGER_INDEX_PASS=yes");
