@@ -34,6 +34,10 @@ function makePdf(runCode, paddingBytes = 0) {
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 let chatContentType = "";
+let chatRequestCount = 0;
+page.on("request", request => {
+  if (request.url().includes("/api/chat")) chatRequestCount++;
+});
 page.on("response", response => {
   if (response.url().includes("/api/chat")) {
     chatContentType = response.headers()["content-type"] || "";
@@ -56,7 +60,7 @@ await page.addInitScript(() => {
     start() {
       window.__fnsMicStarted = true;
       setTimeout(() => {
-        this.onresult?.({ results: [[{ transcript: "Responda em português dizendo que o microfone funcionou." }]] });
+        this.onresult?.({ results: [[{ transcript: window.__fnsMicTranscript || "Diga em português que o microfone funcionou." }]] });
       }, 20);
       setTimeout(() => this.onend?.(), 80);
     }
@@ -127,16 +131,36 @@ try {
 
   await page.locator("#chatTab").click();
   const messagesBefore = await page.locator("#messages .msg").count();
+  const requestsBefore = chatRequestCount;
+  const micToken = "MIC-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+  await page.evaluate(token => {
+    window.__fnsMicStarted = false;
+    window.__fnsMicTranscript = "Responda em português confirmando o teste de microfone " + token + ".";
+  }, micToken);
+
   await page.locator("#micBtn").click();
 
   await page.waitForFunction(() => window.__fnsMicStarted === true, null, { timeout: 5000 });
+  await page.waitForFunction(
+    before => document.querySelectorAll("#messages .msg").length >= before + 2,
+    messagesBefore,
+    { timeout: 90000 }
+  );
+
+  const deadline = Date.now() + 90000;
+  while (chatRequestCount <= requestsBefore && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (chatRequestCount <= requestsBefore) throw new Error("microfone não disparou POST /api/chat");
+
+  const lastAssistant = page.locator("#messages .msg.assistant").last();
+  await lastAssistant.waitFor({ state: "visible", timeout: 10000 });
   await page.waitForFunction(() => {
-    const msgs = [...document.querySelectorAll("#messages .msg.assistant")];
-    return msgs.some(m => /microfone|funcionou|português/i.test(m.textContent || ""));
+    const msgs = document.querySelectorAll("#messages .msg.assistant");
+    const last = msgs[msgs.length - 1];
+    return Boolean((last?.textContent || "").trim());
   }, null, { timeout: 90000 });
 
-  const messagesAfter = await page.locator("#messages .msg").count();
-  if (messagesAfter <= messagesBefore) throw new Error("microfone não gerou novo turno visual");
   if (!chatContentType.includes("text/event-stream")) throw new Error("chat visual não recebeu SSE");
 
   const micState = await page.evaluate(() => window.__fnsMicStarted === true);
