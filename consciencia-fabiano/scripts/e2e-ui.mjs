@@ -166,7 +166,11 @@ try {
   const micState = await page.evaluate(() => window.__fnsMicStarted === true);
   if (!micState) throw new Error("Web Speech Recognition não foi acionado");
 
-  if (!appJs.includes("SpeechSynthesisUtterance") || !appJs.includes('u.lang = "pt-BR"') || !appJs.includes("Natural")) {
+  if (
+    !appJs.includes("SpeechSynthesisUtterance") ||
+    !appJs.includes('u.lang = "pt-BR"') ||
+    !appJs.includes("/natural|online/i")
+  ) {
     throw new Error("TTS nativo pt-BR não está publicado no frontend");
   }
 
