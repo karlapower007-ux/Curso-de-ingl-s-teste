@@ -1,0 +1,42 @@
+name: Probe Cloudflare account token delegation
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/probe-cloudflare-account-token.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - name: Probe account-owned token management
+        shell: bash
+        run: |
+          set +e
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}'             "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/tokens?per_page=5"             -H "Authorization: Bearer $CF_TOKEN"             -H 'Content-Type: application/json')
+          success=$(jq -r '.success // false' /tmp/out.json 2>/dev/null)
+          err=$(jq -r '.errors[0].code // 0' /tmp/out.json 2>/dev/null)
+          count=$(jq -r 'if (.result|type)=="array" then (.result|length) else 0 end' /tmp/out.json 2>/dev/null)
+          echo "account_tokens http=$code success=$success count=$count error_code=$err"
+
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/probe-cloudflare-account-token.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish Cloudflare account token probe"
+          git push origin HEAD:consciencia-cloudflare-native-v1
