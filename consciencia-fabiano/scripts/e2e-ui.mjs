@@ -86,8 +86,9 @@ try {
   const before = beforeMatch ? Number(beforeMatch[1]) : 0;
 
   const uiRunCode = "UI-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+  const uiFilename = "fns-ui-visual-" + uiRunCode.toLowerCase() + ".pdf";
   await page.locator("#pdfInput").setInputFiles({
-    name: "fns-ui-visual-e2e.pdf",
+    name: uiFilename,
     mimeType: "application/pdf",
     buffer: makePdf(uiRunCode, 4 * 1024 * 1024),
   });
@@ -120,7 +121,7 @@ try {
   if (!appJs.includes("/api/status?document_id=")) throw new Error("frontend não faz polling assíncrono");
 
   const books = await page.evaluate(() => fetch("/api/admin/livros").then(r => r.json()));
-  const row = (books.livros || []).find(x => x.arquivo === "fns-ui-visual-e2e.pdf");
+  const row = (books.livros || []).find(x => x.arquivo === uiFilename);
   if (!row?.id) throw new Error("PDF visual não apareceu no catálogo");
   testDocId = row.id;
 
