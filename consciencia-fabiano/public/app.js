@@ -440,30 +440,92 @@
     $("avatarState").textContent = "Ouvindo";
   }
 
+  function uploadDirectToR2(url, file, contentType) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      xhr.setRequestHeader("Content-Type", contentType || "application/pdf");
+
+      xhr.upload.onprogress = event => {
+        if (!event.lengthComputable) {
+          $("adminStatus").textContent = "Enviando diretamente para o R2…";
+          return;
+        }
+        const pct = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        const mb = (event.loaded / (1024 * 1024)).toFixed(1);
+        const totalMb = (event.total / (1024 * 1024)).toFixed(1);
+        $("adminStatus").textContent = "Upload direto ao R2: " + pct + "% • " + mb + " de " + totalMb + " MB";
+      };
+
+      xhr.onerror = () => reject(new Error("Falha de rede no upload direto ao R2."));
+      xhr.onabort = () => reject(new Error("Upload cancelado."));
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) return resolve();
+        reject(new Error("R2 recusou o upload direto (HTTP " + xhr.status + ")."));
+      };
+
+      xhr.send(file);
+    });
+  }
+
   async function uploadPdf() {
     const file = $("pdfInput").files?.[0];
     if (!file) {
       $("adminStatus").textContent = "Escolha um PDF.";
       return;
     }
+    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+      $("adminStatus").textContent = "Escolha um arquivo PDF.";
+      return;
+    }
+    if (!file.size) {
+      $("adminStatus").textContent = "O PDF está vazio.";
+      return;
+    }
+
     $("uploadBtn").disabled = true;
-    $("adminStatus").textContent = "Enviando e indexando " + file.name + "…";
+    $("adminStatus").textContent = "Preparando upload direto ao R2 para " + file.name + "…";
+
     try {
-      const fd = new FormData();
-      fd.append("arquivo", file, file.name);
-      const res = await fetch("/api/admin/upload-pdf", {
+      const ticket = await api("/api/admin/direct-upload-ticket", {
         method: "POST",
-        headers: adminHeaders(),
-        body: fd
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          content_type: "application/pdf",
+          size_bytes: file.size
+        })
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || data.message || "Falha no upload.");
-      $("adminStatus").textContent = "PDF indexado: " + (data.arquivo || file.name) + " • " + (data.chunks || 0) + " trechos.";
+
+      if (!ticket?.upload_url || !ticket?.document_id || !ticket?.r2_key) {
+        throw new Error("O servidor não gerou o endereço temporário do R2.");
+      }
+
+      await uploadDirectToR2(ticket.upload_url, file, ticket.content_type || "application/pdf");
+
+      $("adminStatus").textContent =
+        "Arquivo recebido pelo R2. Convertendo e criando a memória pesquisável…";
+
+      const data = await api("/api/admin/index-r2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document_id: ticket.document_id,
+          r2_key: ticket.r2_key,
+          filename: ticket.filename || file.name,
+          size_bytes: file.size
+        })
+      });
+
+      $("adminStatus").textContent = data.duplicate
+        ? "Este PDF já existia na biblioteca. O upload duplicado foi descartado com segurança."
+        : "PDF indexado: " + (data.arquivo || file.name) + " • " + (data.chunks || 0) + " trechos.";
+
       $("pdfInput").value = "";
       await loadBooks();
       await checkBackend();
     } catch (error) {
-      $("adminStatus").textContent = error.message;
+      $("adminStatus").textContent = error.message || "Falha no upload direto ao R2.";
     } finally {
       $("uploadBtn").disabled = false;
     }
