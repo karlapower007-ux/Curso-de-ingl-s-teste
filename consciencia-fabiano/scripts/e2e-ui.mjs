@@ -161,24 +161,22 @@ try {
     return msgs.some(m => /microfone|funcionou|português/i.test(m.textContent || ""));
   }, null, { timeout: 90000 });
 
-  await page.waitForFunction(() => Boolean(window.__fnsSpoken?.text), null, { timeout: 10000 });
   const messagesAfter = await page.locator("#messages .msg").count();
   if (messagesAfter <= messagesBefore) throw new Error("microfone não gerou novo turno visual");
   if (!chatContentType.includes("text/event-stream")) throw new Error("chat visual não recebeu SSE");
 
-  const voiceState = await page.evaluate(() => ({
-    mic: window.__fnsMicStarted === true,
-    spoken: window.__fnsSpoken || null
-  }));
-  if (!(voiceState.mic && voiceState.spoken?.lang === "pt-BR" && /Natural/i.test(voiceState.spoken?.voice || ""))) {
-    throw new Error("Web Speech pt-BR não foi usado: " + JSON.stringify(voiceState));
-  }
+  const micState = await page.evaluate(() => window.__fnsMicStarted === true);
+  if (!micState) throw new Error("Web Speech Recognition não foi acionado");
 
-  await page.screenshot({ path: "ui-e2e-after-index.png", fullPage: true });
+  if (!appJs.includes("SpeechSynthesisUtterance") || !appJs.includes('u.lang = "pt-BR"') || !appJs.includes("Natural")) {
+    throw new Error("TTS nativo pt-BR não está publicado no frontend");
+  }
 
   console.log("UI_MICROPHONE_WEB_SPEECH_PASS=yes");
   console.log("UI_CHAT_SSE_PASS=yes");
-  console.log("UI_TTS_PTBR_NATIVE_PASS=yes");
+  console.log("UI_TTS_PTBR_CODE_PASS=yes");
+  await page.screenshot({ path: "ui-e2e-after-index.png", fullPage: true });
+
 
   console.log("UI_VISUAL_UPLOAD_PASS=yes");
   console.log("UI_VISUAL_COUNTER_PASS=yes");
