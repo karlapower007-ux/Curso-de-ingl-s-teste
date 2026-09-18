@@ -70,6 +70,41 @@ async function waitForIndex(documentId, timeoutMs = 180000) {
   throw new Error("background indexing timeout");
 }
 
+async function readSse(res) {
+  if (!(res.headers.get("content-type") || "").includes("text/event-stream")) throw new Error("chat não retornou SSE");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "", answer = "", meta = null;
+  const pieceFrom = p => String(p?.response ?? p?.delta?.content ?? p?.choices?.[0]?.delta?.content ?? p?.choices?.[0]?.text ?? p?.result?.response ?? "");
+  const consume = block => {
+    const lines = String(block || "").split(/\r?\n/);
+    let eventName = "message";
+    const data = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      if (line.startsWith("data:")) data.push(line.slice(5).trim());
+    }
+    const raw = data.join("\n");
+    if (!raw || raw === "[DONE]") return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (eventName === "fns-meta") meta = parsed;
+      else answer += pieceFrom(parsed);
+    } catch {}
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() || "";
+    for (const part of parts) consume(part);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consume(buffer);
+  return { answer: answer.trim(), meta };
+}
+
 async function cleanup() {
   try {
     if (documentId) {
