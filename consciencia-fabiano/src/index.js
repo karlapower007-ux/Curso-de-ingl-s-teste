@@ -10,7 +10,6 @@ const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 1800;
 const MAX_SERVER_HISTORY = 40;
-const OWNER_TOKEN_HASH = "37ae863d0508e0d693e26f73ae5db81e0c60747d3870c0f8c4498513ebd0c8cb";
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
@@ -156,19 +155,18 @@ async function githubActionsAuthorized(request) {
   }
 }
 
-function rawToken(request) {
-  const auth = request.headers.get("Authorization") || "";
-  if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
-  return (request.headers.get("X-FNS-Owner-Token") || "").trim();
-}
-
 async function adminAuthorized(request, env) {
   if (await githubActionsAuthorized(request)) return true;
+
   const automation = (request.headers.get("X-FNS-Automation") || "").trim();
   if (env.AUTOMATION_SECRET && automation && automation === env.AUTOMATION_SECRET) return true;
-  const token = rawToken(request);
-  if (!token || token.length < 30) return false;
-  return (await sha256Text(token)) === OWNER_TOKEN_HASH;
+
+  const password = String(request.headers.get("X-FNS-Admin-Password") || "");
+  const expectedHash = String(env.ADMIN_PASSWORD_HASH || "").trim().toLowerCase();
+  if (!password || !expectedHash || expectedHash.length !== 64) return false;
+
+  const suppliedHash = await sha256Text(password);
+  return suppliedHash === expectedHash;
 }
 
 function libraryStub(env) {
@@ -723,6 +721,7 @@ async function status(env) {
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
     tts_model: TTS_MODEL,
+    admin_auth: "native-password",
   };
 }
 
@@ -733,6 +732,9 @@ async function handleApi(request, env, url) {
     }
     if (url.pathname === "/api/status" && request.method === "GET") {
       return json(await status(env));
+    }
+    if (url.pathname === "/api/admin/session" && request.method === "GET") {
+      return json({ ok: true, auth: "native-password" });
     }
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (url.pathname === "/api/memory" && request.method === "GET") {
