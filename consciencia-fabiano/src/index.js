@@ -1,4 +1,4 @@
-const VERSION = "1.2.0-async-r2-voice-loop";
+const VERSION = "1.2.1-async-do-voice-loop";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";

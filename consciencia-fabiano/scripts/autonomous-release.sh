@@ -136,6 +136,23 @@ curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
 cat /tmp/chat-en.json
 jq -e '.ok == true and (.resposta|length) > 20 and ([.fontes[] | select(.arquivo=="teste-ingles.pdf" and (.pagina|tonumber)>=1)] | length > 0)' /tmp/chat-en.json >/dev/null
 
+log "Native STT audio smoke"
+python3 - <<'PY'
+import wave
+with wave.open("/tmp/fns-stt-silence.wav","wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(16000)
+    w.writeframes(b"\x00\x00" * 16000)
+PY
+curl -fsS "$BASE/api/stt" \
+  -H 'Content-Type: audio/wav' \
+  --data-binary '@/tmp/fns-stt-silence.wav' \
+  > /tmp/stt.json
+cat /tmp/stt.json
+jq -e '.ok == true and (.text|type) == "string" and .language == "pt-BR"' /tmp/stt.json >/dev/null
+log "STT_NATIVE_RESPONSE=yes"
+
 curl -fsS "$BASE/api/tts" -H 'Content-Type: application/json' \
   --data '{"text":"A Consciencia do Fabiano esta funcionando em portugues."}' \
   -D /tmp/tts.headers -o /tmp/tts.audio || true
@@ -175,6 +192,11 @@ done
 
 curl -fsS "$BASE/api/status" | tee /tmp/status.json
 jq -e '.ok == true and .render_dependency == false and .storage_backend == "durable-object-sqlite"' /tmp/status.json >/dev/null
+
+log "Production browser voice-loop smoke"
+npm install --no-save --no-package-lock playwright-core@1.55.0 >/tmp/playwright-install.log 2>&1
+node ./scripts/browser-voice-smoke.mjs "$BASE"
+log "BROWSER_VOICE_LOOP_PASS=yes"
 
 log "FIRE_TEST_PT_EN=pass"
 log "AUTONOMOUS_RELEASE=success"
