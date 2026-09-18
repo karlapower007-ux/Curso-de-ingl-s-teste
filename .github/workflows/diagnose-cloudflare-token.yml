@@ -1,0 +1,50 @@
+name: Diagnose Cloudflare token target
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/diagnose-cloudflare-token.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+      - name: Verify token and account target
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_code=$(curl -sS -o /tmp/verify.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/user/tokens/verify" -H "Authorization: Bearer $CF_TOKEN")
+          verify_success=$(jq -r '.success // false' /tmp/verify.json)
+          verify_status=$(jq -r '.result.status // "unknown"' /tmp/verify.json)
+          echo "TOKEN_VERIFY http=$verify_code success=$verify_success status=$verify_status"
+
+          accounts_code=$(curl -sS -o /tmp/accounts.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts?per_page=50" -H "Authorization: Bearer $CF_TOKEN")
+          accounts_success=$(jq -r '.success // false' /tmp/accounts.json)
+          target_match=$(jq --arg target "$ACCOUNT" -r 'if (.result|type)=="array" then any(.result[]?; .id==$target) else false end' /tmp/accounts.json)
+          count=$(jq -r 'if (.result|type)=="array" then (.result|length) else 0 end' /tmp/accounts.json)
+          echo "ACCOUNTS_LIST http=$accounts_code success=$accounts_success count=$count target_match=$target_match"
+
+          access_code=$(curl -sS -o /tmp/access.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/access/apps?per_page=1" -H "Authorization: Bearer $CF_TOKEN")
+          access_success=$(jq -r '.success // false' /tmp/access.json)
+          access_err=$(jq -r '.errors[0].code // 0' /tmp/access.json)
+          echo "ACCESS_PROBE http=$access_code success=$access_success error_code=$access_err"
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/diagnose-cloudflare-token.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish Cloudflare token diagnosis"
+          git push origin HEAD:consciencia-cloudflare-native-v1
