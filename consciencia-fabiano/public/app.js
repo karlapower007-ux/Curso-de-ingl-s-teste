@@ -77,7 +77,7 @@
     const body=ct.includes("application/json") ? await res.json() : await res.text();
     if(res.status===401 && canPrompt && isPrivateApi(path)){
       const value=prompt("Informe a chave privada do proprietário para administrar a biblioteca:");
-      if(value && value.trim().length>=30){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
+      if(value && value.trim().length>=10){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
     }
     if(!res.ok){const err=new Error(body?.message || body?.detail || body?.error || String(body));err.code=body?.code || "";err.status=res.status;throw err;}
     return body;
