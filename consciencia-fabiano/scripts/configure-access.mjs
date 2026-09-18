@@ -35,8 +35,8 @@ async function probeOrganization() {
   }
   const errors = Array.isArray(org.body?.errors) ? org.body.errors : [];
   console.log("ACCESS_ORG_ERRORS=" + JSON.stringify(errors.map(e => ({code:e.code,message:e.message}))));
-  console.log("ACCESS_ORG_READY=no");
-  process.exit(78);
+  console.log("ACCESS_ORG_READY=unknown");
+  return null;
 }
 
 async function ensureApplication() {
