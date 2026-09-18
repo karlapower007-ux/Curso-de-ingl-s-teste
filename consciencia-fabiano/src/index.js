@@ -1,10 +1,11 @@
+import { AwsClient } from "aws4fetch";
+
 const VERSION = "1.1.0-cloudflare-native-do-memory";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const TTS_MODEL = "@cf/myshell-ai/melotts";
 const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
-const MAX_PDF_BYTES = 90 * 1024 * 1024;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
@@ -323,19 +324,14 @@ async function convertPdf(env, filename, buffer) {
   return String(result.data);
 }
 
-async function uploadPdf(request, env) {
-  assertBindings(env);
-  assertPdfStorage(env);
-  const form = await request.formData();
-  const file = form.get("arquivo");
-  if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
-  const filename = safeName(file.name);
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
-  if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
-  if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
-  if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 90 MB." }, 413);
-
-  const buffer = await file.arrayBuffer();
+async function indexPdfBuffer(env, {
+  filename,
+  buffer,
+  sizeBytes,
+  documentId = uuidCompact(),
+  objectKey = null,
+  objectAlreadyStored = false,
+}) {
   const digest = await sha256Buffer(buffer);
   const duplicate = await libraryCall(env, "/duplicate?sha=" + encodeURIComponent(digest));
   if (duplicate.document) {
@@ -347,7 +343,10 @@ async function uploadPdf(request, env) {
         customMetadata: { document_id: duplicate.document.id, sha256: digest },
       });
     }
-    return json({
+    if (objectAlreadyStored && objectKey && objectKey !== duplicateKey) {
+      await env.PDFS.delete(objectKey).catch(() => {});
+    }
+    return {
       ok: true,
       duplicate: true,
       ...duplicate.document,
@@ -355,16 +354,16 @@ async function uploadPdf(request, env) {
       r2_key: duplicateKey,
       r2_backfilled: !existingObject,
       message: "Este PDF já existe na biblioteca.",
-    });
+    };
   }
 
   const markdown = await convertPdf(env, filename, buffer);
   const pages = splitPages(markdown);
   const metadata = parsePdfMetadata(markdown, filename);
   const language = detectLanguage(markdown);
-  const documentId = uuidCompact();
   const chunks = [];
   let globalIndex = 0;
+
   for (const page of pages) {
     for (const piece of chunkText(page.text)) {
       chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
@@ -374,22 +373,33 @@ async function uploadPdf(request, env) {
 
   for (let i = 0; i < chunks.length; i += 12) {
     const group = chunks.slice(i, i + 12);
-    const vectors = await embedTexts(env, group.map(c => c.text));
-    if (vectors.length !== group.length) throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
-    group.forEach((c, idx) => { c.embedding = vectors[idx]; });
+    const vectors = await embedTexts(env, group.map(item => item.text));
+    if (vectors.length !== group.length) {
+      throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
+    }
+    group.forEach((item, idx) => { item.embedding = vectors[idx]; });
   }
 
+  const finalKey = objectKey || r2ObjectKey(documentId, filename);
   const document = {
-    id: documentId, filename, title: metadata.title, author: metadata.author, language,
-    sha256: digest, size_bytes: file.size, page_count: pages.length,
-    chunk_count: chunks.length, status: "ready",
+    id: documentId,
+    filename,
+    title: metadata.title,
+    author: metadata.author,
+    language,
+    sha256: digest,
+    size_bytes: Number(sizeBytes || buffer.byteLength || 0),
+    page_count: pages.length,
+    chunk_count: chunks.length,
+    status: "ready",
   };
 
-  const objectKey = r2ObjectKey(documentId, filename);
-  await env.PDFS.put(objectKey, buffer, {
-    httpMetadata: { contentType: "application/pdf" },
-    customMetadata: { document_id: documentId, sha256: digest },
-  });
+  if (!objectAlreadyStored) {
+    await env.PDFS.put(finalKey, buffer, {
+      httpMetadata: { contentType: "application/pdf" },
+      customMetadata: { document_id: documentId, sha256: digest },
+    });
+  }
 
   try {
     await libraryCall(env, "/ingest", {
@@ -398,18 +408,165 @@ async function uploadPdf(request, env) {
       body: JSON.stringify({ document, chunks }),
     });
   } catch (error) {
-    await env.PDFS.delete(objectKey).catch(() => {});
+    await env.PDFS.delete(finalKey).catch(() => {});
     throw error;
   }
 
-  return json({
-    ok: true, document_id: documentId, arquivo: filename, titulo: metadata.title,
-    autor: metadata.author, idioma: language, paginas: pages.length, chunks: chunks.length,
+  return {
+    ok: true,
+    document_id: documentId,
+    arquivo: filename,
+    titulo: metadata.title,
+    autor: metadata.author,
+    idioma: language,
+    paginas: pages.length,
+    chunks: chunks.length,
     storage: "r2-original+durable-object-sqlite-index",
-    r2_key: objectKey,
-  }, 201);
+    r2_key: finalKey,
+  };
 }
 
+async function uploadPdf(request, env) {
+  assertBindings(env);
+  assertPdfStorage(env);
+  const form = await request.formData();
+  const file = form.get("arquivo");
+  if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
+
+  const filename = safeName(file.name);
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
+  if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
+  if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
+
+  const buffer = await file.arrayBuffer();
+  const result = await indexPdfBuffer(env, {
+    filename,
+    buffer,
+    sizeBytes: file.size,
+  });
+  return json(result, result.duplicate ? 200 : 201);
+}
+
+function encodedR2Key(key) {
+  return String(key || "").split("/").map(segment => encodeURIComponent(segment)).join("/");
+}
+
+async function createDirectUploadTicket(request, env) {
+  assertBindings(env);
+  assertPdfStorage(env);
+
+  const body = await request.json().catch(() => ({}));
+  const filename = safeName(body?.filename || "");
+  const contentType = "application/pdf";
+  if (!filename || !/\.pdf$/i.test(filename)) {
+    return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
+  }
+
+  const accountId = String(env.R2_ACCOUNT_ID || "").trim();
+  const bucket = String(env.R2_BUCKET_NAME || "consciencia-fabiano-pdfs").trim();
+  const parentToken = String(env.R2_PARENT_API_TOKEN || "").trim();
+  const parentAccessKeyId = String(env.R2_PARENT_ACCESS_KEY_ID || "").trim();
+  if (!accountId || !bucket || !parentToken || !parentAccessKeyId) {
+    const err = new Error("Credenciais internas para upload direto ao R2 não estão configuradas.");
+    err.code = "BINDINGS_MISSING";
+    throw err;
+  }
+
+  const documentId = uuidCompact();
+  const objectKey = r2ObjectKey(documentId, filename);
+
+  const tempResponse = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/temp-access-credentials`,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + parentToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        bucket,
+        parentAccessKeyId,
+        permission: "object-read-write",
+        ttlSeconds: 900,
+        objects: [objectKey],
+      }),
+    },
+  );
+
+  const temp = await tempResponse.json().catch(() => ({}));
+  if (!tempResponse.ok || temp?.success !== true) {
+    throw new Error(temp?.errors?.[0]?.message || "Não foi possível gerar credenciais temporárias do R2.");
+  }
+
+  const credentials = temp.result || {};
+  const signer = new AwsClient({
+    service: "s3",
+    region: "auto",
+    accessKeyId: credentials.accessKeyId,
+    secretAccessKey: credentials.secretAccessKey,
+    sessionToken: credentials.sessionToken,
+  });
+
+  const target = new URL(
+    `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${encodedR2Key(objectKey)}`,
+  );
+  target.searchParams.set("X-Amz-Expires", "900");
+
+  const signed = await signer.sign(
+    new Request(target.toString(), {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+    }),
+    { aws: { signQuery: true } },
+  );
+
+  return json({
+    ok: true,
+    direct: true,
+    upload_url: signed.url.toString(),
+    document_id: documentId,
+    r2_key: objectKey,
+    filename,
+    content_type: contentType,
+    expires_in: 900,
+  });
+}
+
+async function indexDirectUpload(request, env) {
+  assertBindings(env);
+  assertPdfStorage(env);
+
+  const body = await request.json().catch(() => ({}));
+  const documentId = String(body?.document_id || "").trim();
+  const filename = safeName(body?.filename || "");
+  const objectKey = String(body?.r2_key || "").trim();
+
+  if (!documentId || !filename || !/\.pdf$/i.test(filename)) {
+    return json({ ok: false, message: "Dados do PDF inválidos." }, 400);
+  }
+
+  const expectedKey = r2ObjectKey(documentId, filename);
+  if (objectKey !== expectedKey) {
+    return json({ ok: false, message: "Chave R2 inválida para este documento." }, 400);
+  }
+
+  const object = await env.PDFS.get(objectKey);
+  if (!object) {
+    return json({ ok: false, message: "O upload direto ainda não apareceu no R2." }, 404);
+  }
+
+  const buffer = await object.arrayBuffer();
+  const result = await indexPdfBuffer(env, {
+    filename,
+    buffer,
+    sizeBytes: object.size,
+    documentId,
+    objectKey,
+    objectAlreadyStored: true,
+  });
+
+  return json(result, result.duplicate ? 200 : 201);
+}
 async function listBooks(env) {
   assertBindings(env);
   return libraryCall(env, "/docs");
@@ -722,6 +879,8 @@ async function status(env) {
     stt_model: STT_MODEL,
     tts_model: TTS_MODEL,
     admin_auth: "native-password",
+    direct_r2_upload: true,
+    upload_body_limit_bypassed: true,
   };
 }
 
@@ -752,6 +911,12 @@ async function handleApi(request, env, url) {
     if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
 
+    if (url.pathname === "/api/admin/direct-upload-ticket" && request.method === "POST") {
+      return await createDirectUploadTicket(request, env);
+    }
+    if (url.pathname === "/api/admin/index-r2" && request.method === "POST") {
+      return await indexDirectUpload(request, env);
+    }
     if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") {
       return await uploadPdf(request, env);
     }
