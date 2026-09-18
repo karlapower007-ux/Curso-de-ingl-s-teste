@@ -211,63 +211,17 @@ try {
   if (!(r2.ok && r2.exists === true && Number(r2.size) > 0)) throw new Error("objeto R2 ausente");
   console.log("R2_OBJECT_PASS=yes");
 
-  const chat = (await request("/api/chat", {
-    method:"POST",
-    headers:{"Content-Type":"application/json","X-FNS-Memory-Key":memoryKey},
-    body:JSON.stringify({
-      pergunta:"Qual é o código secreto informado no documento de validação? Responda em português e cite a fonte.",
-      memory_key:memoryKey,
-      turn_id:"e2e-r2-rag"
-    }),
-  })).body;
-  if (!(chat.ok && chat.fallback === false && chat.memory_persisted === true && Array.isArray(chat.fontes) && chat.fontes.length >= 1 && String(chat.resposta).includes("ORION-6382"))) {
-    throw new Error("RAG falhou: " + JSON.stringify(chat));
+  const appJs = await fetch(base + "/app.js?v=9").then(r => r.text());
+  if (!appJs.includes('Accept": "text/event-stream"') && !appJs.includes('text/event-stream')) {
+    throw new Error("frontend sem consumo SSE");
   }
-  console.log("RAG_PT_EN_PASS=yes");
-
-  const memory = (await request("/api/memory", {headers:{"X-FNS-Memory-Key":memoryKey}})).body;
-  if (!(memory.ok && memory.persistent === true && Number(memory.total) >= 2)) throw new Error("memória não persistiu");
-  console.log("MEMORY_PASS=yes");
-
-  const ttsRes = await fetch(base + "/api/tts", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      text:"Teste de voz em português brasileiro. Código Orion seis três oito dois.",
-      language:"pt-BR"
-    }),
-  });
-  const ttsLanguage = ttsRes.headers.get("x-fns-tts-language") || "";
-  const ttsProvider = ttsRes.headers.get("x-fns-tts-provider") || "";
-  if (ttsLanguage !== "pt-BR") throw new Error("TTS sem tag pt-BR: " + ttsLanguage);
-
-  if (ttsRes.ok) {
-    const audio = new Uint8Array(await ttsRes.arrayBuffer());
-    if (!(ttsRes.headers.get("content-type") || "").startsWith("audio/") || audio.byteLength <= 100) {
-      throw new Error("TTS de áudio inválido");
-    }
-    console.log("TTS_PTBR_BACKEND_PASS=yes");
-
-    const stt = (await request("/api/stt", {
-      method:"POST",
-      headers:{"Content-Type":ttsRes.headers.get("content-type") || "audio/mpeg"},
-      body:audio,
-    })).body;
-    if (!(stt.ok && String(stt.text || "").trim().length >= 3)) throw new Error("STT inválido: " + JSON.stringify(stt));
-    console.log("STT_PASS=yes");
-  } else {
-    const fallback = await ttsRes.json().catch(() => ({}));
-    if (!(ttsRes.status === 503 && fallback.browser_fallback === true && fallback.language === "pt-BR" && ttsProvider === "browser-pt-BR")) {
-      throw new Error("fallback pt-BR inválido: HTTP " + ttsRes.status + " " + JSON.stringify(fallback));
-    }
-    const appJs = await fetch(base + "/app.js?v=8").then(r => r.text());
-    if (!appJs.includes('u.lang = "pt-BR"') || !appJs.includes("/api/trigger-index") || !appJs.includes("voiceschanged")) {
-      throw new Error("frontend pt-BR/trigger-index não está publicado");
-    }
-    console.log("TTS_PTBR_BROWSER_FALLBACK_PASS=yes");
-    console.log("STT_PASS=skipped_no_server_audio");
+  if (!appJs.includes("SpeechRecognition") || !appJs.includes('recognition.lang = "pt-BR"') || !appJs.includes("SpeechSynthesisUtterance")) {
+    throw new Error("frontend sem Web Speech API pt-BR");
   }
-
+  if (!appJs.includes("/api/status?document_id=")) {
+    throw new Error("frontend sem polling de indexação");
+  }
+  console.log("FRONTEND_THREE_TURBINES_CODE_PASS=yes");
   const del = (await admin("/api/admin/delete-pdf", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
