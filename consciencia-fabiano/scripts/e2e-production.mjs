@@ -21,7 +21,7 @@ async function request(path, options = {}) {
   return { res, body };
 }
 
-function makePdf(lines) {
+function makePdf(lines, paddingBytes = 0) {
   const esc = s => s.replaceAll("\\","\\\\").replaceAll("(","\\(").replaceAll(")","\\)");
   let text = "BT /F1 14 Tf 72 720 Td ";
   lines.forEach((line, i) => {
@@ -47,6 +47,7 @@ function makePdf(lines) {
   out += "xref\n0 " + (objs.length+1) + "\n0000000000 65535 f \n";
   for (const off of offsets.slice(1)) out += String(off).padStart(10,"0") + " 00000 n \n";
   out += "trailer\n<< /Size " + (objs.length+1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
+  if (paddingBytes > 0) { const padLine = "% FNS-PADDING-" + "X".repeat(1000) + "\n"; while (enc.encode(out).length < paddingBytes) out += padLine; }
   return enc.encode(out);
 }
 
@@ -100,7 +101,8 @@ try {
     "FNS Cloudflare R2 end-to-end validation document.",
     "The secret verification code is ORION-6382.",
     "This file validates multilingual retrieval and is deleted automatically."
-  ]);
+  ], 8 * 1024 * 1024);
+  console.log("HEAVY_PDF_BYTES=" + pdf.byteLength);
   const ticket = (await admin("/api/admin/direct-upload-ticket", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
