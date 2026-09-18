@@ -74,7 +74,24 @@ async function diagnoseIdPs() {
   return [];
 }
 
-async function ensureApplication() {
+async function ensureOtpIdp() {
+  const current = await diagnoseIdPs();
+  let otp = current.find(x => x.type === "onetimepin");
+  if (otp) {
+    console.log("OTP_IDP_EXISTS=yes");
+    return otp;
+  }
+  const created = await cf("/accounts/" + accountId + "/access/identity_providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Código por e-mail", type: "onetimepin", config: {} })
+  });
+  otp = ensureSuccess("create OTP IdP", created);
+  console.log("OTP_IDP_CREATED=yes");
+  console.log("OTP_IDP_ID=" + otp.id);
+  return otp;
+}
+
+async function ensureApplication(otpId) {
   const listed = await cf("/accounts/" + accountId + "/access/apps?per_page=100");
   const apps = ensureSuccess("list apps", listed) || [];
   let app = Array.isArray(apps) ? apps.find(x => x.name === appName) : null;
@@ -89,6 +106,8 @@ async function ensureApplication() {
     allow_authenticate_via_warp: false,
     http_only_cookie_attribute: true,
     same_site_cookie_attribute: "strict",
+    allowed_idps: [otpId],
+    auto_redirect_to_identity: true,
     destinations: [
       { type: "public", uri: hostname + "/admin" },
       { type: "public", uri: hostname + "/admin*" },
@@ -115,7 +134,7 @@ async function ensureApplication() {
   return app;
 }
 
-async function ensurePolicy(appId) {
+async function ensurePolicy(appId, otpId) {
   const listed = await cf("/accounts/" + accountId + "/access/apps/" + appId + "/policies?per_page=100");
   const policies = ensureSuccess("list policies", listed) || [];
   let policy = Array.isArray(policies) ? policies.find(x => x.name === policyName) : null;
@@ -126,7 +145,7 @@ async function ensurePolicy(appId) {
     precedence: 1,
     session_duration: "1h",
     include: [{ email: { email: allowedEmail } }],
-    require: [],
+    require: [{ login_method: { id: otpId } }],
     exclude: []
   };
 
@@ -169,9 +188,9 @@ async function verifyEdgeLock() {
 
 await resolveAccountId();
 await probeOrganization();
-await diagnoseIdPs();
-const app = await ensureApplication();
-await ensurePolicy(app.id);
+const otp = await ensureOtpIdp();
+const app = await ensureApplication(otp.id);
+await ensurePolicy(app.id, otp.id);
 await new Promise(r => setTimeout(r, 5000));
 await verifyEdgeLock();
 console.log("ZERO_TRUST_ACCESS=success");
