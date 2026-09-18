@@ -58,7 +58,7 @@ try {
   while (Date.now() < deadline) {
     finalStatus = String(await page.locator("#adminStatus").textContent() || "");
     if (finalStatus !== lastStatus) {
-      console.log("ADMIN_STATUS=" + finalStatus);
+      console.error("ADMIN_STATUS=" + finalStatus);
       lastStatus = finalStatus;
     }
     if (finalStatus.startsWith("Concluído:") || finalStatus.startsWith("Já indexado:")) break;
