@@ -44,6 +44,11 @@ jobs:
           test -s public/fabiano-aberto.png
           grep -q 'Consciência do Fabiano' public/index.html
           grep -q 'avatar-fabiano-api.onrender.com' src/index.js
+          grep -q 'id="questionInput"' public/index.html
+          grep -q 'id="micBtn"' public/index.html
+          grep -q 'id="sendBtn"' public/index.html
+          grep -q 'id="autoSendVoice"' public/index.html
+          grep -q 'sendQuestion' public/app.js
           npx wrangler deploy --dry-run --outdir /tmp/consciencia-dist
 
       - name: Deploy
