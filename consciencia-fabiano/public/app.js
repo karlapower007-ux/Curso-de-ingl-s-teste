@@ -1,6 +1,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const HISTORY_KEY = "consciencia_fabiano_history_v1";
+  const MEMORY_KEY = "consciencia_fabiano_memory_secret_v1";
   const MAX_HISTORY = 60;
 
   let history = [];
@@ -21,16 +22,46 @@
     } catch { history = []; }
   }
 
+  function getMemorySecret() {
+    let value = localStorage.getItem(MEMORY_KEY) || "";
+    if (value.length >= 32) return value;
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    value = [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(MEMORY_KEY, value);
+    return value;
+  }
+
+  const memorySecret = getMemorySecret();
+
+  async function syncPersistentHistory() {
+    try {
+      const data = await api("/api/memory", { method: "GET" });
+      const remote = Array.isArray(data?.messages) ? data.messages : [];
+      if (remote.length) {
+        history = remote.slice(-MAX_HISTORY).map(x => ({
+          role: x.role === "assistant" ? "assistant" : "user",
+          content: String(x.content || ""),
+          sources: Array.isArray(x.sources) ? x.sources : [],
+          fallback: x.fallback === true,
+          ts: x.ts || Date.now()
+        }));
+        saveHistory();
+        renderHistory();
+      }
+    } catch {}
+  }
+
   function saveHistory() {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
   }
 
   function authHeaders(extra = {}) {
-    return { ...extra };
+    return { "X-FNS-Memory-Key": memorySecret, ...extra };
   }
 
   async function api(path, options = {}) {
-    const headers = new Headers(options.headers || {});
+    const headers = new Headers(authHeaders(options.headers || {}));
     const res = await fetch(path, { ...options, headers });
     const ct = res.headers.get("content-type") || "";
     const body = ct.includes("application/json") ? await res.json() : await res.text();
@@ -185,11 +216,13 @@
     $("micBtn").disabled = true;
     setAvatar("thinking");
     try {
+      const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const data = await api("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pergunta: q,
+          turn_id: turnId,
           historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
         })
       });
@@ -412,16 +445,24 @@
   $("micBtn").onclick = () => startVoice().catch(e => appendMessage("assistant", "Microfone indisponível: " + e.message));
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
-  $("clearChatBtn").onclick = () => {
+  $("clearChatBtn").onclick = async () => {
     if (!confirm("Limpar todo o histórico desta conversa?")) return;
     history = [];
     saveHistory();
     renderHistory();
     setAvatar("closed");
+    try {
+      await api("/api/memory/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+    } catch {}
   };
 
   loadHistory();
   renderHistory();
+  syncPersistentHistory();
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
   loadBooks();
