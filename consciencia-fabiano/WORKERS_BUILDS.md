@@ -21,3 +21,7 @@ O deploy command executa o bootstrap idempotente:
 8. publica o Worker.
 
 A versão estável não deve ser substituída até o bootstrap concluir com sucesso.
+
+## Ativação
+
+GitHub App autorizado; commit de ativação para disparar o Workers Builds na branch de produção nativa.
