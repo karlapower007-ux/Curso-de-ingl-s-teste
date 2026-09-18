@@ -68,6 +68,22 @@ if [ -z "$SUBDOMAIN" ]; then
 fi
 [ -n "$SUBDOMAIN" ] || { cat /tmp/subdomain-put.json 2>/dev/null || cat /tmp/subdomain.json; die "WORKERS_SUBDOMAIN_CREATE_FAILED"; }
 
+log "4a/6 Configure secure direct-to-R2 browser upload"
+PARENT_ACCESS_KEY_ID=$(jq -r '.result.id // empty' /tmp/cf-verify.json)
+[ -n "$PARENT_ACCESS_KEY_ID" ] || die "R2_PARENT_ACCESS_KEY_ID_MISSING"
+
+printf '%s' "$FABIANO_CLOUDFLARE_API_TOKEN" | npx wrangler secret put R2_PARENT_API_TOKEN >/tmp/r2-parent-token.log
+printf '%s' "$PARENT_ACCESS_KEY_ID" | npx wrangler secret put R2_PARENT_ACCESS_KEY_ID >/tmp/r2-parent-key.log
+log "R2_SIGNING_SECRETS_READY=yes"
+
+CORS_BODY='{"rules":[{"allowed":{"origins":["https://consciencia-fabiano.focoeepoder2.workers.dev"],"methods":["PUT"],"headers":["Content-Type"]},"exposeHeaders":["ETag"],"maxAgeSeconds":3600}]}'
+cors_code=$(curl -sS -o /tmp/r2-cors.json -w '%{http_code}' -X PUT   "$CF_API/accounts/$TARGET_ACCOUNT_ID/r2/buckets/$R2_BUCKET/cors"   "${AUTH[@]}" --data "$CORS_BODY")
+if [ "$cors_code" != "200" ]; then
+  cat /tmp/r2-cors.json || true
+  die "R2_CORS_CONFIG_FAILED_HTTP_$cors_code"
+fi
+log "R2_DIRECT_UPLOAD_CORS_READY=yes"
+
 npm run check
 npx wrangler whoami
 npx wrangler deploy | tee /tmp/fabiano-deploy.log
