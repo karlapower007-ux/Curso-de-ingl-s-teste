@@ -118,20 +118,27 @@
   }
 
   async function playAudio(path, textFallback) {
-    if (path) {
-      try {
-        setAvatar("speaking");
-        const res = await fetch(path, { headers: authHeaders() });
-        if (!res.ok) throw new Error("audio " + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); };
-        audio.onerror = () => { URL.revokeObjectURL(url); browserSpeak(textFallback); };
-        await audio.play();
-        return;
-      } catch {}
-    }
+    try {
+      let res;
+      if (path) {
+        res = await fetch(path, { headers: authHeaders() });
+      } else {
+        res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: textFallback })
+        });
+      }
+      if (!res.ok) throw new Error("audio " + res.status);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onplay = () => setAvatar("speaking");
+      audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); };
+      audio.onerror = () => { URL.revokeObjectURL(url); browserSpeak(textFallback); };
+      await audio.play();
+      return;
+    } catch {}
     browserSpeak(textFallback);
   }
 
@@ -196,11 +203,11 @@
   async function checkBackend() {
     try {
       const data = await api("/api/status");
-      const up = data?.backend?.ok === true;
+      const up = data?.ok === true && data?.architecture === "cloudflare-native";
       $("backendDot").className = "dot " + (up ? "ok" : "bad");
       $("backendText").textContent = up
-        ? "Biblioteca RAG conectada"
-        : "Biblioteca despertando; IA de contingência disponível";
+        ? "Cloudflare RAG nativo • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
+        : "Infraestrutura documental ainda não provisionada";
     } catch {
       $("backendDot").className = "dot bad";
       $("backendText").textContent = "Biblioteca indisponível";
@@ -329,7 +336,13 @@
         const strong = document.createElement("strong");
         strong.textContent = item.arquivo;
         const small = document.createElement("small");
-        small.textContent = (item.chunks || 0) + " trechos indexados";
+        small.textContent =
+          (item.titulo && item.titulo !== item.arquivo ? item.titulo + " • " : "") +
+          (item.autor ? item.autor + " • " : "") +
+          (item.paginas || 0) + " páginas • " +
+          (item.chunks || 0) + " trechos • " +
+          (item.idioma || "idioma não detectado") + " • " +
+          (item.status || "sem status");
         info.append(strong, small);
         const del = document.createElement("button");
         del.className = "ghost danger";
@@ -360,9 +373,16 @@
     $("reindexBtn").disabled = true;
     $("adminStatus").textContent = "Reindexando a biblioteca…";
     try {
-      const data = await api("/api/admin/reindex", { method: "POST" });
-      $("adminStatus").textContent = "Reindexação concluída. " + (data.total_chunks || 0) + " trechos disponíveis.";
+      const data = await api("/api/admin/reindex", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const ok = (data.resultados || []).filter(x => x.ok).length;
+      const total = (data.resultados || []).length;
+      $("adminStatus").textContent = "Reindexação concluída: " + ok + " de " + total + " documentos.";
       await loadBooks();
+      await checkBackend();
     } catch (e) {
       $("adminStatus").textContent = e.message;
     } finally {
