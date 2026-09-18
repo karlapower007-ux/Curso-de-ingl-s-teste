@@ -64,6 +64,9 @@ jobs:
           sleep 3
           curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/" | grep -q 'Consciência do Fabiano'
           curl --retry 5 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/health" | grep -q '"ok":true'
-          code=$(curl -sS -o /tmp/auth.json -w '%{http_code}' "$BASE/api/status")
-          test "$code" = "401"
-          echo "PUBLIC SHELL + PRIVATE API PASS"
+          code=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/status")
+          test "$code" = "200"
+          grep -q '"ok":true' /tmp/status.json
+          admin_code=$(curl -sS -o /tmp/admin.json -w '%{http_code}' "$BASE/api/admin/livros")
+          test "$admin_code" = "401"
+          echo "KEYLESS CHAT + PROTECTED ADMIN PASS"
