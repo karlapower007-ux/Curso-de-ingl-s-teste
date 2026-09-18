@@ -151,7 +151,7 @@ async function cleanup() {
 try {
   const health = (await request("/health")).body;
   const docsBefore = Number(health.documents || 0);
-  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && health.trigger_index_route === "/api/trigger-index" && health.asynchronous_indexing === true && health.rag_streaming === "sse" && health.voice_stack === "web-speech-api" && health.backend_stt_tts_enabled === false && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
+  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && health.trigger_index_route === "/api/trigger-index" && health.asynchronous_indexing === true && health.rag_streaming === "sse" && health.voice_stack === "web-speech-api" && health.backend_stt_tts_enabled === false && health.ingestion_matrix?.extraction_turbines === 50 && health.ingestion_matrix?.embedding_turbines === 50 && health.ingestion_matrix?.total_turbines === 100 && health.ingestion_matrix?.pipelined === true && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
     throw new Error("health R2 inválido: " + JSON.stringify(health));
   }
   console.log("HEALTH_R2_PASS=yes");
@@ -218,10 +218,23 @@ try {
   console.log("ASYNC_TRIGGER_MS=" + triggerMs);
 
   const upload = await waitForIndex(ticket.document_id);
-  if (!(upload.status === "ready" && Number(upload.chunks) > 0)) {
-    throw new Error("indexação background inválida: " + JSON.stringify(upload));
+  const backgroundMs = Date.now() - triggerStarted;
+  if (!(upload.status === "ready" &&
+        Number(upload.paginas) === 100 &&
+        Number(upload.extracted_pages) === 100 &&
+        Number(upload.produced_chunks) >= 100 &&
+        Number(upload.embedded_chunks) === Number(upload.produced_chunks) &&
+        Number(upload.extraction_turbines) === 50 &&
+        Number(upload.embedding_turbines) === 50 &&
+        Number(upload.total_turbines) === 100)) {
+    throw new Error("Matriz 100 Turbinas incompleta: " + JSON.stringify(upload));
   }
   console.log("BACKGROUND_INDEX_READY_PASS=yes");
+  console.log("MATRIX_50_EXTRACTION_PASS=yes");
+  console.log("MATRIX_50_EMBEDDING_PASS=yes");
+  console.log("MATRIX_PIPELINE_100_PASS=yes");
+  console.log("MATRIX_100_PAGES_PASS=yes");
+  console.log("BACKGROUND_INDEX_MS=" + backgroundMs);
   const afterIndex = (await request("/health")).body;
   if (Number(afterIndex.documents || 0) < docsBefore + 1) {
     throw new Error("catálogo não refletiu o novo PDF: antes=" + docsBefore + " depois=" + afterIndex.documents);
@@ -232,7 +245,7 @@ try {
   if (!(r2.ok && r2.exists === true && Number(r2.size) > 0)) throw new Error("objeto R2 ausente");
   console.log("R2_OBJECT_PASS=yes");
 
-  const appJs = await fetch(base + "/app.js?v=9").then(r => r.text());
+  const appJs = await fetch(base + "/app.js?v=10").then(r => r.text());
   if (!appJs.includes('Accept": "text/event-stream"') && !appJs.includes('text/event-stream')) {
     throw new Error("frontend sem consumo SSE");
   }
@@ -242,7 +255,10 @@ try {
   if (!appJs.includes("/api/status?document_id=")) {
     throw new Error("frontend sem polling de indexação");
   }
-  console.log("FRONTEND_THREE_TURBINES_CODE_PASS=yes");
+  if (!appJs.includes("Matriz 100 Turbinas") || !appJs.includes("Extração 50 + Memória 50")) {
+    throw new Error("frontend sem telemetria visual da Matriz 100 Turbinas");
+  }
+  console.log("FRONTEND_MATRIX_100_CODE_PASS=yes");
   const del = (await admin("/api/admin/delete-pdf", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
