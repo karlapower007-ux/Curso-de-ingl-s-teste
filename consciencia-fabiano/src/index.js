@@ -4,7 +4,7 @@ const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const TTS_MODEL = "@cf/myshell-ai/melotts";
 const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
+const MAX_PDF_BYTES = 90 * 1024 * 1024;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
@@ -333,7 +333,7 @@ async function uploadPdf(request, env) {
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
   if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
   if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
-  if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
+  if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 90 MB." }, 413);
 
   const buffer = await file.arrayBuffer();
   const digest = await sha256Buffer(buffer);
