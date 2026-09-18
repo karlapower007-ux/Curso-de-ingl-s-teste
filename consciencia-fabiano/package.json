@@ -10,7 +10,8 @@
     "cf:deploy": "npm run check && wrangler deploy"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "playwright": "^1.55.0"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20"
