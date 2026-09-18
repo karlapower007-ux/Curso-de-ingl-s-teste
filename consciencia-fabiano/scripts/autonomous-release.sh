@@ -6,10 +6,12 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+: "${GROQ_API_KEY:?GROQ_API_KEY is required}"
+: "${GEMINI_API_KEY:?GEMINI_API_KEY is required}"
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: Client PDF.js + Matrix 50x50 release =="
+log "== Consciência do Fabiano :: Groq + Gemini external AI bypass release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -20,6 +22,11 @@ node --check scripts/browser-ingest-smoke.mjs
 grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
 grep -q 'EMBED_CONCURRENCY = 50' src/index.js
 grep -q 'pdfjs-dist@4.10.38' public/index.html
+grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
+grep -q 'generativelanguage.googleapis.com' src/index.js
+grep -q 'text/event-stream' src/index.js
+! grep -q 'env.AI' src/index.js
+! grep -q '@cf/' src/index.js
 
 log "2/7 Validate Worker authorization"
 npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
@@ -30,6 +37,9 @@ npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
 
 log "4/7 Install runtime secrets"
+printf '%s' "$GROQ_API_KEY" | npx wrangler secret put GROQ_API_KEY >/dev/null
+printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY >/dev/null
+log "EXTERNAL_AI_SECRETS_INSTALLED=yes"
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
@@ -83,7 +93,7 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-native" and .storage_backend == "durable-object-sqlite" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "google-gemini" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "NATIVE_HEALTH_PASS=yes"
     break
@@ -183,16 +193,17 @@ curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
 jq -e '.ok == true and ([.fontes[] | select(.arquivo=="grande-client-side.pdf")] | length > 0)' /tmp/chat-big.json >/dev/null
 log "LARGE_PDF_RAG_PASS=yes"
 
-log "Native STT/TTS + persistent memory"
+log "Groq STT + browser-local TTS + persistent memory"
 python3 - <<'PY'
 import wave
 with wave.open("/tmp/fns-stt-silence.wav","wb") as w:
-    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\x00\x00"*16000)
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\x00\x00"*160000)
 PY
 curl -fsS "$BASE/api/stt" -H 'Content-Type: audio/wav' --data-binary '@/tmp/fns-stt-silence.wav' > /tmp/stt.json
 jq -e '.ok == true and (.text|type) == "string"' /tmp/stt.json >/dev/null
-curl -fsS "$BASE/api/tts" -H 'Content-Type: application/json' --data '{"text":"Consciência do Fabiano em produção."}' -o /tmp/tts.audio
-[ -s /tmp/tts.audio ] || die "TTS_EMPTY"
+tts_code=$(curl -sS -o /tmp/tts.json -w '%{http_code}' "$BASE/api/tts" -H 'Content-Type: application/json' --data '{"text":"Consciência do Fabiano em produção."}')
+[ "$tts_code" = "503" ] || { cat /tmp/tts.json; die "TTS_SERVER_SHOULD_BE_DISABLED"; }
+jq -e '.code == "BROWSER_TTS"' /tmp/tts.json >/dev/null
 
 MEMORY_SECRET=$(openssl rand -hex 32)
 MEMHDR=(-H "X-FNS-Memory-Key: $MEMORY_SECRET")

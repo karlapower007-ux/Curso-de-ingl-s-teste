@@ -1,9 +1,8 @@
-const VERSION = "1.3.2-client-pdfjs-matrix-50x50-stream-batched";
-const EMBEDDING_MODEL = "@cf/baai/bge-m3";
-const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
-const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
-const TTS_MODEL = "@cf/myshell-ai/melotts";
-const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
+const VERSION = "1.4.0-external-ai-groq-gemini";
+const EMBEDDING_MODEL = "gemini-embedding-001";
+const CHAT_MODEL = "openai/gpt-oss-20b";
+const STT_MODEL = "whisper-large-v3-turbo";
+const TTS_MODEL = "browser-local-pt-BR";
 const MAX_TEXT_CHARS = 30_000_000;
 const MAX_TEXT_BATCH_CHARS = 1_250_000;
 const CHUNK_CONCURRENCY = 50;
@@ -69,13 +68,22 @@ function toBase64(buffer) {
 
 function assertBindings(env) {
   const missing = [];
-  if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
     err.code = "BINDINGS_MISSING";
     throw err;
   }
+}
+
+function requireSecret(env, name) {
+  const value = String(env?.[name] || "").trim();
+  if (!value) {
+    const err = new Error("Secret " + name + " ainda não configurado.");
+    err.code = "EXTERNAL_AI_NOT_CONFIGURED";
+    throw err;
+  }
+  return value;
 }
 
 async function sha256Text(text) {
@@ -227,15 +235,38 @@ function detectLanguage(text) {
   return bestScore >= 4 ? best : "unknown";
 }
 
-function embeddingData(result) {
-  if (Array.isArray(result?.data) && Array.isArray(result.data[0])) return result.data;
-  if (Array.isArray(result?.result?.data) && Array.isArray(result.result.data[0])) return result.result.data;
-  throw new Error("Workers AI não retornou embeddings no formato esperado.");
-}
-
 async function embedTexts(env, texts) {
-  const result = await env.AI.run(EMBEDDING_MODEL, { text: texts });
-  return embeddingData(result);
+  const apiKey = requireSecret(env, "GEMINI_API_KEY");
+  const list = Array.from(texts || []).map(text => String(text || ""));
+  if (!list.length) return [];
+  const modelPath = "models/" + EMBEDDING_MODEL;
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/" + modelPath + ":batchEmbedContents", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      requests: list.map(text => ({
+        model: modelPath,
+        content: { parts: [{ text }] },
+        outputDimensionality: 768,
+      })),
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(body?.error?.message || ("Gemini embeddings HTTP " + res.status));
+    err.status = res.status;
+    throw err;
+  }
+  const vectors = Array.isArray(body?.embeddings)
+    ? body.embeddings.map(item => item?.values)
+    : [];
+  if (vectors.length !== list.length || vectors.some(v => !Array.isArray(v) || !v.length)) {
+    throw new Error("Gemini não retornou todos os embeddings esperados.");
+  }
+  return vectors;
 }
 
 async function parallelMapLimit(items, limit, mapper) {
@@ -515,8 +546,134 @@ function uniqueSources(context) {
   return sources.slice(0, 8);
 }
 
+async function persistChatTurn(env, ownerId, body, question, answer, sources, fallback) {
+  if (!ownerId) return false;
+  const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
+  try {
+    await appendPersistentMessage(env, {
+      id: turnId + ":u",
+      owner_id: ownerId,
+      role: "user",
+      content: question.slice(0, 8000),
+      sources: [],
+      fallback: false,
+    });
+    await appendPersistentMessage(env, {
+      id: turnId + ":a",
+      owner_id: ownerId,
+      role: "assistant",
+      content: String(answer).trim().slice(0, 12000),
+      sources,
+      fallback,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function groqCompletion(env, messages, stream = false) {
+  const apiKey = requireSecret(env, "GROQ_API_KEY");
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: CHAT_MODEL,
+      messages,
+      temperature: 0.35,
+      max_completion_tokens: 1100,
+      stream,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body?.error?.message || ("Groq chat HTTP " + res.status));
+    err.status = res.status;
+    throw err;
+  }
+  return res;
+}
+
+function sseFrame(event, payload) {
+  return "event: " + event + "\n" + "data: " + JSON.stringify(payload) + "\n\n";
+}
+
+async function groqStreamResponse(env, messages, meta) {
+  const upstream = await groqCompletion(env, messages, true);
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      let pending = "";
+      let answer = "";
+      try {
+        controller.enqueue(encoder.encode(sseFrame("meta", {
+          fontes: meta.sources,
+          fallback: meta.fallback,
+          provider: "groq+gemini-rag",
+          embedding_model: EMBEDDING_MODEL,
+          chat_model: CHAT_MODEL,
+        })));
+        const reader = upstream.body.getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, { stream: true });
+          let boundary;
+          while ((boundary = pending.indexOf("\n\n")) >= 0) {
+            const frame = pending.slice(0, boundary);
+            pending = pending.slice(boundary + 2);
+            const line = frame.split("\n").find(x => x.startsWith("data:"));
+            if (!line) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === "[DONE]") continue;
+            const packet = JSON.parse(raw);
+            const delta = packet?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta) {
+              answer += delta;
+              controller.enqueue(encoder.encode(sseFrame("delta", { text: delta })));
+            }
+          }
+        }
+        const memoryPersisted = await persistChatTurn(
+          env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
+        );
+        controller.enqueue(encoder.encode(sseFrame("done", {
+          ok: true,
+          resposta: answer,
+          fontes: meta.sources,
+          fallback: meta.fallback,
+          memory_persisted: memoryPersisted,
+          provider: "groq+gemini-rag",
+          embedding_model: EMBEDDING_MODEL,
+          chat_model: CHAT_MODEL,
+        })));
+        controller.close();
+      } catch (error) {
+        controller.enqueue(encoder.encode(sseFrame("error", {
+          message: String(error?.message || error),
+          code: error?.code || "STREAM_ERROR",
+        })));
+        controller.close();
+      }
+    }
+  });
+  return new Response(stream, {
+    headers: securityHeaders(new Headers({
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    })),
+  });
+}
+
 async function chat(request, env) {
   assertBindings(env);
+  requireSecret(env, "GROQ_API_KEY");
+  requireSecret(env, "GEMINI_API_KEY");
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
@@ -534,7 +691,8 @@ async function chat(request, env) {
   let context = [];
   try {
     context = await retrieveContext(env, question);
-  } catch {
+  } catch (error) {
+    if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
     context = [];
   }
 
@@ -567,49 +725,27 @@ async function chat(request, env) {
     },
   ];
 
-  const result = await env.AI.run(CHAT_MODEL, {
-    messages,
-    temperature: 0.35,
-    max_tokens: 1100,
-  });
-
-  const answer =
-    result?.response ||
-    result?.result?.response ||
-    result?.choices?.[0]?.message?.content ||
-    "Não consegui formular uma resposta agora.";
-
   const sources = uniqueSources(context);
   const fallback = context.length === 0;
-  if (ownerId) {
-    const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
-    try {
-      await appendPersistentMessage(env, {
-        id: turnId + ":u",
-        owner_id: ownerId,
-        role: "user",
-        content: question.slice(0, 8000),
-        sources: [],
-        fallback: false,
-      });
-      await appendPersistentMessage(env, {
-        id: turnId + ":a",
-        owner_id: ownerId,
-        role: "assistant",
-        content: String(answer).trim().slice(0, 12000),
-        sources,
-        fallback,
-      });
-    } catch {}
+  const wantsStream =
+    String(request.headers.get("Accept") || "").includes("text/event-stream") ||
+    body?.stream === true;
+
+  if (wantsStream) {
+    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback });
   }
+
+  const result = await (await groqCompletion(env, messages, false)).json();
+  const answer = String(result?.choices?.[0]?.message?.content || "Não consegui formular uma resposta agora.").trim();
+  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
   return json({
     ok: true,
-    resposta: String(answer).trim(),
+    resposta: answer,
     fontes: sources,
     fallback,
-    memory_persisted: Boolean(ownerId),
-    provider: "cloudflare-native-do-rag",
+    memory_persisted: memoryPersisted,
+    provider: "groq+gemini-rag",
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
@@ -617,17 +753,25 @@ async function chat(request, env) {
 
 async function stt(request, env) {
   assertBindings(env);
+  const apiKey = requireSecret(env, "GROQ_API_KEY");
   const buffer = await request.arrayBuffer();
   if (!buffer.byteLength) return json({ ok: false, message: "Áudio vazio." }, 400);
-  const result = await env.AI.run(STT_MODEL, {
-    audio: toBase64(buffer),
-    task: "transcribe",
-    language: "pt",
-    vad_filter: true,
-    condition_on_previous_text: false,
+  const contentType = request.headers.get("Content-Type") || "audio/webm";
+  const ext = contentType.includes("wav") ? "wav" : contentType.includes("mpeg") ? "mp3" : "webm";
+  const form = new FormData();
+  form.append("file", new Blob([buffer], { type: contentType }), "voice." + ext);
+  form.append("model", STT_MODEL);
+  form.append("language", "pt");
+  form.append("response_format", "json");
+  form.append("temperature", "0");
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + apiKey },
+    body: form,
   });
-  const text = String(result?.text || result?.transcription_info?.text || "").trim();
-  return json({ ok: true, text, language: "pt-BR", model: STT_MODEL });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return json({ ok: false, message: data?.error?.message || ("Groq STT HTTP " + res.status) }, res.status);
+  return json({ ok: true, text: String(data?.text || "").trim(), language: "pt-BR", model: STT_MODEL, provider: "groq" });
 }
 
 async function tts(request, env) {
@@ -635,60 +779,19 @@ async function tts(request, env) {
   const body = await request.json().catch(() => ({}));
   const text = String(body?.text || "").trim().slice(0, 5000);
   if (!text) return json({ ok: false, message: "Texto vazio." }, 400);
-
-  // MeloTTS may return JSON with base64 audio instead of a raw Response.
-  try {
-    const result = await env.AI.run(TTS_MODEL, { prompt: text, lang: "pt" });
-    if (result?.audio && typeof result.audio === "string") {
-      const binary = atob(result.audio);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new Response(bytes, {
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "Cache-Control": "no-store",
-          "X-FNS-TTS-Provider": "melotts",
-        },
-      });
-    }
-    if (result instanceof ReadableStream) {
-      return new Response(result, {
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "Cache-Control": "no-store",
-          "X-FNS-TTS-Provider": "melotts-stream",
-        },
-      });
-    }
-  } catch {}
-
-  // Cloudflare-native fallback. Aura returns a raw audio response and avoids
-  // falling back to the browser when MeloTTS has no Portuguese voice available.
-  try {
-    const raw = await env.AI.run(
-      TTS_FALLBACK_MODEL,
-      { text },
-      { returnRawResponse: true },
-    );
-    if (raw instanceof Response && raw.ok && raw.body) {
-      const headers = new Headers(raw.headers);
-      if (!headers.get("Content-Type")) headers.set("Content-Type", "audio/mpeg");
-      headers.set("Cache-Control", "no-store");
-      headers.set("X-FNS-TTS-Provider", "aura-1");
-      return new Response(raw.body, { status: 200, headers });
-    }
-  } catch {}
-
   return json({
     ok: false,
-    message: "TTS nativo indisponível; o navegador continuará usando a voz pt-BR local.",
+    code: "BROWSER_TTS",
+    message: "TTS no servidor foi removido para zerar Workers AI. Use speechSynthesis pt-BR do navegador.",
+    provider: TTS_MODEL,
   }, 503);
 }
 
 async function status(env) {
   const missing = [];
-  if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
+  if (!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
+  if (!env.GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
@@ -704,16 +807,19 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-native",
+    architecture: "cloudflare-router-external-ai",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
-    ingest_backend: "client-pdfjs-matrix-50x50",
+    ingest_backend: "client-pdfjs-matrix-50x50-gemini",
     client_pdf_extraction: "pdf.js",
     server_pdf_parsing: false,
     chunk_concurrency_limit: CHUNK_CONCURRENCY,
     embedding_concurrency_limit: EMBED_CONCURRENCY,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
+    llm_provider: "groq",
+    embedding_provider: "google-gemini",
+    workers_ai_used: false,
     render_dependency: false,
     bindings_missing: missing,
     documents, chunks, memory_messages: memoryMessages, index_jobs: indexJobs,
@@ -765,7 +871,7 @@ async function handleApi(request, env, url, ctx) {
       ok: false,
       code: error?.code || "INTERNAL_ERROR",
       message: String(error?.message || error),
-    }, error?.code === "BINDINGS_MISSING" ? 503 : 500);
+    }, ["BINDINGS_MISSING","EXTERNAL_AI_NOT_CONFIGURED"].includes(error?.code) ? 503 : 500);
   }
 }
 

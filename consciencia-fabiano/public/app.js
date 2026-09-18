@@ -164,6 +164,85 @@
     $("messages").scrollTop = $("messages").scrollHeight;
   }
 
+  function appendStreamingMessage() {
+    const wrap = document.createElement("div");
+    wrap.className = "msg assistant";
+    const text = document.createElement("div");
+    text.textContent = "";
+    wrap.appendChild(text);
+    $("messages").appendChild(wrap);
+    $("messages").scrollTop = $("messages").scrollHeight;
+    return { wrap, text };
+  }
+
+  async function streamChat(payload) {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: authHeaders({
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream"
+      }),
+      body: JSON.stringify({ ...payload, stream: true })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(async () => ({ message: await res.text().catch(() => "") }));
+      const err = new Error(body?.message || body?.error || ("Chat HTTP " + res.status));
+      err.code = body?.code || "";
+      err.status = res.status;
+      throw err;
+    }
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("text/event-stream")) return res.json();
+
+    const live = appendStreamingMessage();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let answer = "";
+    let meta = { fontes: [], fallback: false, memory_persisted: false };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        pending += decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = pending.indexOf("\n\n")) >= 0) {
+          const frame = pending.slice(0, boundary);
+          pending = pending.slice(boundary + 2);
+          let event = "message";
+          let dataLine = "";
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+          }
+          if (!dataLine) continue;
+          const data = JSON.parse(dataLine);
+          if (event === "delta") {
+            const delta = String(data.text || "");
+            answer += delta;
+            live.text.textContent = answer;
+            $("messages").scrollTop = $("messages").scrollHeight;
+          } else if (event === "meta" || event === "done") {
+            meta = { ...meta, ...data };
+            if (event === "done" && data.resposta) answer = String(data.resposta);
+          } else if (event === "error") {
+            throw new Error(data.message || "Falha no streaming.");
+          }
+        }
+      }
+    } finally {
+      live.wrap.remove();
+    }
+    return {
+      ok: true,
+      resposta: answer || "Sem resposta.",
+      fontes: meta.fontes || [],
+      fallback: meta.fallback === true,
+      memory_persisted: meta.memory_persisted === true,
+      provider: meta.provider || "groq+gemini-rag"
+    };
+  }
+
   function renderHistory() {
     $("messages").innerHTML = "";
     history.forEach(x => appendMessage(x.role, x.content, x.sources || [], x.fallback));
@@ -235,14 +314,10 @@
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
-      const data = await api("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pergunta: q,
-          turn_id: turnId,
-          historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
-        })
+      const data = await streamChat({
+        pergunta: q,
+        turn_id: turnId,
+        historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
       });
       const resposta = String(data.resposta || "Sem resposta.");
       appendMessage("assistant", resposta, data.fontes || [], data.fallback === true);
@@ -269,10 +344,10 @@
   async function checkBackend() {
     try {
       const data = await api("/api/status");
-      const up = data?.ok === true && data?.architecture === "cloudflare-native";
+      const up = data?.ok === true && data?.architecture === "cloudflare-router-external-ai";
       $("backendDot").className = "dot " + (up ? "ok" : "bad");
       $("backendText").textContent = up
-        ? "Cloudflare RAG nativo • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
+        ? "RAG Groq + Gemini • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
         : "Infraestrutura documental ainda não provisionada";
     } catch {
       $("backendDot").className = "dot bad";
