@@ -1,4 +1,4 @@
-const VERSION = "1.0.0-cloudflare-native";
+const VERSION = "1.0.0-cloudflare-native-do";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -7,6 +7,9 @@ const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
+const VECTOR_SCAN_LIMIT = 1800;
+const OWNER_TOKEN_HASH = "37ae863d0508e0d693e26f73ae5db81e0c60747d3870c0f8c4498513ebd0c8cb";
+const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -62,14 +65,41 @@ function toBase64(buffer) {
 function assertBindings(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
-  if (!env.PDFS) missing.push("PDFS");
-  if (!env.VECTORIZE) missing.push("VECTORIZE");
-  if (!env.DB) missing.push("DB");
+  if (!env.LIBRARY) missing.push("LIBRARY");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
     err.code = "BINDINGS_MISSING";
     throw err;
   }
+}
+
+async function sha256Text(text) {
+  return hex(await crypto.subtle.digest("SHA-256", enc.encode(String(text || ""))));
+}
+
+function rawToken(request) {
+  const auth = request.headers.get("Authorization") || "";
+  if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
+  return (request.headers.get("X-FNS-Owner-Token") || "").trim();
+}
+
+async function adminAuthorized(request, env) {
+  const automation = (request.headers.get("X-FNS-Automation") || "").trim();
+  if (env.AUTOMATION_SECRET && automation && automation === env.AUTOMATION_SECRET) return true;
+  const token = rawToken(request);
+  if (!token || token.length < 30) return false;
+  return (await sha256Text(token)) === OWNER_TOKEN_HASH;
+}
+
+function libraryStub(env) {
+  return env.LIBRARY.get(env.LIBRARY.idFromName("main"));
+}
+
+async function libraryCall(env, path, options = {}) {
+  const res = await libraryStub(env).fetch(new Request("https://library.internal" + path, options));
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || ("LibraryDO " + res.status));
+  return data;
 }
 
 function splitPages(markdown) {
@@ -166,135 +196,16 @@ async function embedTexts(env, texts) {
   return embeddingData(result);
 }
 
-async function clearDocumentIndex(env, documentId) {
-  const rows = await env.DB.prepare(
-    "SELECT vector_id FROM chunks WHERE document_id = ? ORDER BY chunk_index"
-  ).bind(documentId).all();
-  const ids = (rows.results || []).map(r => r.vector_id).filter(Boolean);
-  for (let i = 0; i < ids.length; i += 1000) {
-    const batch = ids.slice(i, i + 1000);
-    if (batch.length) await env.VECTORIZE.deleteByIds(batch);
+async function convertPdf(env, filename, buffer) {
+  const converted = await env.AI.toMarkdown(
+    { name: filename, blob: new Blob([buffer], { type: "application/pdf" }) },
+    { conversionOptions: { pdf: { metadata: true }, output: { format: "markdown" } } },
+  );
+  const result = Array.isArray(converted) ? converted[0] : converted;
+  if (!result || result.format === "error" || !result.data) {
+    throw new Error(result?.error || "Falha ao converter PDF para texto.");
   }
-  await env.DB.prepare("DELETE FROM chunks WHERE document_id = ?").bind(documentId).run();
-}
-
-async function indexDocument(env, documentId) {
-  assertBindings(env);
-  const doc = await env.DB.prepare("SELECT * FROM documents WHERE id = ?").bind(documentId).first();
-  if (!doc) throw new Error("Documento não encontrado no D1.");
-
-  const object = await env.PDFS.get(doc.r2_key);
-  if (!object) throw new Error("PDF original não encontrado no R2.");
-
-  await env.DB.prepare(
-    "UPDATE documents SET status='indexing', error=NULL, updated_at=datetime('now') WHERE id=?"
-  ).bind(documentId).run();
-
-  await clearDocumentIndex(env, documentId);
-
-  try {
-    const pdfBuffer = await object.arrayBuffer();
-    const converted = await env.AI.toMarkdown(
-      {
-        name: doc.filename,
-        blob: new Blob([pdfBuffer], { type: "application/pdf" }),
-      },
-      {
-        conversionOptions: {
-          pdf: { metadata: true },
-          output: { format: "markdown" },
-        },
-      },
-    );
-
-    const result = Array.isArray(converted) ? converted[0] : converted;
-    if (!result || result.format === "error" || !result.data) {
-      throw new Error(result?.error || "Falha ao converter PDF para texto.");
-    }
-
-    const markdown = String(result.data);
-    const pages = splitPages(markdown);
-    const metadata = parsePdfMetadata(markdown, doc.filename);
-    const language = detectLanguage(markdown);
-
-    const chunks = [];
-    let globalIndex = 0;
-    for (const page of pages) {
-      for (const piece of chunkText(page.text)) {
-        chunks.push({
-          id: uuidCompact(),
-          document_id: documentId,
-          page: page.page,
-          chunk_index: globalIndex++,
-          text: piece,
-        });
-      }
-    }
-
-    if (!chunks.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
-
-    for (let i = 0; i < chunks.length; i += 12) {
-      const group = chunks.slice(i, i + 12);
-      const vectors = await embedTexts(env, group.map(c => c.text));
-      if (vectors.length !== group.length) {
-        throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
-      }
-
-      const vectorRows = group.map((c, idx) => ({
-        id: c.id,
-        values: vectors[idx],
-        metadata: {
-          document_id: documentId,
-          filename: doc.filename,
-          title: metadata.title,
-          author: metadata.author,
-          language,
-          page: c.page,
-          chunk_index: c.chunk_index,
-        },
-      }));
-      await env.VECTORIZE.upsert(vectorRows);
-
-      const statements = group.map(c =>
-        env.DB.prepare(
-          `INSERT INTO chunks
-           (id, document_id, vector_id, page, chunk_index, text, char_count, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-        ).bind(c.id, documentId, c.id, c.page, c.chunk_index, c.text, c.text.length)
-      );
-      if (statements.length) await env.DB.batch(statements);
-    }
-
-    await env.DB.prepare(
-      `UPDATE documents
-       SET title=?, author=?, language=?, page_count=?, chunk_count=?, status='ready',
-           error=NULL, updated_at=datetime('now')
-       WHERE id=?`
-    ).bind(
-      metadata.title,
-      metadata.author,
-      language,
-      pages.length,
-      chunks.length,
-      documentId
-    ).run();
-
-    return {
-      ok: true,
-      document_id: documentId,
-      arquivo: doc.filename,
-      titulo: metadata.title,
-      autor: metadata.author,
-      idioma: language,
-      paginas: pages.length,
-      chunks: chunks.length,
-    };
-  } catch (error) {
-    await env.DB.prepare(
-      "UPDATE documents SET status='error', error=?, updated_at=datetime('now') WHERE id=?"
-    ).bind(String(error?.message || error).slice(0, 1200), documentId).run();
-    throw error;
-  }
+  return String(result.data);
 }
 
 async function uploadPdf(request, env) {
@@ -302,132 +213,108 @@ async function uploadPdf(request, env) {
   const form = await request.formData();
   const file = form.get("arquivo");
   if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
-
   const filename = safeName(file.name);
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
   if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
   if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
-  if (file.size > MAX_PDF_BYTES) {
-    return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
-  }
+  if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
 
   const buffer = await file.arrayBuffer();
   const digest = await sha256Buffer(buffer);
-  const duplicate = await env.DB.prepare("SELECT id, filename, status FROM documents WHERE sha256 = ?")
-    .bind(digest).first();
-  if (duplicate) {
-    return json({
-      ok: true,
-      duplicate: true,
-      document_id: duplicate.id,
-      arquivo: duplicate.filename,
-      status: duplicate.status,
-      message: "Este PDF já existe na biblioteca.",
-    });
+  const duplicate = await libraryCall(env, "/duplicate?sha=" + encodeURIComponent(digest));
+  if (duplicate.document) {
+    return json({ ok: true, duplicate: true, ...duplicate.document, message: "Este PDF já existe na biblioteca." });
   }
 
+  const markdown = await convertPdf(env, filename, buffer);
+  const pages = splitPages(markdown);
+  const metadata = parsePdfMetadata(markdown, filename);
+  const language = detectLanguage(markdown);
   const documentId = uuidCompact();
-  const r2Key = `pdfs/${documentId}/${filename}`;
-  await env.PDFS.put(r2Key, buffer, {
-    httpMetadata: { contentType: "application/pdf" },
-    customMetadata: { sha256: digest, originalName: filename },
+  const chunks = [];
+  let globalIndex = 0;
+  for (const page of pages) {
+    for (const piece of chunkText(page.text)) {
+      chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
+    }
+  }
+  if (!chunks.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
+
+  for (let i = 0; i < chunks.length; i += 12) {
+    const group = chunks.slice(i, i + 12);
+    const vectors = await embedTexts(env, group.map(c => c.text));
+    if (vectors.length !== group.length) throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
+    group.forEach((c, idx) => { c.embedding = vectors[idx]; });
+  }
+
+  const document = {
+    id: documentId, filename, title: metadata.title, author: metadata.author, language,
+    sha256: digest, size_bytes: file.size, page_count: pages.length,
+    chunk_count: chunks.length, status: "ready",
+  };
+
+  await libraryCall(env, "/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document, chunks }),
   });
 
-  try {
-    await env.DB.prepare(
-      `INSERT INTO documents
-       (id, filename, r2_key, sha256, size_bytes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'uploaded', datetime('now'), datetime('now'))`
-    ).bind(documentId, filename, r2Key, digest, file.size).run();
-
-    return json(await indexDocument(env, documentId), 201);
-  } catch (error) {
-    try { await env.PDFS.delete(r2Key); } catch {}
-    try { await env.DB.prepare("DELETE FROM documents WHERE id=?").bind(documentId).run(); } catch {}
-    throw error;
-  }
+  return json({
+    ok: true, document_id: documentId, arquivo: filename, titulo: metadata.title,
+    autor: metadata.author, idioma: language, paginas: pages.length, chunks: chunks.length,
+    storage: "durable-object-sqlite",
+  }, 201);
 }
 
 async function listBooks(env) {
   assertBindings(env);
-  const rows = await env.DB.prepare(
-    `SELECT id, filename AS arquivo, title AS titulo, author AS autor, language AS idioma,
-            page_count AS paginas, chunk_count AS chunks, size_bytes, status, error,
-            created_at, updated_at
-     FROM documents
-     ORDER BY created_at DESC`
-  ).all();
-  return {
-    ok: true,
-    livros: rows.results || [],
-    total: (rows.results || []).length,
-  };
+  return libraryCall(env, "/docs");
 }
 
 async function deletePdf(request, env) {
   assertBindings(env);
   const body = await request.json().catch(() => ({}));
-  const id = String(body?.document_id || "").trim();
-  const filename = String(body?.arquivo || "").trim();
-
-  let doc = null;
-  if (id) doc = await env.DB.prepare("SELECT * FROM documents WHERE id=?").bind(id).first();
-  if (!doc && filename) doc = await env.DB.prepare("SELECT * FROM documents WHERE filename=?").bind(filename).first();
-  if (!doc) return json({ ok: false, message: "Documento não encontrado." }, 404);
-
-  await clearDocumentIndex(env, doc.id);
-  await env.PDFS.delete(doc.r2_key);
-  await env.DB.prepare("DELETE FROM documents WHERE id=?").bind(doc.id).run();
-  return json({ ok: true, document_id: doc.id, arquivo: doc.filename });
+  return json(await libraryCall(env, "/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: String(body?.document_id || ""),
+      arquivo: String(body?.arquivo || ""),
+    }),
+  }));
 }
 
 async function reindexLibrary(request, env) {
   assertBindings(env);
   const body = await request.json().catch(() => ({}));
   const onlyId = String(body?.document_id || "").trim();
-  const rows = onlyId
-    ? { results: [await env.DB.prepare("SELECT * FROM documents WHERE id=?").bind(onlyId).first()].filter(Boolean) }
-    : await env.DB.prepare("SELECT * FROM documents ORDER BY created_at ASC").all();
-
-  const results = [];
-  for (const doc of rows.results || []) {
-    try {
-      results.push(await indexDocument(env, doc.id));
-    } catch (error) {
-      results.push({ ok: false, document_id: doc.id, arquivo: doc.filename, erro: String(error?.message || error) });
-    }
+  const data = await libraryCall(env, "/chunks" + (onlyId ? ("?document_id=" + encodeURIComponent(onlyId)) : ""));
+  const chunks = Array.isArray(data.chunks) ? data.chunks : [];
+  for (let i = 0; i < chunks.length; i += 12) {
+    const group = chunks.slice(i, i + 12);
+    const vectors = await embedTexts(env, group.map(c => c.text));
+    await libraryCall(env, "/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates: group.map((c, idx) => ({ id: c.id, embedding: vectors[idx] })) }),
+    });
   }
-  return json({ ok: results.every(x => x.ok), resultados: results });
+  const docs = await listBooks(env);
+  const resultados = (docs.livros || [])
+    .filter(d => !onlyId || d.id === onlyId)
+    .map(d => ({ ok: true, document_id: d.id, arquivo: d.arquivo }));
+  return json({ ok: true, resultados });
 }
 
 async function retrieveContext(env, question) {
   assertBindings(env);
   const qEmbedding = await embedTexts(env, [question]);
-  const matches = await env.VECTORIZE.query(qEmbedding[0], {
-    topK: TOP_K,
-    returnValues: false,
-    returnMetadata: "all",
+  const data = await libraryCall(env, "/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ embedding: qEmbedding[0], top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
   });
-
-  const ids = (matches.matches || []).map(m => m.id).filter(Boolean);
-  if (!ids.length) return [];
-
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT c.id, c.vector_id, c.page, c.chunk_index, c.text,
-            d.id AS document_id, d.filename, d.title, d.author, d.language
-     FROM chunks c
-     JOIN documents d ON d.id = c.document_id
-     WHERE c.vector_id IN (${placeholders})`
-  ).bind(...ids).all();
-
-  const rowMap = new Map((rows.results || []).map(r => [r.vector_id, r]));
-  return (matches.matches || [])
-    .map(m => {
-      const row = rowMap.get(m.id);
-      return row ? { ...row, score: Number(m.score || 0) } : null;
-    })
-    .filter(Boolean);
+  return Array.isArray(data.matches) ? data.matches : [];
 }
 
 function uniqueSources(context) {
@@ -510,7 +397,7 @@ async function chat(request, env) {
     resposta: String(answer).trim(),
     fontes: uniqueSources(context),
     fallback: context.length === 0,
-    provider: "cloudflare-native-rag",
+    provider: "cloudflare-native-do-rag",
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
@@ -561,32 +448,26 @@ async function tts(request, env) {
 async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
-  if (!env.PDFS) missing.push("PDFS");
-  if (!env.VECTORIZE) missing.push("VECTORIZE");
-  if (!env.DB) missing.push("DB");
-
-  let documents = null;
-  let chunks = null;
-  let ready = false;
+  if (!env.LIBRARY) missing.push("LIBRARY");
+  let documents = null, chunks = null, ready = false;
   if (!missing.length) {
     try {
-      const d = await env.DB.prepare("SELECT COUNT(*) AS n FROM documents").first();
-      const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM chunks").first();
-      documents = Number(d?.n || 0);
-      chunks = Number(c?.n || 0);
-      ready = true;
+      const st = await libraryCall(env, "/status");
+      documents = Number(st.documents || 0);
+      chunks = Number(st.chunks || 0);
+      ready = st.ok === true;
     } catch {}
   }
-
   return {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
     architecture: "cloudflare-native",
+    storage_backend: "durable-object-sqlite",
+    vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
-    documents,
-    chunks,
+    documents, chunks,
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
@@ -596,6 +477,9 @@ async function status(env) {
 
 async function handleApi(request, env, url) {
   try {
+    if (url.pathname.startsWith("/api/admin/") && !(await adminAuthorized(request, env))) {
+      return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
+    }
     if (url.pathname === "/api/status" && request.method === "GET") {
       return json(await status(env));
     }
@@ -623,6 +507,141 @@ async function handleApi(request, env, url) {
       code: error?.code || "INTERNAL_ERROR",
       message: String(error?.message || error),
     }, error?.code === "BINDINGS_MISSING" ? 503 : 500);
+  }
+}
+
+function cosine(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || !a.length) return -1;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = Number(a[i]) || 0, y = Number(b[i]) || 0;
+    dot += x * y; na += x * x; nb += y * y;
+  }
+  return (!na || !nb) ? -1 : dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+export class LibraryDO {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+    this.sql = ctx.storage.sql;
+    ctx.blockConcurrencyWhile(async () => {
+      this.sql.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY, filename TEXT NOT NULL, title TEXT, author TEXT, language TEXT,
+          sha256 TEXT NOT NULL UNIQUE, size_bytes INTEGER NOT NULL DEFAULT 0,
+          page_count INTEGER NOT NULL DEFAULT 0, chunk_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS chunks (
+          id TEXT PRIMARY KEY, document_id TEXT NOT NULL, page INTEGER, chunk_index INTEGER NOT NULL,
+          text TEXT NOT NULL, embedding TEXT NOT NULL, created_at TEXT NOT NULL,
+          FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
+        CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+        CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
+      `);
+    });
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    try {
+      if (url.pathname === "/status") {
+        const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
+        const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
+        return json({ ok: true, documents: Number(d), chunks: Number(c) });
+      }
+      if (url.pathname === "/duplicate") {
+        const sha = String(url.searchParams.get("sha") || "");
+        const row = [...this.sql.exec("SELECT id, filename AS arquivo, status FROM documents WHERE sha256 = ? LIMIT 1", sha)][0] || null;
+        return json({ ok: true, document: row });
+      }
+      if (url.pathname === "/docs") {
+        const rows = [...this.sql.exec(`
+          SELECT id, filename AS arquivo, title AS titulo, author AS autor, language AS idioma,
+                 page_count AS paginas, chunk_count AS chunks, size_bytes, status, created_at
+          FROM documents ORDER BY created_at DESC
+        `)];
+        return json({ ok: true, livros: rows, total: rows.length });
+      }
+      if (url.pathname === "/ingest" && request.method === "POST") {
+        const body = await request.json();
+        const d = body.document || {};
+        const chunks = Array.isArray(body.chunks) ? body.chunks : [];
+        const now = new Date().toISOString();
+        this.sql.exec(
+          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          d.id, d.filename, d.title || "", d.author || "", d.language || "unknown", d.sha256,
+          Number(d.size_bytes || 0), Number(d.page_count || 0), Number(d.chunk_count || chunks.length), d.status || "ready", now
+        );
+        try {
+          for (const c of chunks) {
+            this.sql.exec(
+              "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+              c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""),
+              JSON.stringify(c.embedding || []), now
+            );
+          }
+        } catch (error) {
+          this.sql.exec("DELETE FROM chunks WHERE document_id = ?", d.id);
+          this.sql.exec("DELETE FROM documents WHERE id = ?", d.id);
+          throw error;
+        }
+        return json({ ok: true, document_id: d.id, chunks: chunks.length });
+      }
+      if (url.pathname === "/delete" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.document_id || "").trim();
+        const filename = String(body.arquivo || "").trim();
+        let row = null;
+        if (id) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE id = ? LIMIT 1", id)][0] || null;
+        if (!row && filename) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE filename = ? LIMIT 1", filename)][0] || null;
+        if (!row) return json({ ok: false, message: "Documento não encontrado." }, 404);
+        this.sql.exec("DELETE FROM chunks WHERE document_id = ?", row.id);
+        this.sql.exec("DELETE FROM documents WHERE id = ?", row.id);
+        return json({ ok: true, document_id: row.id, arquivo: row.filename });
+      }
+      if (url.pathname === "/chunks") {
+        const id = String(url.searchParams.get("document_id") || "").trim();
+        const rows = id
+          ? [...this.sql.exec("SELECT id,document_id,page,chunk_index,text FROM chunks WHERE document_id = ? ORDER BY chunk_index", id)]
+          : [...this.sql.exec("SELECT id,document_id,page,chunk_index,text FROM chunks ORDER BY created_at,chunk_index")];
+        return json({ ok: true, chunks: rows });
+      }
+      if (url.pathname === "/embeddings" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const updates = Array.isArray(body.updates) ? body.updates : [];
+        for (const u of updates) this.sql.exec("UPDATE chunks SET embedding = ? WHERE id = ?", JSON.stringify(u.embedding || []), u.id);
+        return json({ ok: true, updated: updates.length });
+      }
+      if (url.pathname === "/search" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const query = Array.isArray(body.embedding) ? body.embedding : [];
+        const topK = Math.max(1, Math.min(20, Number(body.top_k || 8)));
+        const scanLimit = Math.max(50, Math.min(3000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
+        const rows = [...this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          WHERE d.status='ready' ORDER BY c.created_at DESC LIMIT ?
+        `, scanLimit)];
+        const matches = [];
+        for (const row of rows) {
+          let emb = [];
+          try { emb = JSON.parse(row.embedding); } catch {}
+          const score = cosine(query, emb);
+          if (score > -1) matches.push({ ...row, embedding: undefined, score });
+        }
+        matches.sort((a,b) => b.score - a.score);
+        return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length });
+      }
+      return json({ ok: false, message: "Rota interna não encontrada." }, 404);
+    } catch (error) {
+      return json({ ok: false, message: String(error?.message || error) }, 500);
+    }
   }
 }
 

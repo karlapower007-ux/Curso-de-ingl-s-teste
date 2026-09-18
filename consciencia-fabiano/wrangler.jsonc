@@ -6,30 +6,32 @@
   "ai": {
     "binding": "AI"
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LIBRARY",
+        "class_name": "LibraryDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "library-do-v1",
+      "new_sqlite_classes": [
+        "LibraryDO"
+      ]
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "none",
     "html_handling": "none",
-    "run_worker_first": ["/", "/admin", "/health", "/api/*"]
-  },
-  "r2_buckets": [
-    {
-      "binding": "PDFS",
-      "bucket_name": "consciencia-fabiano-pdfs"
-    }
-  ],
-  "vectorize": [
-    {
-      "binding": "VECTORIZE",
-      "index_name": "consciencia-fabiano-rag"
-    }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "consciencia-fabiano-rag-db",
-      "database_id": "00000000-0000-0000-0000-000000000000"
-    }
-  ]
+    "run_worker_first": [
+      "/",
+      "/admin",
+      "/health",
+      "/api/*"
+    ]
+  }
 }

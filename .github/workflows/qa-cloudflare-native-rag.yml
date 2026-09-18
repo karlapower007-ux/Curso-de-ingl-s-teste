@@ -24,15 +24,16 @@ jobs:
           npm run check
           grep -q '@cf/baai/bge-m3' src/index.js
           grep -q 'env.AI.toMarkdown' src/index.js
-          grep -q 'env.PDFS' src/index.js
-          grep -q 'env.VECTORIZE' src/index.js
-          grep -q 'env.DB' src/index.js
+          grep -q 'class LibraryDO' src/index.js
+          grep -q 'env.LIBRARY' src/index.js
           grep -q '@cf/openai/whisper-large-v3-turbo' src/index.js
           grep -q '@cf/myshell-ai/melotts' src/index.js
+          grep -q 'durable_objects' wrangler.jsonc
+          grep -q 'new_sqlite_classes' wrangler.jsonc
           ! grep -q 'onrender.com' src/index.js
-          test -s migrations/0001_init.sql
-          bash -n scripts/workers-builds-bootstrap.sh
-          grep -q '"cf:bootstrap"' package.json
+          ! grep -q 'env.PDFS' src/index.js
+          ! grep -q 'env.VECTORIZE' src/index.js
+          ! grep -q 'env.DB' src/index.js
+          bash -n scripts/autonomous-release.sh
           grep -q '"cf:deploy"' package.json
-          test -s ../.github/workflows/fire-test-cloudflare-native-rag.yml
-          test -s WORKERS_BUILDS.md
+          grep -q 'durable-object-sqlite' src/index.js
