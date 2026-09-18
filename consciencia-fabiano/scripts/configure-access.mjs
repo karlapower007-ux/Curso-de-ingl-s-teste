@@ -1,12 +1,35 @@
 const apiBase = "https://api.cloudflare.com/client/v4";
 const token = process.env.FABIANO_CLOUDFLARE_API_TOKEN || "";
-const accountId = process.env.FABIANO_CLOUDFLARE_ACCOUNT_ID || "";
+let accountId = process.env.FABIANO_CLOUDFLARE_ACCOUNT_ID || "";
 const hostname = "consciencia-fabiano.focoeepoder2.workers.dev";
 const allowedEmail = "focoeepoder2@gmail.com";
 const appName = "Consciência Fabiano Admin";
 const policyName = "Fabiano somente";
 
 if (!token || !accountId) throw new Error("Cloudflare credentials ausentes");
+
+async function resolveAccountId() {
+  const r = await fetch(apiBase + "/accounts?per_page=50", {
+    headers: { Authorization: "Bearer " + token }
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok || body?.success !== true || !Array.isArray(body.result) || body.result.length === 0) {
+    throw new Error("Não foi possível resolver a conta do token.");
+  }
+  const expected = String(accountId || "").trim();
+  const match = body.result.find(x => x.id === expected);
+  if (match) {
+    accountId = match.id;
+    console.log("ACCESS_ACCOUNT_MATCH=yes");
+    return;
+  }
+  if (body.result.length === 1) {
+    accountId = body.result[0].id;
+    console.log("ACCESS_ACCOUNT_RESOLVED_FROM_TOKEN=yes");
+    return;
+  }
+  throw new Error("Account ID não corresponde e o token enxerga múltiplas contas.");
+}
 
 async function cf(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -131,6 +154,7 @@ async function verifyEdgeLock() {
   console.log("ADMIN_EDGE_LOCK_PASS=yes");
 }
 
+await resolveAccountId();
 await probeOrganization();
 const app = await ensureApplication();
 await ensurePolicy(app.id);
