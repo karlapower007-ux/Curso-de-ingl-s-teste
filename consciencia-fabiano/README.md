@@ -24,3 +24,5 @@ A branch foi criada a partir do baseline estável:
 `b39633ee30d4396803767376b6a30bd5c55ea086`.
 
 Emma e Olivia não são alteradas por este projeto.
+
+Acesso privado sincronizado com o backend RAG.
