@@ -1106,6 +1106,66 @@ function cosine(a, b) {
   return (!na || !nb) ? -1 : dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+class AsyncItemQueue {
+  constructor() {
+    this.items = [];
+    this.waiters = [];
+    this.closed = false;
+  }
+
+  push(item) {
+    if (this.closed) throw new Error("Fila de chunks já encerrada.");
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(item);
+    else this.items.push(item);
+  }
+
+  async take() {
+    if (this.items.length) return this.items.shift();
+    if (this.closed) return null;
+    return new Promise(resolve => this.waiters.push(resolve));
+  }
+
+  close() {
+    this.closed = true;
+    while (this.waiters.length) this.waiters.shift()(null);
+  }
+}
+
+async function embedOneWithRetry(env, text) {
+  let lastError = null;
+  for (let attempt = 0; attempt < EMBEDDING_RETRIES; attempt++) {
+    try {
+      const vectors = await embedTexts(env, [text]);
+      const vector = vectors?.[0];
+      if (!Array.isArray(vector) || !vector.length) throw new Error("Embedding vazio.");
+      return vector;
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= EMBEDDING_RETRIES) break;
+      const backoff = Math.min(2400, 150 * (2 ** attempt)) + Math.floor(Math.random() * 120);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+    }
+  }
+  throw lastError || new Error("Falha ao gerar embedding.");
+}
+
+async function extractPdfPageText(pdf, pageNumber) {
+  const page = await pdf.getPage(pageNumber);
+  try {
+    const content = await page.getTextContent();
+    let text = "";
+    for (const item of content.items || []) {
+      if (!item || typeof item.str !== "string") continue;
+      text += item.str;
+      text += item.hasEOL ? "\n" : " ";
+    }
+    return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  } finally {
+    try { page.cleanup?.(); } catch {}
+  }
+}
+
 export class LibraryDO {
   constructor(ctx, env) {
     this.ctx = ctx;
