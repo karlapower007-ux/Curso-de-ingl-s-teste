@@ -62,6 +62,18 @@ async function probeOrganization() {
   return null;
 }
 
+async function diagnoseIdPs() {
+  const r = await cf("/accounts/" + accountId + "/access/identity_providers");
+  console.log("IDP_LIST_HTTP=" + r.res.status);
+  if (r.body?.success === true && Array.isArray(r.body.result)) {
+    console.log("IDP_LIST=" + JSON.stringify(r.body.result.map(x => ({ id:x.id, name:x.name, type:x.type }))));
+    return r.body.result;
+  }
+  const errors = Array.isArray(r.body?.errors) ? r.body.errors : [];
+  console.log("IDP_LIST_ERRORS=" + JSON.stringify(errors.map(e => ({code:e.code,message:e.message}))));
+  return [];
+}
+
 async function ensureApplication() {
   const listed = await cf("/accounts/" + accountId + "/access/apps?per_page=100");
   const apps = ensureSuccess("list apps", listed) || [];
@@ -157,6 +169,7 @@ async function verifyEdgeLock() {
 
 await resolveAccountId();
 await probeOrganization();
+await diagnoseIdPs();
 const app = await ensureApplication();
 await ensurePolicy(app.id);
 await new Promise(r => setTimeout(r, 5000));
