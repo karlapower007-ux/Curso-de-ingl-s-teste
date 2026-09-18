@@ -41,7 +41,9 @@ await page.route(base + "/api/**", async route => {
 
 let testDocId = "";
 try {
-  await page.goto(base + "/admin?ui-e2e=" + Date.now(), { waitUntil: "networkidle" });
+  await page.goto(base + "/admin?ui-e2e=" + Date.now(), { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForSelector("#uploadBtn", { state: "visible", timeout: 30000 });
+  await page.waitForFunction(() => !document.querySelector("#nativeAdminLogin"), null, { timeout: 30000 });
 
   const backendText = page.locator("#backendText");
   await backendText.waitFor({ state: "attached" });
