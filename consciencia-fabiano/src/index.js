@@ -91,6 +91,71 @@ async function sha256Text(text) {
   return hex(await crypto.subtle.digest("SHA-256", enc.encode(String(text || ""))));
 }
 
+function base64UrlBytes(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function parseJwtJson(part) {
+  return JSON.parse(new TextDecoder().decode(base64UrlBytes(part)));
+}
+
+async function githubActionsAuthorized(request) {
+  const token = String(request.headers.get("X-FNS-GitHub-OIDC") || "").trim();
+  if (!token) return false;
+
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const header = parseJwtJson(parts[0]);
+    const payload = parseJwtJson(parts[1]);
+    const now = Math.floor(Date.now() / 1000);
+    const audienceOk = Array.isArray(payload.aud)
+      ? payload.aud.includes("fns-consciencia-fabiano-e2e")
+      : payload.aud === "fns-consciencia-fabiano-e2e";
+    const expectedWorkflow =
+      "karlapower007-ux/Curso-de-ingl-s-teste/.github/workflows/e2e-consciencia-fabiano-fabiano.yml@refs/heads/consciencia-fabiano-fabiano-cloudflare";
+
+    if (
+      header.alg !== "RS256" ||
+      !header.kid ||
+      payload.iss !== "https://token.actions.githubusercontent.com" ||
+      !audienceOk ||
+      payload.repository !== "karlapower007-ux/Curso-de-ingl-s-teste" ||
+      payload.ref !== "refs/heads/consciencia-fabiano-fabiano-cloudflare" ||
+      payload.workflow_ref !== expectedWorkflow ||
+      payload.runner_environment !== "github-hosted" ||
+      Number(payload.exp || 0) < now ||
+      Number(payload.nbf || 0) > now + 30
+    ) return false;
+
+    const jwksResponse = await fetch("https://token.actions.githubusercontent.com/.well-known/jwks", {
+      cf: { cacheEverything: true, cacheTtl: 3600 },
+    });
+    if (!jwksResponse.ok) return false;
+    const jwks = await jwksResponse.json();
+    const jwk = Array.isArray(jwks.keys) ? jwks.keys.find(k => k.kid === header.kid) : null;
+    if (!jwk) return false;
+
+    const publicKey = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const signed = enc.encode(parts[0] + "." + parts[1]);
+    const signature = base64UrlBytes(parts[2]);
+    return crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, signed);
+  } catch {
+    return false;
+  }
+}
+
 function rawToken(request) {
   const auth = request.headers.get("Authorization") || "";
   if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
@@ -98,6 +163,7 @@ function rawToken(request) {
 }
 
 async function adminAuthorized(request, env) {
+  if (await githubActionsAuthorized(request)) return true;
   const automation = (request.headers.get("X-FNS-Automation") || "").trim();
   if (env.AUTOMATION_SECRET && automation && automation === env.AUTOMATION_SECRET) return true;
   const token = rawToken(request);
