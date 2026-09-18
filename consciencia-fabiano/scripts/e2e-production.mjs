@@ -78,7 +78,7 @@ async function cleanup() {
 try {
   const health = (await request("/health")).body;
   const docsBefore = Number(health.documents || 0);
-  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && health.trigger_index_route === "/api/trigger-index" && health.tts_language === "pt-BR" && health.tts_english_fallback_disabled === true && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
+  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && health.trigger_index_route === "/api/trigger-index" && health.asynchronous_indexing === true && health.rag_streaming === "sse" && health.voice_stack === "web-speech-api" && health.backend_stt_tts_enabled === false && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
     throw new Error("health R2 inválido: " + JSON.stringify(health));
   }
   console.log("HEALTH_R2_PASS=yes");
