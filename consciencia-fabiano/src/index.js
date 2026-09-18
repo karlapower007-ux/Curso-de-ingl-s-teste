@@ -1,4 +1,4 @@
-const VERSION = "1.3.1-client-pdfjs-matrix-50x50-batched";
+const VERSION = "1.3.2-client-pdfjs-matrix-50x50-stream-batched";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -894,12 +894,15 @@ export class LibraryDO {
         const groups=await matrixChunkPages(pageRows);
         const wave=[];
         for(const group of groups) for(const piece of group) wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:piece.text});
-        const embeddings=await embedWaveBatchedWithRetry(this.env,wave);
-        for(let i=0;i<wave.length;i++){
-          const chunk=wave[i];
-          const embedding=embeddings[i];
-          this.sql.exec("INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-            chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embedding),now);
+        for(let embedOffset=0;embedOffset<wave.length;embedOffset+=EMBED_CONCURRENCY){
+          const batch=wave.slice(embedOffset,embedOffset+EMBED_CONCURRENCY);
+          const embeddings=await embedWaveBatchedWithRetry(this.env,batch);
+          for(let i=0;i<batch.length;i++){
+            const chunk=batch[i];
+            const embedding=embeddings[i];
+            this.sql.exec("INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+              chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embedding),now);
+          }
         }
         processedPages+=pageRows.length; offset+=pageRows.length;
         const progress=18+Math.round((processedPages/Math.max(1,actualPages))*78);

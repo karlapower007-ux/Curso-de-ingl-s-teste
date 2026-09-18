@@ -153,10 +153,17 @@ for i in range(1,61):
     img.save(bio,format="JPEG",quality=90,optimize=False)
     bio.seek(0)
     c.setFont("Helvetica-Bold",14)
-    c.drawString(50,800,f"Documento Grande Client-Side - pagina {i}")
-    c.setFont("Helvetica",10)
-    c.drawString(50,780,f"Turbina pagina {i}. Conteudo textual exclusivo FNS-MATRIX-{i:03d}.")
-    c.drawImage(ImageReader(bio),50,390,width=500,height=360)
+    c.drawString(50,810,f"Documento Grande Client-Side - pagina {i}")
+    tx=c.beginText(50,792)
+    tx.setFont("Helvetica",5)
+    tx.setLeading(5.2)
+    for line in range(75):
+        tx.textLine(
+            f"Pagina {i} linha {line:02d} codigo FNS-MATRIX-{i:03d}. "
+            "Conhecimento comparacao memoria reflexao documento verificacao fonte contexto evidencias leitura critica estudo profundo."
+        )
+    c.drawText(tx)
+    c.drawImage(ImageReader(bio),50,40,width=500,height=330)
     c.showPage()
 c.save()
 print(os.path.getsize(path))
@@ -167,8 +174,9 @@ log "BIG_PDF_BYTES=$BIG_BYTES"
 
 npm install --no-save --no-package-lock playwright-core@1.55.0 >/tmp/playwright-install.log 2>&1
 FNS_AUTOMATION_SECRET="$AUTOMATION_SECRET" EXPECT_R2="$EXPECT_R2" node ./scripts/browser-ingest-smoke.mjs "$BASE" /tmp/fns-fire/grande-client-side.pdf | tee /tmp/browser-ingest.json
-jq -e '.ok == true and .binary_pdf_requests_to_worker == 0 and .trigger_index_requests >= 1 and .pdf_file_bytes > 5000000' /tmp/browser-ingest.json >/dev/null
+jq -e '.ok == true and .binary_pdf_requests_to_worker == 0 and .trigger_index_requests >= 4 and .pdf_file_bytes > 5000000 and .max_trigger_payload_bytes < 1600000' /tmp/browser-ingest.json >/dev/null
 log "CLIENT_SIDE_PDFJS_BROWSER_PASS=yes"
+log "BATCHED_TEXT_STREAM_PASS=yes"
 
 curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
   --data '{"pergunta":"Na biblioteca, qual e o codigo textual da pagina 55 do Documento Grande Client-Side?","historico":[]}' > /tmp/chat-big.json
