@@ -136,6 +136,7 @@ try {
   console.log("HEALTH_R2_PASS=yes");
 
   const runCode = "ORION-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+  const testFilename = "fns-r2-e2e-" + runCode.toLowerCase() + ".pdf";
   const pdf = makePdf([
     "FNS Cloudflare R2 end-to-end validation document.",
     "The verification code is " + runCode + ".",
@@ -146,7 +147,7 @@ try {
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
-      filename:"fns-r2-e2e.pdf",
+      filename:testFilename,
       content_type:"application/pdf",
       size_bytes:pdf.byteLength
     }),
@@ -235,7 +236,7 @@ try {
   console.log("DELETE_R2_PASS=yes");
 
   const books = (await admin("/api/admin/livros")).body;
-  if ((books.livros || []).some(x => x.arquivo === "fns-r2-e2e.pdf")) throw new Error("PDF de teste ficou no índice");
+  if ((books.livros || []).some(x => x.id === documentId || x.arquivo === testFilename)) throw new Error("PDF de teste ficou no índice");
   console.log("LIBRARY_CLEAN_PASS=yes");
   const afterCleanup = (await request("/health")).body;
   if (Number(afterCleanup.documents || 0) < docsBefore) {
