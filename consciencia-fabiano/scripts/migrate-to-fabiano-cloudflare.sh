@@ -49,20 +49,31 @@ else
   log "R2_BUCKET_CREATED=yes"
 fi
 
-log "4/6 Validate and deploy Worker"
+log "4/6 Ensure workers.dev subdomain and deploy Worker"
+sub_code=$(curl -sS -o /tmp/subdomain.json -w '%{http_code}' "$CF_API/accounts/$TARGET_ACCOUNT_ID/workers/subdomain" "${AUTH[@]}")
+SUBDOMAIN=""
+if [ "$sub_code" = "200" ]; then
+  SUBDOMAIN=$(jq -r '.result.subdomain // empty' /tmp/subdomain.json)
+fi
+
+if [ -z "$SUBDOMAIN" ]; then
+  for candidate in focoeepoder2 fabiano-fns consciencia-fabiano-fns; do
+    put_code=$(curl -sS -o /tmp/subdomain-put.json -w '%{http_code}' -X PUT "$CF_API/accounts/$TARGET_ACCOUNT_ID/workers/subdomain" "${AUTH[@]}" --data "{\"subdomain\":\"$candidate\"}")
+    if jq -e '.success == true' /tmp/subdomain-put.json >/dev/null 2>&1; then
+      SUBDOMAIN=$(jq -r '.result.subdomain // empty' /tmp/subdomain-put.json)
+      log "WORKERS_SUBDOMAIN_CREATED=$SUBDOMAIN"
+      break
+    fi
+  done
+fi
+[ -n "$SUBDOMAIN" ] || { cat /tmp/subdomain-put.json 2>/dev/null || cat /tmp/subdomain.json; die "WORKERS_SUBDOMAIN_CREATE_FAILED"; }
+
 npm run check
 npx wrangler whoami
 npx wrangler deploy | tee /tmp/fabiano-deploy.log
 log "WORKER_DEPLOY=success"
 
 log "5/6 Resolve Fabiano workers.dev URL"
-sub_code=$(curl -sS -o /tmp/subdomain.json -w '%{http_code}' "$CF_API/accounts/$TARGET_ACCOUNT_ID/workers/subdomain" "${AUTH[@]}")
-if [ "$sub_code" != "200" ]; then
-  cat /tmp/subdomain.json || true
-  die "WORKERS_SUBDOMAIN_NOT_CONFIGURED"
-fi
-SUBDOMAIN=$(jq -r '.result.subdomain // empty' /tmp/subdomain.json)
-[ -n "$SUBDOMAIN" ] || die "WORKERS_SUBDOMAIN_EMPTY"
 BASE="https://consciencia-fabiano.$SUBDOMAIN.workers.dev"
 log "NEW_BASE_URL=$BASE"
 
