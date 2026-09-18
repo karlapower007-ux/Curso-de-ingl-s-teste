@@ -116,8 +116,10 @@ async function githubActionsAuthorized(request) {
     const audienceOk = Array.isArray(payload.aud)
       ? payload.aud.includes("fns-consciencia-fabiano-e2e")
       : payload.aud === "fns-consciencia-fabiano-e2e";
-    const expectedWorkflow =
-      "karlapower007-ux/Curso-de-ingl-s-teste/.github/workflows/e2e-consciencia-fabiano-fabiano.yml@refs/heads/consciencia-fabiano-fabiano-cloudflare";
+    const allowedWorkflows = new Set([
+      "karlapower007-ux/Curso-de-ingl-s-teste/.github/workflows/e2e-consciencia-fabiano-fabiano.yml@refs/heads/consciencia-fabiano-fabiano-cloudflare",
+      "karlapower007-ux/Curso-de-ingl-s-teste/.github/workflows/e2e-ui-consciencia-fabiano.yml@refs/heads/consciencia-fabiano-fabiano-cloudflare",
+    ]);
 
     if (
       header.alg !== "RS256" ||
@@ -126,7 +128,7 @@ async function githubActionsAuthorized(request) {
       !audienceOk ||
       payload.repository !== "karlapower007-ux/Curso-de-ingl-s-teste" ||
       payload.ref !== "refs/heads/consciencia-fabiano-fabiano-cloudflare" ||
-      payload.workflow_ref !== expectedWorkflow ||
+      !allowedWorkflows.has(payload.workflow_ref) ||
       payload.runner_environment !== "github-hosted" ||
       Number(payload.exp || 0) < now ||
       Number(payload.nbf || 0) > now + 30
