@@ -9,28 +9,42 @@ die(){ log "MIGRATION_BLOCKED=$*"; exit 78; }
 
 CF_API="https://api.cloudflare.com/client/v4"
 AUTH=(-H "Authorization: Bearer $FABIANO_CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
-export CLOUDFLARE_API_TOKEN="$FABIANO_CLOUDFLARE_API_TOKEN"
-export CLOUDFLARE_ACCOUNT_ID="$FABIANO_CLOUDFLARE_ACCOUNT_ID"
 
 log "== Consciência do Fabiano :: migration to Fabiano Cloudflare account =="
 
 log "1/6 Verify token"
-code=$(curl -sS -o /tmp/cf-verify.json -w '%{http_code}' "$CF_API/user/tokens/verify" "${AUTH[@]}")
+curl -sS -o /tmp/cf-verify.json "$CF_API/user/tokens/verify" "${AUTH[@]}"
 jq -e '.success == true and .result.status == "active"' /tmp/cf-verify.json >/dev/null || { cat /tmp/cf-verify.json; die "TOKEN_NOT_ACTIVE"; }
 log "TOKEN_ACTIVE=yes"
 
-log "2/6 Verify target account"
-code=$(curl -sS -o /tmp/cf-accounts.json -w '%{http_code}' "$CF_API/accounts?per_page=50" "${AUTH[@]}")
-jq --arg id "$FABIANO_CLOUDFLARE_ACCOUNT_ID" -e '.success == true and any(.result[]?; .id == $id)' /tmp/cf-accounts.json >/dev/null || { cat /tmp/cf-accounts.json; die "ACCOUNT_NOT_VISIBLE_TO_TOKEN"; }
-log "TARGET_ACCOUNT_MATCH=yes"
+log "2/6 Resolve target account safely"
+curl -sS -o /tmp/cf-accounts.json "$CF_API/accounts?per_page=50" "${AUTH[@]}"
+jq -e '.success == true and (.result|type)=="array" and (.result|length) >= 1' /tmp/cf-accounts.json >/dev/null || { cat /tmp/cf-accounts.json; die "NO_ACCOUNT_VISIBLE_TO_TOKEN"; }
+
+EXPECTED_ID=$(printf '%s' "$FABIANO_CLOUDFLARE_ACCOUNT_ID" | tr -d '[:space:]')
+VISIBLE_COUNT=$(jq -r '.result|length' /tmp/cf-accounts.json)
+MATCH_ID=$(jq --arg id "$EXPECTED_ID" -r '.result[]? | select(.id==$id) | .id' /tmp/cf-accounts.json | head -1)
+
+if [ -n "$MATCH_ID" ]; then
+  TARGET_ACCOUNT_ID="$MATCH_ID"
+  log "TARGET_ACCOUNT_MATCH=yes"
+elif [ "$VISIBLE_COUNT" = "1" ]; then
+  TARGET_ACCOUNT_ID=$(jq -r '.result[0].id' /tmp/cf-accounts.json)
+  log "TARGET_ACCOUNT_RESOLVED_FROM_TOKEN=yes"
+else
+  die "ACCOUNT_ID_MISMATCH_MULTIPLE_VISIBLE_ACCOUNTS"
+fi
+
+export CLOUDFLARE_API_TOKEN="$FABIANO_CLOUDFLARE_API_TOKEN"
+export CLOUDFLARE_ACCOUNT_ID="$TARGET_ACCOUNT_ID"
 
 log "3/6 Ensure R2 bucket"
 R2_BUCKET="consciencia-fabiano-pdfs"
-r2_code=$(curl -sS -o /tmp/r2-bucket.json -w '%{http_code}' "$CF_API/accounts/$FABIANO_CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_BUCKET" "${AUTH[@]}")
+r2_code=$(curl -sS -o /tmp/r2-bucket.json -w '%{http_code}' "$CF_API/accounts/$TARGET_ACCOUNT_ID/r2/buckets/$R2_BUCKET" "${AUTH[@]}")
 if [ "$r2_code" = "200" ]; then
   log "R2_BUCKET_EXISTS=yes"
 else
-  create_code=$(curl -sS -o /tmp/r2-create.json -w '%{http_code}' -X POST "$CF_API/accounts/$FABIANO_CLOUDFLARE_ACCOUNT_ID/r2/buckets" "${AUTH[@]}" --data "{\"name\":\"$R2_BUCKET\",\"storageClass\":\"Standard\"}")
+  create_code=$(curl -sS -o /tmp/r2-create.json -w '%{http_code}' -X POST "$CF_API/accounts/$TARGET_ACCOUNT_ID/r2/buckets" "${AUTH[@]}" --data "{\"name\":\"$R2_BUCKET\",\"storageClass\":\"Standard\"}")
   jq -e '.success == true' /tmp/r2-create.json >/dev/null || { cat /tmp/r2-create.json; die "R2_BUCKET_CREATE_FAILED_HTTP_$create_code"; }
   log "R2_BUCKET_CREATED=yes"
 fi
@@ -42,7 +56,7 @@ npx wrangler deploy | tee /tmp/fabiano-deploy.log
 log "WORKER_DEPLOY=success"
 
 log "5/6 Resolve Fabiano workers.dev URL"
-sub_code=$(curl -sS -o /tmp/subdomain.json -w '%{http_code}' "$CF_API/accounts/$FABIANO_CLOUDFLARE_ACCOUNT_ID/workers/subdomain" "${AUTH[@]}")
+sub_code=$(curl -sS -o /tmp/subdomain.json -w '%{http_code}' "$CF_API/accounts/$TARGET_ACCOUNT_ID/workers/subdomain" "${AUTH[@]}")
 if [ "$sub_code" != "200" ]; then
   cat /tmp/subdomain.json || true
   die "WORKERS_SUBDOMAIN_NOT_CONFIGURED"
