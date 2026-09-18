@@ -1,0 +1,34 @@
+name: Migrate Consciência Fabiano to Fabiano Cloudflare
+
+on:
+  push:
+    branches: [consciencia-fabiano-fabiano-cloudflare]
+    paths:
+      - 'consciencia-fabiano/**'
+      - '.github/workflows/migrate-consciencia-fabiano-to-fabiano.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    env:
+      FABIANO_CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      FABIANO_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-fabiano-fabiano-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Migrate to Fabiano Cloudflare account
+        run: bash ./scripts/migrate-to-fabiano-cloudflare.sh
