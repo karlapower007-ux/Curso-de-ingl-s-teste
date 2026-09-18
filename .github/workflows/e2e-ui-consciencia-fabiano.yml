@@ -1,0 +1,52 @@
+name: Visual E2E Consciência Fabiano
+
+on:
+  push:
+    branches: [consciencia-fabiano-fabiano-cloudflare]
+    paths:
+      - 'consciencia-fabiano/scripts/e2e-ui.mjs'
+      - 'consciencia-fabiano/public/app.js'
+      - 'consciencia-fabiano/public/index.html'
+      - '.github/workflows/e2e-ui-consciencia-fabiano.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-fabiano-fabiano-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: consciencia-fabiano
+        run: npm install
+      - name: Install Chromium
+        working-directory: consciencia-fabiano
+        run: npx playwright install --with-deps chromium
+      - name: Get GitHub OIDC token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('fns-consciencia-fabiano-e2e');
+            core.setSecret(token);
+            core.exportVariable('OIDC_TOKEN', token);
+      - name: Run visual E2E
+        working-directory: consciencia-fabiano
+        run: node scripts/e2e-ui.mjs
+      - name: Upload visual proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consciencia-fabiano-ui-proof
+          path: consciencia-fabiano/ui-e2e-after-index.png
+          if-no-files-found: ignore
