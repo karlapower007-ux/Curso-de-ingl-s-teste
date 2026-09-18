@@ -28,4 +28,4 @@ services:
       - key: OWNER_TOKEN_HASH
         value: "92f834aac4bfc1f5a1d56f16d4d2704f39da26d2f21a7b60d9e46652861f151c"
       - key: CORS_ORIGINS
-        value: https://estudos-profundos-fns.karlapower007.chatgpt.site,https://consciencia-fabiano.karlapower007.workers.dev,https://consciencia-fabiano.karlapower007.workers.dev
+        value: https://estudos-profundos-fns.karlapower007.chatgpt.site,https://consciencia-fabiano.karlapower007.workers.dev
