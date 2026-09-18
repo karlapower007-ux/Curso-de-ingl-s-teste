@@ -1,6 +1,8 @@
 import os
 import re
 import uuid
+import hashlib
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -34,14 +36,20 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-2").strip()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+OWNER_TOKEN_HASH = os.getenv(
+    "OWNER_TOKEN_HASH",
+    "6181e1c1b0ce09c367fcfc3be871baec2d356e80f2752db66cff41a736621c6c",
+).strip().lower()
 TTS_VOICE = os.getenv("TTS_VOICE", "pt-BR-AntonioNeural").strip()
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "18000"))
 AUTO_INDEX_ON_STARTUP = os.getenv("AUTO_INDEX_ON_STARTUP", "1").lower() in {"1", "true", "yes", "on"}
 DEFAULT_MAIN_SITE = "https://estudos-profundos-fns.karlapower007.chatgpt.site"
+CONSCIENCIA_SITE = "https://consciencia-fabiano.karlapower007.workers.dev"
+DEFAULT_CORS = f"{DEFAULT_MAIN_SITE},{CONSCIENCIA_SITE}"
 CORS_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", DEFAULT_MAIN_SITE).split(",")
+    for origin in os.getenv("CORS_ORIGINS", DEFAULT_CORS).split(",")
     if origin.strip()
 ]
 
@@ -54,27 +62,30 @@ collection = chroma.get_or_create_collection(
 )
 
 SYSTEM_PROMPT = """
-Você é o Avatar Fabiano, o Livre Pensador do projeto Estudos Profundos FNS.
+Você é a Consciência do Fabiano: uma biblioteca viva, interlocutor enciclopédico e parceiro de reflexão pessoal.
 
 IDENTIDADE:
-- Pesquisador independente e debatedor crítico.
-- Especializado em doutrinas, escrituras, história religiosa, teologia,
-  mormonismo, hermetismo e comparações gnósticas.
-- Você NÃO fala como porta-voz de igreja, denominação ou instituição.
+- Converse SEMPRE em português brasileiro.
+- Você pode consultar PDFs em português, inglês ou outros idiomas.
+- Quando a fonte estiver em outro idioma, compreenda o original internamente e explique em português.
+- Atue com amplitude temática: religião, filosofia, história, maçonaria, arte, literatura, ciência e assuntos gerais.
 
 REGRAS:
 1. Baseie a análise primariamente nos trechos recuperados da biblioteca.
-2. Diferencie fato documental, interpretação, hipótese e ausência de evidência.
-3. Aponte falácias, tensões, paradoxos e contradições somente quando as fontes sustentarem isso.
-4. Não invente citações, datas, páginas, autores nem fatos.
-5. Se o contexto não for suficiente, diga isso explicitamente.
-6. Seja analítico, direto, respeitoso e intelectualmente provocador.
-7. Termine com uma seção curta chamada "Síntese".
+2. Preserve e informe arquivo/livro e página quando esses dados estiverem disponíveis.
+3. Não invente citações, páginas, capítulos, datas, autores ou referências.
+4. Diferencie fato documental, interpretação, hipótese e ausência de evidência.
+5. Se a biblioteca não contiver material suficiente, diga isso claramente.
+6. Ao traduzir uma ideia de fonte estrangeira, deixe claro que se trata de tradução ou paráfrase em português.
+7. Use o histórico recente para manter continuidade sem repetir apresentações.
+8. Seja analítico, claro, respeitoso, curioso e intelectualmente rigoroso.
+9. Termine, quando útil, com uma síntese curta.
 """.strip()
 
 
 class PerguntaRequest(BaseModel):
     pergunta: str = Field(min_length=2, max_length=8000)
+    historico: List[dict] = Field(default_factory=list)
 
 
 class Fonte(BaseModel):
@@ -113,11 +124,22 @@ def require_api():
         )
 
 
-def require_admin(x_admin_token: Optional[str]):
-    if not ADMIN_TOKEN:
-        raise HTTPException(status_code=503, detail="ADMIN_TOKEN não configurado.")
-    if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Token administrativo inválido.")
+def require_admin(
+    x_admin_token: Optional[str] = None,
+    x_fns_owner_token: Optional[str] = None,
+):
+    if ADMIN_TOKEN and x_admin_token and hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
+        return
+
+    if OWNER_TOKEN_HASH and x_fns_owner_token:
+        digest = hashlib.sha256(x_fns_owner_token.encode("utf-8")).hexdigest()
+        if hmac.compare_digest(digest, OWNER_TOKEN_HASH):
+            return
+
+    if not ADMIN_TOKEN and not OWNER_TOKEN_HASH:
+        raise HTTPException(status_code=503, detail="Nenhum mecanismo administrativo configurado.")
+
+    raise HTTPException(status_code=401, detail="Acesso administrativo inválido.")
 
 
 async def embed_texts(texts: List[str]) -> List[List[float]]:
@@ -183,8 +205,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Estudos Profundos FNS — Avatar Fabiano",
-    version="3.1.0",
+    title="Consciência do Fabiano — RAG",
+    version="3.2.0",
     lifespan=lifespan,
 )
 
@@ -193,7 +215,7 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Token"],
+    allow_headers=["Content-Type", "X-Admin-Token", "X-FNS-Owner-Token"],
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -256,13 +278,13 @@ def admin():
 def health():
     return {
         "ok": True,
-        "projeto": "Estudos Profundos FNS — Avatar Fabiano",
-        "versao": "3.1.0",
+        "projeto": "Consciência do Fabiano",
+        "versao": "3.2.0",
         "modelo": GEMINI_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "documentos_indexados": collection.count(),
         "gemini_configurado": bool(GOOGLE_API_KEY),
-        "admin_configurado": bool(ADMIN_TOKEN),
+        "admin_configurado": bool(ADMIN_TOKEN or OWNER_TOKEN_HASH),
         "voz": TTS_VOICE,
         "site_principal": DEFAULT_MAIN_SITE,
         "cors_origins": CORS_ORIGINS,
@@ -277,8 +299,9 @@ def health():
 async def upload_pdf(
     arquivo: UploadFile = File(...),
     x_admin_token: Optional[str] = Header(default=None),
+    x_fns_owner_token: Optional[str] = Header(default=None),
 ):
-    require_admin(x_admin_token)
+    require_admin(x_admin_token, x_fns_owner_token)
     require_api()
 
     if not arquivo.filename or not arquivo.filename.lower().endswith(".pdf"):
@@ -308,19 +331,123 @@ async def upload_pdf(
     }
 
 
+class DeletePdfRequest(BaseModel):
+    arquivo: str = Field(min_length=1, max_length=260)
+
+
+def _safe_pdf_name(nome: str) -> str:
+    base = Path(nome).name
+    if base != nome or not base.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Nome de PDF inválido.")
+    return base
+
+
+@app.get("/admin/livros")
+def listar_livros(
+    x_admin_token: Optional[str] = Header(default=None),
+    x_fns_owner_token: Optional[str] = Header(default=None),
+):
+    require_admin(x_admin_token, x_fns_owner_token)
+    counts = {}
+    try:
+        data = collection.get(include=["metadatas"])
+        for meta in data.get("metadatas") or []:
+            arquivo = (meta or {}).get("arquivo")
+            if arquivo:
+                counts[arquivo] = counts.get(arquivo, 0) + 1
+    except Exception:
+        pass
+
+    nomes = {p.name for p in LIVROS_DIR.glob("*.pdf")}
+    nomes.update(counts.keys())
+    livros = [
+        {
+            "arquivo": nome,
+            "chunks": counts.get(nome, 0),
+            "armazenado_no_disco": (LIVROS_DIR / nome).exists(),
+        }
+        for nome in sorted(nomes, key=str.lower)
+    ]
+    return {"ok": True, "livros": livros, "total_chunks": collection.count()}
+
+
+@app.post("/admin/delete-pdf")
+def deletar_pdf(
+    req: DeletePdfRequest,
+    x_admin_token: Optional[str] = Header(default=None),
+    x_fns_owner_token: Optional[str] = Header(default=None),
+):
+    require_admin(x_admin_token, x_fns_owner_token)
+    nome = _safe_pdf_name(req.arquivo)
+    caminho = LIVROS_DIR / nome
+    if caminho.exists():
+        caminho.unlink()
+    try:
+        collection.delete(where={"arquivo": nome})
+    except Exception:
+        pass
+    return {"ok": True, "arquivo": nome, "total_chunks": collection.count()}
+
+
+@app.post("/admin/reindex")
+async def reindexar_biblioteca(
+    x_admin_token: Optional[str] = Header(default=None),
+    x_fns_owner_token: Optional[str] = Header(default=None),
+):
+    require_admin(x_admin_token, x_fns_owner_token)
+    require_api()
+
+    try:
+        ids = (collection.get() or {}).get("ids") or []
+        if ids:
+            collection.delete(ids=ids)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao limpar índice: {exc}")
+
+    arquivos = []
+    total_novo = 0
+    for pdf in sorted(LIVROS_DIR.glob("*.pdf")):
+        try:
+            chunks = await indexar_pdf(pdf)
+            total_novo += chunks
+            arquivos.append({"arquivo": pdf.name, "chunks": chunks, "ok": True})
+        except Exception as exc:
+            arquivos.append({"arquivo": pdf.name, "ok": False, "erro": str(exc)})
+
+    return {
+        "ok": True,
+        "arquivos": arquivos,
+        "total_chunks": collection.count(),
+        "chunks_reindexados": total_novo,
+    }
+
+
 @app.post("/perguntar", response_model=PerguntaResponse)
 async def perguntar(req: PerguntaRequest):
     require_api()
     contexto, fontes = await recuperar_contexto(req.pergunta)
 
+    historico_linhas = []
+    for item in req.historico[-20:]:
+        role = "ASSISTENTE" if str(item.get("role", "")).lower() == "assistant" else "USUÁRIO"
+        content = str(item.get("content", "")).strip()[:1800]
+        if content:
+            historico_linhas.append(f"{role}: {content}")
+    historico = "\n".join(historico_linhas)
+
     prompt = f"""
-CONTEXTO RECUPERADO:
+HISTÓRICO RECENTE:
+{historico or "(sem histórico anterior)"}
+
+CONTEXTO RECUPERADO DA BIBLIOTECA:
 {contexto}
 
-PERGUNTA / TESE:
+PERGUNTA:
 {req.pergunta}
 
-Responda em português brasileiro e identifique arquivo/página quando disponíveis.
+Responda somente em português brasileiro.
+Se a fonte estiver em inglês ou outro idioma, explique/traduza em português sem perder o sentido.
+Identifique arquivo/livro e página quando disponíveis e nunca invente uma referência ausente.
 """.strip()
 
     try:
