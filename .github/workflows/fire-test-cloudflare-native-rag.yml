@@ -1,0 +1,177 @@
+name: Fire Test Cloudflare Native RAG
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm install
+
+      - name: Assert provisioned bindings
+        run: |
+          set -euo pipefail
+          ! grep -q '00000000-0000-0000-0000-000000000000' wrangler.jsonc
+          grep -q '"bucket_name": "consciencia-fabiano-pdfs"' wrangler.jsonc
+          grep -q '"index_name": "consciencia-fabiano-rag"' wrangler.jsonc
+          grep -q '"database_name": "consciencia-fabiano-rag-db"' wrangler.jsonc
+
+      - name: Generate Portuguese and English PDF fixtures
+        run: |
+          python3 -m pip install --quiet reportlab
+          mkdir -p /tmp/fns-fire
+          python3 - <<'PY'
+          from reportlab.pdfgen import canvas
+          from reportlab.lib.pagesizes import A4
+
+          def make(path, title, author, pages):
+              c=canvas.Canvas(path,pagesize=A4)
+              c.setTitle(title)
+              c.setAuthor(author)
+              for i,lines in enumerate(pages,1):
+                  c.setFont("Helvetica-Bold",16)
+                  c.drawString(72,790,f"{title} - Página {i}")
+                  c.setFont("Helvetica",11)
+                  y=750
+                  for line in lines:
+                      c.drawString(72,y,line)
+                      y-=22
+                  c.showPage()
+              c.save()
+
+          make(
+              "/tmp/fns-fire/teste-portugues.pdf",
+              "Caderno Ponte de Âmbar",
+              "Equipe FNS",
+              [
+                  [
+                      "O princípio Ponte de Âmbar afirma que conhecimento cresce quando fontes são comparadas.",
+                      "Código documental exclusivo: AMBAR-2741.",
+                      "A finalidade deste documento é testar recuperação semântica em português."
+                  ],
+                  [
+                      "Na segunda página, a metáfora da ponte representa diálogo entre memória e reflexão.",
+                      "A cor simbólica escolhida para a ponte é dourada."
+                  ]
+              ],
+          )
+
+          make(
+              "/tmp/fns-fire/teste-ingles.pdf",
+              "Orion Archive Notes",
+              "FNS Research Team",
+              [
+                  [
+                      "The Orion Archive principle states that careful comparison prevents false certainty.",
+                      "Exclusive document code: ORION-6382.",
+                      "This page exists to test cross-language semantic retrieval."
+                  ],
+                  [
+                      "The archive color is cobalt blue.",
+                      "In this document, cobalt blue represents disciplined curiosity and patient verification."
+                  ]
+              ],
+          )
+          PY
+
+      - name: Deploy isolated native test Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --name consciencia-fabiano-native-test
+
+      - name: Wait for native health
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          for i in $(seq 1 12); do
+            body=$(curl -fsS "$BASE/health" || true)
+            echo "$body"
+            if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-native" and .render_dependency == false' >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          exit 1
+
+      - name: Upload and index both PDFs
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          curl -fsS -F 'arquivo=@/tmp/fns-fire/teste-portugues.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf" > /tmp/pt.json
+          curl -fsS -F 'arquivo=@/tmp/fns-fire/teste-ingles.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf" > /tmp/en.json
+          cat /tmp/pt.json
+          cat /tmp/en.json
+          jq -e '.ok == true and .chunks > 0 and .paginas >= 2' /tmp/pt.json
+          jq -e '.ok == true and .chunks > 0 and .paginas >= 2' /tmp/en.json
+
+      - name: Validate Portuguese retrieval and page reference
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          curl -fsS "$BASE/api/chat"             -H 'Content-Type: application/json'             --data '{"pergunta":"Segundo a biblioteca, o que afirma o princípio Ponte de Âmbar e qual é o código documental? Responda em português e use a fonte.","historico":[]}'             > /tmp/chat-pt.json
+          cat /tmp/chat-pt.json
+          jq -e '.ok == true and (.resposta|length) > 20' /tmp/chat-pt.json
+          jq -e '[.fontes[] | select(.arquivo=="teste-portugues.pdf" and (.pagina|tonumber) >= 1)] | length > 0' /tmp/chat-pt.json
+          jq -e '[.fontes[] | select(.autor=="Equipe FNS")] | length > 0' /tmp/chat-pt.json
+
+      - name: Validate English source retrieved through Portuguese question
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          curl -fsS "$BASE/api/chat"             -H 'Content-Type: application/json'             --data '{"pergunta":"No documento em inglês, qual é a cor do arquivo Orion e o que essa cor representa? Explique integralmente em português e cite a fonte.","historico":[]}'             > /tmp/chat-en.json
+          cat /tmp/chat-en.json
+          jq -e '.ok == true and (.resposta|length) > 20' /tmp/chat-en.json
+          jq -e '[.fontes[] | select(.arquivo=="teste-ingles.pdf" and (.pagina|tonumber) >= 1)] | length > 0' /tmp/chat-en.json
+          jq -e '[.fontes[] | select(.autor=="FNS Research Team")] | length > 0' /tmp/chat-en.json
+
+      - name: Validate document list and native TTS
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          curl -fsS "$BASE/api/admin/livros" > /tmp/books.json
+          cat /tmp/books.json
+          jq -e '[.livros[] | select(.status=="ready")] | length >= 2' /tmp/books.json
+
+          curl -fsS "$BASE/api/tts"             -H 'Content-Type: application/json'             --data '{"text":"A Consciência do Fabiano está funcionando em português."}'             -D /tmp/tts.headers -o /tmp/tts.audio
+          test -s /tmp/tts.audio
+          grep -qi 'content-type: audio/' /tmp/tts.headers
+
+      - name: Final native status
+        run: |
+          set -euo pipefail
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          curl -fsS "$BASE/api/status" | tee /tmp/status.json
+          jq -e '.ok == true and .render_dependency == false and .documents >= 2 and .chunks >= 2' /tmp/status.json
+
+      - name: Cleanup test documents
+        if: always()
+        run: |
+          set +e
+          BASE='https://consciencia-fabiano-native-test.karlapower007.workers.dev'
+          for id in $(curl -fsS "$BASE/api/admin/livros" | jq -r '.livros[]? | select(.arquivo=="teste-portugues.pdf" or .arquivo=="teste-ingles.pdf") | .id'); do
+            curl -fsS "$BASE/api/admin/delete-pdf"               -H 'Content-Type: application/json'               --data "{"document_id":"$id"}" || true
+          done
+
+      - name: Remove isolated test Worker
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          npx wrangler delete consciencia-fabiano-native-test --force
