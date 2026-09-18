@@ -8,24 +8,12 @@
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
-  <link rel="stylesheet" href="/style.css?v=1">
+  <link rel="stylesheet" href="/style.css?v=2">
 </head>
 <body>
   <div class="stars"></div>
 
-  <section id="loginView" class="login-shell">
-    <div class="login-card">
-      <div class="seal">FNS</div>
-      <p class="eyebrow">ARQUIVO PESSOAL</p>
-      <h1>Consciência do Fabiano</h1>
-      <p class="muted">Uma biblioteca viva para pensar, estudar e conversar em português.</p>
-      <input id="tokenInput" type="password" autocomplete="current-password" placeholder="Chave privada">
-      <button id="loginBtn" class="primary">Entrar</button>
-      <p id="loginStatus" class="status"></p>
-    </div>
-  </section>
-
-  <main id="appView" class="app hidden">
+  <main id="appView" class="app">
     <header class="topbar">
       <div>
         <p class="eyebrow">ENCICLOPÉDIA PESSOAL</p>
@@ -34,7 +22,6 @@
       <div class="top-actions">
         <button id="chatTab" class="ghost active">Conversar</button>
         <button id="libraryTab" class="ghost">Biblioteca</button>
-        <button id="logoutBtn" class="ghost danger">Sair</button>
       </div>
     </header>
 
@@ -99,6 +86,6 @@
     </section>
   </main>
 
-  <script src="/app.js?v=1" defer></script>
+  <script src="/app.js?v=2" defer></script>
 </body>
 </html>
