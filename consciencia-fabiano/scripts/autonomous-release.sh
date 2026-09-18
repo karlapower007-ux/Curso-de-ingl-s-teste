@@ -126,6 +126,23 @@ else
   log "TTS_NATIVE_RESPONSE=fallback-browser-available"
 fi
 
+log "Persistent backend memory test"
+MEMORY_SECRET=$(openssl rand -hex 32)
+MEMHDR=(-H "X-FNS-Memory-Key: $MEMORY_SECRET")
+
+curl -fsS "${MEMHDR[@]}" "$BASE/api/chat"   -H 'Content-Type: application/json'   --data '{"pergunta":"Responda apenas com a frase MEMORIA-PERSISTENTE-OK.","turn_id":"fire-memory-1","historico":[]}'   > /tmp/memory-chat.json
+jq -e '.ok == true and .memory_persisted == true' /tmp/memory-chat.json >/dev/null
+
+curl -fsS "${MEMHDR[@]}" "$BASE/api/memory" > /tmp/memory-list.json
+jq -e '.ok == true and .persistent == true and (.total >= 2) and ([.messages[] | select(.content | contains("MEMORIA-PERSISTENTE-OK"))] | length >= 1)' /tmp/memory-list.json >/dev/null
+
+curl -fsS "${MEMHDR[@]}" "$BASE/api/memory/clear"   -H 'Content-Type: application/json'   --data '{}' > /tmp/memory-clear.json
+jq -e '.ok == true and (.cleared >= 2)' /tmp/memory-clear.json >/dev/null
+
+curl -fsS "${MEMHDR[@]}" "$BASE/api/memory" > /tmp/memory-empty.json
+jq -e '.ok == true and .total == 0' /tmp/memory-empty.json >/dev/null
+log "PERSISTENT_MEMORY_PASS=yes"
+
 log "7/7 Library validation and fixture cleanup"
 curl -fsS "${HDR[@]}" "$BASE/api/admin/livros" > /tmp/books.json
 cat /tmp/books.json
