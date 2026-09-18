@@ -460,7 +460,7 @@
     await Promise.all(Array.from({length:concurrency},runner));
     const contentSha256=bytesToHex(await digestPromise); await pdf.destroy();
     if(!pages.some(item=>String(item?.text || "").trim())) throw new Error("O PDF não possui texto selecionável. O binário não será enviado ao Worker.");
-    return {filename:file.name,size_bytes:file.size,page_count:pages.length,title,author,content_sha256,pages,total_chars:totalChars};
+    return {filename:file.name,size_bytes:file.size,page_count:pages.length,title,author,content_sha256:contentSha256,pages,total_chars:totalChars};
   }
   function pageBatches(pages){
     const batches=[];let batch=[],chars=0;
