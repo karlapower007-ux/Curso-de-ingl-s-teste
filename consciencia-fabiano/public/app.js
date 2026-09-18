@@ -259,8 +259,6 @@
   }
 
   async function checkBackend() {
-
-async function checkBackend() {
     try {
       const data = await api("/api/status");
       const up = data?.ok === true && data?.architecture === "cloudflare-native";
@@ -450,8 +448,6 @@ async function checkBackend() {
   }
 
   async function loadBooks() {
-
-async function loadBooks() {
     try {
       const data = await api("/api/admin/livros");
       const list = Array.isArray(data?.livros) ? data.livros : [];

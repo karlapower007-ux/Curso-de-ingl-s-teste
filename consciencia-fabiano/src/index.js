@@ -342,8 +342,6 @@ async function indexStatus(env, url) {
 }
 
 async function listBooks(env) {
-
-async function listBooks(env) {
   assertBindings(env);
   return libraryCall(env, "/docs");
 }
@@ -663,8 +661,6 @@ async function handleApi(request, env, url, ctx) {
 }
 
 function cosine(a, b) {
-
-function cosine(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || !a.length) return -1;
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
@@ -953,8 +949,6 @@ export class LibraryDO {
     }
   }
 }
-
-export default {
 
 export default {
   async fetch(request, env, ctx) {
