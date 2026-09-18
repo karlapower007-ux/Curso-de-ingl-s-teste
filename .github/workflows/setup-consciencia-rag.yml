@@ -15,26 +15,24 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
-      - name: Provision Vectorize + R2
+      - name: Probe persistent storage permissions
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set -euo pipefail
-          if ! npx wrangler vectorize get consciencia-fabiano-rag >/tmp/vectorize.txt 2>&1; then
-            cat /tmp/vectorize.txt || true
-            npx wrangler vectorize create consciencia-fabiano-rag --dimensions=768 --metric=cosine
-          else
-            cat /tmp/vectorize.txt
-          fi
-
-          if ! npx wrangler r2 bucket list --json | grep -q '"name"[[:space:]]*:[[:space:]]*"consciencia-fabiano-pdfs"'; then
-            npx wrangler r2 bucket create consciencia-fabiano-pdfs
-          else
-            echo "R2 bucket already exists: consciencia-fabiano-pdfs"
-          fi
-
-          echo "=== Vectorize ==="
+          set +e
+          echo "=== VECTORIZE ==="
           npx wrangler vectorize get consciencia-fabiano-rag
-          echo "=== R2 ==="
-          npx wrangler r2 bucket list --json | grep -C 2 'consciencia-fabiano-pdfs' || true
+          echo "vectorize_get_exit=$?"
+          echo "=== R2 LIST ==="
+          npx wrangler r2 bucket list --json
+          echo "r2_list_exit=$?"
+          echo "=== R2 CREATE ==="
+          npx wrangler r2 bucket create consciencia-fabiano-pdfs
+          echo "r2_create_exit=$?"
+          echo "=== D1 LIST ==="
+          npx wrangler d1 list --json
+          echo "d1_list_exit=$?"
+          echo "=== D1 CREATE ==="
+          npx wrangler d1 create consciencia-fabiano-rag-db
+          echo "d1_create_exit=$?"
