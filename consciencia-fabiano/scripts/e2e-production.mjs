@@ -77,7 +77,7 @@ async function cleanup() {
 
 try {
   const health = (await request("/health")).body;
-  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
+  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
     throw new Error("health R2 inválido: " + JSON.stringify(health));
   }
   console.log("HEALTH_R2_PASS=yes");
@@ -87,13 +87,57 @@ try {
     "The secret verification code is ORION-6382.",
     "This file validates multilingual retrieval and is deleted automatically."
   ]);
-  const form = new FormData();
-  form.set("arquivo", new File([pdf], "fns-r2-e2e.pdf", {type:"application/pdf"}));
-  const upload = (await admin("/api/admin/upload-pdf", {method:"POST", body:form})).body;
-  if (!(upload.ok && upload.storage === "r2-original+durable-object-sqlite-index" && upload.r2_key && Number(upload.chunks) > 0)) {
-    throw new Error("upload inválido: " + JSON.stringify(upload));
+  const ticket = (await admin("/api/admin/direct-upload-ticket", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      filename:"fns-r2-e2e.pdf",
+      content_type:"application/pdf",
+      size_bytes:pdf.byteLength
+    }),
+  })).body;
+  if (!(ticket.ok && ticket.direct === true && ticket.upload_url && ticket.document_id && ticket.r2_key)) {
+    throw new Error("ticket direto inválido: " + JSON.stringify(ticket));
   }
-  documentId = upload.document_id;
+  documentId = ticket.document_id;
+  console.log("DIRECT_UPLOAD_TICKET_PASS=yes");
+
+  const preflight = await fetch(ticket.upload_url, {
+    method:"OPTIONS",
+    headers:{
+      "Origin":base,
+      "Access-Control-Request-Method":"PUT",
+      "Access-Control-Request-Headers":"content-type",
+    },
+  });
+  const corsOrigin = preflight.headers.get("access-control-allow-origin") || "";
+  const corsMethods = preflight.headers.get("access-control-allow-methods") || "";
+  if (!preflight.ok || corsOrigin !== base || !corsMethods.includes("PUT")) {
+    throw new Error("CORS direto inválido HTTP " + preflight.status + " origin=" + corsOrigin + " methods=" + corsMethods);
+  }
+  console.log("DIRECT_R2_CORS_PASS=yes");
+
+  const directPut = await fetch(ticket.upload_url, {
+    method:"PUT",
+    headers:{"Content-Type":"application/pdf","Origin":base},
+    body:pdf,
+  });
+  if (!directPut.ok) throw new Error("PUT direto R2 falhou HTTP " + directPut.status + " " + await directPut.text());
+  console.log("DIRECT_R2_PUT_PASS=yes");
+
+  const upload = (await admin("/api/admin/index-r2", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      document_id:ticket.document_id,
+      r2_key:ticket.r2_key,
+      filename:ticket.filename,
+      size_bytes:pdf.byteLength
+    }),
+  })).body;
+  if (!(upload.ok && upload.storage === "r2-original+durable-object-sqlite-index" && upload.r2_key && Number(upload.chunks) > 0)) {
+    throw new Error("indexação após upload direto inválida: " + JSON.stringify(upload));
+  }
   console.log("UPLOAD_R2_PASS=yes");
 
   const r2 = (await admin("/api/admin/r2-object?document_id=" + encodeURIComponent(documentId))).body;
