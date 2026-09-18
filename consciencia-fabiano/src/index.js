@@ -285,8 +285,7 @@ export default {
     if (url.pathname.startsWith("/api/")) return handleApi(request, env, url);
 
     if (url.pathname === "/" || url.pathname === "/admin") {
-      const assetUrl = new URL("/index.html", url);
-      const response = await env.ASSETS.fetch(new Request(assetUrl, request));
+      const response = await env.ASSETS.fetch(request);
       const headers = securityHeaders(new Headers(response.headers));
       return new Response(response.body, { status: response.status, headers });
     }
