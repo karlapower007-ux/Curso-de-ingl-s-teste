@@ -1,0 +1,30 @@
+name: Lock Consciência Fabiano Admin with Access
+
+on:
+  push:
+    branches: [consciencia-fabiano-fabiano-cloudflare]
+    paths:
+      - 'consciencia-fabiano/scripts/configure-access.mjs'
+      - '.github/workflows/lock-consciencia-fabiano-admin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  access:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FABIANO_CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      FABIANO_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-fabiano-fabiano-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure and verify Cloudflare Access
+        working-directory: consciencia-fabiano
+        run: node scripts/configure-access.mjs
