@@ -1,0 +1,47 @@
+name: Discover existing Cloudflare bindings
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/discover-existing-bindings.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - name: Inspect Worker bindings without reading resource content
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT"
+          curl -fsS "$api/workers/scripts" -H "Authorization: Bearer $CF_TOKEN" > /tmp/scripts.json
+          jq -r '.result[].id' /tmp/scripts.json | while read -r worker; do
+            code=$(curl -sS -o /tmp/settings.json -w '%{http_code}'               "$api/workers/scripts/$worker/settings"               -H "Authorization: Bearer $CF_TOKEN")
+            [ "$code" = "200" ] || continue
+            matches=$(jq -c '[.result.bindings[]? | select(.type=="d1" or .type=="r2_bucket" or .type=="vectorize" or .type=="ai") | {name,type,database_id,bucket_name,index_name}]' /tmp/settings.json)
+            if [ "$matches" != "[]" ]; then
+              echo "WORKER=$worker BINDINGS=$matches"
+            fi
+          done
+
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/discover-existing-bindings.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish existing Cloudflare binding discovery"
+          git push origin HEAD:consciencia-cloudflare-native-v1
