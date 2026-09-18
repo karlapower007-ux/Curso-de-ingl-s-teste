@@ -2,7 +2,10 @@
   const $ = id => document.getElementById(id);
   const HISTORY_KEY = "consciencia_fabiano_history_v1";
   const MEMORY_KEY = "consciencia_fabiano_memory_secret_v1";
+  const OWNER_TOKEN_KEY = "consciencia_fabiano_owner_token_session_v1";
   const MAX_HISTORY = 60;
+  const INLINE_TEXT_LIMIT = 320000;
+  const PAGE_BATCH_LIMIT = 300000;
 
   let history = [];
   let speakingTimer = null;
@@ -60,20 +63,27 @@
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
   }
 
+  function ownerToken() { return sessionStorage.getItem(OWNER_TOKEN_KEY) || ""; }
   function authHeaders(extra = {}) {
-    return { "X-FNS-Memory-Key": memorySecret, ...extra };
+    const headers={"X-FNS-Memory-Key":memorySecret};
+    const token=ownerToken(); if(token) headers["X-FNS-Owner-Token"]=token;
+    return {...headers,...extra};
   }
-
-  async function api(path, options = {}) {
-    const headers = new Headers(authHeaders(options.headers || {}));
-    const res = await fetch(path, { ...options, headers });
-    const ct = res.headers.get("content-type") || "";
-    const body = ct.includes("application/json") ? await res.json() : await res.text();
-    if (!res.ok) {
-      throw new Error(body?.message || body?.detail || body?.error || String(body));
+  function isPrivateApi(path){return /\/api\/(admin\/|trigger-index|index-status)/.test(String(path || ""));}
+  async function api(path,options={},canPrompt=true){
+    const headers=new Headers(authHeaders(options.headers || {}));
+    const res=await fetch(path,{...options,headers});
+    const ct=res.headers.get("content-type") || "";
+    const body=ct.includes("application/json") ? await res.json() : await res.text();
+    if(res.status===401 && canPrompt && isPrivateApi(path)){
+      const value=prompt("Informe a chave privada do proprietário para administrar a biblioteca:");
+      if(value && value.trim().length>=30){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
     }
+    if(!res.ok){const err=new Error(body?.message || body?.detail || body?.error || String(body));err.code=body?.code || "";err.status=res.status;throw err;}
     return body;
   }
+
+  function setAvatar(mode) {
 
   function setAvatar(mode) {
     const img = $("avatarImg");
@@ -418,34 +428,98 @@
     throw new Error("A indexação continua no servidor, mas o acompanhamento local atingiu 10 minutos.");
   }
 
-  async function uploadPdf() {
-    const file = $("pdfInput").files?.[0];
-    if (!file) {
-      $("adminStatus").textContent = "Escolha um PDF.";
-      return;
-    }
-    $("uploadBtn").disabled = true;
-    $("adminStatus").textContent = "Enviando " + file.name + " para a fila de indexação…";
-    try {
-      const fd = new FormData();
-      fd.append("arquivo", file, file.name);
-      const res = await fetch("/api/admin/upload-pdf", { method: "POST", headers: authHeaders(), body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || data.message || "Falha no upload.");
-      if (!data.job_id) throw new Error("Servidor não retornou o job de indexação.");
-      const done = await waitForIndexJob(data.job_id, data.arquivo || file.name);
-      $("adminStatus").textContent = done.duplicate
-        ? "Este PDF já estava na biblioteca: " + (done.arquivo || file.name) + "."
-        : "PDF indexado: " + (done.arquivo || file.name) + " • " + (done.chunks || 0) + " trechos.";
-      $("pdfInput").value = "";
-      await loadBooks();
-      await checkBackend();
-    } catch (error) {
-      $("adminStatus").textContent = error.message;
-    } finally {
-      $("uploadBtn").disabled = false;
+  async function getPdfJs() {
+    if(window.__pdfjsReady) return await window.__pdfjsReady;
+    if(window.pdfjsLib?.getDocument) return window.pdfjsLib;
+    throw new Error("Motor local pdf.js não carregou. Verifique sua conexão.");
+  }
+  function bytesToHex(buffer){return [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,"0")).join("");}
+  function cleanPageText(items){
+    let out="";
+    for(const item of items || []){const value=String(item?.str || "");if(!value)continue;out+=value;out+=item?.hasEOL?"\n":" ";}
+    return out.replace(/[ \t]+\n/g,"\n").replace(/[ \t]{2,}/g," ").replace(/\n{3,}/g,"\n\n").trim();
+  }
+  async function extractPdfLocally(file){
+    const pdfjs=await getPdfJs();
+    $("adminStatus").textContent="Abrindo o PDF localmente com pdf.js…";
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    const digestPromise=crypto.subtle.digest("SHA-256",bytes);
+    const pdf=await pdfjs.getDocument({data:bytes,isEvalSupported:false}).promise;
+    let title="",author="";
+    try{const metadata=await pdf.getMetadata();title=String(metadata?.info?.Title || "").trim();author=String(metadata?.info?.Author || "").trim();}catch{}
+    const pages=new Array(pdf.numPages);
+    let cursor=1,completed=0,totalChars=0;
+    const concurrency=Math.max(1,Math.min(8,Number(navigator.hardwareConcurrency || 4),pdf.numPages));
+    const runner=async()=>{while(true){
+      const pageNumber=cursor++; if(pageNumber>pdf.numPages)return;
+      const page=await pdf.getPage(pageNumber);
+      const content=await page.getTextContent({normalizeWhitespace:true});
+      const text=cleanPageText(content.items);
+      pages[pageNumber-1]={page:pageNumber,text}; totalChars+=text.length; completed++;
+      $("adminStatus").textContent="Extração local: "+completed+"/"+pdf.numPages+" páginas • "+totalChars.toLocaleString("pt-BR")+" caracteres";
+      page.cleanup();
+    }};
+    await Promise.all(Array.from({length:concurrency},runner));
+    const contentSha256=bytesToHex(await digestPromise); await pdf.destroy();
+    if(!pages.some(item=>String(item?.text || "").trim())) throw new Error("O PDF não possui texto selecionável. O binário não será enviado ao Worker.");
+    return {filename:file.name,size_bytes:file.size,page_count:pages.length,title,author,content_sha256,pages,total_chars:totalChars};
+  }
+  function pageBatches(pages){
+    const batches=[];let batch=[],chars=0;
+    for(const page of pages){const size=String(page?.text || "").length;if(batch.length && (batch.length>=25 || chars+size>PAGE_BATCH_LIMIT)){batches.push(batch);batch=[];chars=0;}batch.push(page);chars+=size;}
+    if(batch.length)batches.push(batch);return batches;
+  }
+  async function requestR2Presign(file){
+    try{
+      const data=await api("/api/admin/r2-presign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:file.name,size_bytes:file.size})});
+      return {available:true,...data};
+    }catch(error){
+      if(error.code==="R2_DIRECT_DISABLED" || error.status===503)return {available:false,reason:error.message};
+      throw error;
     }
   }
+  async function uploadOriginalDirectToR2(file,presign){
+    if(!presign?.available)return {stored:false,reason:presign?.reason || "R2 direto indisponível."};
+    const res=await fetch(presign.upload_url,{method:"PUT",headers:{"Content-Type":"application/pdf"},body:file});
+    if(!res.ok)throw new Error("Falha no upload direto ao R2: HTTP "+res.status);
+    return {stored:true,r2_key:presign.r2_key,etag:res.headers.get("etag") || ""};
+  }
+  async function submitExtractedText(extracted,originalR2Key=""){
+    const common={filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,title:extracted.title,author:extracted.author,content_sha256:extracted.content_sha256,original_r2_key:originalR2Key};
+    if(extracted.total_chars<=INLINE_TEXT_LIMIT){
+      return api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"inline",...common,pages:extracted.pages})});
+    }
+    const started=await api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"start",...common})});
+    const batches=pageBatches(extracted.pages);
+    for(let i=0;i<batches.length;i++){
+      $("adminStatus").textContent="Carga leve de texto: lote "+(i+1)+"/"+batches.length+"…";
+      await api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"append",job_id:started.job_id,pages:batches[i]})});
+    }
+    return api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"commit",job_id:started.job_id})});
+  }
+  async function uploadPdf(){
+    const file=$("pdfInput").files?.[0];
+    if(!file){$("adminStatus").textContent="Escolha um PDF.";return;}
+    if(file.type!=="application/pdf" && !/\.pdf$/i.test(file.name)){$("adminStatus").textContent="Selecione um PDF.";return;}
+    $("uploadBtn").disabled=true; const startedAt=performance.now();
+    try{
+      const extracted=await extractPdfLocally(file);
+      $("adminStatus").textContent="Texto extraído localmente. Preparando R2 direto e Matriz 50/50…";
+      const presign=await requestR2Presign(file);
+      const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
+      const queued=await submitExtractedText(extracted,presign.available?presign.r2_key:"");
+      if(!queued?.job_id)throw new Error("Servidor não retornou o job de indexação.");
+      const [done,vault]=await Promise.all([waitForIndexJob(queued.job_id,extracted.filename),vaultPromise]);
+      const seconds=((performance.now()-startedAt)/1000).toFixed(1);
+      const vaultText=vault.stored?" • original salvo direto no R2":" • R2 não configurado; binário não passou pelo Worker";
+      $("adminStatus").textContent=done.duplicate
+        ?"Já indexado: "+(done.arquivo || file.name)+vaultText+" • "+seconds+"s"
+        :"Concluído: "+(done.arquivo || file.name)+" • "+(done.chunks || 0)+" chunks • Matriz 50/50"+vaultText+" • "+seconds+"s";
+      $("pdfInput").value="";await loadBooks();await checkBackend();
+    }catch(error){$("adminStatus").textContent=error.message;}finally{$("uploadBtn").disabled=false;}
+  }
+
+  async function loadBooks() {
 
   async function loadBooks() {
     try {

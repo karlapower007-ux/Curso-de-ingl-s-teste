@@ -1,10 +1,13 @@
-const VERSION = "1.2.1-async-do-voice-loop";
+const VERSION = "1.3.0-client-pdfjs-matrix-50x50";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const TTS_MODEL = "@cf/myshell-ai/melotts";
 const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
+const MAX_TEXT_CHARS = 30_000_000;
+const MAX_TEXT_BATCH_CHARS = 1_250_000;
+const CHUNK_CONCURRENCY = 50;
+const EMBED_CONCURRENCY = 50;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
@@ -235,91 +238,180 @@ async function embedTexts(env, texts) {
   return embeddingData(result);
 }
 
-async function convertPdf(env, filename, buffer) {
-  const converted = await env.AI.toMarkdown(
-    { name: filename, blob: new Blob([buffer], { type: "application/pdf" }) },
-    { conversionOptions: { pdf: { metadata: true }, output: { format: "markdown" } } },
-  );
-  const result = Array.isArray(converted) ? converted[0] : converted;
-  if (!result || result.format === "error" || !result.data) {
-    throw new Error(result?.error || "Falha ao converter PDF para texto.");
-  }
-  return String(result.data);
-}
-
-async function embedChunksBatched(env, chunks, onProgress = null) {
-  const batchSize = 12;
-  const concurrency = 3;
-  const groups = [];
-  for (let i = 0; i < chunks.length; i += batchSize) groups.push(chunks.slice(i, i + batchSize));
-  let completed = 0;
-  for (let i = 0; i < groups.length; i += concurrency) {
-    const wave = groups.slice(i, i + concurrency);
-    const results = await Promise.all(wave.map(group => embedTexts(env, group.map(c => c.text))));
-    results.forEach((vectors, waveIndex) => {
-      const group = wave[waveIndex];
-      if (vectors.length !== group.length) throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
-      group.forEach((c, idx) => { c.embedding = vectors[idx]; });
-      completed += group.length;
-      if (onProgress) onProgress(completed, chunks.length);
-    });
-  }
-}
-
-async function queuePdfUpload(request, env) {
-  assertBindings(env);
-  const form = await request.formData();
-  const file = form.get("arquivo");
-  if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
-
-  const filename = safeName(file.name);
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
-  if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
-  if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
-  if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
-
-  const jobId = uuidCompact();
-  await libraryCall(env, "/jobs/upload?job_id=" + encodeURIComponent(jobId), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/pdf",
-      "X-FNS-Filename": encodeURIComponent(filename),
-      "X-FNS-Size": String(file.size),
-    },
-    body: file.stream(),
+async function parallelMapLimit(items, limit, mapper) {
+  const list = Array.from(items || []);
+  if (!list.length) return [];
+  const safeLimit = Math.max(1, Math.min(Number(limit || 1), list.length));
+  const results = new Array(list.length);
+  let cursor = 0;
+  const runners = Array.from({ length: safeLimit }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= list.length) return;
+      results[index] = await mapper(list[index], index);
+    }
   });
+  await Promise.all(runners);
+  return results;
+}
 
+function isRateLimitError(error) {
+  return /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
+}
+
+async function embedOneWithRetry(env, text, maxAttempts = 5) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const vectors = await embedTexts(env, [text]);
+      if (!vectors?.[0]?.length) throw new Error("Embedding vazio.");
+      return vectors[0];
+    } catch (error) {
+      lastError = error;
+      if (!isRateLimitError(error) || attempt === maxAttempts) throw error;
+      const delay = Math.min(8000, 300 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 350);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError || new Error("Falha ao gerar embedding.");
+}
+
+async function matrixChunkPages(pageRows) {
+  return parallelMapLimit(pageRows, CHUNK_CONCURRENCY, async row => {
+    const page = Math.max(1, Number(row.page || 1));
+    return chunkText(String(row.text || "")).map(text => ({ page, text }));
+  });
+}
+
+function awsEncode(value) {
+  return encodeURIComponent(String(value)).replace(/[!'()*]/g, ch => "%" + ch.charCodeAt(0).toString(16).toUpperCase());
+}
+function encodeR2Key(key) { return String(key).split("/").map(awsEncode).join("/"); }
+
+async function hmacSha256(key, value) {
+  const rawKey = typeof key === "string" ? enc.encode(key) : key;
+  const cryptoKey = await crypto.subtle.importKey("raw", rawKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(String(value))));
+}
+async function sha256HexValue(value) { return hex(await crypto.subtle.digest("SHA-256", enc.encode(String(value)))); }
+function amzTimestamp(date = new Date()) { return date.toISOString().replace(/[:-]|\.\d{3}/g, ""); }
+
+async function presignR2Put(request, env) {
+  const body = await request.json().catch(() => ({}));
+  if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY) {
+    return json({ ok:false, code:"R2_DIRECT_DISABLED", message:"Cofre R2 direto ainda não configurado. A indexação continua por texto sem enviar o PDF ao Worker." }, 503);
+  }
+  const filename = safeName(body?.filename || "documento.pdf");
+  const bucket = "consciencia-fabiano-pdfs";
+  const contentType = "application/pdf";
+  const key = "originals/" + new Date().toISOString().slice(0,10) + "/" + uuidCompact() + "-" + filename;
+  const host = String(env.R2_ACCOUNT_ID) + ".r2.cloudflarestorage.com";
+  const canonicalUri = "/" + awsEncode(bucket) + "/" + encodeR2Key(key);
+  const amzDate = amzTimestamp();
+  const dateStamp = amzDate.slice(0,8);
+  const scope = dateStamp + "/auto/s3/aws4_request";
+  const signedHeaders = "content-type;host";
+  const query = {
+    "X-Amz-Algorithm":"AWS4-HMAC-SHA256",
+    "X-Amz-Content-Sha256":"UNSIGNED-PAYLOAD",
+    "X-Amz-Credential":String(env.R2_ACCESS_KEY_ID)+"/"+scope,
+    "X-Amz-Date":amzDate,
+    "X-Amz-Expires":"900",
+    "X-Amz-SignedHeaders":signedHeaders
+  };
+  const canonicalQuery = Object.keys(query).sort().map(k => awsEncode(k)+"="+awsEncode(query[k])).join("&");
+  const canonicalHeaders = "content-type:"+contentType+"\n"+"host:"+host+"\n";
+  const canonicalRequest = ["PUT",canonicalUri,canonicalQuery,canonicalHeaders,signedHeaders,"UNSIGNED-PAYLOAD"].join("\n");
+  const stringToSign = ["AWS4-HMAC-SHA256",amzDate,scope,await sha256HexValue(canonicalRequest)].join("\n");
+  const kDate = await hmacSha256("AWS4"+String(env.R2_SECRET_ACCESS_KEY), dateStamp);
+  const kRegion = await hmacSha256(kDate, "auto");
+  const kService = await hmacSha256(kRegion, "s3");
+  const kSigning = await hmacSha256(kService, "aws4_request");
+  const signature = hex(await hmacSha256(kSigning, stringToSign));
   return json({
-    ok: true,
-    accepted: true,
-    job_id: jobId,
-    r2_key: "do://pdf-jobs/" + jobId,
-    arquivo: filename,
-    status: "queued",
-    message: "PDF recebido e persistido. A indexação continua em segundo plano.",
-  }, 202);
+    ok:true,direct:true,
+    upload_url:"https://"+host+canonicalUri+"?"+canonicalQuery+"&X-Amz-Signature="+signature,
+    r2_key:key,bucket,content_type:contentType,expires_in:900
+  });
+}
+
+function normalizeClientPages(rawPages) {
+  if (!Array.isArray(rawPages)) return [];
+  return rawPages.slice(0,10000).map((entry,index)=>({
+    page:Math.max(1,Number(entry?.page || index+1)),
+    text:String(entry?.text || "").replace(/\u0000/g,"").slice(0,700000)
+  }));
+}
+function validateClientPageBatch(pages) {
+  if (!pages.length) throw new Error("Nenhuma página recebida.");
+  const chars = pages.reduce((n,p)=>n+p.text.length,0);
+  if (chars > MAX_TEXT_BATCH_CHARS) throw new Error("Lote de texto acima do limite seguro.");
+  return chars;
 }
 
 async function triggerIndex(request, env) {
   assertBindings(env);
   const body = await request.json().catch(() => ({}));
-  const raw = String(body?.job_id || body?.r2_key || "").trim();
-  const jobId = raw.includes("/") ? raw.split("/").pop() : raw;
-  if (!jobId) return json({ ok: false, message: "job_id/r2_key ausente." }, 400);
+  const mode = String(body?.mode || "inline").toLowerCase();
 
-  return json(await libraryCall(env, "/jobs/requeue", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId }),
-  }), 202);
+  if (mode === "start") {
+    const jobId = String(body?.job_id || uuidCompact()).replace(/[^a-zA-Z0-9_-]/g,"").slice(0,120) || uuidCompact();
+    const sha = String(body?.content_sha256 || "").toLowerCase().replace(/[^0-9a-f]/g,"").slice(0,64);
+    if (sha.length !== 64) return json({ok:false,message:"SHA-256 do PDF ausente ou inválido."},400);
+    const started = await libraryCall(env,"/jobs/text-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      id:jobId, filename:safeName(body?.filename || "documento.pdf"),
+      size_bytes:Math.max(0,Number(body?.size_bytes || 0)),
+      page_count:Math.max(1,Math.min(10000,Number(body?.page_count || 1))),
+      title:String(body?.title || "").slice(0,500),
+      author:String(body?.author || "").slice(0,500),
+      content_sha256:sha,
+      original_r2_key:String(body?.original_r2_key || "").slice(0,700)
+    })});
+    return json({ok:true,accepted:true,job_id:jobId,status:started.status || "receiving",client_extraction:true},201);
+  }
+
+  if (mode === "append") {
+    const jobId=String(body?.job_id || "").trim();
+    if(!jobId) return json({ok:false,message:"job_id ausente."},400);
+    const pages=normalizeClientPages(body?.pages); validateClientPageBatch(pages);
+    return json(await libraryCall(env,"/jobs/text-append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:jobId,pages})}));
+  }
+
+  if (mode === "commit") {
+    const jobId=String(body?.job_id || "").trim();
+    if(!jobId) return json({ok:false,message:"job_id ausente."},400);
+    const committed=await libraryCall(env,"/jobs/text-commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:jobId})});
+    return json({ok:true,accepted:true,job_id:jobId,status:committed.status || "queued",client_extraction:true},202);
+  }
+
+  if (mode === "inline") {
+    const pages=normalizeClientPages(body?.pages);
+    const chars=pages.reduce((n,p)=>n+p.text.length,0);
+    if(!pages.length || !chars) return json({ok:false,message:"Texto extraído vazio."},400);
+    if(chars>MAX_TEXT_BATCH_CHARS) return json({ok:false,code:"USE_BATCHED_TEXT",message:"Documento grande: use start/append/commit."},413);
+    const sha=String(body?.content_sha256 || "").toLowerCase().replace(/[^0-9a-f]/g,"").slice(0,64);
+    if(sha.length!==64) return json({ok:false,message:"SHA-256 do PDF ausente ou inválido."},400);
+    const jobId=uuidCompact();
+    await libraryCall(env,"/jobs/text-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      id:jobId,filename:safeName(body?.filename || "documento.pdf"),size_bytes:Math.max(0,Number(body?.size_bytes || 0)),
+      page_count:pages.length,title:String(body?.title || "").slice(0,500),author:String(body?.author || "").slice(0,500),
+      content_sha256:sha,original_r2_key:String(body?.original_r2_key || "").slice(0,700)
+    })});
+    await libraryCall(env,"/jobs/text-append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:jobId,pages})});
+    await libraryCall(env,"/jobs/text-commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:jobId})});
+    return json({ok:true,accepted:true,job_id:jobId,status:"queued",client_extraction:true},202);
+  }
+  return json({ok:false,message:"Modo de indexação inválido."},400);
 }
 
-async function indexStatus(env, url) {
+async function indexStatus(env,url) {
   assertBindings(env);
-  const jobId = String(url.searchParams.get("job_id") || "").trim();
-  if (!jobId) return json({ ok: false, message: "job_id ausente." }, 400);
-  return json(await libraryCall(env, "/jobs/status?job_id=" + encodeURIComponent(jobId)));
+  const jobId=String(url.searchParams.get("job_id") || "").trim();
+  if(!jobId) return json({ok:false,message:"job_id ausente."},400);
+  return json(await libraryCall(env,"/jobs/status?job_id="+encodeURIComponent(jobId)));
 }
+
+async function listBooks(env) {
 
 async function listBooks(env) {
   assertBindings(env);
@@ -584,8 +676,13 @@ async function status(env) {
     version: VERSION,
     architecture: "cloudflare-native",
     storage_backend: "durable-object-sqlite",
-    pdf_storage: "durable-object-sqlite-chunks",
-    ingest_backend: "durable-object-alarm",
+    pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
+    ingest_backend: "client-pdfjs-matrix-50x50",
+    client_pdf_extraction: "pdf.js",
+    server_pdf_parsing: false,
+    chunk_concurrency_limit: CHUNK_CONCURRENCY,
+    embedding_concurrency_limit: EMBED_CONCURRENCY,
+    r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
@@ -623,7 +720,10 @@ async function handleApi(request, env, url, ctx) {
     }
     if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
-    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") return queuePdfUpload(request, env);
+    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") {
+      return json({ok:false,code:"CLIENT_EXTRACTION_REQUIRED",message:"Binário PDF desativado. Extraia no navegador com pdf.js e envie somente texto para /api/trigger-index."},410);
+    }
+    if (url.pathname === "/api/admin/r2-presign" && request.method === "POST") return presignR2Put(request, env);
     if (url.pathname === "/api/trigger-index" && request.method === "POST") return triggerIndex(request, env);
     if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
     if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
@@ -693,19 +793,29 @@ export class LibraryDO {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS job_pdf_parts (
+        CREATE TABLE IF NOT EXISTS job_text_pages (
           job_id TEXT NOT NULL,
-          part_index INTEGER NOT NULL,
-          data BLOB NOT NULL,
-          PRIMARY KEY(job_id, part_index)
+          page INTEGER NOT NULL,
+          text TEXT NOT NULL,
+          PRIMARY KEY(job_id, page)
         );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
-        CREATE INDEX IF NOT EXISTS idx_job_pdf_parts_job ON job_pdf_parts(job_id, part_index);
+        CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
       `);
+      const jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
+      const addJobColumn=(name,ddl)=>{if(!jobColumns.includes(name))this.sql.exec("ALTER TABLE index_jobs ADD COLUMN "+name+" "+ddl);};
+      addJobColumn("expected_pages","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("received_pages","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("title","TEXT");
+      addJobColumn("author","TEXT");
+      addJobColumn("content_sha256","TEXT");
+      addJobColumn("original_r2_key","TEXT");
+      const docColumns=[...this.sql.exec("PRAGMA table_info(documents)")].map(row=>String(row.name || ""));
+      if(!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
     });
   }
 
@@ -723,133 +833,60 @@ export class LibraryDO {
     );
   }
 
-  readPdfBuffer(jobId) {
-    const rows = [...this.sql.exec(
-      "SELECT part_index,data FROM job_pdf_parts WHERE job_id=? ORDER BY part_index",
-      jobId
-    )];
-    if (!rows.length) throw new Error("Partes persistidas do PDF não foram encontradas.");
-
-    const parts = rows.map(row => {
-      const value = row.data;
-      if (value instanceof ArrayBuffer) return new Uint8Array(value);
-      if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-      if (Array.isArray(value)) return Uint8Array.from(value);
-      throw new Error("Formato BLOB inesperado na memória documental.");
-    });
-    const total = parts.reduce((n, p) => n + p.byteLength, 0);
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const part of parts) {
-      merged.set(part, offset);
-      offset += part.byteLength;
-    }
-    return merged.buffer;
-  }
-
-  cleanupJobPdf(jobId) {
-    this.sql.exec("DELETE FROM job_pdf_parts WHERE job_id=?", jobId);
-  }
+  cleanupJobText(jobId) { this.sql.exec("DELETE FROM job_text_pages WHERE job_id=?", jobId); }
 
   async processIndexJob(jobId) {
-    const job = [...this.sql.exec(
-      "SELECT id,storage_key,filename,size_bytes,status,attempts FROM index_jobs WHERE id=? LIMIT 1",
-      jobId
-    )][0];
-    if (!job || job.status === "ready" || job.status === "duplicate" || job.status === "failed") return;
-
-    const attempt = Number(job.attempts || 0) + 1;
-    this.sql.exec(
-      "UPDATE index_jobs SET status='processing',attempts=?,progress=3,error=NULL,updated_at=? WHERE id=?",
-      attempt, new Date().toISOString(), jobId
-    );
-
+    const job=[...this.sql.exec("SELECT id,filename,size_bytes,status,attempts,expected_pages,received_pages,title,author,content_sha256,original_r2_key FROM index_jobs WHERE id=? LIMIT 1",jobId)][0];
+    if(!job || ["ready","duplicate","failed","receiving"].includes(String(job.status))) return;
+    const attempt=Number(job.attempts || 0)+1;
+    this.sql.exec("UPDATE index_jobs SET status='processing',attempts=?,progress=18,error=NULL,updated_at=? WHERE id=?",attempt,new Date().toISOString(),jobId);
+    let documentId=null;
     try {
-      const buffer = this.readPdfBuffer(jobId);
-      const digest = await sha256Buffer(buffer);
-      const duplicate = [...this.sql.exec(
-        "SELECT id,filename FROM documents WHERE sha256=? LIMIT 1",
-        digest
-      )][0] || null;
+      const digest=String(job.content_sha256 || "").trim();
+      if(!/^[0-9a-f]{64}$/i.test(digest)) throw new Error("SHA-256 do documento inválido.");
+      const duplicate=[...this.sql.exec("SELECT id,filename FROM documents WHERE sha256=? LIMIT 1",digest)][0] || null;
+      if(duplicate){this.updateJob(jobId,"duplicate",100,null,duplicate.id);this.cleanupJobText(jobId);return;}
 
-      if (duplicate) {
-        this.updateJob(jobId, "duplicate", 100, null, duplicate.id);
-        this.cleanupJobPdf(jobId);
-        return;
+      const stats=[...this.sql.exec("SELECT COUNT(*) AS pages,COALESCE(SUM(LENGTH(text)),0) AS chars FROM job_text_pages WHERE job_id=?",jobId)][0] || {pages:0,chars:0};
+      const actualPages=Number(stats.pages || 0), totalChars=Number(stats.chars || 0);
+      if(!actualPages || !totalChars) throw new Error("Nenhum texto útil foi recebido do navegador.");
+      const sample=[...this.sql.exec("SELECT text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT 8",jobId)].map(r=>String(r.text || "").slice(0,10000)).join("\n");
+      const language=detectLanguage(sample);
+
+      documentId=uuidCompact(); const now=new Date().toISOString();
+      this.sql.exec("INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        documentId,job.filename,String(job.title || ""),String(job.author || ""),language || "unknown",digest,Number(job.size_bytes || 0),actualPages,0,"indexing",now,String(job.original_r2_key || "") || null);
+
+      let offset=0,chunkIndex=0,processedPages=0;
+      while(offset<actualPages){
+        const pageRows=[...this.sql.exec("SELECT page,text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT 50 OFFSET ?",jobId,offset)];
+        if(!pageRows.length) break;
+        const groups=await matrixChunkPages(pageRows);
+        const wave=[];
+        for(const group of groups) for(const piece of group) wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:piece.text});
+        await parallelMapLimit(wave,EMBED_CONCURRENCY,async chunk=>{
+          const embedding=await embedOneWithRetry(this.env,chunk.text);
+          this.sql.exec("INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+            chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embedding),now);
+        });
+        processedPages+=pageRows.length; offset+=pageRows.length;
+        const progress=18+Math.round((processedPages/Math.max(1,actualPages))*78);
+        this.updateJob(jobId,"processing",Math.min(96,progress),null,documentId,actualPages,chunkIndex);
       }
-
-      this.updateJob(jobId, "processing", 12);
-      const markdown = await convertPdf(this.env, job.filename, buffer);
-      const pages = splitPages(markdown);
-      const metadata = parsePdfMetadata(markdown, job.filename);
-      const language = detectLanguage(markdown);
-      const documentId = uuidCompact();
-      const chunks = [];
-      let globalIndex = 0;
-
-      for (const page of pages) {
-        for (const piece of chunkText(page.text)) {
-          chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
-        }
-      }
-      if (!chunks.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
-
-      this.updateJob(jobId, "processing", 28, null, null, pages.length, chunks.length);
-      await embedChunksBatched(this.env, chunks, (done, total) => {
-        const pct = 28 + Math.round((done / Math.max(1, total)) * 57);
-        this.updateJob(jobId, "processing", pct, null, null, pages.length, chunks.length);
-      });
-
-      const now = new Date().toISOString();
-      this.sql.exec(
-        "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        documentId,
-        job.filename,
-        metadata.title || "",
-        metadata.author || "",
-        language || "unknown",
-        digest,
-        Number(job.size_bytes || buffer.byteLength || 0),
-        pages.length,
-        chunks.length,
-        "ready",
-        now
-      );
-
-      try {
-        for (const c of chunks) {
-          this.sql.exec(
-            "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-            c.id,
-            documentId,
-            Number(c.page || 1),
-            Number(c.chunk_index || 0),
-            String(c.text || ""),
-            JSON.stringify(c.embedding || []),
-            now
-          );
-        }
-      } catch (error) {
-        this.sql.exec("DELETE FROM chunks WHERE document_id=?", documentId);
-        this.sql.exec("DELETE FROM documents WHERE id=?", documentId);
-        throw error;
-      }
-
-      this.updateJob(jobId, "ready", 100, null, documentId, pages.length, chunks.length);
-      this.cleanupJobPdf(jobId);
-    } catch (error) {
-      const message = String(error?.message || error).slice(0, 1500);
-      if (attempt < 3) {
-        this.sql.exec(
-          "UPDATE index_jobs SET status='queued',error=?,updated_at=? WHERE id=?",
-          message, new Date().toISOString(), jobId
-        );
-        await this.ctx.storage.setAlarm(Date.now() + attempt * 2000);
-      } else {
-        this.updateJob(jobId, "failed", 100, message);
-      }
+      this.sql.exec("UPDATE documents SET chunk_count=?,status='ready' WHERE id=?",chunkIndex,documentId);
+      this.updateJob(jobId,"ready",100,null,documentId,actualPages,chunkIndex);
+      this.cleanupJobText(jobId);
+    } catch(error) {
+      if(documentId){this.sql.exec("DELETE FROM chunks WHERE document_id=?",documentId);this.sql.exec("DELETE FROM documents WHERE id=?",documentId);}
+      const message=String(error?.message || error).slice(0,1500);
+      if(attempt<3){
+        this.sql.exec("UPDATE index_jobs SET status='queued',error=?,updated_at=? WHERE id=?",message,new Date().toISOString(),jobId);
+        await this.ctx.storage.setAlarm(Date.now()+attempt*1800);
+      } else this.updateJob(jobId,"failed",100,message);
     }
   }
+
+  async alarm() {
 
   async alarm() {
     const job = [...this.sql.exec(
@@ -882,46 +919,55 @@ export class LibraryDO {
       }
 
       if (url.pathname === "/jobs/upload" && request.method === "POST") {
-        const id = String(url.searchParams.get("job_id") || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
-        let filename = "documento.pdf";
-        try { filename = safeName(decodeURIComponent(request.headers.get("X-FNS-Filename") || "documento.pdf")); } catch {}
-        const declaredSize = Number(request.headers.get("X-FNS-Size") || 0);
-        if (!id) return json({ ok: false, message: "job_id ausente." }, 400);
-
-        const buffer = await request.arrayBuffer();
-        if (!buffer.byteLength) return json({ ok: false, message: "PDF vazio." }, 400);
-        if (buffer.byteLength > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
-
-        const now = new Date().toISOString();
-        const storageKey = "do://pdf-jobs/" + id;
-        this.sql.exec("DELETE FROM job_pdf_parts WHERE job_id=?", id);
-        this.sql.exec("DELETE FROM index_jobs WHERE id=?", id);
-
-        const bytes = new Uint8Array(buffer);
-        const partSize = 1024 * 1024;
-        let partIndex = 0;
-        for (let start = 0; start < bytes.byteLength; start += partSize) {
-          const part = bytes.slice(start, Math.min(bytes.byteLength, start + partSize));
-          this.sql.exec(
-            "INSERT INTO job_pdf_parts (job_id,part_index,data) VALUES (?,?,?)",
-            id, partIndex++, part
-          );
-        }
-
-        this.sql.exec(
-          "INSERT INTO index_jobs (id,kind,storage_key,filename,size_bytes,status,progress,attempts,error,document_id,pages,chunks,created_at,updated_at) VALUES (?, 'pdf-index', ?, ?, ?, 'queued', 0, 0, NULL, NULL, 0, 0, ?, ?)",
-          id, storageKey, filename, declaredSize || buffer.byteLength, now, now
-        );
-        await this.ctx.storage.sync();
-        await this.ctx.storage.setAlarm(Date.now() + 250);
-
-        return json({ ok: true, accepted: true, job_id: id, storage_key: storageKey, parts: partIndex }, 201);
+        return json({ok:false,code:"CLIENT_EXTRACTION_REQUIRED",message:"PDF binário não é aceito pelo backend."},410);
       }
+      if (url.pathname === "/jobs/text-start" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const id=String(body.id || "").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,120);
+        const filename=safeName(body.filename || "documento.pdf");
+        const expectedPages=Math.max(1,Math.min(10000,Number(body.page_count || 1)));
+        const contentSha=String(body.content_sha256 || "").toLowerCase();
+        if(!id || !/^[0-9a-f]{64}$/.test(contentSha)) return json({ok:false,message:"Job de texto inválido."},400);
+        const now=new Date().toISOString();
+        this.sql.exec("DELETE FROM job_text_pages WHERE job_id=?",id);
+        this.sql.exec("DELETE FROM index_jobs WHERE id=?",id);
+        this.sql.exec("INSERT INTO index_jobs (id,kind,storage_key,filename,size_bytes,status,progress,attempts,error,document_id,pages,chunks,created_at,updated_at,expected_pages,received_pages,title,author,content_sha256,original_r2_key) VALUES (?, 'client-text', ?, ?, ?, 'receiving', 1, 0, NULL, NULL, 0, 0, ?, ?, ?, 0, ?, ?, ?, ?)",
+          id,"client://text/"+id,filename,Math.max(0,Number(body.size_bytes || 0)),now,now,expectedPages,String(body.title || "").slice(0,500),String(body.author || "").slice(0,500),contentSha,String(body.original_r2_key || "").slice(0,700));
+        return json({ok:true,job_id:id,status:"receiving",expected_pages:expectedPages},201);
+      }
+      if (url.pathname === "/jobs/text-append" && request.method === "POST") {
+        const body=await request.json().catch(()=>({})); const id=String(body.job_id || "").trim();
+        const job=[...this.sql.exec("SELECT id,status,expected_pages FROM index_jobs WHERE id=? LIMIT 1",id)][0] || null;
+        if(!job) return json({ok:false,message:"Job não encontrado."},404);
+        if(job.status!=="receiving") return json({ok:false,message:"Job não está recebendo páginas."},409);
+        const pages=normalizeClientPages(body.pages); validateClientPageBatch(pages);
+        for(const page of pages) this.sql.exec("INSERT OR REPLACE INTO job_text_pages (job_id,page,text) VALUES (?,?,?)",id,page.page,page.text);
+        const stats=[...this.sql.exec("SELECT COUNT(*) AS pages,COALESCE(SUM(LENGTH(text)),0) AS chars FROM job_text_pages WHERE job_id=?",id)][0] || {pages:0,chars:0};
+        const received=Number(stats.pages || 0), totalChars=Number(stats.chars || 0);
+        if(totalChars>MAX_TEXT_CHARS){this.sql.exec("DELETE FROM job_text_pages WHERE job_id=?",id);this.updateJob(id,"failed",100,"Texto extraído acima do limite de segurança.");return json({ok:false,message:"Texto extraído acima do limite de segurança."},413);}
+        const expected=Math.max(1,Number(job.expected_pages || 1));
+        const progress=Math.min(15,2+Math.round((received/expected)*13));
+        this.sql.exec("UPDATE index_jobs SET received_pages=?,progress=?,updated_at=? WHERE id=?",received,progress,new Date().toISOString(),id);
+        return json({ok:true,job_id:id,status:"receiving",received_pages:received,expected_pages:expected,chars_received:totalChars});
+      }
+      if (url.pathname === "/jobs/text-commit" && request.method === "POST") {
+        const body=await request.json().catch(()=>({})); const id=String(body.job_id || "").trim();
+        const row=[...this.sql.exec("SELECT id,status,expected_pages FROM index_jobs WHERE id=? LIMIT 1",id)][0] || null;
+        if(!row) return json({ok:false,message:"Job não encontrado."},404);
+        const received=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM job_text_pages WHERE job_id=?",id)][0]?.n || 0);
+        const expected=Math.max(1,Number(row.expected_pages || 1));
+        if(received<expected) return json({ok:false,message:"Páginas incompletas: "+received+" de "+expected+"."},409);
+        this.sql.exec("UPDATE index_jobs SET status='queued',received_pages=?,progress=16,error=NULL,updated_at=? WHERE id=?",received,new Date().toISOString(),id);
+        await this.ctx.storage.sync(); await this.ctx.storage.setAlarm(Date.now()+200);
+        return json({ok:true,job_id:id,status:"queued",received_pages:received,expected_pages:expected},202);
+      }
+
+      if (url.pathname === "/jobs/status" && request.method === "GET") {
 
       if (url.pathname === "/jobs/status" && request.method === "GET") {
         const id = String(url.searchParams.get("job_id") || "").trim();
         const row = [...this.sql.exec(
-          "SELECT id AS job_id,filename AS arquivo,status,progress,attempts,error,document_id,pages AS paginas,chunks,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
+          "SELECT id AS job_id,filename AS arquivo,status,progress,attempts,error,document_id,pages AS paginas,chunks,expected_pages,received_pages,original_r2_key,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
           id
         )][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
