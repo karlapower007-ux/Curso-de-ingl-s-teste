@@ -3,6 +3,7 @@ const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const TTS_MODEL = "@cf/myshell-ai/melotts";
+const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
@@ -424,25 +425,53 @@ async function tts(request, env) {
   const text = String(body?.text || "").trim().slice(0, 5000);
   if (!text) return json({ ok: false, message: "Texto vazio." }, 400);
 
+  // MeloTTS may return JSON with base64 audio instead of a raw Response.
+  try {
+    const result = await env.AI.run(TTS_MODEL, { prompt: text, lang: "pt" });
+    if (result?.audio && typeof result.audio === "string") {
+      const binary = atob(result.audio);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Response(bytes, {
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Cache-Control": "no-store",
+          "X-FNS-TTS-Provider": "melotts",
+        },
+      });
+    }
+    if (result instanceof ReadableStream) {
+      return new Response(result, {
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Cache-Control": "no-store",
+          "X-FNS-TTS-Provider": "melotts-stream",
+        },
+      });
+    }
+  } catch {}
+
+  // Cloudflare-native fallback. Aura returns a raw audio response and avoids
+  // falling back to the browser when MeloTTS has no Portuguese voice available.
   try {
     const raw = await env.AI.run(
-      TTS_MODEL,
-      { prompt: text, lang: "pt" },
+      TTS_FALLBACK_MODEL,
+      { text },
       { returnRawResponse: true },
     );
-    if (raw instanceof Response) {
+    if (raw instanceof Response && raw.ok && raw.body) {
       const headers = new Headers(raw.headers);
       if (!headers.get("Content-Type")) headers.set("Content-Type", "audio/mpeg");
       headers.set("Cache-Control", "no-store");
-      return new Response(raw.body, { status: raw.status, headers });
+      headers.set("X-FNS-TTS-Provider", "aura-1");
+      return new Response(raw.body, { status: 200, headers });
     }
-    if (raw?.body) {
-      return new Response(raw.body, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" } });
-    }
-    return json({ ok: false, message: "TTS não retornou áudio." }, 503);
-  } catch (error) {
-    return json({ ok: false, message: String(error?.message || error) }, 503);
-  }
+  } catch {}
+
+  return json({
+    ok: false,
+    message: "TTS nativo indisponível; o navegador continuará usando a voz pt-BR local.",
+  }, 503);
 }
 
 async function status(env) {
