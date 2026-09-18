@@ -21,6 +21,26 @@
     try { delete document.body.dataset.oliviaV11Active; } catch (_) {}
   }
 
+  function decorateTeacherHub(){
+    document.querySelectorAll('.card.teacher').forEach(card=>{
+      const name=String(card.querySelector('h3')?.textContent||'').trim().toLowerCase();
+      if(name!=='olivia') return;
+
+      const tag=card.querySelector('.tag');
+      if(tag) tag.textContent='FNS ISOLADA • ESPAÑOL';
+
+      const h3=card.querySelector('h3');
+      const info=h3?.nextElementSibling;
+      if(info) info.textContent='Español • A1';
+
+      const p=card.querySelector('p');
+      if(p) p.textContent='Sala espanhola isolada, com avatar, memória, voz e fallback próprios.';
+
+      const button=card.querySelector('button.primary');
+      if(button) button.textContent='Abrir Olivia';
+    });
+  }
+
   function goOlivia(){
     const next=new URL(OLIVIA_ROUTE, location.origin);
     location.assign(next.toString());
@@ -39,7 +59,10 @@
     }
 
     removeLegacyOliviaOverlay();
-    if(typeof live==='function') live();
+    if(typeof live==='function'){
+      live();
+      decorateTeacherHub();
+    }
     if(originalOpenTeacher){
       setTimeout(()=>originalOpenTeacher(index),0);
       return true;
@@ -63,6 +86,7 @@
     removeLegacyOliviaOverlay();
     if(typeof live==='function'){
       live();
+      decorateTeacherHub();
       return true;
     }
     return false;
