@@ -1,0 +1,38 @@
+name: Discover accessible Cloudflare accounts
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/discover-cloudflare-accounts.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - name: List accounts visible to current Cloudflare token
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS 'https://api.cloudflare.com/client/v4/accounts?page=1&per_page=50'             -H "Authorization: Bearer $TOKEN"             -H 'Content-Type: application/json'             > /tmp/accounts.json
+          jq '{success, errors, accounts:[.result[]? | {id,name,type}]}' /tmp/accounts.json
+
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/discover-cloudflare-accounts.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish Cloudflare account discovery"
+          git push origin HEAD:consciencia-cloudflare-native-v1
