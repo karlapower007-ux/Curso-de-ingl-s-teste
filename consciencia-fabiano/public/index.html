@@ -56,6 +56,13 @@
         <div id="messages" class="messages"></div>
         <div class="composer">
           <textarea id="questionInput" rows="3" placeholder="Converse com a sua consciência…"></textarea>
+          <div class="composer-options">
+            <label class="check-option">
+              <input id="autoSendVoice" type="checkbox" checked>
+              <span>Enviar automaticamente ao terminar de falar</span>
+            </label>
+            <button id="clearChatBtn" class="ghost small-btn" type="button">Limpar conversa</button>
+          </div>
           <div class="composer-actions">
             <button id="micBtn" class="secondary">🎙️ Falar</button>
             <button id="sendBtn" class="primary">Perguntar</button>
