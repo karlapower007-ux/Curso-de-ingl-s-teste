@@ -21,7 +21,16 @@ log "2/7 Validate Worker authorization"
 npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
 
-log "3/7 Deploy existing Worker with SQLite Durable Object"
+log "3/7 Ensure R2 bucket and deploy Worker"
+set +e
+npx wrangler r2 bucket create consciencia-fabiano-pdfs >/tmp/r2-create.log 2>&1
+r2_rc=$?
+set -e
+if [ "$r2_rc" -ne 0 ] && ! grep -Eqi 'already exists|already been taken|10004' /tmp/r2-create.log; then
+  cat /tmp/r2-create.log
+  die "R2_BUCKET_CREATE_FAILED"
+fi
+log "R2_BUCKET_READY=yes"
 npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
 
@@ -102,8 +111,27 @@ curl -fsS "${HDR[@]}" -F 'arquivo=@/tmp/fns-fire/teste-portugues.pdf;type=applic
 curl -fsS "${HDR[@]}" -F 'arquivo=@/tmp/fns-fire/teste-ingles.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf" > /tmp/en.json
 cat /tmp/pt.json
 cat /tmp/en.json
-jq -e '.ok == true and .chunks > 0 and .paginas >= 1' /tmp/pt.json >/dev/null
-jq -e '.ok == true and .chunks > 0 and .paginas >= 1' /tmp/en.json >/dev/null
+jq -e '.ok == true and .accepted == true and (.job_id|length) > 10' /tmp/pt.json >/dev/null
+jq -e '.ok == true and .accepted == true and (.job_id|length) > 10' /tmp/en.json >/dev/null
+
+poll_job() {
+  local file="$1"
+  local job
+  job=$(jq -r '.job_id' "$file")
+  for i in $(seq 1 120); do
+    curl -fsS "${HDR[@]}" "$BASE/api/index-status?job_id=$job" > "$file.status"
+    cat "$file.status"
+    status=$(jq -r '.status // "unknown"' "$file.status")
+    if [ "$status" = "ready" ] || [ "$status" = "duplicate" ]; then return 0; fi
+    if [ "$status" = "failed" ]; then return 1; fi
+    sleep 2
+  done
+  return 1
+}
+poll_job /tmp/pt.json
+poll_job /tmp/en.json
+jq -e '.ok == true and (.chunks|tonumber) > 0 and (.paginas|tonumber) >= 1' /tmp/pt.json.status >/dev/null
+jq -e '.ok == true and (.chunks|tonumber) > 0 and (.paginas|tonumber) >= 1' /tmp/en.json.status >/dev/null
 
 curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
   --data '{"pergunta":"Segundo a biblioteca, o que afirma o principio Ponte de Ambar e qual e o codigo documental? Responda em portugues e cite a fonte.","historico":[]}' \

@@ -6,6 +6,12 @@
   "ai": {
     "binding": "AI"
   },
+  "r2_buckets": [
+    {
+      "binding": "PDFS",
+      "bucket_name": "consciencia-fabiano-pdfs"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

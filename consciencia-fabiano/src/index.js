@@ -1,4 +1,4 @@
-const VERSION = "1.1.0-cloudflare-native-do-memory";
+const VERSION = "1.2.0-async-r2-voice-loop";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -68,6 +68,7 @@ function assertBindings(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
+  if (!env.PDFS) missing.push("PDFS");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
     err.code = "BINDINGS_MISSING";
@@ -247,7 +248,26 @@ async function convertPdf(env, filename, buffer) {
   return String(result.data);
 }
 
-async function uploadPdf(request, env) {
+async function embedChunksBatched(env, chunks, onProgress = null) {
+  const batchSize = 12;
+  const concurrency = 3;
+  const groups = [];
+  for (let i = 0; i < chunks.length; i += batchSize) groups.push(chunks.slice(i, i + batchSize));
+  let completed = 0;
+  for (let i = 0; i < groups.length; i += concurrency) {
+    const wave = groups.slice(i, i + concurrency);
+    const results = await Promise.all(wave.map(group => embedTexts(env, group.map(c => c.text))));
+    results.forEach((vectors, waveIndex) => {
+      const group = wave[waveIndex];
+      if (vectors.length !== group.length) throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
+      group.forEach((c, idx) => { c.embedding = vectors[idx]; });
+      completed += group.length;
+      if (onProgress) onProgress(completed, chunks.length);
+    });
+  }
+}
+
+async function queuePdfUpload(request, env, ctx) {
   assertBindings(env);
   const form = await request.formData();
   const file = form.get("arquivo");
@@ -258,52 +278,70 @@ async function uploadPdf(request, env) {
   if (file.size <= 0) return json({ ok: false, message: "PDF vazio." }, 400);
   if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
 
-  const buffer = await file.arrayBuffer();
-  const digest = await sha256Buffer(buffer);
-  const duplicate = await libraryCall(env, "/duplicate?sha=" + encodeURIComponent(digest));
-  if (duplicate.document) {
-    return json({ ok: true, duplicate: true, ...duplicate.document, message: "Este PDF já existe na biblioteca." });
-  }
-
-  const markdown = await convertPdf(env, filename, buffer);
-  const pages = splitPages(markdown);
-  const metadata = parsePdfMetadata(markdown, filename);
-  const language = detectLanguage(markdown);
-  const documentId = uuidCompact();
-  const chunks = [];
-  let globalIndex = 0;
-  for (const page of pages) {
-    for (const piece of chunkText(page.text)) {
-      chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
-    }
-  }
-  if (!chunks.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
-
-  for (let i = 0; i < chunks.length; i += 12) {
-    const group = chunks.slice(i, i + 12);
-    const vectors = await embedTexts(env, group.map(c => c.text));
-    if (vectors.length !== group.length) throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
-    group.forEach((c, idx) => { c.embedding = vectors[idx]; });
-  }
-
-  const document = {
-    id: documentId, filename, title: metadata.title, author: metadata.author, language,
-    sha256: digest, size_bytes: file.size, page_count: pages.length,
-    chunk_count: chunks.length, status: "ready",
-  };
-
-  await libraryCall(env, "/ingest", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ document, chunks }),
+  const jobId = uuidCompact();
+  const r2Key = "library/" + jobId + "-" + filename;
+  await env.PDFS.put(r2Key, file.stream(), {
+    httpMetadata: { contentType: "application/pdf" },
+    customMetadata: { filename, job_id: jobId },
   });
 
+  await libraryCall(env, "/jobs/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: jobId, r2_key: r2Key, filename, size_bytes: file.size, kind: "pdf-index" }),
+  });
+
+  const trigger = libraryStub(env).fetch(new Request("https://library.internal/jobs/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId }),
+  }));
+  if (ctx?.waitUntil) ctx.waitUntil(trigger.catch(() => {}));
+  else await trigger;
+
   return json({
-    ok: true, document_id: documentId, arquivo: filename, titulo: metadata.title,
-    autor: metadata.author, idioma: language, paginas: pages.length, chunks: chunks.length,
-    storage: "durable-object-sqlite",
-  }, 201);
+    ok: true, accepted: true, job_id: jobId, r2_key: r2Key,
+    arquivo: filename, status: "queued",
+    message: "PDF recebido. A indexação continua em segundo plano.",
+  }, 202);
 }
+
+async function triggerIndex(request, env, ctx) {
+  assertBindings(env);
+  const body = await request.json().catch(() => ({}));
+  const r2Key = String(body?.r2_key || "").trim();
+  if (!r2Key) return json({ ok: false, message: "r2_key ausente." }, 400);
+  const object = await env.PDFS.head(r2Key);
+  if (!object) return json({ ok: false, message: "PDF não encontrado no R2." }, 404);
+
+  const filename = safeName(body?.filename || object.customMetadata?.filename || r2Key.split("/").pop());
+  const jobId = String(body?.job_id || uuidCompact()).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120) || uuidCompact();
+
+  await libraryCall(env, "/jobs/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: jobId, r2_key: r2Key, filename, size_bytes: Number(object.size || 0), kind: "pdf-index" }),
+  });
+
+  const trigger = libraryStub(env).fetch(new Request("https://library.internal/jobs/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId }),
+  }));
+  if (ctx?.waitUntil) ctx.waitUntil(trigger.catch(() => {}));
+  else await trigger;
+
+  return json({ ok: true, accepted: true, job_id: jobId, r2_key: r2Key, status: "queued" }, 202);
+}
+
+async function indexStatus(env, url) {
+  assertBindings(env);
+  const jobId = String(url.searchParams.get("job_id") || "").trim();
+  if (!jobId) return json({ ok: false, message: "job_id ausente." }, 400);
+  return json(await libraryCall(env, "/jobs/status?job_id=" + encodeURIComponent(jobId)));
+}
+
+async function listBooks(env) {
 
 async function listBooks(env) {
   assertBindings(env);
@@ -329,13 +367,13 @@ async function reindexLibrary(request, env) {
   const onlyId = String(body?.document_id || "").trim();
   const data = await libraryCall(env, "/chunks" + (onlyId ? ("?document_id=" + encodeURIComponent(onlyId)) : ""));
   const chunks = Array.isArray(data.chunks) ? data.chunks : [];
-  for (let i = 0; i < chunks.length; i += 12) {
-    const group = chunks.slice(i, i + 12);
-    const vectors = await embedTexts(env, group.map(c => c.text));
+  await embedChunksBatched(env, chunks);
+  for (let i = 0; i < chunks.length; i += 36) {
+    const group = chunks.slice(i, i + 36);
     await libraryCall(env, "/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ updates: group.map((c, idx) => ({ id: c.id, embedding: vectors[idx] })) }),
+      body: JSON.stringify({ updates: group.map(c => ({ id: c.id, embedding: c.embedding })) }),
     });
   }
   const docs = await listBooks(env);
@@ -551,13 +589,15 @@ async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
-  let documents = null, chunks = null, memoryMessages = null, ready = false;
+  if (!env.PDFS) missing.push("PDFS");
+  let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
       const st = await libraryCall(env, "/status");
       documents = Number(st.documents || 0);
       chunks = Number(st.chunks || 0);
       memoryMessages = Number(st.memory_messages || 0);
+      indexJobs = Number(st.index_jobs || 0);
       ready = st.ok === true;
     } catch {}
   }
@@ -567,10 +607,12 @@ async function status(env) {
     version: VERSION,
     architecture: "cloudflare-native",
     storage_backend: "durable-object-sqlite",
+    pdf_storage: "r2",
+    ingest_backend: "durable-object-background",
     vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
-    documents, chunks, memory_messages: memoryMessages,
+    documents, chunks, memory_messages: memoryMessages, index_jobs: indexJobs,
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
@@ -578,14 +620,17 @@ async function status(env) {
   };
 }
 
-async function handleApi(request, env, url) {
+async function handleApi(request, env, url, ctx) {
   try {
-    if (url.pathname.startsWith("/api/admin/") && !(await adminAuthorized(request, env))) {
+    const privateIndexRoute =
+      url.pathname.startsWith("/api/admin/") ||
+      url.pathname === "/api/trigger-index" ||
+      url.pathname === "/api/index-status";
+
+    if (privateIndexRoute && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
-    if (url.pathname === "/api/status" && request.method === "GET") {
-      return json(await status(env));
-    }
+    if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (url.pathname === "/api/memory" && request.method === "GET") {
       const ownerId = await memoryOwner(request);
@@ -601,20 +646,12 @@ async function handleApi(request, env, url) {
     }
     if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
-
-    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") {
-      return await uploadPdf(request, env);
-    }
-    if (url.pathname === "/api/admin/livros" && request.method === "GET") {
-      return json(await listBooks(env));
-    }
-    if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") {
-      return await deletePdf(request, env);
-    }
-    if (url.pathname === "/api/admin/reindex" && request.method === "POST") {
-      return await reindexLibrary(request, env);
-    }
-
+    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") return queuePdfUpload(request, env, ctx);
+    if (url.pathname === "/api/trigger-index" && request.method === "POST") return triggerIndex(request, env, ctx);
+    if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
+    if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
+    if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") return await deletePdf(request, env);
+    if (url.pathname === "/api/admin/reindex" && request.method === "POST") return await reindexLibrary(request, env);
     return json({ ok: false, message: "Rota não encontrada." }, 404);
   } catch (error) {
     return json({
@@ -624,6 +661,8 @@ async function handleApi(request, env, url) {
     }, error?.code === "BINDINGS_MISSING" ? 503 : 500);
   }
 }
+
+function cosine(a, b) {
 
 function cosine(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || !a.length) return -1;
@@ -655,20 +694,93 @@ export class LibraryDO {
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS conversation_messages (
-          id TEXT PRIMARY KEY,
-          owner_id TEXT NOT NULL,
-          role TEXT NOT NULL,
-          content TEXT NOT NULL,
-          sources TEXT NOT NULL DEFAULT '[]',
-          fallback INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
+          sources TEXT NOT NULL DEFAULT '[]', fallback INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS index_jobs (
+          id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'pdf-index', r2_key TEXT NOT NULL,
+          filename TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0,
+          error TEXT, document_id TEXT, pages INTEGER NOT NULL DEFAULT 0, chunks INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
       `);
+      const docColumns = [...this.sql.exec("PRAGMA table_info(documents)")].map(x => String(x.name || ""));
+      if (!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
     });
+  }
+
+  updateJob(id, status, progress, error = null, documentId = null, pages = null, chunks = null) {
+    this.sql.exec(
+      "UPDATE index_jobs SET status=?, progress=?, error=?, document_id=COALESCE(?,document_id), pages=COALESCE(?,pages), chunks=COALESCE(?,chunks), updated_at=? WHERE id=?",
+      status, Math.max(0, Math.min(100, Number(progress || 0))), error, documentId, pages, chunks, new Date().toISOString(), id
+    );
+  }
+
+  async processIndexJob(jobId) {
+    const job = [...this.sql.exec("SELECT id,r2_key,filename,size_bytes,status FROM index_jobs WHERE id=? LIMIT 1", jobId)][0];
+    if (!job || job.status === "ready" || job.status === "duplicate") return;
+    this.updateJob(jobId, "processing", 3);
+
+    try {
+      const object = await this.env.PDFS.get(job.r2_key);
+      if (!object) throw new Error("Arquivo PDF não encontrado no R2.");
+      const buffer = await object.arrayBuffer();
+      const digest = await sha256Buffer(buffer);
+      const duplicate = [...this.sql.exec("SELECT id,filename FROM documents WHERE sha256=? LIMIT 1", digest)][0] || null;
+      if (duplicate) {
+        this.updateJob(jobId, "duplicate", 100, null, duplicate.id);
+        await this.env.PDFS.delete(job.r2_key).catch(() => {});
+        return;
+      }
+
+      this.updateJob(jobId, "processing", 12);
+      const markdown = await convertPdf(this.env, job.filename, buffer);
+      const pages = splitPages(markdown);
+      const metadata = parsePdfMetadata(markdown, job.filename);
+      const language = detectLanguage(markdown);
+      const documentId = uuidCompact();
+      const chunks = [];
+      let globalIndex = 0;
+      for (const page of pages) {
+        for (const piece of chunkText(page.text)) {
+          chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
+        }
+      }
+      if (!chunks.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
+
+      this.updateJob(jobId, "processing", 28, null, null, pages.length, chunks.length);
+      await embedChunksBatched(this.env, chunks, (done, total) => {
+        this.updateJob(jobId, "processing", 28 + Math.round((done / Math.max(1, total)) * 57), null, null, pages.length, chunks.length);
+      });
+
+      const now = new Date().toISOString();
+      this.sql.exec(
+        "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        documentId, job.filename, metadata.title || "", metadata.author || "", language || "unknown",
+        digest, Number(job.size_bytes || buffer.byteLength || 0), pages.length, chunks.length, "ready", now, job.r2_key
+      );
+      try {
+        for (const c of chunks) {
+          this.sql.exec(
+            "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+            c.id, documentId, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""), JSON.stringify(c.embedding || []), now
+          );
+        }
+      } catch (error) {
+        this.sql.exec("DELETE FROM chunks WHERE document_id=?", documentId);
+        this.sql.exec("DELETE FROM documents WHERE id=?", documentId);
+        throw error;
+      }
+      this.updateJob(jobId, "ready", 100, null, documentId, pages.length, chunks.length);
+    } catch (error) {
+      this.updateJob(jobId, "failed", 100, String(error?.message || error).slice(0, 1500));
+    }
   }
 
   async fetch(request) {
@@ -678,12 +790,44 @@ export class LibraryDO {
         const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
         const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
         const m = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages")][0]?.n || 0;
-        return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m) });
+        const j = [...this.sql.exec("SELECT COUNT(*) AS n FROM index_jobs WHERE status IN ('queued','processing')")][0]?.n || 0;
+        return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m), index_jobs: Number(j) });
       }
       if (url.pathname === "/duplicate") {
         const sha = String(url.searchParams.get("sha") || "");
         const row = [...this.sql.exec("SELECT id, filename AS arquivo, status FROM documents WHERE sha256 = ? LIMIT 1", sha)][0] || null;
         return json({ ok: true, document: row });
+      }
+      if (url.pathname === "/jobs/create" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.id || "").slice(0, 120);
+        const r2Key = String(body.r2_key || "").slice(0, 700);
+        const filename = safeName(body.filename || "documento.pdf");
+        if (!id || !r2Key) return json({ ok: false, message: "Job de indexação inválido." }, 400);
+        const now = new Date().toISOString();
+        this.sql.exec(
+          "INSERT OR IGNORE INTO index_jobs (id,kind,r2_key,filename,size_bytes,status,progress,error,document_id,pages,chunks,created_at,updated_at) VALUES (?,?,?,?,?,'queued',0,NULL,NULL,0,0,?,?)",
+          id, String(body.kind || "pdf-index").slice(0, 80), r2Key, filename, Number(body.size_bytes || 0), now, now
+        );
+        return json({ ok: true, job_id: id, status: "queued" }, 201);
+      }
+      if (url.pathname === "/jobs/status" && request.method === "GET") {
+        const id = String(url.searchParams.get("job_id") || "").trim();
+        const row = [...this.sql.exec(
+          "SELECT id AS job_id,filename AS arquivo,status,progress,error,document_id,pages AS paginas,chunks,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
+          id
+        )][0] || null;
+        if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
+        return json({ ok: true, ...row });
+      }
+      if (url.pathname === "/jobs/run" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.job_id || "").trim();
+        if (!id) return json({ ok: false, message: "job_id ausente." }, 400);
+        const row = [...this.sql.exec("SELECT status FROM index_jobs WHERE id=? LIMIT 1", id)][0] || null;
+        if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
+        if (row.status !== "ready" && row.status !== "duplicate") this.ctx.waitUntil(this.processIndexJob(id));
+        return json({ ok: true, accepted: true, job_id: id }, 202);
       }
       if (url.pathname === "/docs") {
         const rows = [...this.sql.exec(`
@@ -699,16 +843,15 @@ export class LibraryDO {
         const chunks = Array.isArray(body.chunks) ? body.chunks : [];
         const now = new Date().toISOString();
         this.sql.exec(
-          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
           d.id, d.filename, d.title || "", d.author || "", d.language || "unknown", d.sha256,
-          Number(d.size_bytes || 0), Number(d.page_count || 0), Number(d.chunk_count || chunks.length), d.status || "ready", now
+          Number(d.size_bytes || 0), Number(d.page_count || 0), Number(d.chunk_count || chunks.length), d.status || "ready", now, d.r2_key || null
         );
         try {
           for (const c of chunks) {
             this.sql.exec(
               "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-              c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""),
-              JSON.stringify(c.embedding || []), now
+              c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""), JSON.stringify(c.embedding || []), now
             );
           }
         } catch (error) {
@@ -723,11 +866,12 @@ export class LibraryDO {
         const id = String(body.document_id || "").trim();
         const filename = String(body.arquivo || "").trim();
         let row = null;
-        if (id) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE id = ? LIMIT 1", id)][0] || null;
-        if (!row && filename) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE filename = ? LIMIT 1", filename)][0] || null;
+        if (id) row = [...this.sql.exec("SELECT id, filename, r2_key FROM documents WHERE id = ? LIMIT 1", id)][0] || null;
+        if (!row && filename) row = [...this.sql.exec("SELECT id, filename, r2_key FROM documents WHERE filename = ? LIMIT 1", filename)][0] || null;
         if (!row) return json({ ok: false, message: "Documento não encontrado." }, 404);
         this.sql.exec("DELETE FROM chunks WHERE document_id = ?", row.id);
         this.sql.exec("DELETE FROM documents WHERE id = ?", row.id);
+        if (row.r2_key) await this.env.PDFS.delete(row.r2_key).catch(() => {});
         return json({ ok: true, document_id: row.id, arquivo: row.filename });
       }
       if (url.pathname === "/chunks") {
@@ -753,14 +897,7 @@ export class LibraryDO {
         )].reverse().map(row => {
           let sources = [];
           try { sources = JSON.parse(row.sources || "[]"); } catch {}
-          return {
-            id: row.id,
-            role: row.role,
-            content: row.content,
-            sources,
-            fallback: Number(row.fallback || 0) === 1,
-            ts: row.created_at,
-          };
+          return { id: row.id, role: row.role, content: row.content, sources, fallback: Number(row.fallback || 0) === 1, ts: row.created_at };
         });
         return json({ ok: true, messages: rows, total: rows.length });
       }
@@ -773,8 +910,7 @@ export class LibraryDO {
         if (!id || !ownerId || !content) return json({ ok: false, message: "Mensagem de memória inválida." }, 400);
         this.sql.exec(
           "INSERT OR IGNORE INTO conversation_messages (id,owner_id,role,content,sources,fallback,created_at) VALUES (?,?,?,?,?,?,?)",
-          id, ownerId, role, content, JSON.stringify(Array.isArray(body.sources) ? body.sources : []),
-          body.fallback ? 1 : 0, new Date().toISOString()
+          id, ownerId, role, content, JSON.stringify(Array.isArray(body.sources) ? body.sources : []), body.fallback ? 1 : 0, new Date().toISOString()
         );
         this.sql.exec(
           "DELETE FROM conversation_messages WHERE owner_id = ? AND id NOT IN (SELECT id FROM conversation_messages WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?)",
@@ -819,7 +955,9 @@ export class LibraryDO {
 }
 
 export default {
-  async fetch(request, env) {
+
+export default {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
@@ -827,7 +965,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/")) {
-      return handleApi(request, env, url);
+      return handleApi(request, env, url, ctx);
     }
 
     if (url.pathname === "/" || url.pathname === "/admin") {

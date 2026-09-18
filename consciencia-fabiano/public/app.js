@@ -8,6 +8,10 @@
   let speakingTimer = null;
   let recorder = null;
   let chunks = [];
+  let voiceLoopEnabled = false;
+  let voiceStream = null;
+  let voiceMonitor = 0;
+  let voiceAudioContext = null;
 
   const frames = {
     closed: "/fabiano-fechado.png",
@@ -177,34 +181,40 @@
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
-      audio.onplay = () => setAvatar("speaking");
-      audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); };
-      audio.onerror = () => { URL.revokeObjectURL(url); browserSpeak(textFallback); };
-      await audio.play();
+      await new Promise((resolve, reject) => {
+        audio.onplay = () => setAvatar("speaking");
+        audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Falha na reprodução do TTS.")); };
+        audio.play().catch(reject);
+      });
       return;
     } catch {}
-    browserSpeak(textFallback);
+    await browserSpeak(textFallback);
   }
 
   function browserSpeak(text) {
-    if (!("speechSynthesis" in window) || !text) {
-      setAvatar("closed");
-      return;
-    }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text.slice(0, 5000));
-    u.lang = "pt-BR";
-    u.rate = 0.96;
-    const voices = speechSynthesis.getVoices();
-    const pt = voices.find(v => /^pt-BR/i.test(v.lang)) || voices.find(v => /^pt/i.test(v.lang));
-    if (pt) u.voice = pt;
-    u.onstart = () => setAvatar("speaking");
-    u.onend = () => setAvatar("closed");
-    u.onerror = () => setAvatar("closed");
-    speechSynthesis.speak(u);
+    return new Promise(resolve => {
+      if (!("speechSynthesis" in window) || !text) {
+        setAvatar("closed");
+        resolve();
+        return;
+      }
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text.slice(0, 5000));
+      u.lang = "pt-BR";
+      u.rate = 0.96;
+      const voices = speechSynthesis.getVoices();
+      const pt = voices.find(v => /^pt-BR/i.test(v.lang)) || voices.find(v => /^pt/i.test(v.lang));
+      if (pt) u.voice = pt;
+      u.onstart = () => setAvatar("speaking");
+      u.onend = () => { setAvatar("closed"); resolve(); };
+      u.onerror = () => { setAvatar("closed"); resolve(); };
+      speechSynthesis.speak(u);
+    });
   }
 
-  async function sendQuestion() {
+  async function sendQuestion(options = {}) {
+    const fromVoice = options.fromVoice === true;
     const q = $("questionInput").value.trim();
     if (!q) return;
     $("questionInput").value = "";
@@ -213,7 +223,7 @@
     saveHistory();
 
     $("sendBtn").disabled = true;
-    $("micBtn").disabled = true;
+    if (!voiceLoopEnabled) $("micBtn").disabled = true;
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
@@ -228,13 +238,7 @@
       });
       const resposta = String(data.resposta || "Sem resposta.");
       appendMessage("assistant", resposta, data.fontes || [], data.fallback === true);
-      history.push({
-        role: "assistant",
-        content: resposta,
-        sources: data.fontes || [],
-        fallback: data.fallback === true,
-        ts: Date.now()
-      });
+      history.push({ role: "assistant", content: resposta, sources: data.fontes || [], fallback: data.fallback === true, ts: Date.now() });
       saveHistory();
       await playAudio(data.audio_url, resposta);
     } catch (error) {
@@ -243,10 +247,20 @@
     } finally {
       $("sendBtn").disabled = false;
       $("micBtn").disabled = false;
+      if (fromVoice && voiceLoopEnabled) {
+        $("micBtn").textContent = "⏹️ Encerrar voz";
+        setTimeout(() => {
+          if (voiceLoopEnabled) startRecorderFallback().catch(stopVoiceLoop);
+        }, 250);
+      } else if (!voiceLoopEnabled) {
+        $("micBtn").textContent = "🎙️ Falar";
+      }
     }
   }
 
   async function checkBackend() {
+
+async function checkBackend() {
     try {
       const data = await api("/api/status");
       const up = data?.ok === true && data?.architecture === "cloudflare-native";
@@ -270,71 +284,140 @@
   }
 
   async function startVoice() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      const rec = new SR();
-      rec.lang = "pt-BR";
-      rec.interimResults = false;
-      rec.maxAlternatives = 1;
-      $("micBtn").textContent = "🎧 Ouvindo…";
-      $("avatarState").textContent = "Ouvindo";
-      rec.onresult = async e => {
-        const text = e.results?.[0]?.[0]?.transcript || "";
-        $("questionInput").value = text;
-        if (text.trim() && $("autoSendVoice")?.checked) {
-          await sendQuestion();
-        }
-      };
-      rec.onend = () => {
-        $("micBtn").textContent = "🎙️ Falar";
-        setAvatar("closed");
-      };
-      rec.onerror = () => {
-        $("micBtn").textContent = "🎙️ Falar";
-        startRecorderFallback().catch(() => setAvatar("closed"));
-      };
-      rec.start();
+    if (voiceLoopEnabled) {
+      stopVoiceLoop();
       return;
     }
+    voiceLoopEnabled = true;
+    $("micBtn").textContent = "⏹️ Encerrar voz";
     await startRecorderFallback();
   }
 
-  async function startRecorderFallback() {
-    if (recorder?.state === "recording") {
-      recorder.stop();
-      return;
+  function stopVoiceMonitor() {
+    if (voiceMonitor) cancelAnimationFrame(voiceMonitor);
+    voiceMonitor = 0;
+    if (voiceAudioContext) {
+      voiceAudioContext.close().catch(() => {});
+      voiceAudioContext = null;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
+  }
+
+  function stopVoiceLoop() {
+    voiceLoopEnabled = false;
+    stopVoiceMonitor();
+    if (recorder?.state === "recording") {
+      try { recorder.stop(); } catch {}
+    }
+    if (voiceStream) {
+      voiceStream.getTracks().forEach(t => t.stop());
+      voiceStream = null;
+    }
+    $("micBtn").textContent = "🎙️ Falar";
+    $("micBtn").disabled = false;
+    setAvatar("closed");
+  }
+
+  async function ensureVoiceStream() {
+    if (voiceStream && voiceStream.getTracks().some(t => t.readyState === "live")) return voiceStream;
+    voiceStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
     });
+    return voiceStream;
+  }
+
+  async function startRecorderFallback() {
+    if (!voiceLoopEnabled || recorder?.state === "recording") return;
+    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) throw new Error("Este navegador não oferece gravação de áudio compatível.");
+
+    const stream = await ensureVoiceStream();
     chunks = [];
     recorder = new MediaRecorder(stream);
+    const thisRecorder = recorder;
+    let heardSpeech = false;
+    let lastVoiceAt = performance.now();
+    const startedAt = performance.now();
+
     recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
     recorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      $("micBtn").textContent = "🎙️ Falar";
+      stopVoiceMonitor();
+      if (!voiceLoopEnabled) return;
       $("avatarState").textContent = "Transcrevendo…";
       try {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const blob = new Blob(chunks, { type: thisRecorder.mimeType || "audio/webm" });
+        if (blob.size < 700) {
+          setTimeout(() => voiceLoopEnabled && startRecorderFallback().catch(stopVoiceLoop), 300);
+          return;
+        }
         const res = await fetch("/api/stt", {
           method: "POST",
           headers: authHeaders({ "Content-Type": blob.type || "audio/webm" }),
           body: blob
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "STT indisponível");
-        $("questionInput").value = data.text || "";
-        if ((data.text || "").trim() && $("autoSendVoice")?.checked) {
-          await sendQuestion();
+        const text = String(data.text || "").trim();
+        $("questionInput").value = text;
+        if (text && $("autoSendVoice")?.checked) {
+          await sendQuestion({ fromVoice: true });
+        } else if (voiceLoopEnabled) {
+          setTimeout(() => startRecorderFallback().catch(stopVoiceLoop), 300);
         }
       } catch (e) {
         appendMessage("assistant", "Não consegui transcrever sua voz: " + e.message);
+        if (voiceLoopEnabled) setTimeout(() => startRecorderFallback().catch(stopVoiceLoop), 600);
       }
-      setAvatar("closed");
     };
-    recorder.start(250);
-    $("micBtn").textContent = "⏹️ Parar";
+
+    recorder.start(200);
+    $("micBtn").textContent = "⏹️ Encerrar voz";
     $("avatarState").textContent = "Ouvindo";
+
+    voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = voiceAudioContext.createMediaStreamSource(stream);
+    const analyser = voiceAudioContext.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.fftSize);
+
+    const monitor = () => {
+      if (!voiceLoopEnabled || recorder !== thisRecorder || thisRecorder.state !== "recording") return;
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      if (rms > 0.025) {
+        heardSpeech = true;
+        lastVoiceAt = now;
+      }
+      const silenceAfterSpeech = heardSpeech && now - lastVoiceAt > 950 && now - startedAt > 900;
+      const maxTurn = now - startedAt > 25000;
+      const noSpeechTimeout = !heardSpeech && now - startedAt > 9000;
+      if (silenceAfterSpeech || maxTurn || noSpeechTimeout) {
+        try { thisRecorder.stop(); } catch {}
+        return;
+      }
+      voiceMonitor = requestAnimationFrame(monitor);
+    };
+    voiceMonitor = requestAnimationFrame(monitor);
+  }
+
+  async function waitForIndexJob(jobId, filename) {
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const data = await api("/api/index-status?job_id=" + encodeURIComponent(jobId), { method: "GET" });
+      const status = String(data.status || "queued");
+      const progress = Math.max(0, Math.min(100, Number(data.progress || 0)));
+      $("adminStatus").textContent = "Indexando " + filename + "… " + progress + "% • " + status;
+      if (status === "ready") return data;
+      if (status === "duplicate") return { ...data, duplicate: true };
+      if (status === "failed") throw new Error(data.error || "Falha durante a indexação.");
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    throw new Error("A indexação continua no servidor, mas o acompanhamento local atingiu 10 minutos.");
   }
 
   async function uploadPdf() {
@@ -344,18 +427,18 @@
       return;
     }
     $("uploadBtn").disabled = true;
-    $("adminStatus").textContent = "Enviando e indexando " + file.name + "…";
+    $("adminStatus").textContent = "Enviando " + file.name + " para a fila de indexação…";
     try {
       const fd = new FormData();
       fd.append("arquivo", file, file.name);
-      const res = await fetch("/api/admin/upload-pdf", {
-        method: "POST",
-        headers: authHeaders(),
-        body: fd
-      });
+      const res = await fetch("/api/admin/upload-pdf", { method: "POST", headers: authHeaders(), body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || data.message || "Falha no upload.");
-      $("adminStatus").textContent = "PDF indexado: " + (data.arquivo || file.name) + " • " + (data.chunks || 0) + " trechos.";
+      if (!data.job_id) throw new Error("Servidor não retornou o job de indexação.");
+      const done = await waitForIndexJob(data.job_id, data.arquivo || file.name);
+      $("adminStatus").textContent = done.duplicate
+        ? "Este PDF já estava na biblioteca: " + (done.arquivo || file.name) + "."
+        : "PDF indexado: " + (done.arquivo || file.name) + " • " + (done.chunks || 0) + " trechos.";
       $("pdfInput").value = "";
       await loadBooks();
       await checkBackend();
@@ -367,6 +450,8 @@
   }
 
   async function loadBooks() {
+
+async function loadBooks() {
     try {
       const data = await api("/api/admin/livros");
       const list = Array.isArray(data?.livros) ? data.livros : [];
