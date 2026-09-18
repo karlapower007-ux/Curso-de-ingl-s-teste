@@ -1,0 +1,17 @@
+name: QA Fabiano backend
+on:
+  push:
+    branches: [avatar-fabiano-production]
+    paths: ['.github/workflows/qa-fabiano-backend.yml']
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: python3 -m py_compile avatar-fabiano/main.py
+      - name: Probe Render
+        run: |
+          set -e
+          curl -sS --max-time 120 https://avatar-fabiano-api.onrender.com/health -o /tmp/health.json || true
+          cat /tmp/health.json 2>/dev/null || true
