@@ -31,6 +31,18 @@ printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/t
 log "AUTOMATION_SECRET_INSTALLED=yes"
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
+HDR=(-H "X-FNS-Automation: $AUTOMATION_SECRET")
+
+log "Waiting for automation secret propagation"
+for i in $(seq 1 12); do
+  code=$(curl -sS -o /tmp/admin-probe.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/livros" || true)
+  if [ "$code" = "200" ]; then
+    log "AUTOMATION_SECRET_ACTIVE=yes"
+    break
+  fi
+  [ "$i" = 12 ] && { cat /tmp/admin-probe.json || true; die "AUTOMATION_SECRET_NOT_ACTIVE"; }
+  sleep 2
+done
 
 log "5/7 Production health"
 for i in $(seq 1 15); do
@@ -85,8 +97,6 @@ make("/tmp/fns-fire/teste-ingles.pdf","Orion Archive Notes","FNS Research Team",
     "In this document, cobalt blue represents disciplined curiosity and patient verification."
 ]])
 PY
-
-HDR=(-H "X-FNS-Automation: $AUTOMATION_SECRET")
 
 curl -fsS "${HDR[@]}" -F 'arquivo=@/tmp/fns-fire/teste-portugues.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf" > /tmp/pt.json
 curl -fsS "${HDR[@]}" -F 'arquivo=@/tmp/fns-fire/teste-ingles.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf" > /tmp/en.json
