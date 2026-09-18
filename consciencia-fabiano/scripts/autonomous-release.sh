@@ -21,16 +21,7 @@ log "2/7 Validate Worker authorization"
 npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
 
-log "3/7 Ensure R2 bucket and deploy Worker"
-set +e
-npx wrangler r2 bucket create consciencia-fabiano-pdfs >/tmp/r2-create.log 2>&1
-r2_rc=$?
-set -e
-if [ "$r2_rc" -ne 0 ] && ! grep -Eqi 'already exists|already been taken|10004' /tmp/r2-create.log; then
-  cat /tmp/r2-create.log
-  die "R2_BUCKET_CREATE_FAILED"
-fi
-log "R2_BUCKET_READY=yes"
+log "3/7 Deploy Worker with Durable Object alarm queue"
 npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
 

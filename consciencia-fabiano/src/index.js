@@ -68,7 +68,6 @@ function assertBindings(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
-  if (!env.PDFS) missing.push("PDFS");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
     err.code = "BINDINGS_MISSING";
@@ -267,11 +266,12 @@ async function embedChunksBatched(env, chunks, onProgress = null) {
   }
 }
 
-async function queuePdfUpload(request, env, ctx) {
+async function queuePdfUpload(request, env) {
   assertBindings(env);
   const form = await request.formData();
   const file = form.get("arquivo");
   if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
+
   const filename = safeName(file.name);
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(filename);
   if (!isPdf) return json({ ok: false, message: "Envie um arquivo PDF." }, 415);
@@ -279,59 +279,39 @@ async function queuePdfUpload(request, env, ctx) {
   if (file.size > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
 
   const jobId = uuidCompact();
-  const r2Key = "library/" + jobId + "-" + filename;
-  await env.PDFS.put(r2Key, file.stream(), {
-    httpMetadata: { contentType: "application/pdf" },
-    customMetadata: { filename, job_id: jobId },
-  });
-
-  await libraryCall(env, "/jobs/create", {
+  await libraryCall(env, "/jobs/upload?job_id=" + encodeURIComponent(jobId), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: jobId, r2_key: r2Key, filename, size_bytes: file.size, kind: "pdf-index" }),
+    headers: {
+      "Content-Type": "application/pdf",
+      "X-FNS-Filename": encodeURIComponent(filename),
+      "X-FNS-Size": String(file.size),
+    },
+    body: file.stream(),
   });
-
-  const trigger = libraryStub(env).fetch(new Request("https://library.internal/jobs/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId }),
-  }));
-  if (ctx?.waitUntil) ctx.waitUntil(trigger.catch(() => {}));
-  else await trigger;
 
   return json({
-    ok: true, accepted: true, job_id: jobId, r2_key: r2Key,
-    arquivo: filename, status: "queued",
-    message: "PDF recebido. A indexação continua em segundo plano.",
+    ok: true,
+    accepted: true,
+    job_id: jobId,
+    r2_key: "do://pdf-jobs/" + jobId,
+    arquivo: filename,
+    status: "queued",
+    message: "PDF recebido e persistido. A indexação continua em segundo plano.",
   }, 202);
 }
 
-async function triggerIndex(request, env, ctx) {
+async function triggerIndex(request, env) {
   assertBindings(env);
   const body = await request.json().catch(() => ({}));
-  const r2Key = String(body?.r2_key || "").trim();
-  if (!r2Key) return json({ ok: false, message: "r2_key ausente." }, 400);
-  const object = await env.PDFS.head(r2Key);
-  if (!object) return json({ ok: false, message: "PDF não encontrado no R2." }, 404);
+  const raw = String(body?.job_id || body?.r2_key || "").trim();
+  const jobId = raw.includes("/") ? raw.split("/").pop() : raw;
+  if (!jobId) return json({ ok: false, message: "job_id/r2_key ausente." }, 400);
 
-  const filename = safeName(body?.filename || object.customMetadata?.filename || r2Key.split("/").pop());
-  const jobId = String(body?.job_id || uuidCompact()).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120) || uuidCompact();
-
-  await libraryCall(env, "/jobs/create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: jobId, r2_key: r2Key, filename, size_bytes: Number(object.size || 0), kind: "pdf-index" }),
-  });
-
-  const trigger = libraryStub(env).fetch(new Request("https://library.internal/jobs/run", {
+  return json(await libraryCall(env, "/jobs/requeue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId }),
-  }));
-  if (ctx?.waitUntil) ctx.waitUntil(trigger.catch(() => {}));
-  else await trigger;
-
-  return json({ ok: true, accepted: true, job_id: jobId, r2_key: r2Key, status: "queued" }, 202);
+  }), 202);
 }
 
 async function indexStatus(env, url) {
@@ -587,7 +567,6 @@ async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
-  if (!env.PDFS) missing.push("PDFS");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
@@ -605,8 +584,8 @@ async function status(env) {
     version: VERSION,
     architecture: "cloudflare-native",
     storage_backend: "durable-object-sqlite",
-    pdf_storage: "r2",
-    ingest_backend: "durable-object-background",
+    pdf_storage: "durable-object-sqlite-chunks",
+    ingest_backend: "durable-object-alarm",
     vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
@@ -644,8 +623,8 @@ async function handleApi(request, env, url, ctx) {
     }
     if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
-    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") return queuePdfUpload(request, env, ctx);
-    if (url.pathname === "/api/trigger-index" && request.method === "POST") return triggerIndex(request, env, ctx);
+    if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") return queuePdfUpload(request, env);
+    if (url.pathname === "/api/trigger-index" && request.method === "POST") return triggerIndex(request, env);
     if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
     if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
     if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") return await deletePdf(request, env);
@@ -690,48 +669,112 @@ export class LibraryDO {
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS conversation_messages (
-          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
-          sources TEXT NOT NULL DEFAULT '[]', fallback INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          sources TEXT NOT NULL DEFAULT '[]',
+          fallback INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS index_jobs (
-          id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'pdf-index', r2_key TEXT NOT NULL,
-          filename TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0,
-          status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0,
-          error TEXT, document_id TEXT, pages INTEGER NOT NULL DEFAULT 0, chunks INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'pdf-index',
+          storage_key TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued',
+          progress INTEGER NOT NULL DEFAULT 0,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          document_id TEXT,
+          pages INTEGER NOT NULL DEFAULT 0,
+          chunks INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS job_pdf_parts (
+          job_id TEXT NOT NULL,
+          part_index INTEGER NOT NULL,
+          data BLOB NOT NULL,
+          PRIMARY KEY(job_id, part_index)
         );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_job_pdf_parts_job ON job_pdf_parts(job_id, part_index);
       `);
-      const docColumns = [...this.sql.exec("PRAGMA table_info(documents)")].map(x => String(x.name || ""));
-      if (!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
     });
   }
 
   updateJob(id, status, progress, error = null, documentId = null, pages = null, chunks = null) {
     this.sql.exec(
       "UPDATE index_jobs SET status=?, progress=?, error=?, document_id=COALESCE(?,document_id), pages=COALESCE(?,pages), chunks=COALESCE(?,chunks), updated_at=? WHERE id=?",
-      status, Math.max(0, Math.min(100, Number(progress || 0))), error, documentId, pages, chunks, new Date().toISOString(), id
+      status,
+      Math.max(0, Math.min(100, Number(progress || 0))),
+      error,
+      documentId,
+      pages,
+      chunks,
+      new Date().toISOString(),
+      id
     );
   }
 
+  readPdfBuffer(jobId) {
+    const rows = [...this.sql.exec(
+      "SELECT part_index,data FROM job_pdf_parts WHERE job_id=? ORDER BY part_index",
+      jobId
+    )];
+    if (!rows.length) throw new Error("Partes persistidas do PDF não foram encontradas.");
+
+    const parts = rows.map(row => {
+      const value = row.data;
+      if (value instanceof ArrayBuffer) return new Uint8Array(value);
+      if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      if (Array.isArray(value)) return Uint8Array.from(value);
+      throw new Error("Formato BLOB inesperado na memória documental.");
+    });
+    const total = parts.reduce((n, p) => n + p.byteLength, 0);
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      merged.set(part, offset);
+      offset += part.byteLength;
+    }
+    return merged.buffer;
+  }
+
+  cleanupJobPdf(jobId) {
+    this.sql.exec("DELETE FROM job_pdf_parts WHERE job_id=?", jobId);
+  }
+
   async processIndexJob(jobId) {
-    const job = [...this.sql.exec("SELECT id,r2_key,filename,size_bytes,status FROM index_jobs WHERE id=? LIMIT 1", jobId)][0];
-    if (!job || job.status === "ready" || job.status === "duplicate") return;
-    this.updateJob(jobId, "processing", 3);
+    const job = [...this.sql.exec(
+      "SELECT id,storage_key,filename,size_bytes,status,attempts FROM index_jobs WHERE id=? LIMIT 1",
+      jobId
+    )][0];
+    if (!job || job.status === "ready" || job.status === "duplicate" || job.status === "failed") return;
+
+    const attempt = Number(job.attempts || 0) + 1;
+    this.sql.exec(
+      "UPDATE index_jobs SET status='processing',attempts=?,progress=3,error=NULL,updated_at=? WHERE id=?",
+      attempt, new Date().toISOString(), jobId
+    );
 
     try {
-      const object = await this.env.PDFS.get(job.r2_key);
-      if (!object) throw new Error("Arquivo PDF não encontrado no R2.");
-      const buffer = await object.arrayBuffer();
+      const buffer = this.readPdfBuffer(jobId);
       const digest = await sha256Buffer(buffer);
-      const duplicate = [...this.sql.exec("SELECT id,filename FROM documents WHERE sha256=? LIMIT 1", digest)][0] || null;
+      const duplicate = [...this.sql.exec(
+        "SELECT id,filename FROM documents WHERE sha256=? LIMIT 1",
+        digest
+      )][0] || null;
+
       if (duplicate) {
         this.updateJob(jobId, "duplicate", 100, null, duplicate.id);
-        await this.env.PDFS.delete(job.r2_key).catch(() => {});
+        this.cleanupJobPdf(jobId);
         return;
       }
 
@@ -743,6 +786,7 @@ export class LibraryDO {
       const documentId = uuidCompact();
       const chunks = [];
       let globalIndex = 0;
+
       for (const page of pages) {
         for (const piece of chunkText(page.text)) {
           chunks.push({ id: uuidCompact(), page: page.page, chunk_index: globalIndex++, text: piece });
@@ -752,20 +796,37 @@ export class LibraryDO {
 
       this.updateJob(jobId, "processing", 28, null, null, pages.length, chunks.length);
       await embedChunksBatched(this.env, chunks, (done, total) => {
-        this.updateJob(jobId, "processing", 28 + Math.round((done / Math.max(1, total)) * 57), null, null, pages.length, chunks.length);
+        const pct = 28 + Math.round((done / Math.max(1, total)) * 57);
+        this.updateJob(jobId, "processing", pct, null, null, pages.length, chunks.length);
       });
 
       const now = new Date().toISOString();
       this.sql.exec(
-        "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        documentId, job.filename, metadata.title || "", metadata.author || "", language || "unknown",
-        digest, Number(job.size_bytes || buffer.byteLength || 0), pages.length, chunks.length, "ready", now, job.r2_key
+        "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        documentId,
+        job.filename,
+        metadata.title || "",
+        metadata.author || "",
+        language || "unknown",
+        digest,
+        Number(job.size_bytes || buffer.byteLength || 0),
+        pages.length,
+        chunks.length,
+        "ready",
+        now
       );
+
       try {
         for (const c of chunks) {
           this.sql.exec(
             "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-            c.id, documentId, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""), JSON.stringify(c.embedding || []), now
+            c.id,
+            documentId,
+            Number(c.page || 1),
+            Number(c.chunk_index || 0),
+            String(c.text || ""),
+            JSON.stringify(c.embedding || []),
+            now
           );
         }
       } catch (error) {
@@ -773,10 +834,34 @@ export class LibraryDO {
         this.sql.exec("DELETE FROM documents WHERE id=?", documentId);
         throw error;
       }
+
       this.updateJob(jobId, "ready", 100, null, documentId, pages.length, chunks.length);
+      this.cleanupJobPdf(jobId);
     } catch (error) {
-      this.updateJob(jobId, "failed", 100, String(error?.message || error).slice(0, 1500));
+      const message = String(error?.message || error).slice(0, 1500);
+      if (attempt < 3) {
+        this.sql.exec(
+          "UPDATE index_jobs SET status='queued',error=?,updated_at=? WHERE id=?",
+          message, new Date().toISOString(), jobId
+        );
+        await this.ctx.storage.setAlarm(Date.now() + attempt * 2000);
+      } else {
+        this.updateJob(jobId, "failed", 100, message);
+      }
     }
+  }
+
+  async alarm() {
+    const job = [...this.sql.exec(
+      "SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 1"
+    )][0] || null;
+
+    if (job?.id) await this.processIndexJob(job.id);
+
+    const more = [...this.sql.exec(
+      "SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 1"
+    )][0] || null;
+    if (more?.id) await this.ctx.storage.setAlarm(Date.now() + 750);
   }
 
   async fetch(request) {
@@ -789,42 +874,72 @@ export class LibraryDO {
         const j = [...this.sql.exec("SELECT COUNT(*) AS n FROM index_jobs WHERE status IN ('queued','processing')")][0]?.n || 0;
         return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m), index_jobs: Number(j) });
       }
+
       if (url.pathname === "/duplicate") {
         const sha = String(url.searchParams.get("sha") || "");
         const row = [...this.sql.exec("SELECT id, filename AS arquivo, status FROM documents WHERE sha256 = ? LIMIT 1", sha)][0] || null;
         return json({ ok: true, document: row });
       }
-      if (url.pathname === "/jobs/create" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const id = String(body.id || "").slice(0, 120);
-        const r2Key = String(body.r2_key || "").slice(0, 700);
-        const filename = safeName(body.filename || "documento.pdf");
-        if (!id || !r2Key) return json({ ok: false, message: "Job de indexação inválido." }, 400);
+
+      if (url.pathname === "/jobs/upload" && request.method === "POST") {
+        const id = String(url.searchParams.get("job_id") || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
+        let filename = "documento.pdf";
+        try { filename = safeName(decodeURIComponent(request.headers.get("X-FNS-Filename") || "documento.pdf")); } catch {}
+        const declaredSize = Number(request.headers.get("X-FNS-Size") || 0);
+        if (!id) return json({ ok: false, message: "job_id ausente." }, 400);
+
+        const buffer = await request.arrayBuffer();
+        if (!buffer.byteLength) return json({ ok: false, message: "PDF vazio." }, 400);
+        if (buffer.byteLength > MAX_PDF_BYTES) return json({ ok: false, message: "PDF acima do limite atual de 25 MB." }, 413);
+
         const now = new Date().toISOString();
+        const storageKey = "do://pdf-jobs/" + id;
+        this.sql.exec("DELETE FROM job_pdf_parts WHERE job_id=?", id);
+        this.sql.exec("DELETE FROM index_jobs WHERE id=?", id);
+
+        const bytes = new Uint8Array(buffer);
+        const partSize = 1024 * 1024;
+        let partIndex = 0;
+        for (let start = 0; start < bytes.byteLength; start += partSize) {
+          const part = bytes.slice(start, Math.min(bytes.byteLength, start + partSize));
+          this.sql.exec(
+            "INSERT INTO job_pdf_parts (job_id,part_index,data) VALUES (?,?,?)",
+            id, partIndex++, part
+          );
+        }
+
         this.sql.exec(
-          "INSERT OR IGNORE INTO index_jobs (id,kind,r2_key,filename,size_bytes,status,progress,error,document_id,pages,chunks,created_at,updated_at) VALUES (?,?,?,?,?,'queued',0,NULL,NULL,0,0,?,?)",
-          id, String(body.kind || "pdf-index").slice(0, 80), r2Key, filename, Number(body.size_bytes || 0), now, now
+          "INSERT INTO index_jobs (id,kind,storage_key,filename,size_bytes,status,progress,attempts,error,document_id,pages,chunks,created_at,updated_at) VALUES (?, 'pdf-index', ?, ?, ?, 'queued', 0, 0, NULL, NULL, 0, 0, ?, ?)",
+          id, storageKey, filename, declaredSize || buffer.byteLength, now, now
         );
-        return json({ ok: true, job_id: id, status: "queued" }, 201);
+        await this.ctx.storage.sync();
+        await this.ctx.storage.setAlarm(Date.now() + 250);
+
+        return json({ ok: true, accepted: true, job_id: id, storage_key: storageKey, parts: partIndex }, 201);
       }
+
       if (url.pathname === "/jobs/status" && request.method === "GET") {
         const id = String(url.searchParams.get("job_id") || "").trim();
         const row = [...this.sql.exec(
-          "SELECT id AS job_id,filename AS arquivo,status,progress,error,document_id,pages AS paginas,chunks,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
+          "SELECT id AS job_id,filename AS arquivo,status,progress,attempts,error,document_id,pages AS paginas,chunks,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
           id
         )][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
         return json({ ok: true, ...row });
       }
-      if (url.pathname === "/jobs/run" && request.method === "POST") {
+
+      if (url.pathname === "/jobs/requeue" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const id = String(body.job_id || "").trim();
-        if (!id) return json({ ok: false, message: "job_id ausente." }, 400);
-        const row = [...this.sql.exec("SELECT status FROM index_jobs WHERE id=? LIMIT 1", id)][0] || null;
+        const row = [...this.sql.exec("SELECT id,status FROM index_jobs WHERE id=? LIMIT 1", id)][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
-        if (row.status !== "ready" && row.status !== "duplicate") this.ctx.waitUntil(this.processIndexJob(id));
-        return json({ ok: true, accepted: true, job_id: id }, 202);
+        if (row.status !== "ready" && row.status !== "duplicate") {
+          this.sql.exec("UPDATE index_jobs SET status='queued',error=NULL,updated_at=? WHERE id=?", new Date().toISOString(), id);
+          await this.ctx.storage.setAlarm(Date.now() + 250);
+        }
+        return json({ ok: true, accepted: true, job_id: id, status: row.status === "ready" ? "ready" : "queued" });
       }
+
       if (url.pathname === "/docs") {
         const rows = [...this.sql.exec(`
           SELECT id, filename AS arquivo, title AS titulo, author AS autor, language AS idioma,
@@ -833,21 +948,23 @@ export class LibraryDO {
         `)];
         return json({ ok: true, livros: rows, total: rows.length });
       }
+
       if (url.pathname === "/ingest" && request.method === "POST") {
         const body = await request.json();
         const d = body.document || {};
         const chunks = Array.isArray(body.chunks) ? body.chunks : [];
         const now = new Date().toISOString();
         this.sql.exec(
-          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
           d.id, d.filename, d.title || "", d.author || "", d.language || "unknown", d.sha256,
-          Number(d.size_bytes || 0), Number(d.page_count || 0), Number(d.chunk_count || chunks.length), d.status || "ready", now, d.r2_key || null
+          Number(d.size_bytes || 0), Number(d.page_count || 0), Number(d.chunk_count || chunks.length), d.status || "ready", now
         );
         try {
           for (const c of chunks) {
             this.sql.exec(
               "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-              c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""), JSON.stringify(c.embedding || []), now
+              c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""),
+              JSON.stringify(c.embedding || []), now
             );
           }
         } catch (error) {
@@ -857,19 +974,20 @@ export class LibraryDO {
         }
         return json({ ok: true, document_id: d.id, chunks: chunks.length });
       }
+
       if (url.pathname === "/delete" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const id = String(body.document_id || "").trim();
         const filename = String(body.arquivo || "").trim();
         let row = null;
-        if (id) row = [...this.sql.exec("SELECT id, filename, r2_key FROM documents WHERE id = ? LIMIT 1", id)][0] || null;
-        if (!row && filename) row = [...this.sql.exec("SELECT id, filename, r2_key FROM documents WHERE filename = ? LIMIT 1", filename)][0] || null;
+        if (id) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE id = ? LIMIT 1", id)][0] || null;
+        if (!row && filename) row = [...this.sql.exec("SELECT id, filename FROM documents WHERE filename = ? LIMIT 1", filename)][0] || null;
         if (!row) return json({ ok: false, message: "Documento não encontrado." }, 404);
         this.sql.exec("DELETE FROM chunks WHERE document_id = ?", row.id);
         this.sql.exec("DELETE FROM documents WHERE id = ?", row.id);
-        if (row.r2_key) await this.env.PDFS.delete(row.r2_key).catch(() => {});
         return json({ ok: true, document_id: row.id, arquivo: row.filename });
       }
+
       if (url.pathname === "/chunks") {
         const id = String(url.searchParams.get("document_id") || "").trim();
         const rows = id
@@ -877,12 +995,14 @@ export class LibraryDO {
           : [...this.sql.exec("SELECT id,document_id,page,chunk_index,text FROM chunks ORDER BY created_at,chunk_index")];
         return json({ ok: true, chunks: rows });
       }
+
       if (url.pathname === "/embeddings" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const updates = Array.isArray(body.updates) ? body.updates : [];
         for (const u of updates) this.sql.exec("UPDATE chunks SET embedding = ? WHERE id = ?", JSON.stringify(u.embedding || []), u.id);
         return json({ ok: true, updated: updates.length });
       }
+
       if (url.pathname === "/memory/list" && request.method === "GET") {
         const ownerId = String(url.searchParams.get("owner_id") || "").trim();
         const limit = Math.max(1, Math.min(MAX_SERVER_HISTORY, Number(url.searchParams.get("limit") || MAX_SERVER_HISTORY)));
@@ -893,10 +1013,14 @@ export class LibraryDO {
         )].reverse().map(row => {
           let sources = [];
           try { sources = JSON.parse(row.sources || "[]"); } catch {}
-          return { id: row.id, role: row.role, content: row.content, sources, fallback: Number(row.fallback || 0) === 1, ts: row.created_at };
+          return {
+            id: row.id, role: row.role, content: row.content, sources,
+            fallback: Number(row.fallback || 0) === 1, ts: row.created_at,
+          };
         });
         return json({ ok: true, messages: rows, total: rows.length });
       }
+
       if (url.pathname === "/memory/append" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const id = String(body.id || "").slice(0, 160);
@@ -906,7 +1030,8 @@ export class LibraryDO {
         if (!id || !ownerId || !content) return json({ ok: false, message: "Mensagem de memória inválida." }, 400);
         this.sql.exec(
           "INSERT OR IGNORE INTO conversation_messages (id,owner_id,role,content,sources,fallback,created_at) VALUES (?,?,?,?,?,?,?)",
-          id, ownerId, role, content, JSON.stringify(Array.isArray(body.sources) ? body.sources : []), body.fallback ? 1 : 0, new Date().toISOString()
+          id, ownerId, role, content, JSON.stringify(Array.isArray(body.sources) ? body.sources : []),
+          body.fallback ? 1 : 0, new Date().toISOString()
         );
         this.sql.exec(
           "DELETE FROM conversation_messages WHERE owner_id = ? AND id NOT IN (SELECT id FROM conversation_messages WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?)",
@@ -914,6 +1039,7 @@ export class LibraryDO {
         );
         return json({ ok: true });
       }
+
       if (url.pathname === "/memory/clear" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const ownerId = String(body.owner_id || "").slice(0, 128);
@@ -922,6 +1048,7 @@ export class LibraryDO {
         this.sql.exec("DELETE FROM conversation_messages WHERE owner_id = ?", ownerId);
         return json({ ok: true, cleared: Number(before) });
       }
+
       if (url.pathname === "/search" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const query = Array.isArray(body.embedding) ? body.embedding : [];
@@ -943,6 +1070,7 @@ export class LibraryDO {
         matches.sort((a,b) => b.score - a.score);
         return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length });
       }
+
       return json({ ok: false, message: "Rota interna não encontrada." }, 404);
     } catch (error) {
       return json({ ok: false, message: String(error?.message || error) }, 500);

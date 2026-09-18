@@ -31,8 +31,7 @@ jobs:
           grep -q 'durable_objects' wrangler.jsonc
           grep -q 'new_sqlite_classes' wrangler.jsonc
           ! grep -q 'onrender.com' src/index.js
-          grep -q 'env.PDFS' src/index.js
-          grep -q '"bucket_name": "consciencia-fabiano-pdfs"' wrangler.jsonc
+          ! grep -q 'env.PDFS' src/index.js
           ! grep -q 'env.VECTORIZE' src/index.js
           ! grep -q 'env.DB' src/index.js
           bash -n scripts/autonomous-release.sh
@@ -42,8 +41,10 @@ jobs:
           grep -q '/api/memory' src/index.js
           grep -q 'X-FNS-Memory-Key' public/app.js
           grep -q 'syncPersistentHistory' public/app.js
-          grep -q 'ctx.waitUntil' src/index.js
+          grep -q 'async alarm()' src/index.js
           grep -q 'index_jobs' src/index.js
+          grep -q 'job_pdf_parts' src/index.js
+          grep -q 'setAlarm' src/index.js
           grep -q '/api/index-status' src/index.js
           grep -q 'waitForIndexJob' public/app.js
           grep -q 'voiceLoopEnabled' public/app.js
