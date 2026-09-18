@@ -1,0 +1,30 @@
+name: Discover ChatGPT Site linkage
+on:
+  push:
+    branches: [avatar-fabiano-production]
+    paths: ['.github/workflows/discover-site-linkage.yml']
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect deployed Site metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://estudos-profundos-fns.karlapower007.chatgpt.site'
+          curl -sS --compressed -L "$BASE/admin" -o /tmp/admin.html
+          echo "HTML bytes: $(wc -c </tmp/admin.html)"
+          echo "=== direct metadata hits ==="
+          grep -Eo 'appgprj_[A-Za-z0-9]+|project_id[^,;<"]*|deployment_id[^,;<"]*|hosting\.json|source_version_number[^,;<"]*|projection_revision[^,;<"]*' /tmp/admin.html | sort -u || true
+          echo "=== chunk scan ==="
+          grep -Eo 'src="/_next/static/chunks/[^"]+\.js"' /tmp/admin.html | cut -d'"' -f2 | sort -u > /tmp/chunks.txt || true
+          while read -r p; do
+            [ -n "$p" ] || continue
+            curl -sS --compressed "$BASE$p" -o /tmp/chunk.js || continue
+            HITS=$(grep -Eo 'appgprj_[A-Za-z0-9]+|project_id[^,;<"]*|hosting\.json|source_version_number[^,;<"]*|projection_revision[^,;<"]*' /tmp/chunk.js | sort -u | head -50 || true)
+            if [ -n "$HITS" ]; then
+              echo "--- $p ---"
+              echo "$HITS"
+            fi
+          done </tmp/chunks.txt
