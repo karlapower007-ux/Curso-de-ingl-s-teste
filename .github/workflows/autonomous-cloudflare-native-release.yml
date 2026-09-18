@@ -1,0 +1,38 @@
+name: Autonomous Cloudflare Native Release
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - 'consciencia-fabiano/**'
+      - '.github/workflows/autonomous-cloudflare-native-release.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: consciencia-cloudflare-native-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Autonomous provision and deploy
+        run: bash ./scripts/autonomous-release.sh
