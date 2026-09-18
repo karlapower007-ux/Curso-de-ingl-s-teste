@@ -1,4 +1,4 @@
-const OWNER_TOKEN_HASH = "4df264da389c491ea6b9a57f10715108246440ae738f9378b65a64a4c4ce4fc0";
+const OWNER_TOKEN_HASH = "92f834aac4bfc1f5a1d56f16d4d2704f39da26d2f21a7b60d9e46652861f151c";
 const RENDER_BASE = "https://avatar-fabiano-api.onrender.com";
 const VERSION = "2026-09-18.1";
 
