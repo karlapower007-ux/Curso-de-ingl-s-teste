@@ -1,4 +1,4 @@
-const VERSION = "1.0.0-cloudflare-native-do";
+const VERSION = "1.1.0-cloudflare-native-do-memory";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -9,6 +9,7 @@ const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 1800;
+const MAX_SERVER_HISTORY = 40;
 const OWNER_TOKEN_HASH = "37ae863d0508e0d693e26f73ae5db81e0c60747d3870c0f8c4498513ebd0c8cb";
 const enc = new TextEncoder();
 
@@ -101,6 +102,43 @@ async function libraryCall(env, path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || ("LibraryDO " + res.status));
   return data;
+}
+
+async function memoryOwner(request, body = null) {
+  const raw = String(
+    body?.memory_key ||
+    request.headers.get("X-FNS-Memory-Key") ||
+    ""
+  ).trim();
+  if (raw.length < 32 || raw.length > 256) return null;
+  return sha256Text(raw);
+}
+
+async function readPersistentHistory(env, ownerId, limit = MAX_SERVER_HISTORY) {
+  if (!ownerId) return [];
+  const data = await libraryCall(
+    env,
+    "/memory/list?owner_id=" + encodeURIComponent(ownerId) + "&limit=" + Math.max(1, Math.min(MAX_SERVER_HISTORY, Number(limit) || MAX_SERVER_HISTORY))
+  );
+  return Array.isArray(data.messages) ? data.messages : [];
+}
+
+async function appendPersistentMessage(env, payload) {
+  if (!payload?.owner_id) return;
+  await libraryCall(env, "/memory/append", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function clearPersistentHistory(env, ownerId) {
+  if (!ownerId) return { ok: true, cleared: 0 };
+  return libraryCall(env, "/memory/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner_id: ownerId }),
+  });
 }
 
 function splitPages(markdown) {
@@ -345,11 +383,20 @@ async function chat(request, env) {
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
 
-  const history = Array.isArray(body?.historico) ? body.historico.slice(-20) : [];
+  const ownerId = await memoryOwner(request, body);
+  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-20) : [];
+  let storedHistory = [];
+  try {
+    storedHistory = await readPersistentHistory(env, ownerId, 20);
+  } catch {}
+  const history = storedHistory.length
+    ? storedHistory.slice(-20).map(x => ({ role: x.role, content: x.content }))
+    : clientHistory;
+
   let context = [];
   try {
     context = await retrieveContext(env, question);
-  } catch (error) {
+  } catch {
     context = [];
   }
 
@@ -369,7 +416,8 @@ async function chat(request, env) {
         "As fontes recuperadas aparecem como [F1], [F2] etc. Cite esses marcadores quando fundamentarem uma afirmação. " +
         "Nunca invente livro, autor, página, capítulo ou citação. Se a biblioteca não tiver evidência suficiente, diga isso. " +
         "Diferencie documento, interpretação e hipótese. Você pode conversar sobre religião, filosofia, maçonaria, história, arte, ciência, literatura e qualquer outro assunto. " +
-        "Se não houver fonte documental suficiente, ainda pode usar conhecimento geral, mas declare claramente que essa parte não veio dos PDFs."
+        "Se não houver fonte documental suficiente, ainda pode usar conhecimento geral, mas declare claramente que essa parte não veio dos PDFs. " +
+        "Use o histórico persistente apenas como contexto de conversa; não o trate como fonte documental."
     },
     ...history.map(x => ({
       role: x.role === "assistant" ? "assistant" : "user",
@@ -393,11 +441,36 @@ async function chat(request, env) {
     result?.choices?.[0]?.message?.content ||
     "Não consegui formular uma resposta agora.";
 
+  const sources = uniqueSources(context);
+  const fallback = context.length === 0;
+  if (ownerId) {
+    const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
+    try {
+      await appendPersistentMessage(env, {
+        id: turnId + ":u",
+        owner_id: ownerId,
+        role: "user",
+        content: question.slice(0, 8000),
+        sources: [],
+        fallback: false,
+      });
+      await appendPersistentMessage(env, {
+        id: turnId + ":a",
+        owner_id: ownerId,
+        role: "assistant",
+        content: String(answer).trim().slice(0, 12000),
+        sources,
+        fallback,
+      });
+    } catch {}
+  }
+
   return json({
     ok: true,
     resposta: String(answer).trim(),
-    fontes: uniqueSources(context),
-    fallback: context.length === 0,
+    fontes: sources,
+    fallback,
+    memory_persisted: Boolean(ownerId),
     provider: "cloudflare-native-do-rag",
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
@@ -478,12 +551,13 @@ async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
-  let documents = null, chunks = null, ready = false;
+  let documents = null, chunks = null, memoryMessages = null, ready = false;
   if (!missing.length) {
     try {
       const st = await libraryCall(env, "/status");
       documents = Number(st.documents || 0);
       chunks = Number(st.chunks || 0);
+      memoryMessages = Number(st.memory_messages || 0);
       ready = st.ok === true;
     } catch {}
   }
@@ -496,7 +570,7 @@ async function status(env) {
     vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
-    documents, chunks,
+    documents, chunks, memory_messages: memoryMessages,
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
@@ -513,6 +587,18 @@ async function handleApi(request, env, url) {
       return json(await status(env));
     }
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
+    if (url.pathname === "/api/memory" && request.method === "GET") {
+      const ownerId = await memoryOwner(request);
+      if (!ownerId) return json({ ok: false, message: "Chave de memória ausente." }, 400);
+      const messages = await readPersistentHistory(env, ownerId, MAX_SERVER_HISTORY);
+      return json({ ok: true, messages, total: messages.length, persistent: true });
+    }
+    if (url.pathname === "/api/memory/clear" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const ownerId = await memoryOwner(request, body);
+      if (!ownerId) return json({ ok: false, message: "Chave de memória ausente." }, 400);
+      return json(await clearPersistentHistory(env, ownerId));
+    }
     if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
 
@@ -568,9 +654,19 @@ export class LibraryDO {
           text TEXT NOT NULL, embedding TEXT NOT NULL, created_at TEXT NOT NULL,
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          sources TEXT NOT NULL DEFAULT '[]',
+          fallback INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
+        CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
       `);
     });
   }
@@ -581,7 +677,8 @@ export class LibraryDO {
       if (url.pathname === "/status") {
         const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
         const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
-        return json({ ok: true, documents: Number(d), chunks: Number(c) });
+        const m = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages")][0]?.n || 0;
+        return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m) });
       }
       if (url.pathname === "/duplicate") {
         const sha = String(url.searchParams.get("sha") || "");
@@ -645,6 +742,53 @@ export class LibraryDO {
         const updates = Array.isArray(body.updates) ? body.updates : [];
         for (const u of updates) this.sql.exec("UPDATE chunks SET embedding = ? WHERE id = ?", JSON.stringify(u.embedding || []), u.id);
         return json({ ok: true, updated: updates.length });
+      }
+      if (url.pathname === "/memory/list" && request.method === "GET") {
+        const ownerId = String(url.searchParams.get("owner_id") || "").trim();
+        const limit = Math.max(1, Math.min(MAX_SERVER_HISTORY, Number(url.searchParams.get("limit") || MAX_SERVER_HISTORY)));
+        if (!ownerId) return json({ ok: true, messages: [], total: 0 });
+        const rows = [...this.sql.exec(
+          "SELECT id, role, content, sources, fallback, created_at FROM conversation_messages WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?",
+          ownerId, limit
+        )].reverse().map(row => {
+          let sources = [];
+          try { sources = JSON.parse(row.sources || "[]"); } catch {}
+          return {
+            id: row.id,
+            role: row.role,
+            content: row.content,
+            sources,
+            fallback: Number(row.fallback || 0) === 1,
+            ts: row.created_at,
+          };
+        });
+        return json({ ok: true, messages: rows, total: rows.length });
+      }
+      if (url.pathname === "/memory/append" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.id || "").slice(0, 160);
+        const ownerId = String(body.owner_id || "").slice(0, 128);
+        const role = body.role === "assistant" ? "assistant" : "user";
+        const content = String(body.content || "").slice(0, 12000);
+        if (!id || !ownerId || !content) return json({ ok: false, message: "Mensagem de memória inválida." }, 400);
+        this.sql.exec(
+          "INSERT OR IGNORE INTO conversation_messages (id,owner_id,role,content,sources,fallback,created_at) VALUES (?,?,?,?,?,?,?)",
+          id, ownerId, role, content, JSON.stringify(Array.isArray(body.sources) ? body.sources : []),
+          body.fallback ? 1 : 0, new Date().toISOString()
+        );
+        this.sql.exec(
+          "DELETE FROM conversation_messages WHERE owner_id = ? AND id NOT IN (SELECT id FROM conversation_messages WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?)",
+          ownerId, ownerId, MAX_SERVER_HISTORY
+        );
+        return json({ ok: true });
+      }
+      if (url.pathname === "/memory/clear" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const ownerId = String(body.owner_id || "").slice(0, 128);
+        if (!ownerId) return json({ ok: true, cleared: 0 });
+        const before = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages WHERE owner_id = ?", ownerId)][0]?.n || 0;
+        this.sql.exec("DELETE FROM conversation_messages WHERE owner_id = ?", ownerId);
+        return json({ ok: true, cleared: Number(before) });
       }
       if (url.pathname === "/search" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
