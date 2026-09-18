@@ -31,6 +31,9 @@ jobs:
           grep -q '@cf/myshell-ai/melotts' src/index.js
           ! grep -q 'onrender.com' src/index.js
           test -s migrations/0001_init.sql
+          bash -n scripts/workers-builds-bootstrap.sh
+          grep -q '"cf:bootstrap"' package.json
+          grep -q '"cf:deploy"' package.json
           test -s ../.github/workflows/provision-cloudflare-native-rag.yml
           test -s ../.github/workflows/fire-test-cloudflare-native-rag.yml
           test -s ../.github/workflows/deploy-cloudflare-native-v1.yml
