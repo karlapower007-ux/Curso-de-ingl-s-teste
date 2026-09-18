@@ -5,7 +5,6 @@ const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const TTS_MODEL = "@cf/myshell-ai/melotts";
-const TTS_FALLBACK_MODEL = "@cf/deepgram/aura-1";
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
@@ -798,55 +797,36 @@ async function tts(request, env) {
   const text = String(body?.text || "").trim().slice(0, 5000);
   if (!text) return json({ ok: false, message: "Texto vazio." }, 400);
 
-  // MeloTTS may return JSON with base64 audio instead of a raw Response.
-  try {
-    const result = await env.AI.run(TTS_MODEL, { prompt: text, lang: "pt" });
-    if (result?.audio && typeof result.audio === "string") {
-      const binary = atob(result.audio);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new Response(bytes, {
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "Cache-Control": "no-store",
-          "X-FNS-TTS-Provider": "melotts",
-        },
-      });
-    }
-    if (result instanceof ReadableStream) {
-      return new Response(result, {
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "Cache-Control": "no-store",
-          "X-FNS-TTS-Provider": "melotts-stream",
-        },
-      });
-    }
-  } catch {}
-
-  // Cloudflare-native fallback. Aura returns a raw audio response and avoids
-  // falling back to the browser when MeloTTS has no Portuguese voice available.
+  // Explicit Portuguese target. Cloudflare's MeloTTS schema uses "lang".
+  // We do NOT fall back to Aura-1 here because an English-only/English-accent
+  // server fallback is worse than the browser's native pt-BR voice.
   try {
     const raw = await env.AI.run(
-      TTS_FALLBACK_MODEL,
-      { text },
+      TTS_MODEL,
+      { prompt: text, lang: "pt" },
       { returnRawResponse: true },
     );
+
     if (raw instanceof Response && raw.ok && raw.body) {
       const headers = new Headers(raw.headers);
       if (!headers.get("Content-Type")) headers.set("Content-Type", "audio/mpeg");
       headers.set("Cache-Control", "no-store");
-      headers.set("X-FNS-TTS-Provider", "aura-1");
+      headers.set("X-FNS-TTS-Provider", "melotts");
+      headers.set("X-FNS-TTS-Language", "pt-BR");
       return new Response(raw.body, { status: 200, headers });
     }
   } catch {}
 
   return json({
     ok: false,
-    message: "TTS nativo indisponível; o navegador continuará usando a voz pt-BR local.",
-  }, 503);
+    browser_fallback: true,
+    language: "pt-BR",
+    message: "TTS do servidor sem voz portuguesa confiável; usar voz natural pt-BR do navegador.",
+  }, 503, {
+    "X-FNS-TTS-Language": "pt-BR",
+    "X-FNS-TTS-Provider": "browser-pt-BR",
+  });
 }
-
 async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
@@ -878,6 +858,9 @@ async function status(env) {
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
     tts_model: TTS_MODEL,
+    tts_language: "pt-BR",
+    tts_english_fallback_disabled: true,
+    trigger_index_route: "/api/trigger-index",
     admin_auth: "native-password",
     direct_r2_upload: true,
     upload_body_limit_bypassed: true,
@@ -886,7 +869,7 @@ async function status(env) {
 
 async function handleApi(request, env, url) {
   try {
-    if (url.pathname.startsWith("/api/admin/") && !(await adminAuthorized(request, env))) {
+    if ((url.pathname.startsWith("/api/admin/") || url.pathname === "/api/trigger-index") && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/status" && request.method === "GET") {
@@ -913,6 +896,9 @@ async function handleApi(request, env, url) {
 
     if (url.pathname === "/api/admin/direct-upload-ticket" && request.method === "POST") {
       return await createDirectUploadTicket(request, env);
+    }
+    if (url.pathname === "/api/trigger-index" && request.method === "POST") {
+      return await indexDirectUpload(request, env);
     }
     if (url.pathname === "/api/admin/index-r2" && request.method === "POST") {
       return await indexDirectUpload(request, env);
