@@ -1,0 +1,12 @@
+{
+  "name": "avatar-fabiano-site",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}
