@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090b13">
+  <title>Consciência do Fabiano</title>
+  <link rel="preload" as="image" href="/fabiano-fechado.png">
+  <link rel="preload" as="image" href="/fabiano-falando.png">
+  <link rel="preload" as="image" href="/fabiano-aberto.png">
+  <link rel="stylesheet" href="/style.css?v=1">
+</head>
+<body>
+  <div class="stars"></div>
+
+  <section id="loginView" class="login-shell">
+    <div class="login-card">
+      <div class="seal">FNS</div>
+      <p class="eyebrow">ARQUIVO PESSOAL</p>
+      <h1>Consciência do Fabiano</h1>
+      <p class="muted">Uma biblioteca viva para pensar, estudar e conversar em português.</p>
+      <input id="tokenInput" type="password" autocomplete="current-password" placeholder="Chave privada">
+      <button id="loginBtn" class="primary">Entrar</button>
+      <p id="loginStatus" class="status"></p>
+    </div>
+  </section>
+
+  <main id="appView" class="app hidden">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">ENCICLOPÉDIA PESSOAL</p>
+        <h1>Consciência do Fabiano</h1>
+      </div>
+      <div class="top-actions">
+        <button id="chatTab" class="ghost active">Conversar</button>
+        <button id="libraryTab" class="ghost">Biblioteca</button>
+        <button id="logoutBtn" class="ghost danger">Sair</button>
+      </div>
+    </header>
+
+    <section id="chatPanel" class="panel-grid">
+      <aside class="avatar-card">
+        <div class="avatar-orbit">
+          <img id="avatarImg" src="/fabiano-fechado.png" alt="Avatar Fabiano">
+        </div>
+        <h2>Fabiano</h2>
+        <p id="avatarState" class="state">Pronto para conversar</p>
+        <div class="status-row">
+          <span id="backendDot" class="dot"></span>
+          <span id="backendText">Verificando biblioteca…</span>
+        </div>
+        <p class="small">Os PDFs podem estar em português, inglês ou outros idiomas. As respostas ficam em português.</p>
+      </aside>
+
+      <section class="conversation-card">
+        <div id="messages" class="messages"></div>
+        <div class="composer">
+          <textarea id="questionInput" rows="3" placeholder="Converse com a sua consciência…"></textarea>
+          <div class="composer-actions">
+            <button id="micBtn" class="secondary">🎙️ Falar</button>
+            <button id="sendBtn" class="primary">Perguntar</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="libraryPanel" class="library hidden">
+      <div class="library-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">MEMÓRIA DOCUMENTAL</p>
+            <h2>Biblioteca de PDFs</h2>
+          </div>
+          <button id="reindexBtn" class="secondary">Reindexar</button>
+        </div>
+
+        <label class="dropzone" for="pdfInput">
+          <strong>Adicionar PDF</strong>
+          <span>Livros, artigos, discursos, filosofia, religião, arte, história e muito mais.</span>
+          <input id="pdfInput" type="file" accept="application/pdf,.pdf">
+        </label>
+        <button id="uploadBtn" class="primary full">Enviar e indexar</button>
+        <p id="adminStatus" class="status"></p>
+
+        <div class="library-note">
+          <strong>Regra de resposta</strong>
+          <p>O Fabiano consulta a fonte no idioma original e explica em português. Quando a página estiver disponível, ela aparece junto da referência.</p>
+        </div>
+
+        <div id="booksList" class="books"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js?v=1" defer></script>
+</body>
+</html>
