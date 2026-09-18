@@ -55,7 +55,7 @@ try {
   await page.waitForFunction(() => {
     const text = document.querySelector("#adminStatus")?.textContent || "";
     return text.startsWith("Concluído:") || text.startsWith("Já indexado:");
-  }, { timeout: 240000 });
+  }, null, { timeout: 240000 });
 
   const finalStatus = await page.locator("#adminStatus").textContent();
   const bookName = pdfPath.split("/").pop();
