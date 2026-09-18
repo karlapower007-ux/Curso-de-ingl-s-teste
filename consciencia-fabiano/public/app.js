@@ -2,6 +2,7 @@
   const $ = id => document.getElementById(id);
   const HISTORY_KEY = "consciencia_fabiano_history_v1";
   const MEMORY_KEY = "consciencia_fabiano_memory_secret_v1";
+  const ADMIN_PASSWORD_KEY = "consciencia_fabiano_admin_password_v1";
   const MAX_HISTORY = 60;
 
   let history = [];
@@ -60,8 +61,17 @@
     return { "X-FNS-Memory-Key": memorySecret, ...extra };
   }
 
+  function adminHeaders(extra = {}) {
+    const headers = new Headers(authHeaders(extra));
+    const password = sessionStorage.getItem(ADMIN_PASSWORD_KEY) || "";
+    if (password) headers.set("X-FNS-Admin-Password", password);
+    return headers;
+  }
+
   async function api(path, options = {}) {
-    const headers = new Headers(authHeaders(options.headers || {}));
+    const headers = path.startsWith("/api/admin/")
+      ? adminHeaders(options.headers || {})
+      : new Headers(authHeaders(options.headers || {}));
     const res = await fetch(path, { ...options, headers });
     const ct = res.headers.get("content-type") || "";
     const body = ct.includes("application/json") ? await res.json() : await res.text();
@@ -69,6 +79,99 @@
       throw new Error(body?.message || body?.detail || body?.error || String(body));
     }
     return body;
+  }
+
+  async function verifyAdminPassword(password) {
+    const res = await fetch("/api/admin/session", {
+      method: "GET",
+      headers: {
+        "X-FNS-Memory-Key": memorySecret,
+        "X-FNS-Admin-Password": password
+      }
+    });
+    return res.ok;
+  }
+
+  async function ensureAdminLogin() {
+    const existing = sessionStorage.getItem(ADMIN_PASSWORD_KEY) || "";
+    if (existing && await verifyAdminPassword(existing).catch(() => false)) return true;
+    sessionStorage.removeItem(ADMIN_PASSWORD_KEY);
+
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.id = "nativeAdminLogin";
+      overlay.style.cssText = [
+        "position:fixed","inset:0","z-index:99999","display:grid","place-items:center",
+        "background:radial-gradient(circle at top,#18223a 0,#070b12 55%,#020305 100%)",
+        "padding:24px","font-family:system-ui,-apple-system,Segoe UI,sans-serif"
+      ].join(";");
+
+      const card = document.createElement("form");
+      card.autocomplete = "off";
+      card.style.cssText = [
+        "width:min(430px,92vw)","background:#0d1420","color:#fff","border:1px solid #29364a",
+        "border-radius:18px","padding:28px","box-shadow:0 24px 80px rgba(0,0,0,.55)"
+      ].join(";");
+
+      const title = document.createElement("h1");
+      title.textContent = "Área administrativa";
+      title.style.cssText = "margin:0 0 8px;font-size:26px";
+
+      const subtitle = document.createElement("p");
+      subtitle.textContent = "Digite a palavra-passe para acessar sua biblioteca privada.";
+      subtitle.style.cssText = "margin:0 0 22px;color:#aab7c8;line-height:1.45";
+
+      const input = document.createElement("input");
+      input.type = "password";
+      input.placeholder = "Palavra-passe";
+      input.autocomplete = "current-password";
+      input.required = true;
+      input.style.cssText = [
+        "width:100%","box-sizing:border-box","padding:14px 15px","font-size:17px",
+        "border-radius:10px","border:1px solid #3a4a63","background:#070c14","color:#fff",
+        "outline:none"
+      ].join(";");
+
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.textContent = "Entrar";
+      button.style.cssText = [
+        "width:100%","margin-top:14px","padding:13px","font-size:16px","font-weight:700",
+        "border:0","border-radius:10px","cursor:pointer","background:#fff","color:#101722"
+      ].join(";");
+
+      const status = document.createElement("div");
+      status.style.cssText = "min-height:22px;margin-top:12px;color:#ff9b9b;font-size:14px";
+
+      card.append(title, subtitle, input, button, status);
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      input.focus();
+
+      card.addEventListener("submit", async e => {
+        e.preventDefault();
+        const password = input.value;
+        button.disabled = true;
+        button.textContent = "Verificando…";
+        status.textContent = "";
+        try {
+          const ok = await verifyAdminPassword(password);
+          if (!ok) throw new Error("Palavra-passe incorreta.");
+          sessionStorage.setItem(ADMIN_PASSWORD_KEY, password);
+          overlay.remove();
+          document.body.style.overflow = previousOverflow;
+          resolve(true);
+        } catch (error) {
+          status.textContent = error.message || "Não foi possível autenticar.";
+          input.select();
+        } finally {
+          button.disabled = false;
+          button.textContent = "Entrar";
+        }
+      });
+    });
   }
 
   function setAvatar(mode) {
@@ -350,7 +453,7 @@
       fd.append("arquivo", file, file.name);
       const res = await fetch("/api/admin/upload-pdf", {
         method: "POST",
-        headers: authHeaders(),
+        headers: adminHeaders(),
         body: fd
       });
       const data = await res.json().catch(() => ({}));
@@ -460,10 +563,22 @@
     } catch {}
   };
 
-  loadHistory();
-  renderHistory();
-  syncPersistentHistory();
-  switchPanel(location.pathname === "/admin" ? "library" : "chat");
-  checkBackend();
-  loadBooks();
+  async function initialize() {
+    const isAdmin = location.pathname === "/admin";
+    if (isAdmin) {
+      const authenticated = await ensureAdminLogin();
+      if (!authenticated) return;
+    }
+
+    loadHistory();
+    renderHistory();
+    syncPersistentHistory();
+    switchPanel(isAdmin ? "library" : "chat");
+    checkBackend();
+    if (isAdmin) loadBooks();
+  }
+
+  initialize().catch(error => {
+    console.error("Falha ao inicializar:", error);
+  });
 })();
