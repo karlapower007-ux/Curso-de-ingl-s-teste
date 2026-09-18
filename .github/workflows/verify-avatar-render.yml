@@ -1,0 +1,59 @@
+name: Verify Avatar Fabiano Render
+
+on:
+  push:
+    branches:
+      - avatar-fabiano-production
+    paths:
+      - 'avatar-fabiano/**'
+      - '.github/workflows/verify-avatar-render.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source UI contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'FABIANO_UI_V2_20260917' avatar-fabiano/static/index.html
+          grep -q 'FABIANO_UI_V2_20260917' avatar-fabiano/static/admin.html
+          grep -q 'avatar-fabiano-perfil.png' avatar-fabiano/static/index.html
+          grep -q 'avatar-fabiano-debatendo.png' avatar-fabiano/static/index.html
+          grep -q "API + '/perguntar'" avatar-fabiano/static/index.html
+          grep -q "searchParams.set('_ts'" avatar-fabiano/static/index.html
+          grep -q 'object-fit:cover' avatar-fabiano/static/index.html
+          grep -q 'border-radius:50%' avatar-fabiano/static/index.html
+          grep -q "window.__FNS_AVATAR_FABIANO_WIDGET_V2__" avatar-fabiano/static/fns-avatar-widget.js
+          node --check avatar-fabiano/static/fns-avatar-widget.js
+
+      - name: Wait for Render auto-deploy and verify live pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://avatar-fabiano-api.onrender.com'
+          ok=0
+          for i in $(seq 1 60); do
+            echo "Render verification attempt $i/60"
+            if curl --compressed --fail --silent --show-error --max-time 25 "$BASE/" -o /tmp/index.html &&
+               curl --compressed --fail --silent --show-error --max-time 25 "$BASE/admin" -o /tmp/admin.html &&
+               grep -q 'FABIANO_UI_V2_20260917' /tmp/index.html &&
+               grep -q 'FABIANO_UI_V2_20260917' /tmp/admin.html &&
+               grep -q 'avatar-fabiano-perfil.png' /tmp/index.html &&
+               grep -q 'avatar-fabiano-debatendo.png' /tmp/index.html &&
+               grep -q '/perguntar' /tmp/index.html; then
+              ok=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ok" = "1"
+          curl --compressed --fail --silent --show-error --max-time 25 "$BASE/static/avatar-fabiano-perfil.png" -o /tmp/perfil.png
+          curl --compressed --fail --silent --show-error --max-time 25 "$BASE/static/avatar-fabiano-debatendo.png" -o /tmp/debatendo.png
+          test -s /tmp/perfil.png
+          test -s /tmp/debatendo.png
+          echo 'LIVE RENDER UI PASS'
