@@ -1013,6 +1013,7 @@ async function status(env) {
     backend_stt_tts_enabled: false,
     rag_streaming: "sse",
     asynchronous_indexing: true,
+    background_executor: "durable-object-alarm",
     trigger_index_route: "/api/trigger-index",
     admin_auth: "native-password",
     direct_r2_upload: true,
@@ -1285,6 +1286,26 @@ export class LibraryDO {
     }
   }
 
+  async alarm() {
+    const row = [...this.sql.exec(
+      "SELECT document_id,r2_key,filename,size_bytes FROM index_jobs WHERE status='processing' ORDER BY updated_at DESC LIMIT 1"
+    )][0] || null;
+
+    if (!row) return;
+
+    await this.processPdfJob({
+      document_id: row.document_id,
+      r2_key: row.r2_key,
+      filename: row.filename,
+      size_bytes: Number(row.size_bytes || 0),
+    });
+
+    const pending = [...this.sql.exec(
+      "SELECT document_id FROM index_jobs WHERE status='processing' ORDER BY updated_at DESC LIMIT 1"
+    )][0] || null;
+    if (pending) await this.ctx.storage.setAlarm(Date.now() + 250);
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     try {
@@ -1313,8 +1334,15 @@ export class LibraryDO {
       }
       if (url.pathname === "/process-pdf" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
-        this.ctx.waitUntil(this.processPdfJob(body));
-        return json({ ok: true, status: "processing", document_id: String(body?.document_id || "") }, 202);
+        const documentId = String(body?.document_id || "").trim();
+        if (!documentId) return json({ ok: false, message: "document_id ausente." }, 400);
+        await this.ctx.storage.setAlarm(Date.now() + 50);
+        return json({
+          ok: true,
+          status: "processing",
+          document_id: documentId,
+          execution: "durable-object-alarm"
+        }, 202);
       }
       if (url.pathname === "/job-status" && request.method === "GET") {
         const documentId = String(url.searchParams.get("document_id") || "").trim();
