@@ -1,0 +1,35 @@
+name: Probe R2 Temporary Credentials
+
+on:
+  push:
+    branches: [consciencia-fabiano-fabiano-cloudflare]
+    paths:
+      - '.github/workflows/probe-r2-temp-creds.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Probe temporary credentials API
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY="$(curl -fsS -H "Authorization: Bearer $CF_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          TOKEN_ID="$(printf '%s' "$VERIFY" | jq -r '.result.id')"
+          ACCOUNT_ID="$(curl -fsS -H "Authorization: Bearer $CF_TOKEN" 'https://api.cloudflare.com/client/v4/accounts?per_page=50' | jq -r '.result[0].id')"
+          STATUS="$(curl -sS -o /tmp/temp.json -w '%{http_code}'             -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/r2/temp-access-credentials"             -H "Authorization: Bearer $CF_TOKEN"             -H 'Content-Type: application/json'             --data "$(jq -nc --arg b 'consciencia-fabiano-pdfs' --arg p "$TOKEN_ID" '{bucket:$b,parentAccessKeyId:$p,permission:"object-read-write",ttlSeconds:900,prefixes:["direct-upload-probe/"]}')")"
+          echo "TEMP_CREDS_HTTP=$STATUS"
+          echo "TEMP_CREDS_SUCCESS=$(jq -r '.success // false' /tmp/temp.json)"
+          echo "TEMP_CREDS_ERROR_CODES=$(jq -c '[.errors[]?.code]' /tmp/temp.json)"
+          echo "TEMP_CREDS_ERROR_MESSAGES=$(jq -c '[.errors[]?.message]' /tmp/temp.json)"
+          if [ "$STATUS" = "200" ] && jq -e '.success == true and .result.accessKeyId and .result.secretAccessKey and .result.sessionToken' /tmp/temp.json >/dev/null; then
+            echo "TEMP_CREDS_READY=yes"
+          else
+            exit 1
+          fi
