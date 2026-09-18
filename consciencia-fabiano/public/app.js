@@ -504,8 +504,12 @@
       const data = await api("/api/status");
       const up = data?.ok === true && data?.architecture === "cloudflare-native";
       $("backendDot").className = "dot " + (up ? "ok" : "bad");
+      const matrix = data?.ingestion_matrix;
+      const matrixText = matrix?.total_turbines
+        ? " • Matriz " + matrix.total_turbines + " turbinas"
+        : "";
       $("backendText").textContent = up
-        ? "Cloudflare RAG nativo • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
+        ? "Cloudflare RAG nativo • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos" + matrixText
         : "Infraestrutura documental ainda não provisionada";
     } catch {
       $("backendDot").className = "dot bad";
@@ -604,9 +608,16 @@
         throw new Error(data.error || "A indexação falhou no processamento em background.");
       }
 
-      const chunksText = Number(data.chunks || 0) > 0 ? " • " + data.chunks + " trechos processados" : "";
+      const pagesDone = Number(data.extracted_pages || 0);
+      const pagesTotal = Number(data.paginas || 0);
+      const produced = Number(data.produced_chunks || 0);
+      const embedded = Number(data.embedded_chunks || data.chunks || 0);
       $("adminStatus").textContent =
-        "Indexando em segundo plano…" + chunksText + " Pode continuar usando a página.";
+        "Matriz 100 Turbinas • Extração 50 + Memória 50 • " +
+        "páginas " + pagesDone + "/" + pagesTotal +
+        " • chunks " + produced +
+        " • vetores " + embedded +
+        " • processamento em segundo plano.";
       await sleep(1400);
     }
     throw new Error("A indexação continua em segundo plano por mais tempo que o esperado.");
