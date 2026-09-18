@@ -3,46 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#090b13">
-  <title>Consciência do Fabiano</title>
+  <meta name="theme-color" content="#0f172a">
+  <title>Consciência do Fabiano - V1.0</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
-  <link rel="stylesheet" href="/style.css?v=2">
+  <link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
-  <div class="stars"></div>
+  <header class="site-header">
+    <div>
+      <span class="header-kicker">SISTEMA NATIVO V1.0</span>
+      <strong>Consciência do Fabiano</strong>
+    </div>
+    <div class="top-actions">
+      <button id="chatTab" class="ghost active" type="button">Conversar</button>
+      <button id="libraryTab" class="ghost" type="button">Biblioteca</button>
+    </div>
+  </header>
 
   <main id="appView" class="app">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">ENCICLOPÉDIA PESSOAL</p>
-        <h1>Consciência do Fabiano</h1>
-      </div>
-      <div class="top-actions">
-        <button id="chatTab" class="ghost active">Conversar</button>
-        <button id="libraryTab" class="ghost">Biblioteca</button>
-      </div>
-    </header>
-
-    <section id="chatPanel" class="panel-grid">
-      <aside class="avatar-card">
-        <div class="avatar-orbit">
+    <section id="chatPanel" class="chat-layout">
+      <aside class="avatar-container">
+        <div class="avatar-circle">
           <img id="avatarImg" src="/fabiano-fechado.png" alt="Avatar Fabiano">
         </div>
-        <h2>Fabiano</h2>
-        <p id="avatarState" class="state">Pronto para conversar</p>
+        <h1>Fabiano</h1>
+        <p id="avatarState" class="status-text">Pronto para iniciar</p>
         <div class="status-row">
           <span id="backendDot" class="dot"></span>
           <span id="backendText">Verificando biblioteca…</span>
         </div>
-        <p class="small">Os PDFs podem estar em português, inglês ou outros idiomas. As respostas ficam em português.</p>
+        <p class="avatar-note">Consulta PDFs em português, inglês e outros idiomas e responde em português com referências quando disponíveis.</p>
       </aside>
 
-      <section class="conversation-card">
-        <div id="messages" class="messages"></div>
+      <section class="chat-section">
+        <div id="messages" class="chat-box"></div>
+
         <div class="composer">
-          <textarea id="questionInput" rows="3" placeholder="Converse com a sua consciência…"></textarea>
+          <textarea id="questionInput" rows="2" placeholder="Escreva a sua mensagem ou pergunta..." autocomplete="off"></textarea>
           <div class="composer-options">
             <label class="check-option">
               <input id="autoSendVoice" type="checkbox" checked>
@@ -50,9 +49,9 @@
             </label>
             <button id="clearChatBtn" class="ghost small-btn" type="button">Limpar conversa</button>
           </div>
-          <div class="composer-actions">
-            <button id="micBtn" class="secondary">🎙️ Falar</button>
-            <button id="sendBtn" class="primary">Perguntar</button>
+          <div class="input-area">
+            <button id="micBtn" class="secondary" type="button">🎙️ Falar</button>
+            <button id="sendBtn" class="primary" type="button">Enviar</button>
           </div>
         </div>
       </section>
@@ -65,7 +64,7 @@
             <p class="eyebrow">MEMÓRIA DOCUMENTAL</p>
             <h2>Biblioteca de PDFs</h2>
           </div>
-          <button id="reindexBtn" class="secondary">Reindexar</button>
+          <button id="reindexBtn" class="secondary" type="button">Reindexar</button>
         </div>
 
         <label class="dropzone" for="pdfInput">
@@ -73,12 +72,12 @@
           <span>Livros, artigos, discursos, filosofia, religião, arte, história e muito mais.</span>
           <input id="pdfInput" type="file" accept="application/pdf,.pdf">
         </label>
-        <button id="uploadBtn" class="primary full">Enviar e indexar</button>
+        <button id="uploadBtn" class="primary full" type="button">Enviar e indexar</button>
         <p id="adminStatus" class="status"></p>
 
         <div class="library-note">
           <strong>Regra de resposta</strong>
-          <p>O Fabiano consulta a fonte no idioma original e explica em português. Quando a página estiver disponível, ela aparece junto da referência.</p>
+          <p>O sistema consulta a fonte no idioma original e explica em português. Quando a página estiver disponível, ela aparece junto da referência.</p>
         </div>
 
         <div id="booksList" class="books"></div>
@@ -86,6 +85,6 @@
     </section>
   </main>
 
-  <script src="/app.js?v=2" defer></script>
+  <script src="/app.js?v=3" defer></script>
 </body>
 </html>
