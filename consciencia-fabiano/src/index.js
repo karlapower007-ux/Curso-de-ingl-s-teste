@@ -42,6 +42,10 @@ function safeName(name) {
     .slice(0, 180) || "documento.pdf";
 }
 
+function r2ObjectKey(documentId, filename) {
+  return `pdfs/${String(documentId || "").trim()}/${safeName(filename)}`;
+}
+
 function uuidCompact() {
   return crypto.randomUUID().replace(/-/g, "");
 }
@@ -70,6 +74,14 @@ function assertBindings(env) {
   if (!env.LIBRARY) missing.push("LIBRARY");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
+    err.code = "BINDINGS_MISSING";
+    throw err;
+  }
+}
+
+function assertPdfStorage(env) {
+  if (!env.PDFS) {
+    const err = new Error("Binding R2 ausente: PDFS");
     err.code = "BINDINGS_MISSING";
     throw err;
   }
@@ -249,6 +261,7 @@ async function convertPdf(env, filename, buffer) {
 
 async function uploadPdf(request, env) {
   assertBindings(env);
+  assertPdfStorage(env);
   const form = await request.formData();
   const file = form.get("arquivo");
   if (!(file instanceof File)) return json({ ok: false, message: "PDF não enviado." }, 400);
@@ -262,7 +275,23 @@ async function uploadPdf(request, env) {
   const digest = await sha256Buffer(buffer);
   const duplicate = await libraryCall(env, "/duplicate?sha=" + encodeURIComponent(digest));
   if (duplicate.document) {
-    return json({ ok: true, duplicate: true, ...duplicate.document, message: "Este PDF já existe na biblioteca." });
+    const duplicateKey = r2ObjectKey(duplicate.document.id, duplicate.document.arquivo);
+    const existingObject = await env.PDFS.head(duplicateKey);
+    if (!existingObject) {
+      await env.PDFS.put(duplicateKey, buffer, {
+        httpMetadata: { contentType: "application/pdf" },
+        customMetadata: { document_id: duplicate.document.id, sha256: digest },
+      });
+    }
+    return json({
+      ok: true,
+      duplicate: true,
+      ...duplicate.document,
+      storage: "r2-original+durable-object-sqlite-index",
+      r2_key: duplicateKey,
+      r2_backfilled: !existingObject,
+      message: "Este PDF já existe na biblioteca.",
+    });
   }
 
   const markdown = await convertPdf(env, filename, buffer);
@@ -292,16 +321,28 @@ async function uploadPdf(request, env) {
     chunk_count: chunks.length, status: "ready",
   };
 
-  await libraryCall(env, "/ingest", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ document, chunks }),
+  const objectKey = r2ObjectKey(documentId, filename);
+  await env.PDFS.put(objectKey, buffer, {
+    httpMetadata: { contentType: "application/pdf" },
+    customMetadata: { document_id: documentId, sha256: digest },
   });
+
+  try {
+    await libraryCall(env, "/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document, chunks }),
+    });
+  } catch (error) {
+    await env.PDFS.delete(objectKey).catch(() => {});
+    throw error;
+  }
 
   return json({
     ok: true, document_id: documentId, arquivo: filename, titulo: metadata.title,
     autor: metadata.author, idioma: language, paginas: pages.length, chunks: chunks.length,
-    storage: "durable-object-sqlite",
+    storage: "r2-original+durable-object-sqlite-index",
+    r2_key: objectKey,
   }, 201);
 }
 
@@ -310,17 +351,55 @@ async function listBooks(env) {
   return libraryCall(env, "/docs");
 }
 
+async function r2ObjectStatus(request, env, url) {
+  assertBindings(env);
+  assertPdfStorage(env);
+  const documentId = String(url.searchParams.get("document_id") || "").trim();
+  const arquivo = String(url.searchParams.get("arquivo") || "").trim();
+  if (!documentId && !arquivo) return json({ ok: false, message: "Informe document_id ou arquivo." }, 400);
+
+  const docs = await listBooks(env);
+  const row = (docs.livros || []).find(d =>
+    (documentId && d.id === documentId) || (!documentId && arquivo && d.arquivo === arquivo)
+  );
+  if (!row) return json({ ok: false, message: "Documento não encontrado no índice." }, 404);
+
+  const key = r2ObjectKey(row.id, row.arquivo);
+  const head = await env.PDFS.head(key);
+  return json({
+    ok: true,
+    exists: Boolean(head),
+    document_id: row.id,
+    arquivo: row.arquivo,
+    r2_key: key,
+    size: head?.size ?? null,
+    etag: head?.etag ?? null,
+    storage_class: head?.storageClass ?? null,
+  });
+}
+
 async function deletePdf(request, env) {
   assertBindings(env);
+  assertPdfStorage(env);
   const body = await request.json().catch(() => ({}));
-  return json(await libraryCall(env, "/delete", {
+  const deleted = await libraryCall(env, "/delete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       document_id: String(body?.document_id || ""),
       arquivo: String(body?.arquivo || ""),
     }),
-  }));
+  });
+  const key = r2ObjectKey(deleted.document_id, deleted.arquivo);
+  let r2Deleted = true;
+  let warning = null;
+  try {
+    await env.PDFS.delete(key);
+  } catch (error) {
+    r2Deleted = false;
+    warning = "Índice removido; limpeza do objeto R2 deverá ser repetida.";
+  }
+  return json({ ...deleted, r2_deleted: r2Deleted, r2_key: key, warning });
 }
 
 async function reindexLibrary(request, env) {
@@ -551,6 +630,7 @@ async function status(env) {
   const missing = [];
   if (!env.AI) missing.push("AI");
   if (!env.LIBRARY) missing.push("LIBRARY");
+  if (!env.PDFS) missing.push("PDFS");
   let documents = null, chunks = null, memoryMessages = null, ready = false;
   if (!missing.length) {
     try {
@@ -566,7 +646,9 @@ async function status(env) {
     service: "Consciência do Fabiano",
     version: VERSION,
     architecture: "cloudflare-native",
-    storage_backend: "durable-object-sqlite",
+    storage_backend: "r2-originals+durable-object-sqlite",
+    pdf_storage: "r2",
+    r2_binding: "PDFS",
     vector_backend: "durable-object-cosine",
     render_dependency: false,
     bindings_missing: missing,
@@ -607,6 +689,9 @@ async function handleApi(request, env, url) {
     }
     if (url.pathname === "/api/admin/livros" && request.method === "GET") {
       return json(await listBooks(env));
+    }
+    if (url.pathname === "/api/admin/r2-object" && request.method === "GET") {
+      return await r2ObjectStatus(request, env, url);
     }
     if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") {
       return await deletePdf(request, env);
