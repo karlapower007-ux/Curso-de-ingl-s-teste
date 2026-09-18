@@ -3,6 +3,8 @@ services:
     name: avatar-fabiano-api
     runtime: python
     plan: free
+    repo: https://github.com/karlapower007-ux/Curso-de-ingl-s-teste
+    branch: avatar-fabiano-production
     rootDir: avatar-fabiano
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
