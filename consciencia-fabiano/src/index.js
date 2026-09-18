@@ -1018,6 +1018,13 @@ async function status(env) {
     rag_streaming: "sse",
     asynchronous_indexing: true,
     background_executor: "durable-object-alarm",
+    ingestion_matrix: {
+      extraction_turbines: EXTRACTION_TURBINES,
+      embedding_turbines: EMBEDDING_TURBINES,
+      total_turbines: EXTRACTION_TURBINES + EMBEDDING_TURBINES,
+      pipelined: true,
+      parser: "unpdf-serverless-pdfjs"
+    },
     trigger_index_route: "/api/trigger-index",
     admin_auth: "native-password",
     direct_r2_upload: true,
@@ -1499,13 +1506,13 @@ export class LibraryDO {
         const existing = [...this.sql.exec("SELECT document_id,status FROM index_jobs WHERE document_id=? LIMIT 1", documentId)][0] || null;
         if (existing) {
           this.sql.exec(
-            "UPDATE index_jobs SET r2_key=?, filename=?, size_bytes=?, status='processing', chunks=0, page_count=0, duplicate_of=NULL, error_message=NULL, updated_at=? WHERE document_id=?",
+            "UPDATE index_jobs SET r2_key=?, filename=?, size_bytes=?, status='processing', chunks=0, page_count=0, extracted_pages=0, produced_chunks=0, duration_ms=NULL, started_at=NULL, finished_at=NULL, duplicate_of=NULL, error_message=NULL, updated_at=? WHERE document_id=?",
             r2Key, filename, Number(body?.size_bytes || 0), now, documentId
           );
         } else {
           this.sql.exec(
-            "INSERT INTO index_jobs (document_id,r2_key,filename,size_bytes,status,chunks,page_count,duplicate_of,error_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            documentId, r2Key, filename, Number(body?.size_bytes || 0), "processing", 0, 0, null, null, now, now
+            "INSERT INTO index_jobs (document_id,r2_key,filename,size_bytes,status,chunks,page_count,extracted_pages,produced_chunks,duration_ms,started_at,finished_at,duplicate_of,error_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            documentId, r2Key, filename, Number(body?.size_bytes || 0), "processing", 0, 0, 0, 0, null, null, null, null, null, now, now
           );
         }
         return json({ ok: true, status: "processing", document_id: documentId });
@@ -1525,7 +1532,7 @@ export class LibraryDO {
       if (url.pathname === "/job-status" && request.method === "GET") {
         const documentId = String(url.searchParams.get("document_id") || "").trim();
         const row = [...this.sql.exec(
-          "SELECT document_id,r2_key,filename,size_bytes,status,chunks,page_count,duplicate_of,error_message,created_at,updated_at FROM index_jobs WHERE document_id=? LIMIT 1",
+          "SELECT document_id,r2_key,filename,size_bytes,status,chunks,page_count,extracted_pages,produced_chunks,duration_ms,started_at,finished_at,duplicate_of,error_message,created_at,updated_at FROM index_jobs WHERE document_id=? LIMIT 1",
           documentId
         )][0] || null;
         if (!row) return json({ ok: false, status: "not_found", message: "Job de indexação não encontrado." }, 404);
@@ -1538,6 +1545,15 @@ export class LibraryDO {
           status: row.status,
           chunks: Number(row.chunks || 0),
           paginas: Number(row.page_count || 0),
+          extracted_pages: Number(row.extracted_pages || 0),
+          produced_chunks: Number(row.produced_chunks || 0),
+          embedded_chunks: Number(row.chunks || 0),
+          extraction_turbines: EXTRACTION_TURBINES,
+          embedding_turbines: EMBEDDING_TURBINES,
+          total_turbines: EXTRACTION_TURBINES + EMBEDDING_TURBINES,
+          duration_ms: row.duration_ms == null ? null : Number(row.duration_ms),
+          started_at: row.started_at || null,
+          finished_at: row.finished_at || null,
           duplicate_of: row.duplicate_of || null,
           error: row.error_message || null,
           created_at: row.created_at,
