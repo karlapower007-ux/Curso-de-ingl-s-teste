@@ -91,11 +91,24 @@
         const row = document.createElement("div");
         row.className = "source";
         const strong = document.createElement("strong");
-        strong.textContent = item.arquivo || "Fonte";
+        strong.textContent = item.titulo || item.arquivo || "Fonte";
         row.appendChild(strong);
-        if (item.pagina) row.appendChild(document.createTextNode(" — página " + item.pagina));
+
+        const meta = [];
+        if (item.autor) meta.push("autor: " + item.autor);
+        if (item.pagina) meta.push("página " + item.pagina);
+        if (item.idioma && item.idioma !== "unknown") meta.push("idioma: " + item.idioma);
+        if (item.arquivo && item.titulo && item.arquivo !== item.titulo) meta.push(item.arquivo);
+        if (meta.length) {
+          const details = document.createElement("div");
+          details.className = "source-meta";
+          details.textContent = meta.join(" • ");
+          row.appendChild(details);
+        }
+
         if (item.trecho) {
           const excerpt = document.createElement("div");
+          excerpt.className = "source-excerpt";
           excerpt.textContent = item.trecho;
           row.appendChild(excerpt);
         }
