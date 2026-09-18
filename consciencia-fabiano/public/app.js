@@ -69,7 +69,8 @@
   }
 
   async function api(path, options = {}) {
-    const headers = path.startsWith("/api/admin/")
+    const adminPath = path.startsWith("/api/admin/") || path === "/api/trigger-index";
+    const headers = adminPath
       ? adminHeaders(options.headers || {})
       : new Headers(authHeaders(options.headers || {}));
     const res = await fetch(path, { ...options, headers });
@@ -273,7 +274,7 @@
         res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: textFallback })
+          body: JSON.stringify({ text: textFallback, language: "pt-BR" })
         });
       }
       if (!res.ok) throw new Error("audio " + res.status);
@@ -289,24 +290,60 @@
     browserSpeak(textFallback);
   }
 
-  function browserSpeak(text) {
+  function getSpeechVoices() {
+    const current = speechSynthesis.getVoices();
+    if (current.length) return Promise.resolve(current);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        speechSynthesis.removeEventListener("voiceschanged", finish);
+        resolve(speechSynthesis.getVoices());
+      };
+      speechSynthesis.addEventListener("voiceschanged", finish, { once: true });
+      setTimeout(finish, 1200);
+    });
+  }
+
+  async function browserSpeak(text) {
     if (!("speechSynthesis" in window) || !text) {
       setAvatar("closed");
       return;
     }
+
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text.slice(0, 5000));
     u.lang = "pt-BR";
-    u.rate = 0.96;
-    const voices = speechSynthesis.getVoices();
-    const pt = voices.find(v => /^pt-BR/i.test(v.lang)) || voices.find(v => /^pt/i.test(v.lang));
-    if (pt) u.voice = pt;
+    u.rate = 0.94;
+    u.pitch = 1.0;
+
+    const voices = await getSpeechVoices();
+    const ptBr = voices.filter(v => /^pt-BR$/i.test(v.lang));
+    const ptAny = voices.filter(v => /^pt(?:-|$)/i.test(v.lang));
+    const candidates = ptBr.length ? ptBr : ptAny;
+
+    const natural =
+      candidates.find(v => /natural|online/i.test(v.name)) ||
+      candidates.find(v => /microsoft|google/i.test(v.name)) ||
+      candidates[0] ||
+      null;
+
+    if (natural) {
+      u.voice = natural;
+      u.lang = natural.lang || "pt-BR";
+    } else {
+      // Keep the BCP-47 language tag explicit even when the browser hides
+      // its voice list; never force an en-US voice.
+      u.lang = "pt-BR";
+    }
+
     u.onstart = () => setAvatar("speaking");
     u.onend = () => setAvatar("closed");
     u.onerror = () => setAvatar("closed");
     speechSynthesis.speak(u);
   }
-
   async function sendQuestion() {
     const q = $("questionInput").value.trim();
     if (!q) return;
@@ -506,7 +543,7 @@
       $("adminStatus").textContent =
         "Arquivo recebido pelo R2. Convertendo e criando a memória pesquisável…";
 
-      const data = await api("/api/admin/index-r2", {
+      const data = await api("/api/trigger-index", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -524,6 +561,11 @@
       $("pdfInput").value = "";
       await loadBooks();
       await checkBackend();
+
+      const verify = await api("/api/status");
+      if (!data.duplicate && Number(verify?.documents || 0) < 1) {
+        throw new Error("A indexação terminou, mas o catálogo ainda não refletiu o PDF.");
+      }
     } catch (error) {
       $("adminStatus").textContent = error.message || "Falha no upload direto ao R2.";
     } finally {
