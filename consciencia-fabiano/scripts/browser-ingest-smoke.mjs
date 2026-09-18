@@ -71,7 +71,7 @@ try {
     throw new Error("Timeout aguardando ingestão. status=" + finalStatus + " api=" + JSON.stringify(apiRequests.slice(-20)) + " pageErrors=" + JSON.stringify(pageErrors));
   }
   const bookName = pdfPath.split("/").pop();
-  await page.locator("#booksList").getByText(bookName, { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+  await page.locator("#booksList").getByText(bookName, { exact: true }).first().waitFor({ state: "visible", timeout: 15000 });
 
   const binaryWorkerUploads = apiRequests.filter(x => x.path === "/api/admin/upload-pdf");
   const triggerRequests = apiRequests.filter(x => x.path === "/api/trigger-index");

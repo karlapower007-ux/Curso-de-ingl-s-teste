@@ -93,6 +93,12 @@ for i in $(seq 1 15); do
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
 
+log "Pre-clean stale automation fixtures"
+curl -fsS "${HDR[@]}" "$BASE/api/admin/livros" > /tmp/preclean-books.json
+for id in $(jq -r '.livros[] | select(.arquivo=="teste-portugues-client.pdf" or .arquivo=="teste-ingles-client.pdf" or .arquivo=="grande-client-side.pdf") | .id' /tmp/preclean-books.json); do
+  curl -fsS "${HDR[@]}" "$BASE/api/admin/delete-pdf" -H 'Content-Type: application/json' --data "{\"document_id\":\"$id\"}" >/dev/null || true
+done
+
 log "6/7 Text-only RAG fire test"
 PT_SHA=$(printf 'pt-client-fixture-v13' | sha256sum | cut -d' ' -f1)
 EN_SHA=$(printf 'en-client-fixture-v13' | sha256sum | cut -d' ' -f1)
