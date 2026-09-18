@@ -63,12 +63,22 @@ fi
 
 HDR=(-H "X-FNS-Automation: $AUTOMATION_SECRET")
 log "Waiting for secret propagation"
-for i in $(seq 1 15); do
+stable=0
+for i in $(seq 1 30); do
   code=$(curl -sS -o /tmp/admin-probe.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/livros" || true)
-  if [ "$code" = "200" ]; then log "AUTOMATION_SECRET_ACTIVE=yes"; break; fi
-  [ "$i" = 15 ] && { cat /tmp/admin-probe.json || true; die "AUTOMATION_SECRET_NOT_ACTIVE"; }
+  if [ "$code" = "200" ]; then
+    stable=$((stable+1))
+    if [ "$stable" -ge 3 ]; then
+      log "AUTOMATION_SECRET_ACTIVE=yes"
+      break
+    fi
+  else
+    stable=0
+  fi
+  [ "$i" = 30 ] && { cat /tmp/admin-probe.json || true; die "AUTOMATION_SECRET_NOT_ACTIVE"; }
   sleep 2
 done
+sleep 3
 
 log "5/7 Production health"
 for i in $(seq 1 15); do
