@@ -1230,30 +1230,48 @@ export class LibraryDO {
     const filename = safeName(payload?.filename || "");
     const objectKey = String(payload?.r2_key || "").trim();
     const expectedKey = r2ObjectKey(documentId, filename);
+    const startedMs = Date.now();
     const now = () => new Date().toISOString();
+
+    const updateJob = fields => {
+      const entries = Object.entries(fields || {});
+      if (!entries.length) return;
+      const sql = "UPDATE index_jobs SET " + entries.map(([k]) => k + "=?").join(",") + ",updated_at=? WHERE document_id=?";
+      this.sql.exec(sql, ...entries.map(([,v]) => v), now(), documentId);
+    };
 
     const fail = async error => {
       const message = String(error?.message || error).slice(0, 1800);
       try {
         this.sql.exec("DELETE FROM chunks WHERE document_id = ?", documentId);
-        this.sql.exec("UPDATE documents SET status = 'error', chunk_count = 0 WHERE id = ?", documentId);
-        this.sql.exec(
-          "UPDATE index_jobs SET status='error', error_message=?, updated_at=? WHERE document_id=?",
-          message, now(), documentId
-        );
+        this.sql.exec("UPDATE documents SET status='error', chunk_count=0 WHERE id=?", documentId);
+        updateJob({
+          status: "error",
+          error_message: message,
+          duration_ms: Date.now() - startedMs,
+          finished_at: now(),
+        });
       } catch {}
       return { ok: false, status: "error", message };
     };
 
+    let pdf = null;
     try {
       if (!documentId || !filename || !/\.pdf$/i.test(filename) || objectKey !== expectedKey) {
         throw new Error("Job de indexação inválido.");
       }
 
-      this.sql.exec(
-        "UPDATE index_jobs SET status='processing', error_message=NULL, updated_at=? WHERE document_id=?",
-        now(), documentId
-      );
+      updateJob({
+        status: "processing",
+        error_message: null,
+        extracted_pages: 0,
+        produced_chunks: 0,
+        chunks: 0,
+        page_count: 0,
+        started_at: now(),
+        finished_at: null,
+        duration_ms: null,
+      });
 
       const object = await this.env.PDFS.get(objectKey);
       if (!object) throw new Error("O PDF não foi encontrado no R2.");
@@ -1270,10 +1288,17 @@ export class LibraryDO {
         await this.env.PDFS.delete(objectKey).catch(() => {});
         this.sql.exec("DELETE FROM chunks WHERE document_id = ?", documentId);
         this.sql.exec("DELETE FROM documents WHERE id = ?", documentId);
-        this.sql.exec(
-          "UPDATE index_jobs SET status='duplicate', duplicate_of=?, chunks=?, page_count=?, error_message=NULL, updated_at=? WHERE document_id=?",
-          duplicate.id, Number(duplicate.chunk_count || 0), Number(duplicate.page_count || 0), now(), documentId
-        );
+        updateJob({
+          status: "duplicate",
+          duplicate_of: duplicate.id,
+          chunks: Number(duplicate.chunk_count || 0),
+          page_count: Number(duplicate.page_count || 0),
+          extracted_pages: Number(duplicate.page_count || 0),
+          produced_chunks: Number(duplicate.chunk_count || 0),
+          error_message: null,
+          duration_ms: Date.now() - startedMs,
+          finished_at: now(),
+        });
         return { ok: true, status: "duplicate", duplicate_of: duplicate.id };
       }
 
@@ -1292,74 +1317,153 @@ export class LibraryDO {
         );
       }
 
-      const markdown = await convertPdf(this.env, filename, buffer);
-      const pages = splitPages(markdown);
-      const metadata = parsePdfMetadata(markdown, filename);
-      const language = detectLanguage(markdown);
+      pdf = await getDocumentProxy(new Uint8Array(buffer), {
+        disableFontFace: true,
+        maxImageSize: 16_777_216,
+        useSystemFonts: true,
+      });
 
-      const chunkRows = [];
-      let chunkIndex = 0;
-      for (const page of pages) {
-        for (const piece of chunkText(page.text)) {
-          chunkRows.push({
-            id: uuidCompact(),
-            page: Number(page.page || 1),
-            chunk_index: chunkIndex++,
-            text: piece,
-          });
-        }
-      }
-      if (!chunkRows.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
+      const totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error("PDF sem páginas reconhecíveis.");
+      updateJob({ page_count: totalPages });
+
+      let title = filename.replace(/\.pdf$/i, "");
+      let author = "";
+      try {
+        const metadata = await pdf.getMetadata();
+        title = String(metadata?.info?.Title || title).slice(0, 300);
+        author = String(metadata?.info?.Author || "").slice(0, 300);
+      } catch {}
+
+      const queue = new AsyncItemQueue();
+      let nextPage = 1;
+      let extractedPages = 0;
+      let producedChunks = 0;
+      let embeddedChunks = 0;
+      let sampleText = "";
+      let lastProgressAt = 0;
+      let pipelineError = null;
+
+      const flushProgress = force => {
+        const ts = Date.now();
+        if (!force && ts - lastProgressAt < 220) return;
+        lastProgressAt = ts;
+        updateJob({
+          extracted_pages: extractedPages,
+          produced_chunks: producedChunks,
+          chunks: embeddedChunks,
+          page_count: totalPages,
+        });
+      };
+
+      const extractionWorkers = Array.from(
+        { length: Math.min(EXTRACTION_TURBINES, totalPages) },
+        (_, workerId) => (async () => {
+          while (!pipelineError) {
+            const pageNumber = nextPage++;
+            if (pageNumber > totalPages) break;
+
+            const pageText = await extractPdfPageText(pdf, pageNumber);
+            if (sampleText.length < 16000 && pageText) {
+              sampleText += "\n" + pageText.slice(0, Math.max(0, 16000 - sampleText.length));
+            }
+
+            const pieces = chunkText(pageText);
+            for (let localIndex = 0; localIndex < pieces.length; localIndex++) {
+              queue.push({
+                id: uuidCompact(),
+                page: pageNumber,
+                chunk_index: ((pageNumber - 1) * 100000) + localIndex,
+                text: pieces[localIndex],
+                extraction_worker: workerId + 1,
+              });
+              producedChunks++;
+            }
+
+            extractedPages++;
+            flushProgress(false);
+            await Promise.resolve();
+          }
+        })().catch(error => {
+          pipelineError = pipelineError || error;
+          throw error;
+        })
+      );
 
       const createdAt = now();
-      let inserted = 0;
-      const EMBED_BATCH = 8;
-      for (let i = 0; i < chunkRows.length; i += EMBED_BATCH) {
-        const group = chunkRows.slice(i, i + EMBED_BATCH);
-        const vectors = await embedTexts(this.env, group.map(item => item.text));
-        if (vectors.length !== group.length) {
-          throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
-        }
+      const embeddingWorkers = Array.from(
+        { length: EMBEDDING_TURBINES },
+        (_, workerId) => (async () => {
+          while (!pipelineError) {
+            const item = await queue.take();
+            if (!item) break;
 
-        for (let j = 0; j < group.length; j++) {
-          const item = group[j];
-          this.sql.exec(
-            "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-            item.id, documentId, item.page, item.chunk_index, item.text,
-            JSON.stringify(vectors[j] || []), createdAt
-          );
-          inserted++;
-        }
+            const vector = await embedOneWithRetry(this.env, item.text);
+            this.sql.exec(
+              "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+              item.id, documentId, item.page, item.chunk_index, item.text,
+              JSON.stringify(vector), createdAt
+            );
 
-        this.sql.exec(
-          "UPDATE index_jobs SET chunks=?, page_count=?, updated_at=? WHERE document_id=?",
-          inserted, pages.length, now(), documentId
-        );
+            embeddedChunks++;
+            if (embeddedChunks % 5 === 0) flushProgress(false);
+            await Promise.resolve();
+          }
+        })().catch(error => {
+          pipelineError = pipelineError || error;
+          throw error;
+        })
+      );
+
+      try {
+        await Promise.all(extractionWorkers);
+      } finally {
+        queue.close();
       }
 
+      await Promise.all(embeddingWorkers);
+      if (pipelineError) throw pipelineError;
+      if (!producedChunks || !embeddedChunks) throw new Error("Nenhum texto útil foi extraído do PDF.");
+      if (embeddedChunks !== producedChunks) {
+        throw new Error("Pipeline incompleto: chunks produzidos e vetorizados não coincidem.");
+      }
+
+      flushProgress(true);
+      const language = detectLanguage(sampleText);
       this.sql.exec(
         "UPDATE documents SET title=?, author=?, language=?, page_count=?, chunk_count=?, status='ready' WHERE id=?",
-        metadata.title || filename, metadata.author || "", language || "unknown",
-        pages.length, inserted, documentId
+        title || filename, author || "", language || "unknown",
+        totalPages, embeddedChunks, documentId
       );
-      this.sql.exec(
-        "UPDATE index_jobs SET status='ready', chunks=?, page_count=?, error_message=NULL, updated_at=? WHERE document_id=?",
-        inserted, pages.length, now(), documentId
-      );
+      updateJob({
+        status: "ready",
+        chunks: embeddedChunks,
+        page_count: totalPages,
+        extracted_pages: extractedPages,
+        produced_chunks: producedChunks,
+        error_message: null,
+        duration_ms: Date.now() - startedMs,
+        finished_at: now(),
+      });
 
       return {
         ok: true,
         status: "ready",
         document_id: documentId,
         arquivo: filename,
-        chunks: inserted,
-        paginas: pages.length,
+        chunks: embeddedChunks,
+        paginas: totalPages,
+        extraction_turbines: EXTRACTION_TURBINES,
+        embedding_turbines: EMBEDDING_TURBINES,
+        total_turbines: EXTRACTION_TURBINES + EMBEDDING_TURBINES,
+        duration_ms: Date.now() - startedMs,
       };
     } catch (error) {
       return fail(error);
+    } finally {
+      try { await pdf?.destroy?.(); } catch {}
     }
   }
-
   async alarm() {
     const row = [...this.sql.exec(
       "SELECT document_id,r2_key,filename,size_bytes FROM index_jobs WHERE status='processing' ORDER BY updated_at DESC LIMIT 1"
