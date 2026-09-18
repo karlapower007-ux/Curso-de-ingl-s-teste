@@ -22,29 +22,33 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
+          node --check scripts/browser-voice-smoke.mjs
+          node --check scripts/browser-ingest-smoke.mjs
+          bash -n scripts/autonomous-release.sh
           grep -q '@cf/baai/bge-m3' src/index.js
-          grep -q 'env.AI.toMarkdown' src/index.js
-          grep -q 'class LibraryDO' src/index.js
-          grep -q 'env.LIBRARY' src/index.js
           grep -q '@cf/openai/whisper-large-v3-turbo' src/index.js
           grep -q '@cf/myshell-ai/melotts' src/index.js
+          grep -q 'class LibraryDO' src/index.js
+          grep -q 'env.LIBRARY' src/index.js
           grep -q 'durable_objects' wrangler.jsonc
           grep -q 'new_sqlite_classes' wrangler.jsonc
-          ! grep -q 'onrender.com' src/index.js
-          ! grep -q 'env.PDFS' src/index.js
-          ! grep -q 'env.VECTORIZE' src/index.js
-          ! grep -q 'env.DB' src/index.js
-          bash -n scripts/autonomous-release.sh
-          grep -q '"cf:deploy"' package.json
-          grep -q 'durable-object-sqlite' src/index.js
           grep -q 'conversation_messages' src/index.js
-          grep -q '/api/memory' src/index.js
-          grep -q 'X-FNS-Memory-Key' public/app.js
-          grep -q 'syncPersistentHistory' public/app.js
-          grep -q 'async alarm()' src/index.js
-          grep -q 'index_jobs' src/index.js
-          grep -q 'job_pdf_parts' src/index.js
-          grep -q 'setAlarm' src/index.js
-          grep -q '/api/index-status' src/index.js
+          grep -q 'job_text_pages' src/index.js
+          grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
+          grep -q 'EMBED_CONCURRENCY = 50' src/index.js
+          grep -q 'parallelMapLimit' src/index.js
+          grep -q 'embedOneWithRetry' src/index.js
+          grep -q 'matrixChunkPages' src/index.js
+          grep -q 'server_pdf_parsing: false' src/index.js
+          grep -q 'R2_DIRECT_DISABLED' src/index.js
+          grep -q '/api/admin/r2-presign' src/index.js
+          grep -q 'extractPdfLocally' public/app.js
+          grep -q 'uploadOriginalDirectToR2' public/app.js
+          grep -q 'pdfjs-dist@4.10.38' public/index.html
           grep -q 'waitForIndexJob' public/app.js
           grep -q 'voiceLoopEnabled' public/app.js
+          ! grep -q 'AI.toMarkdown' src/index.js
+          ! grep -q 'request.formData' src/index.js
+          ! grep -q 'readPdfBuffer' src/index.js
+          ! grep -q 'job_pdf_parts' src/index.js
+          ! grep -q 'onrender.com' src/index.js
