@@ -13,7 +13,7 @@ const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 1800;
 const MAX_SERVER_HISTORY = 40;
-const OWNER_TOKEN_HASH = "37ae863d0508e0d693e26f73ae5db81e0c60747d3870c0f8c4498513ebd0c8cb";
+const OWNER_TOKEN_HASH = "8205541ffbdb2d6ee4d000427b0d8a0bc70f657087ba43d95712eeef0a9609ed";
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
@@ -92,7 +92,7 @@ async function adminAuthorized(request, env) {
   const automation = (request.headers.get("X-FNS-Automation") || "").trim();
   if (env.AUTOMATION_SECRET && automation && automation === env.AUTOMATION_SECRET) return true;
   const token = rawToken(request);
-  if (!token || token.length < 30) return false;
+  if (!token || token.length < 10) return false;
   return (await sha256Text(token)) === OWNER_TOKEN_HASH;
 }
 
