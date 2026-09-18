@@ -56,6 +56,19 @@ async function admin(path, options = {}) {
   return request(path, { ...options, headers });
 }
 
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForIndex(documentId, timeoutMs = 180000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const { body } = await admin("/api/status?document_id=" + encodeURIComponent(documentId));
+    if (body.status === "ready" || body.status === "duplicate") return body;
+    if (body.status === "error") throw new Error("background index error: " + (body.error || "unknown"));
+    await sleep(1200);
+  }
+  throw new Error("background indexing timeout");
+}
+
 async function cleanup() {
   try {
     if (documentId) {
