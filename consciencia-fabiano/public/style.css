@@ -87,3 +87,11 @@ input:focus,textarea:focus{border-color:rgba(211,179,107,.55);box-shadow:0 0 0 3
   .messages{max-height:52vh;min-height:330px}
   .msg{max-width:96%}
 }
+
+.composer-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;flex-wrap:wrap}
+.check-option{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.9rem;cursor:pointer}
+.check-option input{width:auto;margin:0;accent-color:var(--accent)}
+.small-btn{padding:8px 11px;font-size:.85rem}
+@media(max-width:620px){
+  .composer-options{align-items:flex-start;flex-direction:column}
+}
