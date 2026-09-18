@@ -57,8 +57,8 @@ jobs:
           set -euo pipefail
           BASE='https://consciencia-fabiano.karlapower007.workers.dev'
           sleep 3
-          curl --fail --silent --show-error "$BASE/" | grep -q 'Consciência do Fabiano'
-          curl --fail --silent --show-error "$BASE/health" | grep -q '"ok":true'
+          curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/" | grep -q 'Consciência do Fabiano'
+          curl --retry 5 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/health" | grep -q '"ok":true'
           code=$(curl -sS -o /tmp/auth.json -w '%{http_code}' "$BASE/api/status")
           test "$code" = "401"
           echo "PUBLIC SHELL + PRIVATE API PASS"
