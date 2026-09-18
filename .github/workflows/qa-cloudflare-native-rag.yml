@@ -37,3 +37,7 @@ jobs:
           bash -n scripts/autonomous-release.sh
           grep -q '"cf:deploy"' package.json
           grep -q 'durable-object-sqlite' src/index.js
+          grep -q 'conversation_messages' src/index.js
+          grep -q '/api/memory' src/index.js
+          grep -q 'X-FNS-Memory-Key' public/app.js
+          grep -q 'syncPersistentHistory' public/app.js
