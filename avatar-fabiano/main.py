@@ -38,7 +38,7 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 OWNER_TOKEN_HASH = os.getenv(
     "OWNER_TOKEN_HASH",
-    "92f834aac4bfc1f5a1d56f16d4d2704f39da26d2f21a7b60d9e46652861f151c",
+    "37ae863d0508e0d693e26f73ae5db81e0c60747d3870c0f8c4498513ebd0c8cb",
 ).strip().lower()
 TTS_VOICE = os.getenv("TTS_VOICE", "pt-BR-AntonioNeural").strip()
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
