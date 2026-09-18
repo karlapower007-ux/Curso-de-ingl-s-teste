@@ -78,6 +78,7 @@ async function ensureApplication() {
     http_only_cookie_attribute: true,
     same_site_cookie_attribute: "strict",
     destinations: [
+      { type: "public", uri: hostname + "/admin" },
       { type: "public", uri: hostname + "/admin*" },
       { type: "public", uri: hostname + "/api/admin/*" }
     ]
