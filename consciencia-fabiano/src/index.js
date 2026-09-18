@@ -1212,6 +1212,16 @@ export class LibraryDO {
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
       `);
+
+      for (const statement of [
+        "ALTER TABLE index_jobs ADD COLUMN extracted_pages INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE index_jobs ADD COLUMN produced_chunks INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE index_jobs ADD COLUMN duration_ms INTEGER",
+        "ALTER TABLE index_jobs ADD COLUMN started_at TEXT",
+        "ALTER TABLE index_jobs ADD COLUMN finished_at TEXT"
+      ]) {
+        try { this.sql.exec(statement); } catch {}
+      }
     });
   }
 
