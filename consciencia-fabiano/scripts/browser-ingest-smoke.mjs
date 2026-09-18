@@ -52,12 +52,24 @@ try {
   await page.locator("#pdfInput").setInputFiles(pdfPath);
   await page.locator("#uploadBtn").click();
 
-  await page.waitForFunction(() => {
-    const text = document.querySelector("#adminStatus")?.textContent || "";
-    return text.startsWith("Concluído:") || text.startsWith("Já indexado:");
-  }, null, { timeout: 240000 });
-
-  const finalStatus = await page.locator("#adminStatus").textContent();
+  let finalStatus = "";
+  const deadline = Date.now() + 240000;
+  let lastStatus = "";
+  while (Date.now() < deadline) {
+    finalStatus = String(await page.locator("#adminStatus").textContent() || "");
+    if (finalStatus !== lastStatus) {
+      console.log("ADMIN_STATUS=" + finalStatus);
+      lastStatus = finalStatus;
+    }
+    if (finalStatus.startsWith("Concluído:") || finalStatus.startsWith("Já indexado:")) break;
+    if (/^(Falha|Erro):/i.test(finalStatus)) {
+      throw new Error("Interface reportou falha: " + finalStatus);
+    }
+    await page.waitForTimeout(1000);
+  }
+  if (!finalStatus.startsWith("Concluído:") && !finalStatus.startsWith("Já indexado:")) {
+    throw new Error("Timeout aguardando ingestão. status=" + finalStatus + " api=" + JSON.stringify(apiRequests.slice(-20)) + " pageErrors=" + JSON.stringify(pageErrors));
+  }
   const bookName = pdfPath.split("/").pop();
   await page.locator("#booksList").getByText(bookName, { exact: true }).waitFor({ state: "visible", timeout: 15000 });
 
