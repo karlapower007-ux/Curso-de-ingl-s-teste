@@ -14,6 +14,10 @@ function makePdf(runCode, paddingBytes = 0) {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Length " + enc.encode(text).length + " >>\nstream\n" + text + "\nendstream",
   ];
+  if (paddingBytes > 0) {
+    const payload = "Z".repeat(Math.max(0, paddingBytes));
+    objs.push("<< /Length " + payload.length + " >>\nstream\n" + payload + "\nendstream");
+  }
   let out = "%PDF-1.4\n";
   const offsets = [0];
   for (let i = 0; i < objs.length; i++) {
@@ -24,10 +28,6 @@ function makePdf(runCode, paddingBytes = 0) {
   out += "xref\n0 " + (objs.length + 1) + "\n0000000000 65535 f \n";
   for (const off of offsets.slice(1)) out += String(off).padStart(10, "0") + " 00000 n \n";
   out += "trailer\n<< /Size " + (objs.length + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
-  if (paddingBytes > 0) {
-    const padLine = "% UI-PADDING-" + "Y".repeat(1000) + "\n";
-    while (Buffer.byteLength(out) < paddingBytes) out += padLine;
-  }
   return Buffer.from(out);
 }
 
