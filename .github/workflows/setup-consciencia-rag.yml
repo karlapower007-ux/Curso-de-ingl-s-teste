@@ -1,0 +1,40 @@
+name: Setup Consciência persistent RAG
+on:
+  push:
+    branches: [consciencia-do-fabiano]
+    paths: ['.github/workflows/setup-consciencia-rag.yml']
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Provision Vectorize + R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if ! npx wrangler vectorize get consciencia-fabiano-rag >/tmp/vectorize.txt 2>&1; then
+            cat /tmp/vectorize.txt || true
+            npx wrangler vectorize create consciencia-fabiano-rag --dimensions=768 --metric=cosine
+          else
+            cat /tmp/vectorize.txt
+          fi
+
+          if ! npx wrangler r2 bucket list --json | grep -q '"name"[[:space:]]*:[[:space:]]*"consciencia-fabiano-pdfs"'; then
+            npx wrangler r2 bucket create consciencia-fabiano-pdfs
+          else
+            echo "R2 bucket already exists: consciencia-fabiano-pdfs"
+          fi
+
+          echo "=== Vectorize ==="
+          npx wrangler vectorize get consciencia-fabiano-rag
+          echo "=== R2 ==="
+          npx wrangler r2 bucket list --json | grep -C 2 'consciencia-fabiano-pdfs' || true
