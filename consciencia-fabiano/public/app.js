@@ -7,8 +7,6 @@
 
   let history = [];
   let speakingTimer = null;
-  let recorder = null;
-  let chunks = [];
 
   const frames = {
     closed: "/fabiano-fechado.png",
@@ -69,7 +67,10 @@
   }
 
   async function api(path, options = {}) {
-    const adminPath = path.startsWith("/api/admin/") || path === "/api/trigger-index";
+    const adminPath =
+      path.startsWith("/api/admin/") ||
+      path === "/api/trigger-index" ||
+      path.startsWith("/api/status?document_id=");
     const headers = adminPath
       ? adminHeaders(options.headers || {})
       : new Headers(authHeaders(options.headers || {}));
@@ -265,29 +266,124 @@
     }
   }
 
-  async function playAudio(path, textFallback) {
-    try {
-      let res;
-      if (path) {
-        res = await fetch(path, { headers: authHeaders() });
-      } else {
-        res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: textFallback, language: "pt-BR" })
-        });
+  async function speakFinalResponse(text) {
+    await browserSpeak(text);
+  }
+
+  function appendSourcesToMessage(wrap, sources = [], fallback = false) {
+    if (!wrap || !(sources?.length || fallback)) return;
+    const src = document.createElement("div");
+    src.className = "sources";
+    if (fallback) {
+      const note = document.createElement("div");
+      note.className = "source";
+      note.textContent = "Resposta de contingência: os PDFs não foram consultados.";
+      src.appendChild(note);
+    }
+    (sources || []).forEach(item => {
+      const row = document.createElement("div");
+      row.className = "source";
+      const strong = document.createElement("strong");
+      strong.textContent = item.titulo || item.arquivo || "Fonte";
+      row.appendChild(strong);
+
+      const meta = [];
+      if (item.autor) meta.push("autor: " + item.autor);
+      if (item.pagina) meta.push("página " + item.pagina);
+      if (item.idioma && item.idioma !== "unknown") meta.push("idioma: " + item.idioma);
+      if (item.arquivo && item.titulo && item.arquivo !== item.titulo) meta.push(item.arquivo);
+      if (meta.length) {
+        const details = document.createElement("div");
+        details.className = "source-meta";
+        details.textContent = meta.join(" • ");
+        row.appendChild(details);
       }
-      if (!res.ok) throw new Error("audio " + res.status);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onplay = () => setAvatar("speaking");
-      audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); };
-      audio.onerror = () => { URL.revokeObjectURL(url); browserSpeak(textFallback); };
-      await audio.play();
-      return;
-    } catch {}
-    browserSpeak(textFallback);
+
+      if (item.trecho) {
+        const excerpt = document.createElement("div");
+        excerpt.className = "source-excerpt";
+        excerpt.textContent = item.trecho;
+        row.appendChild(excerpt);
+      }
+      src.appendChild(row);
+    });
+    wrap.appendChild(src);
+  }
+
+  function appendStreamingAssistant() {
+    const wrap = document.createElement("div");
+    wrap.className = "msg assistant";
+    const text = document.createElement("div");
+    text.textContent = "";
+    wrap.appendChild(text);
+    $("messages").appendChild(wrap);
+    $("messages").scrollTop = $("messages").scrollHeight;
+    return { wrap, text };
+  }
+
+  function extractSseText(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    return String(
+      payload.response ??
+      payload.delta?.content ??
+      payload.choices?.[0]?.delta?.content ??
+      payload.choices?.[0]?.text ??
+      payload.result?.response ??
+      ""
+    );
+  }
+
+  async function consumeChatStream(res, target) {
+    if (!res.body) throw new Error("O navegador não recebeu o stream da resposta.");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let resposta = "";
+    let fontes = [];
+    let fallback = false;
+
+    const consumeEvent = block => {
+      const lines = String(block || "").split(/\r?\n/);
+      let eventName = "message";
+      const dataLines = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      const raw = dataLines.join("\n");
+      if (!raw || raw === "[DONE]") return;
+
+      if (eventName === "fns-meta") {
+        try {
+          const meta = JSON.parse(raw);
+          fontes = Array.isArray(meta.fontes) ? meta.fontes : [];
+          fallback = meta.fallback === true;
+        } catch {}
+        return;
+      }
+
+      try {
+        const piece = extractSseText(JSON.parse(raw));
+        if (piece) {
+          resposta += piece;
+          target.text.textContent = resposta;
+          $("messages").scrollTop = $("messages").scrollHeight;
+        }
+      } catch {}
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() || "";
+      for (const part of parts) consumeEvent(part);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeEvent(buffer);
+
+    return { resposta: resposta.trim(), fontes, fallback };
   }
 
   function getSpeechVoices() {
@@ -355,37 +451,54 @@
     $("sendBtn").disabled = true;
     $("micBtn").disabled = true;
     setAvatar("thinking");
+    const target = appendStreamingAssistant();
+
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
-      const data = await api("/api/chat", {
+      const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+        }),
         body: JSON.stringify({
           pergunta: q,
           turn_id: turnId,
           historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
         })
       });
-      const resposta = String(data.resposta || "Sem resposta.");
-      appendMessage("assistant", resposta, data.fontes || [], data.fallback === true);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || ("Chat indisponível (HTTP " + res.status + ")."));
+      }
+      if (!(res.headers.get("content-type") || "").includes("text/event-stream")) {
+        throw new Error("O chat não retornou streaming SSE.");
+      }
+
+      const streamed = await consumeChatStream(res, target);
+      const resposta = streamed.resposta || "Não consegui formular uma resposta agora.";
+      if (!streamed.resposta) target.text.textContent = resposta;
+      appendSourcesToMessage(target.wrap, streamed.fontes, streamed.fallback);
+
       history.push({
         role: "assistant",
         content: resposta,
-        sources: data.fontes || [],
-        fallback: data.fallback === true,
+        sources: streamed.fontes,
+        fallback: streamed.fallback,
         ts: Date.now()
       });
       saveHistory();
-      await playAudio(data.audio_url, resposta);
+
+      await speakFinalResponse(resposta);
     } catch (error) {
-      appendMessage("assistant", "Não consegui responder agora. " + error.message);
+      target.text.textContent = "Não consegui responder agora. " + error.message;
       setAvatar("closed");
     } finally {
       $("sendBtn").disabled = false;
       $("micBtn").disabled = false;
     }
   }
-
   async function checkBackend() {
     try {
       const data = await api("/api/status");
@@ -410,73 +523,45 @@
   }
 
   async function startVoice() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      const rec = new SR();
-      rec.lang = "pt-BR";
-      rec.interimResults = false;
-      rec.maxAlternatives = 1;
-      $("micBtn").textContent = "🎧 Ouvindo…";
-      $("avatarState").textContent = "Ouvindo";
-      rec.onresult = async e => {
-        const text = e.results?.[0]?.[0]?.transcript || "";
-        $("questionInput").value = text;
-        if (text.trim() && $("autoSendVoice")?.checked) {
-          await sendQuestion();
-        }
-      };
-      rec.onend = () => {
-        $("micBtn").textContent = "🎙️ Falar";
-        setAvatar("closed");
-      };
-      rec.onerror = () => {
-        $("micBtn").textContent = "🎙️ Falar";
-        startRecorderFallback().catch(() => setAvatar("closed"));
-      };
-      rec.start();
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      appendMessage("assistant",
+        "O reconhecimento de voz nativo não está disponível neste navegador. Use Chrome ou Edge com permissão de microfone.");
+      setAvatar("closed");
       return;
     }
-    await startRecorderFallback();
-  }
 
-  async function startRecorderFallback() {
-    if (recorder?.state === "recording") {
-      recorder.stop();
-      return;
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-    });
-    chunks = [];
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
-    recorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      $("micBtn").textContent = "🎙️ Falar";
-      $("avatarState").textContent = "Transcrevendo…";
-      try {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const res = await fetch("/api/stt", {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": blob.type || "audio/webm" }),
-          body: blob
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "STT indisponível");
-        $("questionInput").value = data.text || "";
-        if ((data.text || "").trim() && $("autoSendVoice")?.checked) {
-          await sendQuestion();
-        }
-      } catch (e) {
-        appendMessage("assistant", "Não consegui transcrever sua voz: " + e.message);
+    const recognition = new SpeechRecognition();
+    recognition.lang = "pt-BR";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+
+    $("micBtn").textContent = "🎧 Ouvindo…";
+    $("avatarState").textContent = "Ouvindo";
+
+    recognition.onresult = async event => {
+      const transcricao = event.results?.[0]?.[0]?.transcript || "";
+      $("questionInput").value = transcricao;
+      if (transcricao.trim() && $("autoSendVoice")?.checked) {
+        await sendQuestion();
       }
+    };
+
+    recognition.onend = () => {
+      $("micBtn").textContent = "🎙️ Falar";
+      if ($("avatarState").textContent === "Ouvindo") setAvatar("closed");
+    };
+
+    recognition.onerror = event => {
+      $("micBtn").textContent = "🎙️ Falar";
+      const reason = event?.error ? " (" + event.error + ")" : "";
+      appendMessage("assistant", "Não foi possível usar o microfone do navegador" + reason + ".");
       setAvatar("closed");
     };
-    recorder.start(250);
-    $("micBtn").textContent = "⏹️ Parar";
-    $("avatarState").textContent = "Ouvindo";
-  }
 
+    recognition.start();
+  }
   function uploadDirectToR2(url, file, contentType) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -503,6 +588,28 @@
 
       xhr.send(file);
     });
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function waitForIndexing(documentId, timeoutMs = 15 * 60 * 1000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const data = await api("/api/status?document_id=" + encodeURIComponent(documentId));
+      if (data.status === "ready") return data;
+      if (data.status === "duplicate") return data;
+      if (data.status === "error") {
+        throw new Error(data.error || "A indexação falhou no processamento em background.");
+      }
+
+      const chunksText = Number(data.chunks || 0) > 0 ? " • " + data.chunks + " trechos processados" : "";
+      $("adminStatus").textContent =
+        "Indexando em segundo plano…" + chunksText + " Pode continuar usando a página.";
+      await sleep(1400);
+    }
+    throw new Error("A indexação continua em segundo plano por mais tempo que o esperado.");
   }
 
   async function uploadPdf() {
@@ -543,7 +650,7 @@
       $("adminStatus").textContent =
         "Arquivo recebido pelo R2. Convertendo e criando a memória pesquisável…";
 
-      const data = await api("/api/trigger-index", {
+      const accepted = await api("/api/trigger-index", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -554,18 +661,22 @@
         })
       });
 
-      $("adminStatus").textContent = data.duplicate
+      if (accepted.status !== "processing") {
+        throw new Error("O Worker não aceitou a indexação assíncrona.");
+      }
+
+      $("adminStatus").textContent =
+        "Upload concluído. Indexação iniciada em segundo plano…";
+
+      const data = await waitForIndexing(ticket.document_id);
+
+      $("adminStatus").textContent = data.status === "duplicate"
         ? "Este PDF já existia na biblioteca. O upload duplicado foi descartado com segurança."
         : "PDF indexado: " + (data.arquivo || file.name) + " • " + (data.chunks || 0) + " trechos.";
 
       $("pdfInput").value = "";
       await loadBooks();
       await checkBackend();
-
-      const verify = await api("/api/status");
-      if (!data.duplicate && Number(verify?.documents || 0) < 1) {
-        throw new Error("A indexação terminou, mas o catálogo ainda não refletiu o PDF.");
-      }
     } catch (error) {
       $("adminStatus").textContent = error.message || "Falha no upload direto ao R2.";
     } finally {
