@@ -84,8 +84,6 @@
   }
 
   function setAvatar(mode) {
-
-  function setAvatar(mode) {
     const img = $("avatarImg");
     if (!img) return;
     if (mode === "closed") {
@@ -518,8 +516,6 @@
       $("pdfInput").value="";await loadBooks();await checkBackend();
     }catch(error){$("adminStatus").textContent=error.message;}finally{$("uploadBtn").disabled=false;}
   }
-
-  async function loadBooks() {
 
   async function loadBooks() {
     try {

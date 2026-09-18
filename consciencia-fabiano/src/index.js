@@ -412,8 +412,6 @@ async function indexStatus(env,url) {
 }
 
 async function listBooks(env) {
-
-async function listBooks(env) {
   assertBindings(env);
   return libraryCall(env, "/docs");
 }
@@ -887,8 +885,6 @@ export class LibraryDO {
   }
 
   async alarm() {
-
-  async alarm() {
     const job = [...this.sql.exec(
       "SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 1"
     )][0] || null;
@@ -961,8 +957,6 @@ export class LibraryDO {
         await this.ctx.storage.sync(); await this.ctx.storage.setAlarm(Date.now()+200);
         return json({ok:true,job_id:id,status:"queued",received_pages:received,expected_pages:expected},202);
       }
-
-      if (url.pathname === "/jobs/status" && request.method === "GET") {
 
       if (url.pathname === "/jobs/status" && request.method === "GET") {
         const id = String(url.searchParams.get("job_id") || "").trim();
