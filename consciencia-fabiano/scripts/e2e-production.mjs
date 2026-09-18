@@ -141,7 +141,8 @@ try {
   if (!directPut.ok) throw new Error("PUT direto R2 falhou HTTP " + directPut.status + " " + await directPut.text());
   console.log("DIRECT_R2_PUT_PASS=yes");
 
-  const upload = (await admin("/api/trigger-index", {
+  const triggerStarted = Date.now();
+  const triggerResult = await admin("/api/trigger-index", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
@@ -150,12 +151,20 @@ try {
       filename:ticket.filename,
       size_bytes:pdf.byteLength
     }),
-  })).body;
-  if (!(upload.ok && upload.storage === "r2-original+durable-object-sqlite-index" && upload.r2_key && Number(upload.chunks) > 0)) {
-    throw new Error("indexação após upload direto inválida: " + JSON.stringify(upload));
+  });
+  const triggerMs = Date.now() - triggerStarted;
+  if (!(triggerResult.res.status === 202 && triggerResult.body.ok && triggerResult.body.status === "processing")) {
+    throw new Error("trigger assíncrono inválido: HTTP " + triggerResult.res.status + " " + JSON.stringify(triggerResult.body));
   }
-  console.log("UPLOAD_R2_PASS=yes");
+  if (triggerMs > 5000) throw new Error("trigger-index demorou demais: " + triggerMs + "ms");
+  console.log("ASYNC_TRIGGER_202_PASS=yes");
+  console.log("ASYNC_TRIGGER_MS=" + triggerMs);
 
+  const upload = await waitForIndex(ticket.document_id);
+  if (!(upload.status === "ready" && Number(upload.chunks) > 0)) {
+    throw new Error("indexação background inválida: " + JSON.stringify(upload));
+  }
+  console.log("BACKGROUND_INDEX_READY_PASS=yes");
   const afterIndex = (await request("/health")).body;
   if (Number(afterIndex.documents || 0) !== docsBefore + 1) {
     throw new Error("catálogo não incrementou após trigger-index: antes=" + docsBefore + " depois=" + afterIndex.documents);
