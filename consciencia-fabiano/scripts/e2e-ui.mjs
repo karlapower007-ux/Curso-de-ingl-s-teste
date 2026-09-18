@@ -43,19 +43,6 @@ page.on("response", response => {
 await page.addInitScript(() => {
   sessionStorage.setItem("consciencia_fabiano_admin_password_v1", "ui-e2e-placeholder");
 
-  class MockUtterance {
-    constructor(text) {
-      this.text = text;
-      this.lang = "";
-      this.voice = null;
-      this.rate = 1;
-      this.pitch = 1;
-      this.onstart = null;
-      this.onend = null;
-      this.onerror = null;
-    }
-  }
-
   class MockRecognition {
     constructor() {
       this.lang = "";
@@ -77,21 +64,7 @@ await page.addInitScript(() => {
 
   Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: MockRecognition });
   Object.defineProperty(window, "webkitSpeechRecognition", { configurable: true, value: MockRecognition });
-  Object.defineProperty(window, "SpeechSynthesisUtterance", { configurable: true, value: MockUtterance });
 
-  const voices = [{ lang: "pt-BR", name: "Microsoft Francisca Online (Natural) - Portuguese (Brazil)" }];
-  const synth = {
-    getVoices: () => voices,
-    cancel: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    speak: utterance => {
-      window.__fnsSpoken = { text: utterance.text, lang: utterance.lang, voice: utterance.voice?.name || "" };
-      utterance.onstart?.();
-      setTimeout(() => utterance.onend?.(), 20);
-    }
-  };
-  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
 });
 
 await page.route(base + "/api/**", async route => {
