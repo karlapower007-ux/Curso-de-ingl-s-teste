@@ -41,6 +41,8 @@
     }
   ],
   "vars": {
-    "ADMIN_PASSWORD_HASH": "97cce096511f26a7054764f60b317c8ee56757a5e717bd225dc19236ad5847f2"
+    "ADMIN_PASSWORD_HASH": "97cce096511f26a7054764f60b317c8ee56757a5e717bd225dc19236ad5847f2",
+    "R2_ACCOUNT_ID": "68f76f308db819c105bc9dfe3852c2fd",
+    "R2_BUCKET_NAME": "consciencia-fabiano-pdfs"
   }
 }
