@@ -1,0 +1,32 @@
+name: Probe Main FNS ChatGPT Site
+
+on:
+  push:
+    branches: [avatar-fabiano-production]
+    paths:
+      - '.github/workflows/probe-main-fns-site.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Probe main site and admin
+        shell: bash
+        run: |
+          set +e
+          BASE='https://estudos-profundos-fns.karlapower007.chatgpt.site'
+          for PATHNAME in '/' '/admin'; do
+            OUT="/tmp/fns$(echo "$PATHNAME" | tr '/' '_').html"
+            HDR="/tmp/fns$(echo "$PATHNAME" | tr '/' '_').hdr"
+            CODE=$(curl -L --compressed -sS --max-time 40 -D "$HDR" -o "$OUT" -w '%{http_code}' "$BASE$PATHNAME")
+            echo "=== $PATHNAME ==="
+            echo "HTTP=$CODE BYTES=$(wc -c <"$OUT" 2>/dev/null || echo 0)"
+            echo "--- HEADERS ---"
+            sed -n '1,40p' "$HDR" || true
+            echo "--- MARKERS ---"
+            grep -Eio 'avatar|fabiano|área do autor|area do autor|login|oai-authenticated-user|next|vite|vinext|script src=[^ >]+' "$OUT" | head -80 || true
+            echo "--- FIRST 1600 ---"
+            head -c 1600 "$OUT" || true
+            echo
+          done
