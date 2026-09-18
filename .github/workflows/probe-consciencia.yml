@@ -1,0 +1,18 @@
+name: Probe Consciência production
+on:
+  push:
+    branches: [consciencia-do-fabiano]
+    paths: ['.github/workflows/probe-consciencia.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe
+        run: |
+          set +e
+          BASE='https://consciencia-fabiano.karlapower007.workers.dev'
+          for p in '/' '/index.html' '/health' '/api/status' '/style.css'; do
+            echo "=== $p ==="
+            curl -i -sS --max-time 20 "$BASE$p" | head -40
+            echo
+          done
