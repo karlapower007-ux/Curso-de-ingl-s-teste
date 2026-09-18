@@ -1,6 +1,7 @@
 import { AwsClient } from "aws4fetch";
+import { getDocumentProxy } from "unpdf";
 
-const VERSION = "1.2.0-three-turbines";
+const VERSION = "1.3.0-matrix-100-turbines";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -10,6 +11,9 @@ const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 1800;
 const MAX_SERVER_HISTORY = 40;
+const EXTRACTION_TURBINES = 50;
+const EMBEDDING_TURBINES = 50;
+const EMBEDDING_RETRIES = 5;
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
