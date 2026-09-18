@@ -132,9 +132,10 @@ try {
   }
   console.log("HEALTH_R2_PASS=yes");
 
+  const runCode = "ORION-" + crypto.randomUUID().slice(0, 8).toUpperCase();
   const pdf = makePdf([
     "FNS Cloudflare R2 end-to-end validation document.",
-    "The secret verification code is ORION-6382.",
+    "The verification code is " + runCode + ".",
     "This file validates multilingual retrieval and is deleted automatically."
   ], 8 * 1024 * 1024);
   console.log("HEAVY_PDF_BYTES=" + pdf.byteLength);
