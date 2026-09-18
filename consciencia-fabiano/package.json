@@ -5,7 +5,10 @@
   "scripts": {
     "check": "node --check src/index.js && node --check public/app.js",
     "deploy": "wrangler deploy",
-    "migrate:remote": "wrangler d1 execute consciencia-fabiano-rag-db --remote --file=./migrations/0001_init.sql"
+    "migrate:remote": "wrangler d1 execute consciencia-fabiano-rag-db --remote --file=./migrations/0001_init.sql",
+    "build": "npm run check",
+    "cf:bootstrap": "bash ./scripts/workers-builds-bootstrap.sh",
+    "cf:deploy": "npm run cf:bootstrap && wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
