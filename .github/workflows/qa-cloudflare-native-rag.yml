@@ -34,6 +34,5 @@ jobs:
           bash -n scripts/workers-builds-bootstrap.sh
           grep -q '"cf:bootstrap"' package.json
           grep -q '"cf:deploy"' package.json
-          test -s ../.github/workflows/provision-cloudflare-native-rag.yml
           test -s ../.github/workflows/fire-test-cloudflare-native-rag.yml
-          test -s ../.github/workflows/deploy-cloudflare-native-v1.yml
+          test -s WORKERS_BUILDS.md
