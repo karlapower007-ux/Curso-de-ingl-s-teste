@@ -21,36 +21,57 @@ async function request(path, options = {}) {
   return { res, body };
 }
 
-function makePdf(lines, paddingBytes = 0) {
-  const esc = s => s.replaceAll("\\","\\\\").replaceAll("(","\\(").replaceAll(")","\\)");
-  let text = "BT /F1 14 Tf 72 720 Td ";
-  lines.forEach((line, i) => {
-    if (i) text += "0 -26 Td ";
-    text += "(" + esc(line) + ") Tj ";
-  });
-  text += "ET";
+function makePdf(pageCount, paddingBytes, runCode) {
   const enc = new TextEncoder();
-  const objs = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Length " + enc.encode(text).length + " >>\nstream\n" + text + "\nendstream",
-  ];
-  if (paddingBytes > 0) {
-    const payload = "Z".repeat(Math.max(0, paddingBytes));
-    objs.push("<< /Length " + payload.length + " >>\nstream\n" + payload + "\nendstream");
+  const esc = s => String(s).replaceAll("\\","\\\\").replaceAll("(","\\(").replaceAll(")","\\)");
+  const objects = [null];
+  const pageObjectNumbers = [];
+
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+  for (let i = 0; i < pageCount; i++) {
+    const pageObj = 4 + (i * 2);
+    const contentObj = pageObj + 1;
+    pageObjectNumbers.push(pageObj);
+
+    const text1 = "FNS Matrix 100 Turbines validation page " + (i + 1) + " of " + pageCount + ".";
+    const text2 = "Verification code " + runCode + ". Parallel extraction and embedding validation.";
+    const stream =
+      "BT /F1 11 Tf 72 720 Td (" + esc(text1) + ") Tj " +
+      "0 -22 Td (" + esc(text2) + ") Tj ET";
+
+    objects[pageObj] =
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
+      "/Resources << /Font << /F1 3 0 R >> >> /Contents " + contentObj + " 0 R >>";
+    objects[contentObj] =
+      "<< /Length " + enc.encode(stream).length + " >>\nstream\n" + stream + "\nendstream";
   }
+
+  objects[2] =
+    "<< /Type /Pages /Kids [" + pageObjectNumbers.map(n => n + " 0 R").join(" ") + "] /Count " + pageCount + " >>";
+
+  if (paddingBytes > 0) {
+    const padObj = objects.length;
+    const payload = "Z".repeat(paddingBytes);
+    objects[padObj] = "<< /Length " + payload.length + " >>\nstream\n" + payload + "\nendstream";
+  }
+
   let out = "%PDF-1.4\n";
   const offsets = [0];
-  for (let i=0;i<objs.length;i++) {
-    offsets.push(enc.encode(out).length);
-    out += (i+1) + " 0 obj\n" + objs[i] + "\nendobj\n";
+  for (let i = 1; i < objects.length; i++) {
+    offsets[i] = enc.encode(out).length;
+    out += i + " 0 obj\n" + objects[i] + "\nendobj\n";
   }
+
   const xref = enc.encode(out).length;
-  out += "xref\n0 " + (objs.length+1) + "\n0000000000 65535 f \n";
-  for (const off of offsets.slice(1)) out += String(off).padStart(10,"0") + " 00000 n \n";
-  out += "trailer\n<< /Size " + (objs.length+1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
+  out += "xref\n0 " + objects.length + "\n";
+  out += "0000000000 65535 f \n";
+  for (let i = 1; i < objects.length; i++) {
+    out += String(offsets[i]).padStart(10,"0") + " 00000 n \n";
+  }
+  out += "trailer\n<< /Size " + objects.length + " /Root 1 0 R >>\n";
+  out += "startxref\n" + xref + "\n%%EOF\n";
   return enc.encode(out);
 }
 
@@ -137,11 +158,7 @@ try {
 
   const runCode = "ORION-" + crypto.randomUUID().slice(0, 8).toUpperCase();
   const testFilename = "fns-r2-e2e-" + runCode.toLowerCase() + ".pdf";
-  const pdf = makePdf([
-    "FNS Cloudflare R2 end-to-end validation document.",
-    "The verification code is " + runCode + ".",
-    "This file validates multilingual retrieval and is deleted automatically."
-  ], 8 * 1024 * 1024);
+  const pdf = makePdf(100, 8 * 1024 * 1024, runCode);
   console.log("HEAVY_PDF_BYTES=" + pdf.byteLength);
   const ticket = (await admin("/api/admin/direct-upload-ticket", {
     method:"POST",
