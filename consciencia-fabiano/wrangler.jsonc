@@ -39,5 +39,8 @@
       "binding": "PDFS",
       "bucket_name": "consciencia-fabiano-pdfs"
     }
-  ]
+  ],
+  "vars": {
+    "ADMIN_PASSWORD_HASH": "97cce096511f26a7054764f60b317c8ee56757a5e717bd225dc19236ad5847f2"
+  }
 }
