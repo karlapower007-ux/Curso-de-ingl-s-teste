@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
 
-const VERSION = "1.1.0-cloudflare-native-do-memory";
+const VERSION = "1.2.0-three-turbines";
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -180,6 +180,64 @@ async function libraryCall(env, path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || ("LibraryDO " + res.status));
   return data;
+}
+
+async function indexJobStatus(env, documentId) {
+  return libraryCall(env, "/job-status?document_id=" + encodeURIComponent(documentId));
+}
+
+async function triggerIndexBackground(request, env, ctx) {
+  assertBindings(env);
+  assertPdfStorage(env);
+
+  const body = await request.json().catch(() => ({}));
+  const documentId = String(body?.document_id || "").trim();
+  const filename = safeName(body?.filename || "");
+  const objectKey = String(body?.r2_key || "").trim();
+  const sizeBytes = Number(body?.size_bytes || 0);
+
+  if (!documentId || !filename || !/\.pdf$/i.test(filename)) {
+    return json({ ok: false, message: "Dados do PDF inválidos." }, 400);
+  }
+
+  const expectedKey = r2ObjectKey(documentId, filename);
+  if (objectKey !== expectedKey) {
+    return json({ ok: false, message: "Chave R2 inválida para este documento." }, 400);
+  }
+
+  const queued = await libraryCall(env, "/queue-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      filename,
+      r2_key: objectKey,
+      size_bytes: sizeBytes,
+    }),
+  });
+
+  const stub = libraryStub(env);
+  const dispatch = stub.fetch(new Request("https://library.internal/process-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      filename,
+      r2_key: objectKey,
+      size_bytes: sizeBytes,
+    }),
+  }));
+
+  if (ctx?.waitUntil) ctx.waitUntil(dispatch);
+  else dispatch.catch(() => {});
+
+  return json({
+    ok: true,
+    status: queued?.status || "processing",
+    document_id: documentId,
+    r2_key: objectKey,
+    message: "Indexação iniciada em background.",
+  }, 202);
 }
 
 async function memoryOwner(request, body = null) {
@@ -678,7 +736,75 @@ function uniqueSources(context) {
   return sources.slice(0, 8);
 }
 
-async function chat(request, env) {
+function extractAiStreamText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  return String(
+    payload.response ??
+    payload.delta?.content ??
+    payload.choices?.[0]?.delta?.content ??
+    payload.choices?.[0]?.text ??
+    payload.result?.response ??
+    ""
+  );
+}
+
+async function collectAiSseText(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let answer = "";
+
+  const consume = eventBlock => {
+    const lines = String(eventBlock || "").split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const raw = line.slice(5).trim();
+      if (!raw || raw === "[DONE]") continue;
+      try {
+        answer += extractAiStreamText(JSON.parse(raw));
+      } catch {}
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() || "";
+    for (const part of parts) consume(part);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consume(buffer);
+  return answer.trim();
+}
+
+function prependSseMeta(aiStream, meta) {
+  const reader = aiStream.getReader();
+  return new ReadableStream({
+    async start(controller) {
+      controller.enqueue(enc.encode(
+        "event: fns-meta\n" +
+        "data: " + JSON.stringify(meta) + "\n\n"
+      ));
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
+async function chat(request, env, ctx) {
   assertBindings(env);
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
@@ -702,8 +828,8 @@ async function chat(request, env) {
   }
 
   const contextText = context.length
-    ? context.map((c, i) =>
-        `[F${i + 1}] ${c.title || c.filename}${c.author ? " — " + c.author : ""}, página ${c.page || "não informada"}\n${c.text}`
+    ? context.map((item, i) =>
+        `[F${i + 1}] ${item.title || item.filename}${item.author ? " — " + item.author : ""}, página ${item.page || "não informada"}\n${item.text}`
       ).join("\n\n")
     : "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
 
@@ -730,54 +856,76 @@ async function chat(request, env) {
     },
   ];
 
-  const result = await env.AI.run(CHAT_MODEL, {
+  const aiResult = await env.AI.run(CHAT_MODEL, {
     messages,
     temperature: 0.35,
     max_tokens: 1100,
+    stream: true,
   });
 
-  const answer =
-    result?.response ||
-    result?.result?.response ||
-    result?.choices?.[0]?.message?.content ||
-    "Não consegui formular uma resposta agora.";
+  const upstream =
+    aiResult instanceof ReadableStream ? aiResult :
+    aiResult instanceof Response ? aiResult.body :
+    aiResult?.body instanceof ReadableStream ? aiResult.body :
+    null;
+
+  if (!upstream) {
+    throw new Error("Workers AI não retornou um stream SSE.");
+  }
 
   const sources = uniqueSources(context);
   const fallback = context.length === 0;
+  const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
+  const [clientBranch, memoryBranch] = upstream.tee();
+
   if (ownerId) {
-    const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
-    try {
-      await appendPersistentMessage(env, {
-        id: turnId + ":u",
-        owner_id: ownerId,
-        role: "user",
-        content: question.slice(0, 8000),
-        sources: [],
-        fallback: false,
-      });
-      await appendPersistentMessage(env, {
-        id: turnId + ":a",
-        owner_id: ownerId,
-        role: "assistant",
-        content: String(answer).trim().slice(0, 12000),
-        sources,
-        fallback,
-      });
-    } catch {}
+    const persist = (async () => {
+      try {
+        await appendPersistentMessage(env, {
+          id: turnId + ":u",
+          owner_id: ownerId,
+          role: "user",
+          content: question.slice(0, 8000),
+          sources: [],
+          fallback: false,
+        });
+        const answer = await collectAiSseText(memoryBranch);
+        if (answer) {
+          await appendPersistentMessage(env, {
+            id: turnId + ":a",
+            owner_id: ownerId,
+            role: "assistant",
+            content: answer.slice(0, 12000),
+            sources,
+            fallback,
+          });
+        }
+      } catch {}
+    })();
+    if (ctx?.waitUntil) ctx.waitUntil(persist);
+  } else {
+    memoryBranch.cancel().catch(() => {});
   }
 
-  return json({
+  const responseStream = prependSseMeta(clientBranch, {
     ok: true,
-    resposta: String(answer).trim(),
     fontes: sources,
     fallback,
-    memory_persisted: Boolean(ownerId),
-    provider: "cloudflare-native-do-rag",
+    provider: "cloudflare-native-do-rag-stream",
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
-}
 
+  return new Response(responseStream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-store",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
 async function stt(request, env) {
   assertBindings(env);
   const buffer = await request.arrayBuffer();
@@ -858,10 +1006,13 @@ async function status(env) {
     documents, chunks, memory_messages: memoryMessages,
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
-    stt_model: STT_MODEL,
-    tts_model: TTS_MODEL,
-    tts_language: "pt-BR",
-    tts_english_fallback_disabled: true,
+    stt_model: null,
+    tts_model: null,
+    voice_stack: "web-speech-api",
+    voice_language: "pt-BR",
+    backend_stt_tts_enabled: false,
+    rag_streaming: "sse",
+    asynchronous_indexing: true,
     trigger_index_route: "/api/trigger-index",
     admin_auth: "native-password",
     direct_r2_upload: true,
@@ -869,18 +1020,21 @@ async function status(env) {
   };
 }
 
-async function handleApi(request, env, url) {
+async function handleApi(request, env, url, ctx) {
   try {
-    if ((url.pathname.startsWith("/api/admin/") || url.pathname === "/api/trigger-index") && !(await adminAuthorized(request, env))) {
+    const privateStatus = url.pathname === "/api/status" && Boolean(url.searchParams.get("document_id"));
+    if ((url.pathname.startsWith("/api/admin/") || url.pathname === "/api/trigger-index" || privateStatus) && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/status" && request.method === "GET") {
+      const documentId = String(url.searchParams.get("document_id") || "").trim();
+      if (documentId) return json(await indexJobStatus(env, documentId));
       return json(await status(env));
     }
     if (url.pathname === "/api/admin/session" && request.method === "GET") {
       return json({ ok: true, auth: "native-password" });
     }
-    if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
+    if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env, ctx);
     if (url.pathname === "/api/memory" && request.method === "GET") {
       const ownerId = await memoryOwner(request);
       if (!ownerId) return json({ ok: false, message: "Chave de memória ausente." }, 400);
@@ -893,14 +1047,20 @@ async function handleApi(request, env, url) {
       if (!ownerId) return json({ ok: false, message: "Chave de memória ausente." }, 400);
       return json(await clearPersistentHistory(env, ownerId));
     }
-    if (url.pathname === "/api/stt" && request.method === "POST") return stt(request, env);
-    if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
+    if ((url.pathname === "/api/stt" || url.pathname === "/api/tts") && request.method === "POST") {
+      return json({
+        ok: false,
+        code: "CLIENT_SIDE_VOICE_ONLY",
+        message: "STT e TTS rodam no navegador via Web Speech API.",
+        language: "pt-BR",
+      }, 410);
+    }
 
     if (url.pathname === "/api/admin/direct-upload-ticket" && request.method === "POST") {
       return await createDirectUploadTicket(request, env);
     }
     if (url.pathname === "/api/trigger-index" && request.method === "POST") {
-      return await indexDirectUpload(request, env);
+      return await triggerIndexBackground(request, env, ctx);
     }
     if (url.pathname === "/api/admin/index-r2" && request.method === "POST") {
       return await indexDirectUpload(request, env);
@@ -969,6 +1129,19 @@ export class LibraryDO {
           fallback INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS index_jobs (
+          document_id TEXT PRIMARY KEY,
+          r2_key TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'processing',
+          chunks INTEGER NOT NULL DEFAULT 0,
+          page_count INTEGER NOT NULL DEFAULT 0,
+          duplicate_of TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
@@ -977,25 +1150,210 @@ export class LibraryDO {
     });
   }
 
+  async processPdfJob(payload) {
+    const documentId = String(payload?.document_id || "").trim();
+    const filename = safeName(payload?.filename || "");
+    const objectKey = String(payload?.r2_key || "").trim();
+    const expectedKey = r2ObjectKey(documentId, filename);
+    const now = () => new Date().toISOString();
+
+    const fail = async error => {
+      const message = String(error?.message || error).slice(0, 1800);
+      try {
+        this.sql.exec("DELETE FROM chunks WHERE document_id = ?", documentId);
+        this.sql.exec("UPDATE documents SET status = 'error', chunk_count = 0 WHERE id = ?", documentId);
+        this.sql.exec(
+          "UPDATE index_jobs SET status='error', error_message=?, updated_at=? WHERE document_id=?",
+          message, now(), documentId
+        );
+      } catch {}
+      return { ok: false, status: "error", message };
+    };
+
+    try {
+      if (!documentId || !filename || !/\.pdf$/i.test(filename) || objectKey !== expectedKey) {
+        throw new Error("Job de indexação inválido.");
+      }
+
+      this.sql.exec(
+        "UPDATE index_jobs SET status='processing', error_message=NULL, updated_at=? WHERE document_id=?",
+        now(), documentId
+      );
+
+      const object = await this.env.PDFS.get(objectKey);
+      if (!object) throw new Error("O PDF não foi encontrado no R2.");
+
+      const buffer = await object.arrayBuffer();
+      const digest = await sha256Buffer(buffer);
+
+      const duplicate = [...this.sql.exec(
+        "SELECT id,filename,title,author,language,page_count,chunk_count FROM documents WHERE sha256=? AND status='ready' AND id<>? LIMIT 1",
+        digest, documentId
+      )][0] || null;
+
+      if (duplicate) {
+        await this.env.PDFS.delete(objectKey).catch(() => {});
+        this.sql.exec("DELETE FROM chunks WHERE document_id = ?", documentId);
+        this.sql.exec("DELETE FROM documents WHERE id = ?", documentId);
+        this.sql.exec(
+          "UPDATE index_jobs SET status='duplicate', duplicate_of=?, chunks=?, page_count=?, error_message=NULL, updated_at=? WHERE document_id=?",
+          duplicate.id, Number(duplicate.chunk_count || 0), Number(duplicate.page_count || 0), now(), documentId
+        );
+        return { ok: true, status: "duplicate", duplicate_of: duplicate.id };
+      }
+
+      const existingDoc = [...this.sql.exec("SELECT id FROM documents WHERE id=? LIMIT 1", documentId)][0];
+      if (existingDoc) {
+        this.sql.exec("DELETE FROM chunks WHERE document_id = ?", documentId);
+        this.sql.exec(
+          "UPDATE documents SET filename=?, title='', author='', language='unknown', sha256=?, size_bytes=?, page_count=0, chunk_count=0, status='processing' WHERE id=?",
+          filename, digest, Number(object.size || payload?.size_bytes || buffer.byteLength || 0), documentId
+        );
+      } else {
+        this.sql.exec(
+          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          documentId, filename, "", "", "unknown", digest,
+          Number(object.size || payload?.size_bytes || buffer.byteLength || 0), 0, 0, "processing", now()
+        );
+      }
+
+      const markdown = await convertPdf(this.env, filename, buffer);
+      const pages = splitPages(markdown);
+      const metadata = parsePdfMetadata(markdown, filename);
+      const language = detectLanguage(markdown);
+
+      const chunkRows = [];
+      let chunkIndex = 0;
+      for (const page of pages) {
+        for (const piece of chunkText(page.text)) {
+          chunkRows.push({
+            id: uuidCompact(),
+            page: Number(page.page || 1),
+            chunk_index: chunkIndex++,
+            text: piece,
+          });
+        }
+      }
+      if (!chunkRows.length) throw new Error("Nenhum texto útil foi extraído do PDF.");
+
+      const createdAt = now();
+      let inserted = 0;
+      const EMBED_BATCH = 8;
+      for (let i = 0; i < chunkRows.length; i += EMBED_BATCH) {
+        const group = chunkRows.slice(i, i + EMBED_BATCH);
+        const vectors = await embedTexts(this.env, group.map(item => item.text));
+        if (vectors.length !== group.length) {
+          throw new Error("Quantidade de embeddings diferente da quantidade de trechos.");
+        }
+
+        for (let j = 0; j < group.length; j++) {
+          const item = group[j];
+          this.sql.exec(
+            "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+            item.id, documentId, item.page, item.chunk_index, item.text,
+            JSON.stringify(vectors[j] || []), createdAt
+          );
+          inserted++;
+        }
+
+        this.sql.exec(
+          "UPDATE index_jobs SET chunks=?, page_count=?, updated_at=? WHERE document_id=?",
+          inserted, pages.length, now(), documentId
+        );
+      }
+
+      this.sql.exec(
+        "UPDATE documents SET title=?, author=?, language=?, page_count=?, chunk_count=?, status='ready' WHERE id=?",
+        metadata.title || filename, metadata.author || "", language || "unknown",
+        pages.length, inserted, documentId
+      );
+      this.sql.exec(
+        "UPDATE index_jobs SET status='ready', chunks=?, page_count=?, error_message=NULL, updated_at=? WHERE document_id=?",
+        inserted, pages.length, now(), documentId
+      );
+
+      return {
+        ok: true,
+        status: "ready",
+        document_id: documentId,
+        arquivo: filename,
+        chunks: inserted,
+        paginas: pages.length,
+      };
+    } catch (error) {
+      return fail(error);
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     try {
+      if (url.pathname === "/queue-pdf" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const documentId = String(body?.document_id || "").trim();
+        const filename = safeName(body?.filename || "");
+        const r2Key = String(body?.r2_key || "").trim();
+        if (!documentId || !filename || r2Key !== r2ObjectKey(documentId, filename)) {
+          return json({ ok: false, message: "Job de indexação inválido." }, 400);
+        }
+        const now = new Date().toISOString();
+        const existing = [...this.sql.exec("SELECT document_id,status FROM index_jobs WHERE document_id=? LIMIT 1", documentId)][0] || null;
+        if (existing) {
+          this.sql.exec(
+            "UPDATE index_jobs SET r2_key=?, filename=?, size_bytes=?, status='processing', chunks=0, page_count=0, duplicate_of=NULL, error_message=NULL, updated_at=? WHERE document_id=?",
+            r2Key, filename, Number(body?.size_bytes || 0), now, documentId
+          );
+        } else {
+          this.sql.exec(
+            "INSERT INTO index_jobs (document_id,r2_key,filename,size_bytes,status,chunks,page_count,duplicate_of,error_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            documentId, r2Key, filename, Number(body?.size_bytes || 0), "processing", 0, 0, null, null, now, now
+          );
+        }
+        return json({ ok: true, status: "processing", document_id: documentId });
+      }
+      if (url.pathname === "/process-pdf" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        this.ctx.waitUntil(this.processPdfJob(body));
+        return json({ ok: true, status: "processing", document_id: String(body?.document_id || "") }, 202);
+      }
+      if (url.pathname === "/job-status" && request.method === "GET") {
+        const documentId = String(url.searchParams.get("document_id") || "").trim();
+        const row = [...this.sql.exec(
+          "SELECT document_id,r2_key,filename,size_bytes,status,chunks,page_count,duplicate_of,error_message,created_at,updated_at FROM index_jobs WHERE document_id=? LIMIT 1",
+          documentId
+        )][0] || null;
+        if (!row) return json({ ok: false, status: "not_found", message: "Job de indexação não encontrado." }, 404);
+        return json({
+          ok: true,
+          document_id: row.document_id,
+          r2_key: row.r2_key,
+          arquivo: row.filename,
+          size_bytes: Number(row.size_bytes || 0),
+          status: row.status,
+          chunks: Number(row.chunks || 0),
+          paginas: Number(row.page_count || 0),
+          duplicate_of: row.duplicate_of || null,
+          error: row.error_message || null,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        });
+      }
       if (url.pathname === "/status") {
-        const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
-        const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
+        const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents WHERE status='ready'")][0]?.n || 0;
+        const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id=c.document_id WHERE d.status='ready'")][0]?.n || 0;
         const m = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages")][0]?.n || 0;
         return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m) });
       }
       if (url.pathname === "/duplicate") {
         const sha = String(url.searchParams.get("sha") || "");
-        const row = [...this.sql.exec("SELECT id, filename AS arquivo, status FROM documents WHERE sha256 = ? LIMIT 1", sha)][0] || null;
+        const row = [...this.sql.exec("SELECT id, filename AS arquivo, status FROM documents WHERE sha256 = ? AND status='ready' LIMIT 1", sha)][0] || null;
         return json({ ok: true, document: row });
       }
       if (url.pathname === "/docs") {
         const rows = [...this.sql.exec(`
           SELECT id, filename AS arquivo, title AS titulo, author AS autor, language AS idioma,
                  page_count AS paginas, chunk_count AS chunks, size_bytes, status, created_at
-          FROM documents ORDER BY created_at DESC
+          FROM documents WHERE status='ready' ORDER BY created_at DESC
         `)];
         return json({ ok: true, livros: rows, total: rows.length });
       }
@@ -1034,6 +1392,7 @@ export class LibraryDO {
         if (!row) return json({ ok: false, message: "Documento não encontrado." }, 404);
         this.sql.exec("DELETE FROM chunks WHERE document_id = ?", row.id);
         this.sql.exec("DELETE FROM documents WHERE id = ?", row.id);
+        this.sql.exec("DELETE FROM index_jobs WHERE document_id = ?", row.id);
         return json({ ok: true, document_id: row.id, arquivo: row.filename });
       }
       if (url.pathname === "/chunks") {
@@ -1125,7 +1484,7 @@ export class LibraryDO {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
@@ -1133,7 +1492,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/")) {
-      return handleApi(request, env, url);
+      return handleApi(request, env, url, ctx);
     }
 
     if (url.pathname === "/" || url.pathname === "/admin") {
