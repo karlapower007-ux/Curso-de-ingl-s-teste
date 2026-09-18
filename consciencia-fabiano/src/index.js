@@ -115,8 +115,6 @@ async function handleApi(request, env, url) {
     return json({ ok }, ok ? 200 : 401);
   }
 
-  if (!(await authorized(request))) return requireAuthResponse();
-
   if (url.pathname === "/api/status" && request.method === "GET") {
     let backend = null;
     try {
@@ -201,6 +199,10 @@ async function handleApi(request, env, url) {
     } catch (error) {
       return json({ ok: false, message: String(error?.message || error) }, 503);
     }
+  }
+
+  if (url.pathname.startsWith("/api/admin/") && !(await authorized(request))) {
+    return requireAuthResponse();
   }
 
   if (url.pathname === "/api/admin/upload-pdf" && request.method === "POST") {
