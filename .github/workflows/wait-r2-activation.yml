@@ -1,0 +1,70 @@
+name: Wait for R2 activation and create bucket
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/wait-r2-activation.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  r2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+
+      - name: Wait for R2 activation to propagate and create bucket
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set +e
+          READY=no
+          for i in $(seq 1 15); do
+            echo "=== R2 probe $i/15 ==="
+            npx wrangler r2 bucket list > /tmp/r2-list.txt 2>&1
+            rc=$?
+            cat /tmp/r2-list.txt
+            if [ "$rc" = "0" ]; then
+              if grep -q 'consciencia-fabiano-pdfs' /tmp/r2-list.txt; then
+                READY=yes
+                break
+              fi
+              npx wrangler r2 bucket create consciencia-fabiano-pdfs > /tmp/r2-create.txt 2>&1
+              cc=$?
+              cat /tmp/r2-create.txt
+              if [ "$cc" = "0" ]; then
+                READY=yes
+                break
+              fi
+            fi
+            sleep 30
+          done
+          echo "R2_READY=$READY"
+          test "$READY" = "yes"
+
+      - name: Remove one-shot workflow
+        if: always()
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/wait-r2-activation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish R2 activation propagation probe"
+          git push origin HEAD:consciencia-cloudflare-native-v1
