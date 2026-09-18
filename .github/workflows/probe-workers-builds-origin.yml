@@ -1,0 +1,50 @@
+name: Probe Workers Builds origin source
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/probe-workers-builds-origin.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - name: Try API-only origin repository connection
+        shell: bash
+        run: |
+          set +e
+          api="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT"
+          cat >/tmp/body.json <<'JSON'
+          {
+            "provider_type":"origin",
+            "provider_account_id":"karlapower007-ux",
+            "provider_account_name":"karlapower007-ux",
+            "repo_id":"Curso-de-ingl-s-teste",
+            "repo_name":"Curso-de-ingl-s-teste"
+          }
+          JSON
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X PUT             "$api/builds/repos/connections"             -H "Authorization: Bearer $CF_TOKEN"             -H 'Content-Type: application/json'             --data @/tmp/body.json)
+          jq '{success,errors,result:{repo_connection_uuid:.result.repo_connection_uuid,provider_type:.result.provider_type,provider_account_name:.result.provider_account_name,repo_name:.result.repo_name}}' /tmp/out.json
+          echo "ORIGIN_CONNECTION_HTTP=$code"
+
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/probe-workers-builds-origin.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish Workers Builds origin probe"
+          git push origin HEAD:consciencia-cloudflare-native-v1
