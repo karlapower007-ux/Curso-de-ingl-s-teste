@@ -29,7 +29,8 @@ jobs:
         run: |
           python3 -m pip install --quiet pillow
           python3 - <<'PY'
-          from PIL import Image
+          from PIL import Image, ImageFile
+          ImageFile.LOAD_TRUNCATED_IMAGES=True
           a=Image.open('public/fabiano-fechado.png').convert('RGBA')
           b=Image.open('public/fabiano-aberto.png').convert('RGBA').resize(a.size)
           Image.blend(a,b,0.48).save('public/fabiano-falando.png',optimize=True)
