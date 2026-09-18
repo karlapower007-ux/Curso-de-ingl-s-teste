@@ -1,0 +1,30 @@
+name: Resolve Avatar Fabiano Worker URL
+
+on:
+  push:
+    branches: [avatar-fabiano-production]
+    paths:
+      - '.github/workflows/resolve-avatar-worker-url.yml'
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Resolve workers.dev subdomain and verify site
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          JSON=$(curl --fail --silent --show-error             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")
+          SUB=$(printf '%s' "$JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['subdomain'])")
+          URL="https://avatar-fabiano-site.$SUB.workers.dev"
+          echo "PUBLIC_URL=$URL"
+          curl --compressed --fail --silent --show-error --max-time 30 "$URL/?v=resolve" -o /tmp/index.html
+          echo "HTTP_BODY_BYTES=$(wc -c </tmp/index.html)"
+          grep -q 'FABIANO_CF_V1_20260917' /tmp/index.html
+          echo 'PUBLIC_SITE_MARKER=PASS'
