@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "check": "node --check src/index.js && node --check public/app.js",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "migrate:remote": "wrangler d1 execute consciencia-fabiano-rag-db --remote --file=./migrations/0001_init.sql"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

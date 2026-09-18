@@ -1,0 +1,33 @@
+name: QA Cloudflare Native RAG
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - 'consciencia-fabiano/**'
+      - '.github/workflows/qa-cloudflare-native-rag.yml'
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Syntax and architecture checks
+        run: |
+          npm run check
+          grep -q '@cf/baai/bge-m3' src/index.js
+          grep -q 'env.AI.toMarkdown' src/index.js
+          grep -q 'env.PDFS' src/index.js
+          grep -q 'env.VECTORIZE' src/index.js
+          grep -q 'env.DB' src/index.js
+          grep -q '@cf/openai/whisper-large-v3-turbo' src/index.js
+          grep -q '@cf/myshell-ai/melotts' src/index.js
+          ! grep -q 'onrender.com' src/index.js
+          test -s migrations/0001_init.sql
