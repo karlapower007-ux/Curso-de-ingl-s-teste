@@ -12,7 +12,12 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 16
+    env:
+      BASE: https://avatar-fabiano-api.onrender.com
+      RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,14 +36,46 @@ jobs:
           grep -q "window.__FNS_AVATAR_FABIANO_WIDGET_V2__" avatar-fabiano/static/fns-avatar-widget.js
           node --check avatar-fabiano/static/fns-avatar-widget.js
 
-      - name: Wait for Render auto-deploy and verify live pages
+      - name: Probe current live Render UI
+        shell: bash
+        run: |
+          set +e
+          echo "=== ROOT STATUS ==="
+          curl --compressed -sS -o /tmp/root.html -w '%{http_code}\n' --max-time 30 "$BASE/"
+          echo "=== ADMIN STATUS ==="
+          curl --compressed -sS -o /tmp/admin.html -w '%{http_code}\n' --max-time 30 "$BASE/admin"
+          echo "=== HEALTH ==="
+          curl --compressed -sS --max-time 30 "$BASE/health" || true
+          echo
+          echo "=== LIVE UI MARKERS ==="
+          grep -Eo 'FABIANO_UI_[A-Za-z0-9_]+' /tmp/root.html 2>/dev/null | head -5 || true
+          grep -Eo 'avatar-fabiano-(perfil|debatendo)\.png' /tmp/root.html 2>/dev/null | sort -u || true
+          echo "root bytes: $(wc -c </tmp/root.html 2>/dev/null || echo 0)"
+          echo "admin bytes: $(wc -c </tmp/admin.html 2>/dev/null || echo 0)"
+
+      - name: Trigger Render deploy when credentials are available
         shell: bash
         run: |
           set -euo pipefail
-          BASE='https://avatar-fabiano-api.onrender.com'
+          if [ -n "${RENDER_DEPLOY_HOOK:-}" ]; then
+            echo "Using RENDER_DEPLOY_HOOK"
+            curl --fail --silent --show-error --max-time 30 -X POST "$RENDER_DEPLOY_HOOK" >/tmp/render-trigger.json ||             curl --fail --silent --show-error --max-time 30 "$RENDER_DEPLOY_HOOK" >/tmp/render-trigger.json
+            cat /tmp/render-trigger.json || true
+          elif [ -n "${RENDER_API_KEY:-}" ] && [ -n "${RENDER_SERVICE_ID:-}" ]; then
+            echo "Using Render API service deploy"
+            curl --fail --silent --show-error --max-time 30               -X POST "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys"               -H "Authorization: Bearer $RENDER_API_KEY"               -H "Content-Type: application/json"               -d '{"clearCache":"do_not_clear"}' >/tmp/render-trigger.json
+            cat /tmp/render-trigger.json || true
+          else
+            echo "No Render deploy secret configured in GitHub; relying on Render auto-deploy from branch push."
+          fi
+
+      - name: Wait for live V2 UI
+        shell: bash
+        run: |
+          set -euo pipefail
           ok=0
-          for i in $(seq 1 60); do
-            echo "Render verification attempt $i/60"
+          for i in $(seq 1 75); do
+            echo "Render verification attempt $i/75"
             if curl --compressed --fail --silent --show-error --max-time 25 "$BASE/" -o /tmp/index.html &&
                curl --compressed --fail --silent --show-error --max-time 25 "$BASE/admin" -o /tmp/admin.html &&
                grep -q 'FABIANO_UI_V2_20260917' /tmp/index.html &&
@@ -51,7 +88,15 @@ jobs:
             fi
             sleep 10
           done
-          test "$ok" = "1"
+          if [ "$ok" != "1" ]; then
+            echo "LIVE VERSION DID NOT ADVANCE"
+            echo "Current root markers:"
+            grep -Eo 'FABIANO_UI_[A-Za-z0-9_]+' /tmp/index.html 2>/dev/null | head -5 || true
+            echo "Current root first 400 chars:"
+            head -c 400 /tmp/index.html 2>/dev/null || true
+            echo
+            exit 1
+          fi
           curl --compressed --fail --silent --show-error --max-time 25 "$BASE/static/avatar-fabiano-perfil.png" -o /tmp/perfil.png
           curl --compressed --fail --silent --show-error --max-time 25 "$BASE/static/avatar-fabiano-debatendo.png" -o /tmp/debatendo.png
           test -s /tmp/perfil.png
