@@ -1,0 +1,41 @@
+name: Sync Fabiano owner access
+on:
+  push:
+    branches: [avatar-fabiano-production]
+    paths: ['.github/workflows/sync-fabiano-owner-access.yml']
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: avatar-fabiano-production
+      - name: Sync owner auth and Consciência origin
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('avatar-fabiano/main.py')
+          s=p.read_text()
+          old='6181e1c1b0ce09c367fcfc3be871baec2d356e80f2752db66cff41a736621c6c'
+          new='4df264da389c491ea6b9a57f10715108246440ae738f9378b65a64a4c4ce4fc0'
+          if old not in s:
+              raise SystemExit('owner hash not found')
+          p.write_text(s.replace(old,new))
+
+          r=Path('render.yaml')
+          y=r.read_text()
+          old_origin='value: https://estudos-profundos-fns.karlapower007.chatgpt.site'
+          new_origin='value: https://estudos-profundos-fns.karlapower007.chatgpt.site,https://consciencia-fabiano.karlapower007.workers.dev'
+          if old_origin in y:
+              y=y.replace(old_origin,new_origin)
+          r.write_text(y)
+          PY
+          git rm .github/workflows/sync-fabiano-owner-access.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add avatar-fabiano/main.py render.yaml
+          git commit -m "Sync private Consciência access with Fabiano RAG backend"
+          git push origin HEAD:avatar-fabiano-production
