@@ -1,0 +1,48 @@
+name: Probe Workers Builds state
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths: ['.github/workflows/probe-workers-builds-state.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+
+      - name: Probe Workers Builds API
+        shell: bash
+        run: |
+          set +e
+          probe() {
+            label="$1"; endpoint="$2"
+            code=$(curl -sS -o /tmp/out.json -w '%{http_code}'               "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/$endpoint"               -H "Authorization: Bearer $TOKEN"               -H 'Content-Type: application/json')
+            success=$(jq -r '.success // false' /tmp/out.json 2>/dev/null)
+            count=$(jq -r 'if (.result|type)=="array" then (.result|length) else 0 end' /tmp/out.json 2>/dev/null)
+            err=$(jq -r '.errors[0].code // 0' /tmp/out.json 2>/dev/null)
+            echo "$label http=$code success=$success count=$count error_code=$err"
+          }
+          probe "repo_connections" "builds/repos/connections"
+          probe "build_triggers" "builds/triggers"
+          probe "build_tokens" "builds/tokens"
+
+      - name: Remove one-shot workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/probe-workers-builds-state.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Finish Workers Builds probe"
+          git push origin HEAD:consciencia-cloudflare-native-v1
