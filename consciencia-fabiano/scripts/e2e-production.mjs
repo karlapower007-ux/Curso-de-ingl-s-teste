@@ -77,7 +77,8 @@ async function cleanup() {
 
 try {
   const health = (await request("/health")).body;
-  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
+  const docsBefore = Number(health.documents || 0);
+  if (!(health.ok && health.pdf_storage === "r2" && health.r2_binding === "PDFS" && health.direct_r2_upload === true && health.upload_body_limit_bypassed === true && health.trigger_index_route === "/api/trigger-index" && health.tts_language === "pt-BR" && health.tts_english_fallback_disabled === true && Array.isArray(health.bindings_missing) && health.bindings_missing.length === 0)) {
     throw new Error("health R2 inválido: " + JSON.stringify(health));
   }
   console.log("HEALTH_R2_PASS=yes");
@@ -125,7 +126,7 @@ try {
   if (!directPut.ok) throw new Error("PUT direto R2 falhou HTTP " + directPut.status + " " + await directPut.text());
   console.log("DIRECT_R2_PUT_PASS=yes");
 
-  const upload = (await admin("/api/admin/index-r2", {
+  const upload = (await admin("/api/trigger-index", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
@@ -139,6 +140,12 @@ try {
     throw new Error("indexação após upload direto inválida: " + JSON.stringify(upload));
   }
   console.log("UPLOAD_R2_PASS=yes");
+
+  const afterIndex = (await request("/health")).body;
+  if (Number(afterIndex.documents || 0) !== docsBefore + 1) {
+    throw new Error("catálogo não incrementou após trigger-index: antes=" + docsBefore + " depois=" + afterIndex.documents);
+  }
+  console.log("CATALOG_COUNTER_INCREMENT_PASS=yes");
 
   const r2 = (await admin("/api/admin/r2-object?document_id=" + encodeURIComponent(documentId))).body;
   if (!(r2.ok && r2.exists === true && Number(r2.size) > 0)) throw new Error("objeto R2 ausente");
@@ -162,22 +169,44 @@ try {
   if (!(memory.ok && memory.persistent === true && Number(memory.total) >= 2)) throw new Error("memória não persistiu");
   console.log("MEMORY_PASS=yes");
 
-  const tts = await request("/api/tts", {
+  const ttsRes = await fetch(base + "/api/tts", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({text:"Teste de voz da Consciência do Fabiano. Código Orion seis três oito dois."}),
+    body:JSON.stringify({
+      text:"Teste de voz em português brasileiro. Código Orion seis três oito dois.",
+      language:"pt-BR"
+    }),
   });
-  const audio = new Uint8Array(tts.body);
-  if (!(tts.res.headers.get("content-type") || "").startsWith("audio/") || audio.byteLength <= 100) throw new Error("TTS inválido");
-  console.log("TTS_PASS=yes");
+  const ttsLanguage = ttsRes.headers.get("x-fns-tts-language") || "";
+  const ttsProvider = ttsRes.headers.get("x-fns-tts-provider") || "";
+  if (ttsLanguage !== "pt-BR") throw new Error("TTS sem tag pt-BR: " + ttsLanguage);
 
-  const stt = (await request("/api/stt", {
-    method:"POST",
-    headers:{"Content-Type":tts.res.headers.get("content-type") || "audio/mpeg"},
-    body:audio,
-  })).body;
-  if (!(stt.ok && String(stt.text || "").trim().length >= 3)) throw new Error("STT inválido: " + JSON.stringify(stt));
-  console.log("STT_PASS=yes");
+  if (ttsRes.ok) {
+    const audio = new Uint8Array(await ttsRes.arrayBuffer());
+    if (!(ttsRes.headers.get("content-type") || "").startsWith("audio/") || audio.byteLength <= 100) {
+      throw new Error("TTS de áudio inválido");
+    }
+    console.log("TTS_PTBR_BACKEND_PASS=yes");
+
+    const stt = (await request("/api/stt", {
+      method:"POST",
+      headers:{"Content-Type":ttsRes.headers.get("content-type") || "audio/mpeg"},
+      body:audio,
+    })).body;
+    if (!(stt.ok && String(stt.text || "").trim().length >= 3)) throw new Error("STT inválido: " + JSON.stringify(stt));
+    console.log("STT_PASS=yes");
+  } else {
+    const fallback = await ttsRes.json().catch(() => ({}));
+    if (!(ttsRes.status === 503 && fallback.browser_fallback === true && fallback.language === "pt-BR" && ttsProvider === "browser-pt-BR")) {
+      throw new Error("fallback pt-BR inválido: HTTP " + ttsRes.status + " " + JSON.stringify(fallback));
+    }
+    const appJs = await fetch(base + "/app.js?v=8").then(r => r.text());
+    if (!appJs.includes('u.lang = "pt-BR"') || !appJs.includes("/api/trigger-index") || !appJs.includes("voiceschanged")) {
+      throw new Error("frontend pt-BR/trigger-index não está publicado");
+    }
+    console.log("TTS_PTBR_BROWSER_FALLBACK_PASS=yes");
+    console.log("STT_PASS=skipped_no_server_audio");
+  }
 
   const del = (await admin("/api/admin/delete-pdf", {
     method:"POST",
@@ -191,6 +220,11 @@ try {
   const books = (await admin("/api/admin/livros")).body;
   if ((books.livros || []).some(x => x.arquivo === "fns-r2-e2e.pdf")) throw new Error("PDF de teste ficou no índice");
   console.log("LIBRARY_CLEAN_PASS=yes");
+  const afterCleanup = (await request("/health")).body;
+  if (Number(afterCleanup.documents || 0) !== docsBefore) {
+    throw new Error("catálogo não retornou ao total inicial: antes=" + docsBefore + " depois=" + afterCleanup.documents);
+  }
+  console.log("CATALOG_COUNTER_CLEANUP_PASS=yes");
 
   await request("/api/memory/clear", {
     method:"POST",
