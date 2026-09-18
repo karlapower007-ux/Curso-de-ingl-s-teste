@@ -33,5 +33,11 @@
       "/health",
       "/api/*"
     ]
-  }
+  },
+  "r2_buckets": [
+    {
+      "binding": "PDFS",
+      "bucket_name": "consciencia-fabiano-pdfs"
+    }
+  ]
 }
