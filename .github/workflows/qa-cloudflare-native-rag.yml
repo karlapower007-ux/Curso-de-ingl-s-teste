@@ -51,7 +51,7 @@ jobs:
           grep -q 'safeMarkdownHtml' public/app.js
           grep -q 'isFocusedCitationRequest' src/index.js
           grep -q 'APENAS UMA fonte principal' src/index.js
-          grep -q 'NUNCA gere tabela Markdown' src/index.js
+          grep -q 'Não gere tabelas Markdown' src/index.js
           grep -q 'SEMANTIC_MIN_SCORE = 0.46' src/index.js
           grep -q 'LEXICAL_MIN_COVERAGE = 0.50' src/index.js
           grep -q 'gracefulEmptyAnswer' src/index.js
