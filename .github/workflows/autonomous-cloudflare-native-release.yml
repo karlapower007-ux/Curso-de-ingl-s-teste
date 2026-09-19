@@ -23,20 +23,13 @@ jobs:
       run:
         working-directory: consciencia-fabiano
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.FABIANO_R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.FABIANO_R2_SECRET_ACCESS_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      SUPABASE_RAG_SEARCH_URL: ${{ secrets.SUPABASE_RAG_SEARCH_URL }}
-      PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-      PINECONE_UPSERT_URL: ${{ secrets.PINECONE_UPSERT_URL }}
-      PINECONE_QUERY_URL: ${{ secrets.PINECONE_QUERY_URL }}
-      VERCEL_STANDBY_URL: ${{ secrets.VERCEL_STANDBY_URL }}
-      DENO_STANDBY_URL: ${{ secrets.DENO_STANDBY_URL }}
-      SECONDARY_STANDBY_URL: ${{ secrets.SECONDARY_STANDBY_URL }}
+      FABIANO_CLOUDFLARE_EMAIL: focoeepoder2@gmail.com
+      EXPECTED_WORKERS_BASE: https://consciencia-fabiano.focoeepoder2.workers.dev
     steps:
       - uses: actions/checkout@v4
         with:
