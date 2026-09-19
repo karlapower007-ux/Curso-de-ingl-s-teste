@@ -43,7 +43,7 @@ function rpc(worker,type,payload={},timeout=1800){
   });
 }
 function fold(text){return String(text||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu," ").replace(/\s+/g," ").trim();}
-function terms(q){const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","um","uma","que","sobre","para","por","com","como","quero","versiculo","versículo","passagem","citacao","citação","referencia","referência"]);return [...new Set(fold(q).split(" ").filter(x=>x.length>=3&&!stop.has(x)))].slice(0,12);}
+function terms(q){const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre","para","por","com","como","quero","saber","saiba","conhecer","conheca","informacao","informação","versiculo","versículo","passagem","citacao","citação","referencia","referência"]);return [...new Set(fold(q).split(" ").filter(x=>x.length>=3&&!stop.has(x)))].slice(0,18);}
 function normalizeMatch(x,mode){
   return {
     id:String(x.id || x.key || ""),
@@ -237,6 +237,22 @@ async function level10(question){
   return (r.matches||[]).map(x=>normalizeMatch(x,"bm25-local"));
 }
 
+function mergeSearchMatches(...groups){
+  const seen=new Set(),out=[];
+  for(const group of groups){
+    for(const row of (Array.isArray(group)?group:[])){
+      const text=String(row?.text||"").trim();
+      if(!text)continue;
+      const key=String(row?.id||row?.key||"") || [row?.document_id||"",row?.page||0,row?.chunk_index||0,fold(text).slice(0,180)].join("|");
+      if(seen.has(key))continue;
+      seen.add(key);
+      out.push(row);
+    }
+  }
+  out.sort((a,b)=>Number(b?.score||0)-Number(a?.score||0));
+  return out.slice(0,TOP_K);
+}
+
 async function search(question,queryEmbedding){
   await ready;
   const attempts=[];
@@ -251,27 +267,39 @@ async function search(question,queryEmbedding){
       return [];
     }
   };
-  let matches=await run(1,LEVELS[0][1],()=>Promise.resolve(ramSearch(question)));
-  if(matches.length)return {matches,level:1,name:LEVELS[0][1],attempts};
-  matches=await run(2,LEVELS[1][1],()=>level2(question,queryEmbedding));
-  if(matches.length)return {matches,level:2,name:LEVELS[1][1],attempts};
-  matches=await run(3,LEVELS[2][1],()=>level3(question));
-  if(matches.length)return {matches,level:3,name:LEVELS[2][1],attempts};
-  matches=await run(4,LEVELS[3][1],()=>level4(question,queryEmbedding));
-  if(matches.length)return {matches,level:4,name:LEVELS[3][1],attempts};
-  matches=await run(5,LEVELS[4][1],()=>level5(question,queryEmbedding));
-  if(matches.length)return {matches,level:5,name:LEVELS[4][1],attempts};
+
+  // Regra de tráfego V1.20: todas as fontes locais pesquisáveis participam antes
+  // de qualquer rejeição. Um hit em RAM, vetor, OPFS ou BM25 já abre os 20 núcleos.
+  const [ramHits,vectorHits,opfsHits,bm25Hits]=await Promise.all([
+    run(1,LEVELS[0][1],()=>Promise.resolve(ramSearch(question))),
+    run(2,LEVELS[1][1],()=>level2(question,queryEmbedding)),
+    run(3,LEVELS[2][1],()=>level3(question)),
+    run(10,LEVELS[9][1],()=>level10(question))
+  ]);
+  let localMatches=mergeSearchMatches(ramHits,vectorHits,opfsHits,bm25Hits);
+  if(localMatches.length){
+    return {matches:localMatches,level:10,name:"Malha local combinada (RAM + vetores + OPFS + BM25)",attempts};
+  }
+
+  const localhostHits=await run(4,LEVELS[3][1],()=>level4(question,queryEmbedding));
+  if(localhostHits.length)return {matches:localhostHits,level:4,name:LEVELS[3][1],attempts};
+
+  const cloudflareHits=await run(5,LEVELS[4][1],()=>level5(question,queryEmbedding));
+  if(cloudflareHits.length)return {matches:cloudflareHits,level:5,name:LEVELS[4][1],attempts};
 
   await hydrateStaticBackup(true);
-  matches=await run(2,"IndexedDB reidratado",()=>level2(question,queryEmbedding));
-  if(matches.length)return {matches,level:2,name:"IndexedDB reidratado",attempts};
+  const [rehydratedVector,rehydratedBm25]=await Promise.all([
+    run(2,"IndexedDB reidratado",()=>level2(question,queryEmbedding)),
+    run(10,"BM25 reidratado",()=>level10(question))
+  ]);
+  localMatches=mergeSearchMatches(rehydratedVector,rehydratedBm25);
+  if(localMatches.length)return {matches:localMatches,level:10,name:"Backup local reidratado",attempts};
 
   for(const [level,provider] of [[6,"supabase"],[7,"pinecone"],[8,"mongodb"],[9,"astra"]]){
-    matches=await run(level,LEVELS[level-1][1],()=>cloudSlot(provider,question,queryEmbedding));
+    const matches=await run(level,LEVELS[level-1][1],()=>cloudSlot(provider,question,queryEmbedding));
     if(matches.length)return {matches,level,name:LEVELS[level-1][1],attempts};
   }
-  matches=await run(10,LEVELS[9][1],()=>level10(question));
-  return {matches,level:matches.length?10:0,name:matches.length?LEVELS[9][1]:"none",attempts};
+  return {matches:[],level:0,name:"none",attempts};
 }
 
 async function getDocumentChunks(documentId,offset=0,limit=20){
@@ -289,6 +317,17 @@ async function listDocuments(){
     return Array.isArray(r.documents)?r.documents:[];
   }catch{return [];}
 }
+async function localStats(){
+  await ready;
+  try{return await rpc(searchWorker,"local-stats",{},4000);}
+  catch{return {ok:false,chunks:0,vectors:0};}
+}
+async function exportVectors(offset=0,limit=50){
+  await ready;
+  try{
+    return await rpc(searchWorker,"export-vectors",{offset:Number(offset||0),limit:Math.max(1,Math.min(100,Number(limit||50)))},8000);
+  }catch{return {ok:false,total:0,records:[],done:true};}
+}
 async function deleteDocument(documentId){
   const id=String(documentId||"");
   if(!id)return false;
@@ -300,5 +339,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
