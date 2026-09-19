@@ -94,7 +94,7 @@ async function planCLocalAnalytic(payload){
     const matches=Array.isArray(result?.matches)?result.matches:[];
     if(!matches.length) return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
 
-    const turbines=await import("/local-turbine-pool.js?v=3.1.0");
+    const turbines=await import("/local-turbine-pool.js?v=3.2.0");
     const extraction=await turbines.runLocalTurbines({
       question:String(payload.question||""),
       matches,
@@ -106,7 +106,7 @@ async function planCLocalAnalytic(payload){
         ok:true,
         plan:"C",
         provider:"indexeddb-local-worker-swarm",
-        answer:"Modo Offline V3.1: "+cards.length+" trechos relevantes foram extraídos localmente sem IA remota.",
+        answer:"Modo Offline V3.2: "+cards.length+" trechos relevantes foram extraídos localmente sem IA remota.",
         sources:cards.slice(0,24).map(card=>({
           arquivo:card.filename || card.title,
           titulo:card.title,
