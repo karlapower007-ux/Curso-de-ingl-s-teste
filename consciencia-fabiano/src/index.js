@@ -1,5 +1,5 @@
 const VERSION = "1.8.0-xeque-mate-local-embeddings";
-// External AI bypass activation: Groq chat/STT + Cohere multilingual embeddings.
+// Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
 const STT_MODEL = "whisper-large-v3-turbo";
@@ -779,9 +779,9 @@ async function groqStreamResponse(env, messages, meta) {
         controller.enqueue(encoder.encode(sseFrame("meta", {
           fontes: meta.sources,
           fallback: meta.fallback,
-          provider: "groq+cohere-rag",
+          provider: "groq+local-rag",
           embedding_model: LOCAL_EMBEDDING_MODEL,
-    legacy_embedding_model: EMBEDDING_MODEL,
+    legacy_embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
         const reader = upstream.body.getReader();
@@ -814,8 +814,8 @@ async function groqStreamResponse(env, messages, meta) {
           fontes: meta.sources,
           fallback: meta.fallback,
           memory_persisted: memoryPersisted,
-          provider: "groq+cohere-rag",
-          embedding_model: EMBEDDING_MODEL,
+          provider: "groq+local-rag",
+          embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
         controller.close();
@@ -980,8 +980,8 @@ async function chat(request, env) {
     fontes: sources,
     fallback,
     memory_persisted: memoryPersisted,
-    provider: "groq+cohere-rag",
-    embedding_model: EMBEDDING_MODEL,
+    provider: "groq+local-rag",
+    embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
 }
@@ -1067,7 +1067,7 @@ async function status(env) {
     render_dependency: false,
     bindings_missing: missing,
     documents, chunks, memory_messages: memoryMessages, index_jobs: indexJobs,
-    embedding_model: EMBEDDING_MODEL,
+    embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
     stt_model: STT_MODEL,
     tts_model: TTS_MODEL,
@@ -1104,7 +1104,7 @@ async function handleApi(request, env, url, ctx) {
       return json({ok:false,code:"CLIENT_EXTRACTION_REQUIRED",message:"Binário PDF desativado. Extraia no navegador com pdf.js e envie somente texto para /api/trigger-index."},410);
     }
     if (url.pathname === "/api/admin/r2-presign" && request.method === "POST") return presignR2Put(request, env);
-    if (url.pathname === "/api/trigger-index" && request.method === "POST") return triggerIndex(request, env);
+    if (url.pathname === "/api/trigger-index" && request.method === "POST") return json({ok:false,code:"LOCAL_EMBEDDINGS_REQUIRED",message:"Fluxo remoto de embeddings desativado. Atualize a página e use o motor local com Web Worker."},410);
     if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
     if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
     if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") return await deletePdf(request, env);

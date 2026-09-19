@@ -398,7 +398,7 @@
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
       memory_persisted: meta.memory_persisted === true,
-      provider: meta.provider || "groq+cohere-rag"
+      provider: meta.provider || "groq+local-rag"
     };
   }
 
