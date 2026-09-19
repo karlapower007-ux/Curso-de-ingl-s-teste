@@ -184,13 +184,13 @@ jobs:
           grep -q 'const GAP=40' public/app.js
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
-          # Service-worker cache and V6 manifest
+          # Service-worker cache and V7 manifest
           grep -q 'CACHE_NAME="fns-ultimate-resilience-v7"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
           grep -q '"version": "7.0.0"' public/failover-manifest.json
           grep -q '"engine": "twenty-agent-cross-device-v7"' public/failover-manifest.json
-          grep -q '"logical_agent_count": 10' public/failover-manifest.json
+          grep -q '"logical_agent_count": 20' public/failover-manifest.json
           grep -q '"agent2_transformers_semantic": true' public/failover-manifest.json
           grep -q '"agent10_bouncer": true' public/failover-manifest.json
           grep -q '"phantom_daemon": true' public/failover-manifest.json
