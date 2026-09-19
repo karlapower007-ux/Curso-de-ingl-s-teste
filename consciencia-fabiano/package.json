@@ -1,7 +1,7 @@
 {
   "name": "consciencia-do-fabiano",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "scripts": {
     "check": "node --check public/app.js && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "build": "npm run check",
