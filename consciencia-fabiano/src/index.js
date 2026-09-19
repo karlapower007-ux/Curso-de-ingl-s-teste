@@ -1232,7 +1232,7 @@ async function status(env) {
     lexical_min_coverage: LEXICAL_MIN_COVERAGE,
     graceful_empty_answer: true,
     tts_clean_synthesis: true,
-    citation_four_paragraph_mode: true,
+    citation_bullet_mode: true,
     pdf_noise_filter: true,
     indexeddb_gc: true,
     cache_busting: "dynamic",

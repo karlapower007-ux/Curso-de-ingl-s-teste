@@ -50,23 +50,17 @@ jobs:
           grep -q 'DOMPurify' public/app.js
           grep -q 'safeMarkdownHtml' public/app.js
           grep -q 'isFocusedCitationRequest' src/index.js
-          grep -q 'APENAS UMA fonte principal' src/index.js
-          grep -q 'Não gere tabelas Markdown' src/index.js
-          grep -q 'SEMANTIC_MIN_SCORE = 0.46' src/index.js
           grep -q 'LEXICAL_MIN_COVERAGE = 0.50' src/index.js
           grep -q 'gracefulEmptyAnswer' src/index.js
-          grep -q 'Quer que eu faça uma busca mais ampla no documento' src/index.js
           grep -q 'transcribeBlobWithRetry' public/app.js
           grep -q 'scheduleVoiceReconnect' public/app.js
           grep -q 'unlockAudioOutput' public/app.js
           grep -q 'noiseSuppression: true' public/app.js
           grep -q 'echoCancellation: true' public/app.js
           grep -q 'autoGainControl: true' public/app.js
-          grep -q 'citation_four_paragraph_mode: true' src/index.js
           grep -q 'pdf_noise_filter: true' src/index.js
           grep -q 'humanDocumentName' src/index.js
           grep -q 'cleanNarrativeText' src/index.js
-          grep -q 'EXATAMENTE QUATRO PARÁGRAFOS CURTOS' src/index.js
           grep -q 'Obras Padrão' src/index.js
           grep -q 'standard.*works' public/app.js
           grep -q 'SEMANTIC_MIN_SCORE = 0.52' src/index.js
@@ -74,6 +68,8 @@ jobs:
           grep -q 'bm25-fallback' src/index.js
           grep -q 'chunking_density: "paragraph-verse-granular"' src/index.js
           grep -q 'Fabiano, não encontrei uma referência direta' src/index.js
+          grep -q 'citation_bullet_mode: true' src/index.js
+          grep -q 'liste TODAS as passagens relevantes' src/index.js
           grep -q 'É TOTALMENTE PROIBIDO GERAR TABELAS MARKDOWN' src/index.js
           grep -q 'aggressiveGroqMessages' src/index.js
           grep -q 'GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS' src/index.js
