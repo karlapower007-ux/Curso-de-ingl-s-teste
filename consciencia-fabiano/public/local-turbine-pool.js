@@ -1,7 +1,8 @@
-// V3.2 SEMANTIC EXPANSION — 1000 tarefas lógicas, pool físico CPU-aware.
+// V3.3 STRICT PRECISION — pool CPU-aware com corte rígido e silêncio elegante.
 const LOGICAL_NODE_CAPACITY=1000;
 const MAX_PHYSICAL_WORKERS=16;
-const MIN_RESULT_SCORE=1.1;
+const MIN_RESULT_SCORE=3.25;
+const HARD_MIN_COVERAGE=0.50;
 
 function fold(text){
   return String(text||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
@@ -34,7 +35,9 @@ function physicalWorkerCount(){
 function dedupeCards(results){
   const seen=new Set(),cards=[];
   for(const r of results.sort((a,b)=>Number(b.score||0)-Number(a.score||0))){
-    if(!r?.ok||Number(r.score||0)<MIN_RESULT_SCORE)continue;
+    if(!r?.ok)continue;
+    const isBooleanExact=r.strict_mode==="boolean-exact"&&r.exact_match===true;
+    if(!isBooleanExact&&(Number(r.score||0)<MIN_RESULT_SCORE||Number(r.coverage||0)<HARD_MIN_COVERAGE))continue;
     const fingerprint=[String(r.source?.document_id||""),String(r.source?.chunk_index||0),fold(r.text).slice(0,320)].join("|");
     if(!r.text||seen.has(fingerprint))continue;
     seen.add(fingerprint);
@@ -58,6 +61,11 @@ function dedupeCards(results){
       context_before:Number(r.context_before||2),
       context_after:Number(r.context_after||4),
       full_chunk_fallback:Boolean(r.full_chunk_fallback)
+,      strict_mode:String(r.strict_mode||"hard-threshold"),
+      exact_match:Boolean(r.exact_match),
+      exact_target:String(r.exact_target||""),
+      hard_threshold:Number(r.hard_threshold||MIN_RESULT_SCORE),
+      min_coverage:Number(r.min_coverage||HARD_MIN_COVERAGE)
     });
     if(cards.length>=160)break;
   }
@@ -69,7 +77,7 @@ export async function runLocalTurbines({question,matches,onProgress}){
   const workerCount=Math.min(physicalWorkerCount(),tasks.length),workers=[],pending=new Map(),results=new Array(tasks.length);
   let requestSeq=0,cursor=0,completed=0;
   const makeWorker=()=>{
-    const worker=new Worker("/local-turbine-worker.js?v=3.2.0");
+    const worker=new Worker("/local-turbine-worker.js?v=3.3.0");
     worker.onmessage=event=>{
       const data=event.data||{};if(data.type!=="result")return;
       const slot=pending.get(data.request_id);if(!slot)return;
@@ -100,14 +108,27 @@ export async function runLocalTurbines({question,matches,onProgress}){
       }
     }));
   }finally{for(const worker of workers)try{worker.terminate();}catch{}}
-  const cards=dedupeCards(results.filter(Boolean));
+  const resolved=results.filter(Boolean);
+  const cards=dedupeCards(resolved);
+  const exactTarget=resolved.find(r=>r?.exact_target)?.exact_target||"";
+  const booleanExact=resolved.some(r=>r?.strict_mode==="boolean-exact");
+  const thresholdRejected=resolved.filter(r=>r?.reject_reason==="HARD_THRESHOLD_REJECT").length;
+  const booleanRejected=resolved.filter(r=>r?.reject_reason==="BOOLEAN_EXACT_MISS").length;
   return {
     ok:cards.length>0,cards,
+    strict_empty:cards.length===0,
+    zero_noise:true,
+    strict_mode:booleanExact?"boolean-exact":"hard-threshold",
+    exact_target:String(exactTarget||""),
+    hard_threshold:MIN_RESULT_SCORE,
+    min_coverage:HARD_MIN_COVERAGE,
+    rejected_by_threshold:thresholdRejected,
+    rejected_by_boolean:booleanRejected,
     logical_capacity:LOGICAL_NODE_CAPACITY,
     logical_tasks:tasks.length,
     physical_workers:workerCount,
     hardware_concurrency:Number(navigator.hardwareConcurrency||0)||null,
-    scoring:"worker-side-bm25+idf+coverage+phrase+proximity",
+    scoring:"worker-side-boolean-exact-or-bm25-hard-threshold",
     context_window:{before:2,after:4},
     canonical_reference_parser:true,
     main_thread_extraction:false
