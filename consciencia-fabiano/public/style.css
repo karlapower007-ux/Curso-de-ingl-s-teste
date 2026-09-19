@@ -480,3 +480,23 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
     padding:16px 14px 18px;
   }
 }
+
+
+/* V3.3 STRICT PRECISION */
+.strict-empty-msg{
+  width:min(720px,92%);
+  max-width:92%!important;
+  background:transparent!important;
+  border:0!important;
+  border-left:0!important;
+  box-shadow:none!important;
+  padding:10px 2px!important;
+  margin:8px 0 22px!important;
+}
+.strict-empty-text{
+  color:#94a3b8;
+  font-size:.92rem;
+  line-height:1.55;
+  font-style:italic;
+  letter-spacing:.01em;
+}
