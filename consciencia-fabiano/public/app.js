@@ -271,7 +271,19 @@
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
   }
 
+  const LOCAL_ADMIN_PASSWORD = "gadu";
   function ownerToken() { return sessionStorage.getItem(OWNER_TOKEN_KEY) || ""; }
+  function unlockUI() {
+    sessionStorage.setItem(OWNER_TOKEN_KEY,LOCAL_ADMIN_PASSWORD);
+    return true;
+  }
+  function ensureLocalAdminAccess() {
+    if(ownerToken()===LOCAL_ADMIN_PASSWORD) return true;
+    const password=prompt("Senha da biblioteca:");
+    if(password===LOCAL_ADMIN_PASSWORD) return unlockUI();
+    if(password!==null) alert("Senha incorreta.");
+    return false;
+  }
   function authHeaders(extra = {}) {
     const headers={"X-FNS-Memory-Key":memorySecret};
     const token=ownerToken(); if(token) headers["X-FNS-Owner-Token"]=token;
@@ -279,13 +291,21 @@
   }
   function isPrivateApi(path){return /\/api\/(admin\/|trigger-index|index-status)/.test(String(path || ""));}
   async function api(path,options={},canPrompt=true){
+    if(isPrivateApi(path) && !ownerToken()){
+      if(!ensureLocalAdminAccess()){
+        const err=new Error("Acesso administrativo cancelado.");
+        err.code="AUTH_CANCELLED";
+        throw err;
+      }
+    }
     const headers=new Headers(authHeaders(options.headers || {}));
     const res=await fetch(path,{...options,headers});
     const ct=res.headers.get("content-type") || "";
     const body=ct.includes("application/json") ? await res.json() : await res.text();
-    if(res.status===401 && canPrompt && isPrivateApi(path)){
-      const value=prompt("Digite a senha de acesso da biblioteca:");
-      if(value && value.trim().length>=4){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
+    if(res.status===401 && isPrivateApi(path)){
+      sessionStorage.removeItem(OWNER_TOKEN_KEY);
+      const err=new Error("Sessão administrativa inválida. Abra a Biblioteca e informe a senha novamente.");
+      err.code="AUTH_REQUIRED";err.status=401;throw err;
     }
     if(!res.ok){const err=new Error(body?.message || body?.detail || body?.error || String(body));err.code=body?.code || "";err.status=res.status;throw err;}
     return body;
@@ -802,6 +822,7 @@
 
   function switchPanel(name) {
     const lib = name === "library";
+    if(lib && !ensureLocalAdminAccess()) return;
     $("chatPanel").classList.toggle("hidden", lib);
     $("libraryPanel").classList.toggle("hidden", !lib);
     $("chatTab").classList.toggle("active", !lib);
