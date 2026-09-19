@@ -27,8 +27,8 @@ jobs:
           bash -n scripts/autonomous-release.sh
 
           # Core V4.0 identity
-          grep -q '4.0.0-omni-library-symmetry' src/index.js
-          grep -q 'cloudflare-v4-omni-library-symmetry' src/index.js
+          grep -q '6.0.0-omni-agent-swarm' src/index.js
+          grep -q 'cloudflare-v6-omni-agent-swarm' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
           grep -q 'online_offline_search_symmetry: true' src/index.js
           grep -q 'same_paragraph_phrase_required: true' src/index.js
@@ -43,6 +43,19 @@ jobs:
           grep -q 'omni_physical_worker_cap: 16' src/index.js
           grep -q 'omni_virtual_scroller: true' src/index.js
           grep -q 'omni_card_gap_px: 40' src/index.js
+          grep -q 'agent_swarm_enabled: true' src/index.js
+          grep -q 'agent_swarm_logical_nodes: 10' src/index.js
+          grep -q 'agent_swarm_physical_worker_cap: 10' src/index.js
+          grep -q 'agent2_transformers_semantic: true' src/index.js
+          grep -q 'agent10_bouncer: true' src/index.js
+          grep -q 'semantic_fallback_after_literal_miss: true' src/index.js
+          grep -q 'phantom_daemon: true' src/index.js
+          grep -q 'phantom_daemon_target_interval_ms: 180000' src/index.js
+          grep -q 'phantom_daemon_periodic_sync_best_effort: true' src/index.js
+          grep -q 'omni_sync_cloud_fingerprint: true' src/index.js
+          grep -q 'omni_sync_generation_gc: true' src/index.js
+          grep -q 'omni_sync_manual_button: false' src/index.js
+          grep -q 'omni_sync_zero_touch_after_authorization: true' src/index.js
 
           # One shared exact phrase engine for server and browser
           test -f public/strict-match-core.js
@@ -91,6 +104,17 @@ jobs:
           grep -q 'fuzzy_disabled:true' public/local-turbine-pool.js
           grep -q 'or_disabled:true' public/local-turbine-pool.js
           grep -q 'strictParagraphMatch' public/local-turbine-worker.js
+          grep -q 'LOGICAL_AGENT_COUNT=10' public/agent-swarm.js
+          grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js
+          grep -q 'embedding-worker.js' public/rag-cascade.js
+          grep -q 'omniAgentSearch' public/rag-cascade.js
+          grep -q 'runAgentSwarm' public/agent-swarm.js
+          grep -q 'The Literal' public/agent-node-worker.js
+          grep -q 'The Semantic' public/agent-node-worker.js
+          grep -q 'The Contextualizer' public/agent-node-worker.js
+          grep -q 'The Reference Judge' public/agent-node-worker.js
+          grep -q 'The Sweeper' public/agent-node-worker.js
+          grep -q 'The Bouncer' public/agent-node-worker.js
           grep -q 'STRICT_PHRASE_MISS' public/local-turbine-worker.js
           grep -q 'CONTEXT_BEFORE=2' public/local-turbine-worker.js
           grep -q 'CONTEXT_AFTER=4' public/local-turbine-worker.js
@@ -98,17 +122,31 @@ jobs:
 
           # Omni Library sync: max 200 rows resident per page, then explicit release
           test -f public/omni-sync-worker.js
+          test -f public/agent-swarm.js
+          test -f public/agent-node-worker.js
           grep -q 'BATCH_SIZE=200' public/omni-sync-worker.js
+          grep -q 'DAEMON_INTERVAL_MS=3\*60\*1000' public/sw-v3.js
+          grep -q 'periodicsync' public/sw-v3.js
+          grep -q '/api/admin/omni-sync-state' public/sw-v3.js
+          grep -q 'sync_generation' public/sw-v3.js
+          grep -q 'rows.length=0' public/sw-v3.js
+          grep -q 'rows=null' public/sw-v3.js
+          grep -q 'payload=null' public/sw-v3.js
           grep -q 'rows.length=0' public/omni-sync-worker.js
           grep -q 'rows=null' public/omni-sync-worker.js
           grep -q 'payload=null' public/omni-sync-worker.js
           grep -q '/api/admin/omni-sync-page' src/index.js
+          grep -q '/api/admin/omni-sync-state' src/index.js
+          grep -q 'supabaseOmniSyncState' src/index.js
           grep -q 'Math.min(200' src/index.js
           grep -q 'memory_bounded:true' src/index.js
           grep -q 'omniSyncBtn' public/index.html
           grep -q 'SINCRONIZAR BIBLIOTECA COMPLETA' public/index.html
           grep -q 'new Worker("/omni-sync-worker.js?v=4.0.0")' public/app.js
-          grep -q 'maybeAutoOmniSync' public/app.js
+          grep -q 'configurePhantomDaemon' public/app.js
+          grep -q 'PHANTOM_DAEMON_INTERVAL_MS=3\*60\*1000' public/app.js
+          grep -q 'omni-daemon-tick' public/app.js
+          ! grep -q 'id="omniSyncBtn"' public/index.html
           grep -q 'OMNI_SYNC_STAMP_KEY' public/app.js
 
           # Rendering parity and zero-noise UI
@@ -124,7 +162,7 @@ jobs:
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
           # Service-worker cache and V4 manifest
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v4"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v6"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
           grep -q '"version": "4.0.0"' public/failover-manifest.json
