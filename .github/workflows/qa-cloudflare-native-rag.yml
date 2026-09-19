@@ -22,7 +22,7 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V3.2 SEMANTIC EXPANSION + V2 analytical engine invariants
+          # V3.3 STRICT PRECISION + V2 analytical engine invariants
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
           grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
           grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
@@ -70,6 +70,12 @@ jobs:
           grep -q 'plan_c_full_chunk_fallback: true' src/index.js
           grep -q 'plan_c_sequential_chunk_merge: true' src/index.js
           grep -q 'plan_c_canonical_reference_elevation: true' src/index.js
+          grep -q 'plan_c_boolean_exact_match: true' src/index.js
+          grep -q 'plan_c_hard_bm25_threshold: 3.25' src/index.js
+          grep -q 'plan_c_hard_min_coverage: 0.50' src/index.js
+          grep -q 'plan_c_zero_noise: true' src/index.js
+          grep -q 'plan_c_elegant_silence: true' src/index.js
+          grep -q 'plan_c_fuzzy_compensation_disabled: true' src/index.js
           test -f public/local-turbine-pool.js
           test -f public/local-turbine-worker.js
           grep -q 'LOGICAL_NODE_CAPACITY=1000' public/local-turbine-pool.js
@@ -92,6 +98,24 @@ jobs:
           grep -q 'CANONICAL_REFERENCE_RE' public/local-turbine-worker.js
           grep -q 'canonicalReference' public/local-turbine-worker.js
           grep -q 'semantic_title' public/local-turbine-worker.js
+          grep -q 'HARD_BM25_THRESHOLD=3.25' public/local-turbine-worker.js
+          grep -q 'HARD_MIN_COVERAGE=0.50' public/local-turbine-worker.js
+          grep -q 'STRICT_SCRIPTURE_QUERY_RE' public/local-turbine-worker.js
+          grep -q 'STRICT_BOOK_QUERY_RE' public/local-turbine-worker.js
+          grep -q 'exactIntent' public/local-turbine-worker.js
+          grep -q 'containsExactTarget' public/local-turbine-worker.js
+          grep -q 'BOOLEAN_EXACT_MISS' public/local-turbine-worker.js
+          grep -q 'HARD_THRESHOLD_REJECT' public/local-turbine-worker.js
+          grep -q 'strict_mode:"boolean-exact"' public/local-turbine-worker.js
+          grep -q 'MIN_RESULT_SCORE=3.25' public/local-turbine-pool.js
+          grep -q 'HARD_MIN_COVERAGE=0.50' public/local-turbine-pool.js
+          grep -q 'strict_empty:cards.length===0' public/local-turbine-pool.js
+          grep -q 'zero_noise:true' public/local-turbine-pool.js
+          grep -q 'Nenhuma correspondência exata encontrada na biblioteca.' public/failover-v3.js
+          grep -q 'terminal:true' public/failover-v3.js
+          grep -q 'appendElegantSilence' public/app.js
+          grep -q 'strict-empty-msg' public/app.js
+          grep -q 'strict-empty-text' public/style.css
           grep -q 'mergeSequentialOfflineCards' public/app.js
           grep -q 'appendTextWithoutDuplicate' public/app.js
           grep -q 'canonicalHeader' public/app.js
@@ -114,7 +138,7 @@ jobs:
           grep -q 'planE' public/failover-v3.js
           grep -q 'planF' public/failover-v3.js
           grep -q 'DecompressionStream' public/failover-v3.js
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-2"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-3"' public/sw-v3.js
           grep -q 'A->B->C->D->E->F' public/failover-manifest.json
           test -f public/steel/index.json
           test -f scripts/build-static-vault.mjs
@@ -214,7 +238,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '3.2.0-semantic-expansion' src/index.js
+          grep -q '3.3.0-strict-precision' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
