@@ -13,7 +13,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">SISTEMA NATIVO V1.3</span>
+      <span class="header-kicker">SISTEMA NATIVO V1.6</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -49,8 +49,10 @@
             </label>
             <button id="clearChatBtn" class="ghost small-btn" type="button">Limpar conversa</button>
           </div>
+          <p id="micStatus" class="status" aria-live="polite"></p>
           <div class="input-area">
             <button id="micBtn" class="secondary" type="button">🎙️ Falar</button>
+            <button id="stopAudioBtn" class="ghost" type="button" disabled>🔇 Parar áudio</button>
             <button id="sendBtn" class="primary" type="button">Enviar</button>
           </div>
         </div>
@@ -93,6 +95,6 @@
       return mod;
     });
   </script>
-  <script src="/app.js?v=5" defer></script>
+  <script src="/app.js?v=6" defer></script>
 </body>
 </html>

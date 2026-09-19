@@ -1,4 +1,4 @@
-const VERSION = "1.5.0-external-ai-groq-cohere";
+const VERSION = "1.6.0-massive-pdf-throttled-rag";
 // External AI bypass activation: Groq chat/STT + Cohere multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -8,6 +8,10 @@ const MAX_TEXT_CHARS = 30_000_000;
 const MAX_TEXT_BATCH_CHARS = 1_250_000;
 const CHUNK_CONCURRENCY = 50;
 const EMBED_CONCURRENCY = 50;
+const COHERE_API_BATCH = 24;
+const COHERE_THROTTLE_MS = 900;
+const INDEX_PAGE_SLICE = 12;
+const INDEX_ALARM_DELAY_MS = 850;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
 const TOP_K = 8;
@@ -344,10 +348,13 @@ async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 5) {
 
 async function embedChunksBatched(env, chunks) {
   const list = Array.from(chunks || []);
-  for (let offset = 0; offset < list.length; offset += EMBED_CONCURRENCY) {
-    const batch = list.slice(offset, offset + EMBED_CONCURRENCY);
+  for (let offset = 0; offset < list.length; offset += COHERE_API_BATCH) {
+    const batch = list.slice(offset, offset + COHERE_API_BATCH);
     const vectors = await embedWaveBatchedWithRetry(env, batch);
     for (let i = 0; i < batch.length; i++) batch[i].embedding = vectors[i];
+    if (offset + COHERE_API_BATCH < list.length) {
+      await new Promise(resolve => setTimeout(resolve, COHERE_THROTTLE_MS));
+    }
   }
   return list;
 }
@@ -963,8 +970,11 @@ export class LibraryDO {
       addJobColumn("author","TEXT");
       addJobColumn("content_sha256","TEXT");
       addJobColumn("original_r2_key","TEXT");
+      addJobColumn("processed_pages","INTEGER NOT NULL DEFAULT 0");
       const docColumns=[...this.sql.exec("PRAGMA table_info(documents)")].map(row=>String(row.name || ""));
       if(!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
+      const pending=[...this.sql.exec("SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY updated_at LIMIT 1")][0] || null;
+      if(pending?.id) await this.ctx.storage.setAlarm(Date.now()+250);
     });
   }
 
@@ -985,58 +995,154 @@ export class LibraryDO {
   cleanupJobText(jobId) { this.sql.exec("DELETE FROM job_text_pages WHERE job_id=?", jobId); }
 
   async processIndexJob(jobId) {
-    const job=[...this.sql.exec("SELECT id,filename,size_bytes,status,attempts,expected_pages,received_pages,title,author,content_sha256,original_r2_key FROM index_jobs WHERE id=? LIMIT 1",jobId)][0];
+    const job=[...this.sql.exec(
+      "SELECT id,filename,size_bytes,status,attempts,expected_pages,received_pages,title,author,content_sha256,original_r2_key,document_id,pages,chunks,processed_pages FROM index_jobs WHERE id=? LIMIT 1",
+      jobId
+    )][0];
     if(!job || ["ready","duplicate","failed","receiving"].includes(String(job.status))) return;
-    const attempt=Number(job.attempts || 0)+1;
-    this.sql.exec("UPDATE index_jobs SET status='processing',attempts=?,progress=18,error=NULL,updated_at=? WHERE id=?",attempt,new Date().toISOString(),jobId);
-    let documentId=null;
+
+    this.sql.exec(
+      "UPDATE index_jobs SET status='processing',error=NULL,updated_at=? WHERE id=?",
+      new Date().toISOString(),jobId
+    );
+
+    let documentId=String(job.document_id || "");
     try {
       const digest=String(job.content_sha256 || "").trim();
       if(!/^[0-9a-f]{64}$/i.test(digest)) throw new Error("SHA-256 do documento inválido.");
-      const duplicate=[...this.sql.exec("SELECT id,filename FROM documents WHERE sha256=? LIMIT 1",digest)][0] || null;
-      if(duplicate){this.updateJob(jobId,"duplicate",100,null,duplicate.id);this.cleanupJobText(jobId);return;}
 
-      const stats=[...this.sql.exec("SELECT COUNT(*) AS pages,COALESCE(SUM(LENGTH(text)),0) AS chars FROM job_text_pages WHERE job_id=?",jobId)][0] || {pages:0,chars:0};
+      const stats=[...this.sql.exec(
+        "SELECT COUNT(*) AS pages,COALESCE(SUM(LENGTH(text)),0) AS chars FROM job_text_pages WHERE job_id=?",
+        jobId
+      )][0] || {pages:0,chars:0};
       const actualPages=Number(stats.pages || 0), totalChars=Number(stats.chars || 0);
       if(!actualPages || !totalChars) throw new Error("Nenhum texto útil foi recebido do navegador.");
-      const sample=[...this.sql.exec("SELECT text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT 8",jobId)].map(r=>String(r.text || "").slice(0,10000)).join("\n");
-      const language=detectLanguage(sample);
 
-      documentId=uuidCompact(); const now=new Date().toISOString();
-      this.sql.exec("INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        documentId,job.filename,String(job.title || ""),String(job.author || ""),language || "unknown",digest,Number(job.size_bytes || 0),actualPages,0,"indexing",now,String(job.original_r2_key || "") || null);
-
-      let offset=0,chunkIndex=0,processedPages=0;
-      while(offset<actualPages){
-        const pageRows=[...this.sql.exec("SELECT page,text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT 50 OFFSET ?",jobId,offset)];
-        if(!pageRows.length) break;
-        const groups=await matrixChunkPages(pageRows);
-        const wave=[];
-        for(const group of groups) for(const piece of group) wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:piece.text});
-        for(let embedOffset=0;embedOffset<wave.length;embedOffset+=EMBED_CONCURRENCY){
-          const batch=wave.slice(embedOffset,embedOffset+EMBED_CONCURRENCY);
-          const embeddings=await embedWaveBatchedWithRetry(this.env,batch);
-          for(let i=0;i<batch.length;i++){
-            const chunk=batch[i];
-            const embedding=embeddings[i];
-            this.sql.exec("INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-              chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embedding),now);
-          }
+      if(!documentId) {
+        const readyDuplicate=[...this.sql.exec(
+          "SELECT id,filename FROM documents WHERE sha256=? AND status='ready' LIMIT 1",
+          digest
+        )][0] || null;
+        if(readyDuplicate){
+          this.updateJob(jobId,"duplicate",100,null,readyDuplicate.id,actualPages,Number(job.chunks || 0));
+          this.cleanupJobText(jobId);
+          return;
         }
-        processedPages+=pageRows.length; offset+=pageRows.length;
-        const progress=18+Math.round((processedPages/Math.max(1,actualPages))*78);
-        this.updateJob(jobId,"processing",Math.min(96,progress),null,documentId,actualPages,chunkIndex);
+
+        const resumable=[...this.sql.exec(
+          "SELECT id FROM documents WHERE sha256=? AND status='indexing' LIMIT 1",
+          digest
+        )][0] || null;
+        if(resumable?.id) {
+          documentId=String(resumable.id);
+        } else {
+          const sample=[...this.sql.exec(
+            "SELECT text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT 8",jobId
+          )].map(r=>String(r.text || "").slice(0,10000)).join("\n");
+          const language=detectLanguage(sample);
+          documentId=uuidCompact();
+          const now=new Date().toISOString();
+          this.sql.exec(
+            "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            documentId,job.filename,String(job.title || ""),String(job.author || ""),language || "unknown",
+            digest,Number(job.size_bytes || 0),actualPages,0,"indexing",now,String(job.original_r2_key || "") || null
+          );
+        }
+        this.sql.exec(
+          "UPDATE index_jobs SET document_id=?,pages=?,updated_at=? WHERE id=?",
+          documentId,actualPages,new Date().toISOString(),jobId
+        );
       }
-      this.sql.exec("UPDATE documents SET chunk_count=?,status='ready' WHERE id=?",chunkIndex,documentId);
-      this.updateJob(jobId,"ready",100,null,documentId,actualPages,chunkIndex);
-      this.cleanupJobText(jobId);
+
+      let processedPages=Math.max(0,Math.min(actualPages,Number(job.processed_pages || 0)));
+      if(processedPages===0) {
+        this.sql.exec("DELETE FROM chunks WHERE document_id=?",documentId);
+        this.sql.exec("UPDATE documents SET chunk_count=0,status='indexing' WHERE id=?",documentId);
+      }
+
+      if(processedPages>=actualPages) {
+        const totalChunks=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",documentId)][0]?.n || 0);
+        this.sql.exec("UPDATE documents SET chunk_count=?,status='ready' WHERE id=?",totalChunks,documentId);
+        this.sql.exec(
+          "UPDATE index_jobs SET status='ready',progress=100,error=NULL,pages=?,chunks=?,processed_pages=?,attempts=0,updated_at=? WHERE id=?",
+          actualPages,totalChunks,actualPages,new Date().toISOString(),jobId
+        );
+        this.cleanupJobText(jobId);
+        return;
+      }
+
+      const pageRows=[...this.sql.exec(
+        "SELECT page,text FROM job_text_pages WHERE job_id=? ORDER BY page LIMIT ? OFFSET ?",
+        jobId,INDEX_PAGE_SLICE,processedPages
+      )];
+      if(!pageRows.length) throw new Error("Nenhuma página disponível para continuar a indexação.");
+
+      const firstPage=Number(pageRows[0].page || 1);
+      const lastPage=Number(pageRows[pageRows.length-1].page || firstPage);
+      this.sql.exec(
+        "DELETE FROM chunks WHERE document_id=? AND page>=? AND page<=?",
+        documentId,firstPage,lastPage
+      );
+
+      let chunkIndex=Number([...this.sql.exec(
+        "SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",documentId
+      )][0]?.n || 0);
+      const groups=await matrixChunkPages(pageRows);
+      const wave=[];
+      for(const group of groups) {
+        for(const piece of group) {
+          wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:piece.text});
+        }
+      }
+
+      for(let embedOffset=0;embedOffset<wave.length;embedOffset+=COHERE_API_BATCH){
+        const batch=wave.slice(embedOffset,embedOffset+COHERE_API_BATCH);
+        const embeddings=await embedWaveBatchedWithRetry(this.env,batch);
+        for(let i=0;i<batch.length;i++){
+          const chunk=batch[i];
+          this.sql.exec(
+            "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+            chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embeddings[i]),new Date().toISOString()
+          );
+        }
+        if(embedOffset+COHERE_API_BATCH<wave.length) {
+          await new Promise(resolve=>setTimeout(resolve,COHERE_THROTTLE_MS));
+        }
+      }
+
+      processedPages+=pageRows.length;
+      const totalChunks=Number([...this.sql.exec(
+        "SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",documentId
+      )][0]?.n || 0);
+      this.sql.exec("UPDATE documents SET chunk_count=?,status='indexing' WHERE id=?",totalChunks,documentId);
+
+      const progress=Math.min(96,18+Math.round((processedPages/Math.max(1,actualPages))*78));
+      if(processedPages>=actualPages){
+        this.sql.exec("UPDATE documents SET chunk_count=?,status='ready' WHERE id=?",totalChunks,documentId);
+        this.sql.exec(
+          "UPDATE index_jobs SET status='ready',progress=100,error=NULL,document_id=?,pages=?,chunks=?,processed_pages=?,attempts=0,updated_at=? WHERE id=?",
+          documentId,actualPages,totalChunks,actualPages,new Date().toISOString(),jobId
+        );
+        this.cleanupJobText(jobId);
+      } else {
+        this.sql.exec(
+          "UPDATE index_jobs SET status='queued',progress=?,error=NULL,document_id=?,pages=?,chunks=?,processed_pages=?,attempts=0,updated_at=? WHERE id=?",
+          progress,documentId,actualPages,totalChunks,processedPages,new Date().toISOString(),jobId
+        );
+      }
     } catch(error) {
-      if(documentId){this.sql.exec("DELETE FROM chunks WHERE document_id=?",documentId);this.sql.exec("DELETE FROM documents WHERE id=?",documentId);}
       const message=String(error?.message || error).slice(0,1500);
-      if(attempt<3){
-        this.sql.exec("UPDATE index_jobs SET status='queued',error=?,updated_at=? WHERE id=?",message,new Date().toISOString(),jobId);
-        await this.ctx.storage.setAlarm(Date.now()+attempt*1800);
-      } else this.updateJob(jobId,"failed",100,message);
+      const nextAttempt=Number(job.attempts || 0)+1;
+      const retryable=isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(message);
+      if(retryable && nextAttempt<12){
+        this.sql.exec(
+          "UPDATE index_jobs SET status='queued',attempts=?,error=?,updated_at=? WHERE id=?",
+          nextAttempt,message,new Date().toISOString(),jobId
+        );
+      } else {
+        this.updateJob(jobId,"failed",100,message,documentId || null);
+        if(documentId) this.sql.exec("UPDATE documents SET status='failed' WHERE id=?",documentId);
+      }
     }
   }
 
@@ -1050,7 +1156,7 @@ export class LibraryDO {
     const more = [...this.sql.exec(
       "SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 1"
     )][0] || null;
-    if (more?.id) await this.ctx.storage.setAlarm(Date.now() + 750);
+    if (more?.id) await this.ctx.storage.setAlarm(Date.now() + INDEX_ALARM_DELAY_MS);
   }
 
   async fetch(request) {
@@ -1109,7 +1215,7 @@ export class LibraryDO {
         const received=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM job_text_pages WHERE job_id=?",id)][0]?.n || 0);
         const expected=Math.max(1,Number(row.expected_pages || 1));
         if(received<expected) return json({ok:false,message:"Páginas incompletas: "+received+" de "+expected+"."},409);
-        this.sql.exec("UPDATE index_jobs SET status='queued',received_pages=?,progress=16,error=NULL,updated_at=? WHERE id=?",received,new Date().toISOString(),id);
+        this.sql.exec("UPDATE index_jobs SET status='queued',received_pages=?,processed_pages=0,attempts=0,progress=16,error=NULL,updated_at=? WHERE id=?",received,new Date().toISOString(),id);
         await this.ctx.storage.sync(); await this.ctx.storage.setAlarm(Date.now()+200);
         return json({ok:true,job_id:id,status:"queued",received_pages:received,expected_pages:expected},202);
       }
@@ -1117,7 +1223,7 @@ export class LibraryDO {
       if (url.pathname === "/jobs/status" && request.method === "GET") {
         const id = String(url.searchParams.get("job_id") || "").trim();
         const row = [...this.sql.exec(
-          "SELECT id AS job_id,filename AS arquivo,status,progress,attempts,error,document_id,pages AS paginas,chunks,expected_pages,received_pages,original_r2_key,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
+          "SELECT id AS job_id,filename AS arquivo,status,progress,attempts,error,document_id,pages AS paginas,chunks,expected_pages,received_pages,processed_pages,original_r2_key,created_at,updated_at FROM index_jobs WHERE id=? LIMIT 1",
           id
         )][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
@@ -1130,7 +1236,7 @@ export class LibraryDO {
         const row = [...this.sql.exec("SELECT id,status FROM index_jobs WHERE id=? LIMIT 1", id)][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
         if (row.status !== "ready" && row.status !== "duplicate") {
-          this.sql.exec("UPDATE index_jobs SET status='queued',error=NULL,updated_at=? WHERE id=?", new Date().toISOString(), id);
+          this.sql.exec("UPDATE index_jobs SET status='queued',attempts=0,error=NULL,updated_at=? WHERE id=?", new Date().toISOString(), id);
           await this.ctx.storage.setAlarm(Date.now() + 250);
         }
         return json({ ok: true, accepted: true, job_id: id, status: row.status === "ready" ? "ready" : "queued" });
@@ -1254,7 +1360,7 @@ export class LibraryDO {
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
                  d.filename,d.title,d.author,d.language
           FROM chunks c JOIN documents d ON d.id=c.document_id
-          WHERE d.status='ready' ORDER BY c.created_at DESC LIMIT ?
+          WHERE d.status IN ('ready','indexing') ORDER BY c.created_at DESC LIMIT ?
         `, scanLimit)];
         const matches = [];
         for (const row of rows) {

@@ -15,6 +15,10 @@
   let voiceStream = null;
   let voiceMonitor = 0;
   let voiceAudioContext = null;
+  let activeAudio = null;
+  let activeAudioUrl = "";
+  let activeAudioDone = null;
+  let audioStopSerial = 0;
 
   const frames = {
     closed: "/fabiano-fechado.png",
@@ -239,7 +243,7 @@
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
       memory_persisted: meta.memory_persisted === true,
-      provider: meta.provider || "groq+gemini-rag"
+      provider: meta.provider || "groq+cohere-rag"
     };
   }
 
@@ -252,7 +256,49 @@
     }
   }
 
+  function markdownToSpeech(text) {
+    return String(text || "")
+      .replace(/\`\`\`[^\n]*\n?/g, " ")
+      .replace(/\`\`\`/g, " ")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s*>\s?/gm, "")
+      .replace(/^\s*[-+*]\s+/gm, "")
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      .replace(/[\`*_~#>|]/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s*\n+\s*/g, ". ")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\.{2,}/g, ".")
+      .trim();
+  }
+
+  function stopAudioPlayback() {
+    audioStopSerial++;
+    try { window.speechSynthesis?.cancel(); } catch {}
+    if (activeAudio) {
+      try { activeAudio.pause(); activeAudio.currentTime = 0; activeAudio.removeAttribute("src"); activeAudio.load(); } catch {}
+      activeAudio = null;
+    }
+    if (activeAudioUrl) {
+      try { URL.revokeObjectURL(activeAudioUrl); } catch {}
+      activeAudioUrl = "";
+    }
+    if (activeAudioDone) {
+      const done = activeAudioDone;
+      activeAudioDone = null;
+      try { done(); } catch {}
+    }
+    const stopBtn = $("stopAudioBtn");
+    if (stopBtn) stopBtn.disabled = true;
+    setAvatar("closed");
+  }
+
   async function playAudio(path, textFallback) {
+    const speechText = markdownToSpeech(textFallback);
+    if (!speechText) return;
+    const serial = audioStopSerial;
     try {
       let res;
       if (path) {
@@ -261,41 +307,71 @@
         res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: textFallback })
+          body: JSON.stringify({ text: speechText })
         });
       }
       if (!res.ok) throw new Error("audio " + res.status);
+      if (serial !== audioStopSerial) return;
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      activeAudioUrl = URL.createObjectURL(blob);
+      activeAudio = new Audio(activeAudioUrl);
+      const stopBtn = $("stopAudioBtn");
+      if (stopBtn) stopBtn.disabled = false;
       await new Promise((resolve, reject) => {
-        audio.onplay = () => setAvatar("speaking");
-        audio.onended = () => { URL.revokeObjectURL(url); setAvatar("closed"); resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Falha na reprodução do TTS.")); };
-        audio.play().catch(reject);
+        activeAudioDone = resolve;
+        activeAudio.onplay = () => setAvatar("speaking");
+        activeAudio.onended = () => {
+          if (activeAudioUrl) URL.revokeObjectURL(activeAudioUrl);
+          activeAudioUrl = "";
+          activeAudio = null;
+          activeAudioDone = null;
+          if (stopBtn) stopBtn.disabled = true;
+          setAvatar("closed");
+          resolve();
+        };
+        activeAudio.onerror = () => {
+          if (activeAudioUrl) URL.revokeObjectURL(activeAudioUrl);
+          activeAudioUrl = "";
+          activeAudio = null;
+          activeAudioDone = null;
+          if (stopBtn) stopBtn.disabled = true;
+          reject(new Error("Falha na reprodução do TTS."));
+        };
+        activeAudio.play().catch(reject);
       });
       return;
     } catch {}
-    await browserSpeak(textFallback);
+    if (serial !== audioStopSerial) return;
+    await browserSpeak(speechText, serial);
   }
 
-  function browserSpeak(text) {
+  function browserSpeak(text, serial = audioStopSerial) {
     return new Promise(resolve => {
-      if (!("speechSynthesis" in window) || !text) {
+      const speechText = markdownToSpeech(text);
+      if (!("speechSynthesis" in window) || !speechText || serial !== audioStopSerial) {
         setAvatar("closed");
         resolve();
         return;
       }
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.slice(0, 5000));
+      const stopBtn = $("stopAudioBtn");
+      if (stopBtn) stopBtn.disabled = false;
+      activeAudioDone = resolve;
+      const u = new SpeechSynthesisUtterance(speechText.slice(0, 5000));
       u.lang = "pt-BR";
       u.rate = 0.96;
       const voices = speechSynthesis.getVoices();
       const pt = voices.find(v => /^pt-BR/i.test(v.lang)) || voices.find(v => /^pt/i.test(v.lang));
       if (pt) u.voice = pt;
+      const finish = () => {
+        activeAudioDone = null;
+        if (stopBtn) stopBtn.disabled = true;
+        setAvatar("closed");
+        resolve();
+      };
       u.onstart = () => setAvatar("speaking");
-      u.onend = () => { setAvatar("closed"); resolve(); };
-      u.onerror = () => { setAvatar("closed"); resolve(); };
+      u.onend = finish;
+      u.onerror = finish;
       speechSynthesis.speak(u);
     });
   }
@@ -347,7 +423,7 @@
       const up = data?.ok === true && data?.architecture === "cloudflare-router-external-ai";
       $("backendDot").className = "dot " + (up ? "ok" : "bad");
       $("backendText").textContent = up
-        ? "RAG Groq + Gemini • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
+        ? "RAG Groq + Cohere • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
         : "Infraestrutura documental ainda não provisionada";
     } catch {
       $("backendDot").className = "dot bad";
@@ -364,14 +440,49 @@
     if (lib) loadBooks();
   }
 
+  function setMicStatus(message = "", isError = false) {
+    const node = $("micStatus");
+    if (!node) return;
+    node.textContent = message;
+    node.style.color = isError ? "#ff9a9a" : "";
+  }
+
+  function microphoneErrorMessage(error) {
+    const name = String(error?.name || "");
+    if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+      return "Microfone bloqueado. Autorize o microfone no cadeado ao lado do endereço do site e tente novamente.";
+    }
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      return "Nenhum microfone foi encontrado neste aparelho.";
+    }
+    if (name === "NotReadableError" || name === "TrackStartError") {
+      return "O microfone está ocupado ou bloqueado pelo sistema operacional. Feche outros aplicativos de áudio e tente novamente.";
+    }
+    return "Não foi possível iniciar o microfone: " + String(error?.message || error || "erro desconhecido");
+  }
+
   async function startVoice() {
     if (voiceLoopEnabled) {
       stopVoiceLoop();
+      setMicStatus("");
       return;
     }
-    voiceLoopEnabled = true;
-    $("micBtn").textContent = "⏹️ Encerrar voz";
-    await startRecorderFallback();
+    try {
+      setMicStatus("Solicitando acesso ao microfone…");
+      await ensureVoiceStream();
+      voiceLoopEnabled = true;
+      $("micBtn").textContent = "⏹️ Encerrar voz";
+      setMicStatus("Microfone ativo. Pode falar.");
+      await startRecorderFallback();
+    } catch (error) {
+      voiceLoopEnabled = false;
+      $("micBtn").textContent = "🎙️ Falar";
+      $("micBtn").disabled = false;
+      const message = microphoneErrorMessage(error);
+      setMicStatus("⚠️ " + message, true);
+      setAvatar("closed");
+      throw new Error(message);
+    }
   }
 
   function stopVoiceMonitor() {
@@ -400,10 +511,24 @@
 
   async function ensureVoiceStream() {
     if (voiceStream && voiceStream.getTracks().some(t => t.readyState === "live")) return voiceStream;
-    voiceStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-    });
-    return voiceStream;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const error = new Error("Este navegador não oferece navigator.mediaDevices.getUserMedia.");
+      error.name = "NotSupportedError";
+      throw error;
+    }
+    try {
+      voiceStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+      });
+      const track = voiceStream.getAudioTracks?.()[0];
+      if (!track || track.readyState !== "live") throw new Error("O navegador não entregou uma faixa de áudio ativa.");
+      setMicStatus("Microfone autorizado e ativo.");
+      return voiceStream;
+    } catch (error) {
+      voiceStream = null;
+      setMicStatus("⚠️ " + microphoneErrorMessage(error), true);
+      throw error;
+    }
   }
 
   async function startRecorderFallback() {
@@ -487,18 +612,24 @@
   }
 
   async function waitForIndexJob(jobId, filename) {
-    const deadline = Date.now() + 10 * 60 * 1000;
+    const deadline = Date.now() + 90 * 60 * 1000;
     while (Date.now() < deadline) {
       const data = await api("/api/index-status?job_id=" + encodeURIComponent(jobId), { method: "GET" });
       const status = String(data.status || "queued");
       const progress = Math.max(0, Math.min(100, Number(data.progress || 0)));
-      $("adminStatus").textContent = "Indexando " + filename + "… " + progress + "% • " + status;
+      const processed = Number(data.processed_pages || 0);
+      const expected = Number(data.expected_pages || data.paginas || 0);
+      const chunkCount = Number(data.chunks || 0);
+      const detail = expected
+        ? " • " + processed + "/" + expected + " páginas • " + chunkCount + " trechos"
+        : " • " + chunkCount + " trechos";
+      $("adminStatus").textContent = "Indexando " + filename + "… " + progress + "% • " + status + detail;
       if (status === "ready") return data;
       if (status === "duplicate") return { ...data, duplicate: true };
       if (status === "failed") throw new Error(data.error || "Falha durante a indexação.");
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    throw new Error("A indexação continua no servidor, mas o acompanhamento local atingiu 10 minutos.");
+    throw new Error("A indexação ainda está ativa no servidor. Ela continuará automaticamente; volte à Biblioteca para acompanhar o progresso.");
   }
 
   async function getPdfJs() {
@@ -669,6 +800,7 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
   });
   $("micBtn").onclick = () => startVoice().catch(e => appendMessage("assistant", "Microfone indisponível: " + e.message));
+  $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
   $("clearChatBtn").onclick = async () => {
