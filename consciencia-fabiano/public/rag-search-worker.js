@@ -73,6 +73,27 @@ async function semantic(query,topK,minScore){
   for(const r of rows){const score=cosine(query,r.vector);if(score>=minScore)out.push({...r,score});}
   return out.sort((a,b)=>b.score-a.score).slice(0,topK);
 }
+async function literalAnchorSearch(question,topK){
+  const rows=await all("chunks"),qs=terms(question);
+  if(!rows.length||!qs.length)return [];
+  const out=[];
+  for(const row of rows){
+    const f=fold(row.text);
+    let matched=0,hits=0;
+    for(const term of qs){
+      if(!f.includes(term))continue;
+      matched++;
+      let at=0,count=0;
+      while((at=f.indexOf(term,at))>=0 && count<12){count++;at+=term.length;}
+      hits+=count;
+    }
+    if(matched){
+      const coverage=matched/qs.length;
+      out.push({...row,score:8+coverage*5+Math.min(3,hits*.25),retrieval_mode:"literal-anchor-local"});
+    }
+  }
+  return out.sort((a,b)=>b.score-a.score).slice(0,topK);
+}
 async function bm25(question,topK){
   const rows=await all("chunks"),qs=terms(question);
   if(!rows.length||!qs.length)return [];
@@ -122,7 +143,7 @@ self.onmessage=async e=>{
     if(d.type==="persist-chunks"){const count=await putMany("chunks",d.chunks||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||100),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
-    if(d.type==="search-bm25"){const matches=await bm25(d.question||"",Number(d.top_k||100));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="search-bm25"){const topK=Number(d.top_k||100);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
     if(d.type==="local-stats"){
       const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);
       self.postMessage({id,ok:true,chunks,vectors});
