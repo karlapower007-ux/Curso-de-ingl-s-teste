@@ -87,27 +87,45 @@ async function preloadRam(){
 async function hydrateStaticBackup(force=false){
   if(staticBackupHydrated && !force) return {chunks:0,vectors:0};
   try{
-    const res=await fetch("/biblioteca_backup.json?v=16",{cache:"no-store"});
+    const res=await fetch("/biblioteca_backup.json?v=17",{cache:"no-store"});
     if(!res.ok) return {chunks:0,vectors:0};
-    const data=await res.json();
-    const chunks=Array.isArray(data?.chunks)?data.chunks:[];
-    const vectors=Array.isArray(data?.vectors)?data.vectors:[];
-    for(let i=0;i<chunks.length;i+=200){
-      const batch=chunks.slice(i,i+200).map(c=>normalizeMatch(c,"static-backup"));
-      if(batch.length){
-        const stored=batch.map((c,j)=>({...c,key:String(c.id || c.document_id || "backup")+":"+String(c.page || (i+j))}));
-        await rpc(searchWorker,"persist-chunks",{chunks:stored},5000);
-        rpc(opfsWorker,"persist-chunks",{chunks:stored},5000).catch(()=>{});
-        const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
-        if(room)ramCorpus.push(...batch.slice(0,room));
+    const manifest=await res.json();
+    let totalChunks=0,totalVectors=0;
+    const payloads=[];
+
+    if(Array.isArray(manifest?.parts) && manifest.parts.length){
+      for(const part of manifest.parts.slice(0,250)){
+        try{
+          const pRes=await fetch(String(part.url || part),{cache:"no-store"});
+          if(pRes.ok) payloads.push(await pRes.json());
+        }catch{}
+      }
+    }else{
+      payloads.push(manifest);
+    }
+
+    for(const data of payloads){
+      const chunks=Array.isArray(data?.chunks)?data.chunks:[];
+      const vectors=Array.isArray(data?.vectors)?data.vectors:[];
+      totalChunks+=chunks.length; totalVectors+=vectors.length;
+      for(let i=0;i<chunks.length;i+=200){
+        const batch=chunks.slice(i,i+200).map(c=>normalizeMatch(c,"static-backup"));
+        if(batch.length){
+          const stored=batch.map((c,j)=>({...c,key:String(c.id || c.document_id || "backup")+":"+String(c.page || (i+j))}));
+          await rpc(searchWorker,"persist-chunks",{chunks:stored},5000);
+          rpc(opfsWorker,"persist-chunks",{chunks:stored},5000).catch(()=>{});
+          const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
+          if(room)ramCorpus.push(...batch.slice(0,room));
+        }
+      }
+      for(let i=0;i<vectors.length;i+=200){
+        const records=vectors.slice(i,i+200).filter(v=>Array.isArray(v?.vector) && v.vector.length>=64);
+        if(records.length) await rpc(searchWorker,"persist-vectors",{records},8000);
       }
     }
-    for(let i=0;i<vectors.length;i+=200){
-      const records=vectors.slice(i,i+200).filter(v=>Array.isArray(v?.vector) && v.vector.length>=64);
-      if(records.length) await rpc(searchWorker,"persist-vectors",{records},8000);
-    }
+
     staticBackupHydrated=true;
-    return {chunks:chunks.length,vectors:vectors.length};
+    return {chunks:totalChunks,vectors:totalVectors};
   }catch{return {chunks:0,vectors:0};}
 }
 const ready=Promise.all([preloadRam(),hydrateStaticBackup(false)]);
@@ -155,7 +173,9 @@ async function persistVectors(payload){
     updated_at:Date.now()
   })).filter(r=>r.vector.length>=64);
   if(!records.length)return {ok:true,count:0};
-  return rpc(searchWorker,"persist-vectors",{records},8000);
+  const local=await rpc(searchWorker,"persist-vectors",{records},8000);
+  if(window.FNSRagMirrorBatch) window.FNSRagMirrorBatch(records).catch(()=>{});
+  return local;
 }
 
 async function level2(question,queryEmbedding){
