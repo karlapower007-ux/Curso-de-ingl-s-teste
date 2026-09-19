@@ -629,15 +629,56 @@ async function reindexLibrary(request, env) {
   return json({ ok: true, resultados });
 }
 
-async function retrieveContext(env, question) {
-  assertBindings(env);
-  const qEmbedding = await generateEmbeddings(env, [question], "search_query");
-  const data = await libraryCall(env, "/search", {
+function foldSearchText(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function lexicalTerms(question) {
+  const stop = new Set([
+    "a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre",
+    "para","por","com","como","qual","quais","fala","falar","the","and","of","to","in","is","what","about"
+  ]);
+  return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 10);
+}
+
+async function retrieveLexicalContext(env, question) {
+  const terms = lexicalTerms(question);
+  if (!terms.length) return [];
+  const data = await libraryCall(env, "/search-lexical", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ embedding: qEmbedding[0], top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
+    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: 7000 }),
   });
-  return Array.isArray(data.matches) ? data.matches : [];
+  return Array.isArray(data.matches)
+    ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-fallback" }))
+    : [];
+}
+
+async function retrieveContext(env, question) {
+  assertBindings(env);
+  try {
+    const qEmbedding = await generateEmbeddings(env, [question], "search_query");
+    const data = await libraryCall(env, "/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embedding: qEmbedding[0], top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
+    });
+    return Array.isArray(data.matches)
+      ? data.matches.map(item => ({ ...item, retrieval_mode: "semantic" }))
+      : [];
+  } catch (error) {
+    if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
+    if (isRateLimitError(error) || isMonthlyQuotaError(error) || /cohere|embedding/i.test(String(error?.message || ""))) {
+      return retrieveLexicalContext(env, question);
+    }
+    throw error;
+  }
 }
 
 function uniqueSources(context) {
@@ -656,6 +697,7 @@ function uniqueSources(context) {
       pagina: item.page || null,
       trecho: String(item.text || "").slice(0, 650),
       score: Math.round(item.score * 10000) / 10000,
+      retrieval_mode: item.retrieval_mode || "semantic",
     });
   }
   return sources.slice(0, 8);
@@ -1003,6 +1045,7 @@ async function status(env) {
     embedding_throttle_ms: COHERE_THROTTLE_MS,
     embedding_adapter: embeddingAdapter.name,
     smart_chunking: true,
+    lexical_rag_fallback: true,
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
@@ -1534,6 +1577,52 @@ export class LibraryDO {
         const before = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages WHERE owner_id = ?", ownerId)][0]?.n || 0;
         this.sql.exec("DELETE FROM conversation_messages WHERE owner_id = ?", ownerId);
         return json({ ok: true, cleared: Number(before) });
+      }
+
+      if (url.pathname === "/search-lexical" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const query = foldSearchText(body.query || "");
+        const terms = Array.isArray(body.terms)
+          ? body.terms.map(foldSearchText).filter(Boolean).slice(0, 10)
+          : lexicalTerms(query);
+        const topK = Math.max(1, Math.min(20, Number(body.top_k || TOP_K)));
+        const scanLimit = Math.max(200, Math.min(10000, Number(body.scan_limit || 7000)));
+        if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "lexical-fallback" });
+
+        const rows = [...this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          WHERE d.status IN ('ready','indexing')
+          ORDER BY c.created_at DESC LIMIT ?
+        `, scanLimit)];
+
+        const phrase = foldSearchText(query);
+        const matches = [];
+        for (const row of rows) {
+          const folded = foldSearchText(row.text);
+          let hits = 0;
+          let matchedTerms = 0;
+          for (const term of terms) {
+            if (!term) continue;
+            let cursor = 0, termHits = 0;
+            while ((cursor = folded.indexOf(term, cursor)) >= 0 && termHits < 8) {
+              termHits++;
+              cursor += term.length;
+            }
+            if (termHits) {
+              matchedTerms++;
+              hits += termHits;
+            }
+          }
+          if (!matchedTerms) continue;
+          const coverage = matchedTerms / terms.length;
+          const phraseBonus = phrase && phrase.length >= 5 && folded.includes(phrase) ? 2.5 : 0;
+          const score = coverage * 4 + Math.min(3, hits * 0.35) + phraseBonus;
+          matches.push({ ...row, score });
+        }
+        matches.sort((a,b) => b.score - a.score);
+        return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length, mode: "lexical-fallback" });
       }
 
       if (url.pathname === "/search" && request.method === "POST") {

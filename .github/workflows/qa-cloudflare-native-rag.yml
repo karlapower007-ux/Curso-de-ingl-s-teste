@@ -42,6 +42,8 @@ jobs:
           grep -q 'GROQ_INPUT_BUDGET_TOKENS' src/index.js
           grep -q 'isUsefulChunkText' src/index.js
           grep -q 'embeddingAdapter' src/index.js
+          grep -q 'lexical_rag_fallback: true' src/index.js
+          grep -q 'search-lexical' src/index.js
           grep -q 'never split a rate-limited batch' src/index.js
           grep -q 'parallelMapLimit' src/index.js
           grep -q 'embedOneWithRetry' src/index.js
