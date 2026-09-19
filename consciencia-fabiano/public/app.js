@@ -11,6 +11,50 @@
   const LOCAL_EMBED_DB_VERSION = 4;
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
 
+  // V3.0 micro-kernel: heavy browser engines remain dormant until a failure,
+  // an offline event, or an explicit Library/Admin action requires them.
+  let ragCascadePromise = null;
+  let failoverModulePromise = null;
+  let heavyLocalSubsystemsActivated = false;
+
+  async function ensureRagCascade(reason="on-demand") {
+    if(window.FNSRagCascade) return window.FNSRagCascade;
+    if(!ragCascadePromise){
+      ragCascadePromise=import("/rag-cascade.js?v=3.0.0").then(()=>{
+        if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
+        return window.FNSRagCascade;
+      }).catch(error=>{
+        ragCascadePromise=null;
+        throw error;
+      });
+    }
+    const engine=await ragCascadePromise;
+    window.__ragCascadeActivationReason=reason;
+    return engine;
+  }
+
+  async function ensureFailoverV3(){
+    if(!failoverModulePromise){
+      failoverModulePromise=import("/failover-v3.js?v=3.0.0").catch(error=>{
+        failoverModulePromise=null;
+        throw error;
+      });
+    }
+    return failoverModulePromise;
+  }
+
+  function activateHeavyLocalSubsystems(reason="manual"){
+    if(heavyLocalSubsystemsActivated) return;
+    heavyLocalSubsystemsActivated=true;
+    ensureRagCascade(reason).catch(()=>{});
+    setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),250);
+    setTimeout(()=>resumeOfflineVectorJobs().catch(()=>{}),500);
+    setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),800);
+    setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
+    setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
+    setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
+  }
+
   let history = [];
   let speakingTimer = null;
   let recorder = null;
@@ -416,10 +460,10 @@
 
   async function backfillLocalVectorMirror(){
     if(mirrorBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
-    if(!window.FNSRagCascade?.localStats || !window.FNSRagCascade?.exportVectors) return;
     mirrorBackfillRunning=true;
     try{
-      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      await ensureRagCascade("mirror-backfill");
+      if(!window.FNSRagCascade?.localStats || !window.FNSRagCascade?.exportVectors) return;
       const stats=await window.FNSRagCascade.localStats();
       const total=Math.max(0,Number(stats?.vectors||0));
       if(!total) return;
@@ -673,8 +717,8 @@
     $("messages").scrollTop=$("messages").scrollHeight;
   }
 
-  async function directRetrievalWithFailover(question,queryEmbedding){
-    let remoteFailure="";
+  async function directRetrievalWithFailover(question,queryEmbedding=null){
+    let primaryFailure="";
     if(navigator.onLine){
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(),10000);
@@ -690,34 +734,40 @@
         });
         const data=await res.json().catch(()=>({}));
         if(res.ok && data?.ok===true && typeof data?.text==="string" && data.text.length){
-          return {...data,offline_takeover:false};
+          return {...data,plan:"A",offline_takeover:false};
         }
-        remoteFailure=String(data?.code || data?.message || ("HTTP "+res.status));
+        primaryFailure=String(data?.code || data?.message || ("HTTP "+res.status));
       }catch(error){
-        remoteFailure=String(error?.message || error);
+        primaryFailure=String(error?.message || error);
       }finally{
         clearTimeout(timer);
       }
     }else{
-      remoteFailure="offline";
+      primaryFailure="offline";
     }
 
     try{
-      if(window.__ragCascadeReady) await window.__ragCascadeReady;
-      const local=await window.FNSRagCascade?.directRetrieve?.(question);
-      if(local?.ok===true && typeof local?.text==="string" && local.text.length){
-        try{navigator.vibrate?.(35);}catch{}
-        if($("avatarState")) $("avatarState").textContent="Modo Offline Ativado - Leitura Contínua Local";
-        return {...local,offline_takeover:true,remote_failure:remoteFailure};
+      const failover=await ensureFailoverV3();
+      const recovered=await failover.recoverDirect({question:String(question||""),query_embedding:queryEmbedding||[]});
+      if(recovered?.ok){
+        if(recovered.plan==="C"){
+          try{navigator.vibrate?.(35);}catch{}
+          if($("avatarState")) $("avatarState").textContent="Modo Offline Ativado - Leitura Contínua Local";
+        }else if($("avatarState")){
+          $("avatarState").textContent="Contingência Plano "+String(recovered.plan||"?")+" ativa";
+        }
+        return {...recovered,offline_takeover:recovered.plan==="C",primary_failure:primaryFailure};
       }
-    }catch{}
-
-    return {
-      ok:false,direct:true,bypass_llm:true,
-      code:"DIRECT_RETRIEVAL_UNAVAILABLE",
-      remote_failure:remoteFailure,
-      text:""
-    };
+      return {...recovered,primary_failure:primaryFailure,bypass_llm:true,text:""};
+    }catch(error){
+      return {
+        ok:false,direct:true,bypass_llm:true,
+        code:"DIRECT_RETRIEVAL_UNAVAILABLE",
+        primary_failure:primaryFailure,
+        failover_error:String(error?.message||error),
+        text:""
+      };
+    }
   }
 
   function appendMessage(role, content, sources = [], fallback = false) {
@@ -854,12 +904,15 @@
       live.wrap.remove();
     }
     return {
-      ok: true,
+      ok: meta.ok !== false,
       resposta: answer || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?",
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
+      retrieval_unavailable: meta.retrieval_unavailable === true,
       memory_persisted: meta.memory_persisted === true,
-      provider: meta.provider || "groq+resilient-rag"
+      provider: meta.provider || "groq+resilient-rag",
+      code: meta.code || "",
+      raw_meta: meta
     };
   }
 
@@ -1131,23 +1184,30 @@
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
-      const queryEmbedding=await localQueryEmbedding(q);
+      const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
 
+      // Leitura literal: Plano A primeiro. Só após falha o módulo B-F é carregado.
       if(isDirectRetrievalIntent(q)){
-        const direct=await directRetrievalWithFailover(q,queryEmbedding);
+        const direct=await directRetrievalWithFailover(q,null);
         if(direct?.ok===true && typeof direct?.text==="string" && direct.text.length){
-          appendRawDocumentMessage(direct.text,direct);
+          appendRawDocumentMessage(direct.text,{
+            ...direct,
+            offline_takeover:direct.plan==="C",
+            scope:direct.scope || direct.direct_scope || "",
+            title:direct.title || direct.filename || "Documento"
+          });
           history.push({
             role:"assistant",
             content:direct.text,
             raw_document:true,
             direct_meta:{
-              offline_takeover:direct.offline_takeover===true,
+              offline_takeover:direct.plan==="C",
               title:direct.title || direct.filename || "Documento",
               filename:direct.filename || "",
               author:direct.author || "",
               page:direct.page || null,
-              scope:direct.scope || ""
+              scope:direct.scope || direct.direct_scope || "",
+              plan:direct.plan || "A"
             },
             fallback:false,
             ts:Date.now()
@@ -1157,7 +1217,7 @@
           return;
         }
 
-        const failure="Não foi possível recuperar o texto documental exato agora. O modo V2.1 manteve o bypass do LLM e não gerou nem completou o texto por inteligência artificial.";
+        const failure=String(direct?.answer || "Não foi possível recuperar o texto documental exato agora. O V3.0 manteve o bypass do LLM: nenhum texto foi inventado ou completado por inteligência artificial.");
         appendMessage("assistant",failure,[],true);
         history.push({role:"assistant",content:failure,fallback:true,ts:Date.now()});
         saveHistory();
@@ -1165,28 +1225,63 @@
         return;
       }
 
-      let resilient={matches:[],level:0,name:"none"};
+      // Plano A analítico: nenhum IndexedDB, pdf.js, embedding local ou RAG local é carregado.
+      let data=null;
+      let primaryError=null;
       try{
-        if(window.__ragCascadeReady) await window.__ragCascadeReady;
-        if(window.FNSRagCascade?.search) resilient=await window.FNSRagCascade.search(q,queryEmbedding);
-      }catch{}
-      const data = await streamChat({
-        pergunta: q,
-        turn_id: turnId,
-        query_embedding: queryEmbedding,
-        query_embedding_model: queryEmbedding ? LOCAL_EMBED_MODEL : "",
-        client_context:Array.isArray(resilient?.matches)?resilient.matches:[],
-        retrieval_level:Number(resilient?.level || 0),
-        retrieval_level_name:String(resilient?.name || ""),
-        historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
-      });
-      const resposta = String(data.resposta || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?");
-      appendMessage("assistant", resposta, data.fontes || [], data.fallback === true);
-      history.push({ role: "assistant", content: resposta, sources: data.fontes || [], fallback: data.fallback === true, ts: Date.now() });
+        data=await streamChat({
+          pergunta:q,
+          turn_id:turnId,
+          historico:recentHistory
+        });
+      }catch(error){
+        primaryError=error;
+      }
+
+      if(!data || data.fallback===true || data.retrieval_unavailable===true || data.ok===false){
+        let recovered=null;
+        try{
+          const failover=await ensureFailoverV3();
+          recovered=await failover.recoverAnalytic({
+            question:q,
+            history:recentHistory,
+            primary_error:String(primaryError?.message || data?.code || data?.provider || "")
+          });
+        }catch(error){
+          primaryError=primaryError || error;
+        }
+
+        if(recovered?.ok){
+          const resposta=String(recovered.answer || recovered.text || "");
+          appendMessage("assistant",resposta,recovered.sources || [],false);
+          history.push({
+            role:"assistant",content:resposta,sources:recovered.sources || [],fallback:false,
+            failover_plan:recovered.plan || "",ts:Date.now()
+          });
+          saveHistory();
+          if($("backendText")) $("backendText").textContent="Contingência Plano "+String(recovered.plan||"?")+" ativa";
+          setAvatar("closed");
+          return;
+        }
+
+        if(data?.resposta){
+          const resposta=String(data.resposta);
+          appendMessage("assistant",resposta,data.fontes||[],true);
+          history.push({role:"assistant",content:resposta,sources:data.fontes||[],fallback:true,ts:Date.now()});
+          saveHistory();
+          setAvatar("closed");
+          return;
+        }
+        throw primaryError || new Error("Todos os níveis automáticos A-E ficaram indisponíveis. O Plano F exige acesso humano ao raw-vault.");
+      }
+
+      const resposta=String(data.resposta || "");
+      appendMessage("assistant",resposta,data.fontes || [],false);
+      history.push({role:"assistant",content:resposta,sources:data.fontes || [],fallback:false,ts:Date.now()});
       saveHistory();
-      await playAudio(data.audio_url, resposta);
+      await playAudio(data.audio_url,resposta);
     } catch (error) {
-      appendMessage("assistant", "Não consegui responder agora. " + error.message);
+      appendMessage("assistant","Não consegui responder agora. "+String(error?.message||error));
       setAvatar("closed");
     } finally {
       $("sendBtn").disabled = false;
@@ -1209,7 +1304,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "RAG V2.1 • 500 nós • 25 workers • Groq + Local"
+        ? "V3.0 • Plano A ativo • 500 nós analíticos • 1000 turbinas exatas"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
@@ -1224,7 +1319,10 @@
     $("libraryPanel").classList.toggle("hidden", !lib);
     $("chatTab").classList.toggle("active", !lib);
     $("libraryTab").classList.toggle("active", lib);
-    if (lib) loadBooks();
+    if (lib) {
+      activateHeavyLocalSubsystems("library-admin");
+      loadBooks();
+    }
   }
 
   function setMicStatus(message = "", isError = false) {
@@ -1422,9 +1520,18 @@
   }
 
   async function getPdfJs() {
-    if(window.__pdfjsReady) return await window.__pdfjsReady;
     if(window.pdfjsLib?.getDocument) return window.pdfjsLib;
-    throw new Error("Motor local pdf.js não carregou. Verifique sua conexão.");
+    if(!window.__pdfjsReady){
+      window.__pdfjsReady=import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs").then(mod=>{
+        mod.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+        window.pdfjsLib=mod;
+        return mod;
+      }).catch(error=>{
+        window.__pdfjsReady=null;
+        throw error;
+      });
+    }
+    return await window.__pdfjsReady;
   }
   function bytesToHex(buffer){return [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,"0")).join("");}
   function cleanPageText(items){
@@ -1511,7 +1618,7 @@
     }catch{}
 
     try{
-      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      await ensureRagCascade("on-demand-local");
       const docs=await window.FNSRagCascade?.listDocuments?.();
       for(const item of (Array.isArray(docs)?docs:[])){
         const normalized={
@@ -1865,7 +1972,7 @@
       const localId=String(extracted.content_sha256 || extracted.filename);
 
       $("adminStatus").textContent="Texto extraído. Salvando livro no IndexedDB/OPFS local…";
-      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      await ensureRagCascade("on-demand-local");
       await window.FNSRagCascade?.persistExtracted?.(extracted);
 
       await saveLocalCatalogEntry({
@@ -1975,25 +2082,31 @@
   syncPersistentHistory();
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
-  setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
-  setTimeout(()=>resumeOfflineVectorJobs().catch(()=>{}),1500);
-  setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
-  setTimeout(()=>processSyncQueue().catch(()=>{}),5000);
-  setTimeout(()=>processMirrorQueue().catch(()=>{}),7000);
-  setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),9000);
-  setInterval(()=>processSyncQueue().catch(()=>{}),15*60*1000);
-  setInterval(()=>processMirrorQueue().catch(()=>{}),10*60*1000);
-  setInterval(()=>backfillLocalVectorMirror().catch(()=>{}),20*60*1000);
+
+  // Apenas o Service Worker leve é preparado no arranque. Motores locais pesados dormem.
+  ensureFailoverV3().then(mod=>mod.warmServiceWorker?.()).catch(()=>{});
+
+  setInterval(()=>{
+    if(!heavyLocalSubsystemsActivated) return;
+    processSyncQueue().catch(()=>{});
+    processMirrorQueue().catch(()=>{});
+    backfillLocalVectorMirror().catch(()=>{});
+  },20*60*1000);
+
+  window.addEventListener("offline",()=>{
+    activateHeavyLocalSubsystems("offline-event");
+    if($("backendText")) $("backendText").textContent="Offline detectado • contingência local pronta";
+  });
   window.addEventListener("online",()=>{
+    if(!heavyLocalSubsystemsActivated) return;
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
   });
   document.addEventListener("visibilitychange",()=>{
-    if(document.visibilityState==="visible"){
+    if(document.visibilityState==="visible" && heavyLocalSubsystemsActivated){
       processSyncQueue().catch(()=>{});
       processMirrorQueue().catch(()=>{});
     }
   });
-  setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
 })();
