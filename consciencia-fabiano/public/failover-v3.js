@@ -90,7 +90,7 @@ function deterministicEvidenceAnswer(matches,planLabel){
 async function planCLocalAnalytic(payload){
   try{
     const engine=await loadLocalEngine();
-    const result=await engine?.search?.(payload.question,null);
+    const result=engine?.offlineSearch ? await engine.offlineSearch(payload.question) : await engine?.search?.(payload.question,null);
     const matches=Array.isArray(result?.matches)?result.matches:[];
     if(!matches.length) return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
 
