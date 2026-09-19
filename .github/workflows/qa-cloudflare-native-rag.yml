@@ -73,6 +73,7 @@ jobs:
           grep -q 'pruneIndexedDbPointers' public/app.js
           grep -q 'Date.now()' public/index.html
           grep -q 'no-cache, no-store, must-revalidate' src/index.js
+          grep -q '/api/admin/ping' src/index.js
           grep -q 'semantic_min_score: 0.38' src/index.js
           grep -q 'top_k: 15' src/index.js
           grep -q 'require_lexical_match: false' src/index.js

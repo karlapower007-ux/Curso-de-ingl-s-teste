@@ -1273,7 +1273,8 @@ async function handleApi(request, env, url, ctx) {
     if (privateIndexRoute && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
-    if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
+    if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
+        if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (url.pathname === "/api/memory" && request.method === "GET") {
       const ownerId = await memoryOwner(request);

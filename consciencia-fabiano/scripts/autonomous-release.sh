@@ -80,7 +80,7 @@ HDR=(-H "X-FNS-Automation: $AUTOMATION_SECRET")
 log "Waiting for secret propagation"
 stable=0
 for i in $(seq 1 30); do
-  code=$(curl -sS -o /tmp/admin-probe.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/livros" || true)
+  code=$(curl -sS -o /tmp/admin-probe.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/ping" || true)
   if [ "$code" = "200" ]; then
     stable=$((stable+1))
     if [ "$stable" -ge 3 ]; then
