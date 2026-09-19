@@ -1,5 +1,6 @@
 const VERSION = "1.4.0-external-ai-groq-gemini";
 // External AI bypass activation: Groq chat/STT + Gemini embeddings.
+// Gemini REST payload verified against current API shape.
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const CHAT_MODEL = "openai/gpt-oss-20b";
 const STT_MODEL = "whisper-large-v3-turbo";
