@@ -2037,6 +2037,31 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/health/deploy") {
+      const missing=[];
+      if(!env.LIBRARY) missing.push("LIBRARY");
+      if(!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
+      return json({
+        ok: missing.length===0,
+        service: "Consciência do Fabiano",
+        version: VERSION,
+        architecture: "cloudflare-router-external-ai",
+        storage_backend: "durable-object-sqlite",
+        workers_ai_used: false,
+        llm_provider: "groq",
+        embedding_provider: "browser-transformers",
+        server_pdf_parsing: false,
+        chunk_concurrency_limit: CHUNK_CONCURRENCY,
+        embedding_concurrency_limit: EMBED_CONCURRENCY,
+        semantic_min_score: SEMANTIC_MIN_SCORE,
+        search_top_k: TOP_K,
+        require_lexical_match: REQUIRE_LEXICAL_MATCH,
+        local_whisper_stt: true,
+        bindings_missing: missing,
+        probe: "deploy-only-no-storage-read"
+      });
+    }
+
     if (url.pathname === "/health") {
       return json(await status(env));
     }

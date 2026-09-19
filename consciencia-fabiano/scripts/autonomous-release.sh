@@ -97,13 +97,13 @@ sleep 3
 
 log "5/7 Production health"
 for i in $(seq 1 15); do
-  body=$(curl -fsS "$BASE/health" 2>/dev/null || true)
+  body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
-    log "NATIVE_HEALTH_PASS=yes"
+    log "DEPLOY_HEALTH_PASS=yes"
     break
   fi
-  [ "$i" = 15 ] && { echo "$body"; die "NATIVE_HEALTH_FAILED"; }
+  [ "$i" = 15 ] && { echo "$body"; die "DEPLOY_HEALTH_FAILED"; }
   sleep 3
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
