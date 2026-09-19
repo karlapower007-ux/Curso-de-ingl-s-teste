@@ -1,10 +1,12 @@
-const CACHE_NAME="fns-ultimate-resilience-v3";
+const CACHE_NAME="fns-ultimate-resilience-v3-1";
 const CORE=[
   "/",
   "/index.html",
   "/style.css",
   "/app.js",
   "/failover-v3.js",
+  "/local-turbine-pool.js",
+  "/local-turbine-worker.js",
   "/failover-manifest.json",
   "/steel/index.json",
   "/fabiano-fechado.png",
@@ -39,7 +41,7 @@ self.addEventListener("fetch",event=>{
 
   const isSteel=url.pathname.startsWith("/steel/");
   const isResilienceAsset=isSteel || [
-    "/failover-v3.js","/failover-manifest.json","/rag-cascade.js","/rag-search-worker.js","/opfs-sqlite-worker.js"
+    "/failover-v3.js","/local-turbine-pool.js","/local-turbine-worker.js","/failover-manifest.json","/rag-cascade.js","/rag-search-worker.js","/opfs-sqlite-worker.js"
   ].includes(url.pathname);
 
   if(isResilienceAsset){
