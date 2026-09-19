@@ -1,4 +1,4 @@
-const VERSION = "2.0.0-massive-scale";
+const VERSION = "2.1.0-exact-match-turbines";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -49,6 +49,25 @@ const MASSIVE_NODE_GROUP_SIZE = 25;
 const MASSIVE_GROQ_MAX_RETRIES = 3;
 const MASSIVE_NODE_EVIDENCE_CHARS = 520;
 const SSE_KEEPALIVE_MS = 15000;
+
+// V2.1 EXACT MATCH TURBINES — 1000 nós lógicos, LLM bypass e defesa anti-sufocamento.
+const EXACT_SWARM_NODE_COUNT = 1000;
+const EXACT_MAX_CONCURRENT_REQUESTS = 50;
+const EXACT_DEGRADED_CONCURRENCY = 25;
+const EXACT_CIRCUIT_FAILURE_THRESHOLD = 3;
+const EXACT_CIRCUIT_SLOW_MS = 5000;
+const EXACT_CIRCUIT_BASE_PAUSE_MS = 3000;
+const EXACT_MAX_RETRIES = 3;
+const EXACT_MAX_CHUNKS = 1000;
+const EXACT_REMOTE_PAGE_SIZE = 50;
+const EXACT_CHUNK_OVERLAP_SCAN = 360;
+const exactSupabaseCircuit = {
+  failures: 0,
+  open_until: 0,
+  backoff_round: 0,
+  degraded: false,
+  last_reason: ""
+};
 const MICRO_NODE_RELAY_BUDGET_TOKENS = 5600;
 const MICRO_NODE_MAX_COMPLETION_TOKENS = 520;
 const MASTER_NODE_MAX_COMPLETION_TOKENS = 3600;
@@ -2396,11 +2415,410 @@ async function exportLibraryPage(env,url){
   return json(await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit));
 }
 
+
+function detectExactRetrievalIntent(question) {
+  const raw=String(question || "").trim();
+  const q=foldSearchText(raw);
+  const chapterMatch=q.match(/\b(?:capitulo|chapter)\s+(\d{1,4})\b/);
+  const verseMatch=raw.match(/\b(\d{1,4})\s*:\s*(\d{1,4})\b/);
+  const fullChapter=
+    /\b(?:capitulo|chapter)\b.*\b(?:completo|inteiro|integral|na integra|full|whole|entire)\b/i.test(q) ||
+    /\b(?:completo|inteiro|integral|na integra|full|whole|entire)\b.*\b(?:capitulo|chapter)\b/i.test(q);
+  const exactVerse=
+    /\b(?:versiculo|verse)\b.*\b(?:exato|literal|integral|exact|verbatim)\b/i.test(q) ||
+    (/\b(?:exato|literal|exact|verbatim)\b/i.test(q) && Boolean(verseMatch));
+  const rawText=
+    /\b(?:texto exato|texto literal|texto integral|na integra|sem resumir|sem resumo|raw text|verbatim|transcreva|transcricao integral|copie exatamente|mostre exatamente)\b/i.test(q);
+  const triggered=fullChapter || exactVerse || rawText;
+  return {
+    triggered,
+    mode: fullChapter ? "full-chapter" : exactVerse ? "exact-verse" : rawText ? "raw-text" : "",
+    chapter_number: chapterMatch ? Number(chapterMatch[1]) : (verseMatch ? Number(verseMatch[1]) : null),
+    verse_number: verseMatch ? Number(verseMatch[2]) : null,
+    raw_question: raw
+  };
+}
+
+function sortSequentialChunks(rows) {
+  return Array.from(rows || []).filter(r=>String(r?.text || "").length).sort((a,b)=>{
+    const ai=Number.isFinite(Number(a?.chunk_index)) ? Number(a.chunk_index) : Number.MAX_SAFE_INTEGER;
+    const bi=Number.isFinite(Number(b?.chunk_index)) ? Number(b.chunk_index) : Number.MAX_SAFE_INTEGER;
+    if(ai!==bi) return ai-bi;
+    const ap=Number(a?.page || 0), bp=Number(b?.page || 0);
+    if(ap!==bp) return ap-bp;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+}
+
+function stitchExactChunks(rows) {
+  const ordered=sortSequentialChunks(rows);
+  let out="";
+  for(const row of ordered){
+    const next=String(row?.text || "");
+    if(!next) continue;
+    if(!out){out=next;continue;}
+    const max=Math.min(EXACT_CHUNK_OVERLAP_SCAN,out.length,next.length);
+    let overlap=0;
+    for(let n=max;n>=12;n--){
+      if(out.slice(-n)===next.slice(0,n)){overlap=n;break;}
+    }
+    out += overlap ? next.slice(overlap) : "\n"+next;
+  }
+  return out;
+}
+
+function exactChapterSlice(text,chapterNumber) {
+  const raw=String(text || "");
+  const n=Number(chapterNumber || 0);
+  if(!raw || !n) return null;
+  const startRe=new RegExp("(?:^|\\n)\\s*(?:CAP[ÍI]TULO|CAPITULO|CHAPTER)\\s+"+n+"\\b","im");
+  const startMatch=startRe.exec(raw);
+  if(!startMatch) return null;
+  let start=startMatch.index;
+  if(raw[start]==="\n") start++;
+  const tailStart=startMatch.index+startMatch[0].length;
+  const nextRe=new RegExp("(?:^|\\n)\\s*(?:CAP[ÍI]TULO|CAPITULO|CHAPTER)\\s+"+(n+1)+"\\b","im");
+  const nextMatch=nextRe.exec(raw.slice(tailStart));
+  const end=nextMatch ? tailStart+nextMatch.index : raw.length;
+  const chapter=raw.slice(start,end).replace(/\s+$/,"");
+  return chapter || null;
+}
+
+function exactVerseSlice(text,verseNumber) {
+  const raw=String(text || "");
+  const v=Number(verseNumber || 0);
+  if(!raw || !v) return null;
+  const startRe=new RegExp("(^|[\\n\\r]|\\s)"+v+"\\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇa-záàâãéêíóôõúç])","mu");
+  const startMatch=startRe.exec(raw);
+  if(!startMatch) return null;
+  const start=startMatch.index+(startMatch[1]?.length || 0);
+  const rest=raw.slice(start+String(v).length);
+  const nextRe=new RegExp("(^|[\\n\\r]|\\s)"+(v+1)+"\\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇa-záàâãéêíóôõúç])","mu");
+  const nextMatch=nextRe.exec(rest);
+  const end=nextMatch ? start+String(v).length+nextMatch.index+(nextMatch[1]?.length || 0) : raw.length;
+  return raw.slice(start,end).replace(/\s+$/,"") || null;
+}
+
+function chooseDirectAnchor(matches,question) {
+  const rows=Array.from(matches || []);
+  if(!rows.length) return null;
+  const phrase=foldSearchText(question);
+  const terms=lexicalTerms(question);
+  return rows.map(row=>{
+    const folded=foldSearchText(row?.text || "");
+    const termHits=terms.reduce((n,t)=>n+(folded.includes(t)?1:0),0);
+    const exact=phrase.length>=5 && folded.includes(phrase);
+    return {row,rank:Number(row?.score || 0)+(exact?100:0)+termHits*2};
+  }).sort((a,b)=>b.rank-a.rank)[0]?.row || rows[0];
+}
+
+function directWindowStart(anchor,intent) {
+  const idx=Math.max(0,Number(anchor?.chunk_index || 0));
+  if(intent?.mode==="full-chapter") return Math.max(0,idx-300);
+  if(intent?.mode==="exact-verse") return Math.max(0,idx-80);
+  return Math.max(0,idx-12);
+}
+
+function directWindowLimit(intent) {
+  if(intent?.mode==="full-chapter") return EXACT_MAX_CHUNKS;
+  if(intent?.mode==="exact-verse") return 240;
+  return 48;
+}
+
+function directAssemble(rows,intent,anchor) {
+  const ordered=sortSequentialChunks(rows);
+  if(!ordered.length) return {text:"",scope:"none",chunks:0};
+  const stitched=stitchExactChunks(ordered);
+
+  if(intent?.mode==="full-chapter" && intent?.chapter_number){
+    const chapter=exactChapterSlice(stitched,intent.chapter_number);
+    if(chapter) return {text:chapter,scope:"full-chapter",chunks:ordered.length};
+  }
+
+  if(intent?.mode==="exact-verse"){
+    let base=stitched;
+    if(intent?.chapter_number){
+      const chapter=exactChapterSlice(stitched,intent.chapter_number);
+      if(chapter) base=chapter;
+    }
+    if(intent?.verse_number){
+      const verse=exactVerseSlice(base,intent.verse_number);
+      if(verse) return {text:verse,scope:"exact-verse",chunks:ordered.length};
+    }
+    const rawAnchor=String(anchor?.text || "");
+    if(rawAnchor) return {text:rawAnchor,scope:"exact-anchor-chunk",chunks:1};
+  }
+
+  if(intent?.mode==="raw-text"){
+    const anchorIndex=ordered.findIndex(r=>String(r?.id || "")===String(anchor?.id || ""));
+    if(anchorIndex>=0){
+      const slice=ordered.slice(Math.max(0,anchorIndex-2),Math.min(ordered.length,anchorIndex+3));
+      return {text:stitchExactChunks(slice),scope:"raw-exact-window",chunks:slice.length};
+    }
+  }
+
+  return {text:stitched,scope:"ordered-raw-window",chunks:ordered.length};
+}
+
+async function exactSleep(ms){return new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));}
+
+function exactCircuitTrip(reason, immediate=false) {
+  exactSupabaseCircuit.failures = immediate
+    ? EXACT_CIRCUIT_FAILURE_THRESHOLD
+    : exactSupabaseCircuit.failures + 1;
+  exactSupabaseCircuit.last_reason=String(reason || "overload");
+  if(exactSupabaseCircuit.failures>=EXACT_CIRCUIT_FAILURE_THRESHOLD){
+    const pause=EXACT_CIRCUIT_BASE_PAUSE_MS*(2**Math.min(4,exactSupabaseCircuit.backoff_round));
+    exactSupabaseCircuit.open_until=Date.now()+pause;
+    exactSupabaseCircuit.backoff_round++;
+    exactSupabaseCircuit.degraded=true;
+  }
+}
+
+function exactCircuitRecover() {
+  exactSupabaseCircuit.failures=0;
+  if(Date.now()>=exactSupabaseCircuit.open_until){
+    exactSupabaseCircuit.open_until=0;
+  }
+}
+
+async function exactGuardedFetch(url,options={}) {
+  if(Date.now()<exactSupabaseCircuit.open_until){
+    await exactSleep(exactSupabaseCircuit.open_until-Date.now());
+  }
+  let lastError=null;
+  for(let attempt=0;attempt<EXACT_MAX_RETRIES;attempt++){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),EXACT_CIRCUIT_SLOW_MS+800);
+    const started=Date.now();
+    try{
+      const res=await fetch(url,{...options,signal:controller.signal});
+      const elapsed=Date.now()-started;
+      if(elapsed>EXACT_CIRCUIT_SLOW_MS){
+        exactCircuitTrip("latency>"+EXACT_CIRCUIT_SLOW_MS,true);
+      }
+      if(res.status===429 || res.status>=500){
+        exactCircuitTrip("http-"+res.status,false);
+        lastError=new Error("Supabase exact HTTP "+res.status);
+        if(Date.now()<exactSupabaseCircuit.open_until){
+          await exactSleep(exactSupabaseCircuit.open_until-Date.now());
+        }else{
+          await exactSleep(EXACT_CIRCUIT_BASE_PAUSE_MS*(2**attempt));
+        }
+        continue;
+      }
+      if(!res.ok){
+        const err=new Error("Supabase exact HTTP "+res.status);
+        err.status=res.status;
+        throw err;
+      }
+      exactCircuitRecover();
+      return res;
+    }catch(error){
+      lastError=error;
+      exactCircuitTrip(error?.name==="AbortError"?"timeout":String(error?.message||error),error?.name==="AbortError");
+      if(attempt<EXACT_MAX_RETRIES-1){
+        const delay=Date.now()<exactSupabaseCircuit.open_until
+          ? exactSupabaseCircuit.open_until-Date.now()
+          : EXACT_CIRCUIT_BASE_PAUSE_MS*(2**attempt);
+        await exactSleep(delay);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error("Supabase exact retrieval unavailable");
+}
+
+async function supabaseExactDocumentChunks(env,documentId,startChunk,limit) {
+  const base=String(env?.SUPABASE_URL || "").replace(/\/$/,"");
+  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
+  if(!base || !token || !documentId) return [];
+  const wanted=Math.max(1,Math.min(EXACT_MAX_CHUNKS,Number(limit || EXACT_MAX_CHUNKS)));
+  const pages=Math.ceil(wanted/EXACT_REMOTE_PAGE_SIZE);
+  const tasks=Array.from({length:pages},(_,i)=>i);
+  const concurrency=exactSupabaseCircuit.degraded ? EXACT_DEGRADED_CONCURRENCY : EXACT_MAX_CONCURRENT_REQUESTS;
+  const results=await runAsyncWorkerPool(tasks,concurrency,async pageIndex=>{
+    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
+    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+    endpoint.searchParams.set("document_id","eq."+String(documentId));
+    endpoint.searchParams.set("chunk_index","gte."+Math.max(0,Number(startChunk||0)));
+    endpoint.searchParams.set("order","chunk_index.asc");
+    endpoint.searchParams.set("limit",String(EXACT_REMOTE_PAGE_SIZE));
+    endpoint.searchParams.set("offset",String(pageIndex*EXACT_REMOTE_PAGE_SIZE));
+    const res=await exactGuardedFetch(endpoint.toString(),{
+      headers:{
+        "Authorization":"Bearer "+token,
+        "apikey":token,
+        "Accept":"application/json"
+      }
+    });
+    const rows=await res.json().catch(()=>[]);
+    return Array.isArray(rows)?rows:[];
+  });
+  return sortSequentialChunks(results.flat().filter(Array.isArray).flat()).slice(0,wanted);
+}
+
+async function durableExactDocumentChunks(env,documentId,startChunk,limit) {
+  const data=await libraryCall(
+    env,
+    "/chunks-range?document_id="+encodeURIComponent(String(documentId || ""))+
+      "&start_chunk="+Math.max(0,Number(startChunk || 0))+
+      "&limit="+Math.max(1,Math.min(EXACT_MAX_CHUNKS,Number(limit || EXACT_MAX_CHUNKS)))
+  );
+  return Array.isArray(data?.chunks) ? data.chunks : [];
+}
+
+async function directRetrievalPayload(env,body) {
+  const question=String(body?.question || body?.pergunta || "").trim();
+  const intent=detectExactRetrievalIntent(question);
+  if(!intent.triggered){
+    return {ok:false,direct:false,code:"DIRECT_INTENT_NOT_DETECTED"};
+  }
+
+  let anchors=[];
+  let anchorError="";
+  try{
+    anchors=await retrieveContext(
+      env,
+      question,
+      Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null
+    );
+  }catch(error){
+    anchorError=String(error?.message || error);
+  }
+  const anchor=chooseDirectAnchor(anchors,question);
+  if(!anchor){
+    return {
+      ok:false,direct:true,bypass_llm:true,code:"DIRECT_ANCHOR_UNAVAILABLE",
+      intent,provider:"none",anchor_error:anchorError
+    };
+  }
+
+  const startChunk=directWindowStart(anchor,intent);
+  const limit=directWindowLimit(intent);
+  let rows=[];
+  let provider="durable-object";
+  try{
+    rows=await durableExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+  }catch{}
+
+  if(!rows.length){
+    provider="supabase-postgrest";
+    try{
+      rows=await supabaseExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+    }catch{}
+  }
+
+  if(!rows.length){
+    rows=[anchor];
+    provider=String(anchor?.retrieval_mode || "anchor-only");
+  }
+
+  const logical=sortSequentialChunks(rows).slice(0,EXACT_SWARM_NODE_COUNT);
+  const processed=await runAsyncWorkerPool(
+    logical,
+    EXACT_MAX_CONCURRENT_REQUESTS,
+    async (row,index)=>({
+      ...row,
+      __logical_node:index+1,
+      __ordered_index:Number(row?.chunk_index || index)
+    })
+  );
+  const ordered=sortSequentialChunks(processed);
+  const assembled=directAssemble(ordered,intent,anchor);
+  if(!assembled.text){
+    return {ok:false,direct:true,bypass_llm:true,code:"DIRECT_TEXT_EMPTY",intent,provider};
+  }
+
+  return {
+    ok:true,
+    direct:true,
+    bypass_llm:true,
+    text:assembled.text,
+    scope:assembled.scope,
+    intent,
+    provider,
+    document_id:String(anchor?.document_id || ""),
+    filename:String(anchor?.filename || anchor?.title || "Documento"),
+    title:String(anchor?.title || anchor?.filename || "Documento"),
+    author:String(anchor?.author || ""),
+    page:Number(anchor?.page || 0) || null,
+    anchor_chunk_index:Number(anchor?.chunk_index || 0),
+    logical_swarm_size:EXACT_SWARM_NODE_COUNT,
+    logical_nodes_used:ordered.length,
+    max_concurrency:EXACT_MAX_CONCURRENT_REQUESTS,
+    ordered_buffer:true,
+    chunks_reassembled:assembled.chunks,
+    llm_calls:0,
+    circuit_breaker:{
+      failure_threshold:EXACT_CIRCUIT_FAILURE_THRESHOLD,
+      slow_ms:EXACT_CIRCUIT_SLOW_MS,
+      degraded_concurrency:EXACT_DEGRADED_CONCURRENCY,
+      degraded:exactSupabaseCircuit.degraded===true
+    }
+  };
+}
+
+async function directRetrievalResponse(request,env) {
+  const body=await request.json().catch(()=>({}));
+  const result=await directRetrievalPayload(env,body);
+  if(result.ok) return json(result);
+  const status=result.code==="DIRECT_INTENT_NOT_DETECTED" ? 400 : 503;
+  return json(result,status);
+}
+
 async function chat(request, env) {
-  requireGroqKeys(env);
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
+
+  const exactIntent=detectExactRetrievalIntent(question);
+  if(exactIntent.triggered){
+    const direct=await directRetrievalPayload(env,body);
+    const answer=direct.ok
+      ? String(direct.text || "")
+      : "Não foi possível recuperar o texto documental exato neste momento. O modo de leitura direta não acionou o LLM.";
+    const wantsStream=
+      String(request.headers.get("Accept") || "").includes("text/event-stream") ||
+      body?.stream === true;
+    const payload={
+      ok:direct.ok,
+      resposta:answer,
+      fontes:direct.ok ? [{
+        document_id:direct.document_id,
+        arquivo:direct.filename,
+        titulo:direct.title,
+        autor:direct.author,
+        pagina:direct.page,
+        ref_id:"RAW1"
+      }] : [],
+      fallback:!direct.ok,
+      bypass_llm:true,
+      direct_retrieval:true,
+      direct_scope:direct.scope || "",
+      direct_provider:direct.provider || "none",
+      logical_swarm_size:EXACT_SWARM_NODE_COUNT,
+      max_concurrency:EXACT_MAX_CONCURRENT_REQUESTS,
+      ordered_buffer:true,
+      chunks_reassembled:Number(direct.chunks_reassembled || 0),
+      code:direct.code || ""
+    };
+    if(wantsStream){
+      const frames=
+        sseFrame("meta",{...payload,resposta:undefined})+
+        sseFrame("delta",{text:answer,raw_document:true})+
+        sseFrame("done",payload);
+      return new Response(frames,{status:direct.ok?200:503,headers:securityHeaders(new Headers({
+        "Content-Type":"text/event-stream; charset=utf-8",
+        "Cache-Control":"no-cache, no-transform",
+        "X-Accel-Buffering":"no"
+      }))});
+    }
+    return json(payload,direct.ok?200:503);
+  }
+
+  requireGroqKeys(env);
 
   const ownerId = await memoryOwner(request, body);
   const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-GROQ_HISTORY_MESSAGES * 2) : [];
@@ -2562,7 +2980,7 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-v2-massive-scale",
+    architecture: "cloudflare-v2.1-exact-match-turbines",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
@@ -2611,6 +3029,15 @@ async function status(env) {
     direct_postgres_connections: 0,
     logical_worker_nodes: MASSIVE_NODE_COUNT,
     worker_pool_concurrency: MASSIVE_WORKER_CONCURRENCY,
+    exact_match_llm_bypass: true,
+    exact_swarm_logical_nodes: EXACT_SWARM_NODE_COUNT,
+    exact_max_concurrent_requests: EXACT_MAX_CONCURRENT_REQUESTS,
+    exact_degraded_concurrency: EXACT_DEGRADED_CONCURRENCY,
+    exact_circuit_failure_threshold: EXACT_CIRCUIT_FAILURE_THRESHOLD,
+    exact_circuit_slow_ms: EXACT_CIRCUIT_SLOW_MS,
+    exact_ordered_buffer: true,
+    exact_local_indexeddb_takeover: true,
+    exact_zero_model_rewrite: true,
     queue_strategy: "fifo-exponential-backoff",
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
@@ -2624,6 +3051,14 @@ async function status(env) {
     micro_node_temperature: 0.0,
         active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
         max_bubbles_per_query: MASSIVE_NODE_COUNT,
+        exact_match_llm_bypass: true,
+        exact_swarm_logical_nodes: EXACT_SWARM_NODE_COUNT,
+        exact_max_concurrent_requests: EXACT_MAX_CONCURRENT_REQUESTS,
+        exact_degraded_concurrency: EXACT_DEGRADED_CONCURRENCY,
+        exact_circuit_failure_threshold: EXACT_CIRCUIT_FAILURE_THRESHOLD,
+        exact_circuit_slow_ms: EXACT_CIRCUIT_SLOW_MS,
+        exact_ordered_buffer: true,
+        exact_local_indexeddb_takeover: true,
         sse_keepalive_ms: SSE_KEEPALIVE_MS,
         groq_round_robin_key_rotation: true,
         groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
@@ -2698,6 +3133,7 @@ async function handleApi(request, env, url, ctx) {
       });
     }
     if (url.pathname === "/api/rag/provider-search" && request.method === "POST") return externalRagProviderSearch(request,env);
+    if (url.pathname === "/api/rag/direct" && request.method === "POST") return directRetrievalResponse(request,env);
     if (url.pathname === "/api/rag/search" && request.method === "POST") {
       const body=await request.json().catch(()=>({}));
       const question=String(body?.question || body?.pergunta || "").trim();
@@ -3325,6 +3761,21 @@ export class LibraryDO {
         return json({ ok: true, chunks: rows });
       }
 
+      if (url.pathname === "/chunks-range") {
+        const id=String(url.searchParams.get("document_id") || "").trim();
+        const startChunk=Math.max(0,Number(url.searchParams.get("start_chunk") || 0));
+        const limit=Math.max(1,Math.min(EXACT_MAX_CHUNKS,Number(url.searchParams.get("limit") || EXACT_MAX_CHUNKS)));
+        if(!id) return json({ok:true,chunks:[]});
+        const rows=[...this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          WHERE c.document_id=? AND c.chunk_index>=?
+          ORDER BY c.chunk_index ASC LIMIT ?
+        `,id,startChunk,limit)];
+        return json({ok:true,chunks:rows,start_chunk:startChunk,limit});
+      }
+
       if (url.pathname === "/embeddings" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const updates = Array.isArray(body.updates) ? body.updates : [];
@@ -3504,7 +3955,7 @@ export default {
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-v2-massive-scale",
+        architecture: "cloudflare-v2.1-exact-match-turbines",
         storage_backend: "durable-object-sqlite",
         workers_ai_used: false,
         llm_provider: "groq",
