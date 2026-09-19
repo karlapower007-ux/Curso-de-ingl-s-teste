@@ -1,4 +1,4 @@
-const VERSION = "3.2.0-semantic-expansion";
+const VERSION = "3.3.0-strict-precision";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -2992,7 +2992,7 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-v3.2-semantic-expansion",
+    architecture: "cloudflare-v3.3-strict-precision",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
@@ -3076,6 +3076,12 @@ async function status(env) {
     plan_c_full_chunk_fallback: true,
     plan_c_sequential_chunk_merge: true,
     plan_c_canonical_reference_elevation: true,
+    plan_c_boolean_exact_match: true,
+    plan_c_hard_bm25_threshold: 3.25,
+    plan_c_hard_min_coverage: 0.50,
+    plan_c_zero_noise: true,
+    plan_c_elegant_silence: true,
+    plan_c_fuzzy_compensation_disabled: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     micro_node_chain: false,
@@ -3988,7 +3994,7 @@ export default {
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-v3.2-semantic-expansion",
+        architecture: "cloudflare-v3.3-strict-precision",
         storage_backend: "durable-object-sqlite",
         workers_ai_used: false,
         llm_provider: "groq",
@@ -4046,6 +4052,12 @@ export default {
     plan_c_full_chunk_fallback: true,
     plan_c_sequential_chunk_merge: true,
     plan_c_canonical_reference_elevation: true,
+    plan_c_boolean_exact_match: true,
+    plan_c_hard_bm25_threshold: 3.25,
+    plan_c_hard_min_coverage: 0.50,
+    plan_c_zero_noise: true,
+    plan_c_elegant_silence: true,
+    plan_c_fuzzy_compensation_disabled: true,
         sse_keepalive_ms: SSE_KEEPALIVE_MS,
         groq_round_robin_key_rotation: true,
         groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
