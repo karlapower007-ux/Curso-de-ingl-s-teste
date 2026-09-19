@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: Groq + Cohere external AI bypass release =="
+log "== Consciência do Fabiano :: Xeque-Mate local embeddings release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -24,7 +24,6 @@ grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
 grep -q 'EMBED_CONCURRENCY = 50' src/index.js
 grep -q 'pdfjs-dist@4.10.38' public/index.html
 grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
-grep -q 'api.cohere.com/v2/embed' src/index.js
 ! grep -q 'generativelanguage.googleapis.com' src/index.js
 grep -q 'text/event-stream' src/index.js
 ! grep -q 'env.AI' src/index.js
@@ -45,7 +44,6 @@ log "DEPLOY_COMMAND=success"
 
 log "4/7 Install runtime secrets"
 printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
-printf '%s' "$COHERE_API_KEY_CLEAN" | npx wrangler secret put COHERE_API_KEY >/dev/null
 log "GROQ_SECRET_INSTALLED=yes"
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
