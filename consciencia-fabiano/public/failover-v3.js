@@ -94,7 +94,8 @@ async function planCLocalAnalytic(payload){
     const matches=Array.isArray(result?.matches)?result.matches:[];
 
     if(!matches.length){
-      const stats=await engine?.localStats?.().catch?.(()=>null);
+      let stats=null;
+      try{stats=engine?.localStats ? await engine.localStats() : null;}catch{}
       if(Number(stats?.chunks||0)>0){
         return {
           ok:true,plan:"C",provider:"indexeddb-local-worker-swarm",
