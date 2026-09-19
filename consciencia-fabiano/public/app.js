@@ -20,7 +20,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=3.0.0").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=4.0.0").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -35,7 +35,7 @@
 
   async function ensureFailoverV3(){
     if(!failoverModulePromise){
-      failoverModulePromise=import("/failover-v3.js?v=3.0.0").catch(error=>{
+      failoverModulePromise=import("/failover-v3.js?v=4.0.0").catch(error=>{
         failoverModulePromise=null;
         throw error;
       });
@@ -576,7 +576,7 @@
   function createNodeProgressVirtualizer(host) {
     const header=document.createElement("div");
     header.className="node-progress-header";
-    header.textContent="RAG V3.3 • preparando 500 nós assíncronos";
+    header.textContent="RAG V4.0 • preparando 500 nós assíncronos";
     const viewport=document.createElement("div");
     viewport.className="node-progress-viewport";
     viewport.setAttribute("aria-label","Progresso dos nós RAG");
@@ -651,7 +651,7 @@
         }else{
           items[existing]=record;
         }
-        header.textContent="RAG V3.3 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
+        header.textContent="RAG V4.0 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
           (reduceTotal ? " • síntese "+reduceDone+"/"+reduceTotal : "");
         const nearBottom=(viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight)<90;
         schedule();
@@ -660,13 +660,13 @@
       reduce(data){
         reduceTotal=Math.max(reduceTotal,Number(data?.total_groups || 0));
         reduceDone=Math.min(reduceTotal || Number.MAX_SAFE_INTEGER,reduceDone+1);
-        header.textContent="RAG V3.3 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
+        header.textContent="RAG V4.0 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
       },
       keepalive(){
         header.dataset.live=String(Date.now());
       },
       complete(){
-        header.textContent="RAG V3.3 • fusão enciclopédica concluída";
+        header.textContent="RAG V4.0 • fusão enciclopédica concluída";
       },
       destroy(){
         if(raf) cancelAnimationFrame(raf);
@@ -915,10 +915,16 @@
     badge.className="offline-turbine-badge";
     badge.textContent="T"+String(item?.node || index+1).padStart(4,"0");
     const title=document.createElement("strong");
-    title.textContent=canonicalHeader(item);
+    const elevated=String(item?.canonical_reference||item?.semantic_title||"").trim();
+    title.textContent=elevated || sourceStem(item);
     top.appendChild(badge);
     top.appendChild(title);
     card.appendChild(top);
+
+    const sourceSubtitle=document.createElement("div");
+    sourceSubtitle.className="offline-turbine-source-subtitle";
+    sourceSubtitle.textContent=String(item?.filename||item?.source_title||"Documento");
+    card.appendChild(sourceSubtitle);
 
     const meta=document.createElement("div");
     meta.className="offline-turbine-meta";
@@ -955,7 +961,7 @@
     const physical=Math.max(0,Number(data?.physical_workers||0));
     const logical=Math.max(0,Number(data?.logical_tasks||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
-    status.textContent="Plano C V3.3 • "+cards.length+" blocos semânticos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
+    status.textContent="Plano C V4.0 • "+cards.length+" blocos semânticos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
       (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
     wrap.appendChild(status);
 
@@ -1024,12 +1030,12 @@
     return {wrap,viewport,cards};
   }
 
-  function appendElegantSilence(message="Nenhuma correspondência exata encontrada na biblioteca.") {
+  function appendElegantSilence(message="Nenhuma correspondência exata encontrada na biblioteca total.") {
     const wrap=document.createElement("div");
     wrap.className="msg assistant strict-empty-msg";
     const text=document.createElement("div");
     text.className="strict-empty-text";
-    text.textContent=String(message||"Nenhuma correspondência exata encontrada na biblioteca.");
+    text.textContent=String(message||"Nenhuma correspondência exata encontrada na biblioteca total.");
     wrap.appendChild(text);
     $("messages").appendChild(wrap);
     $("messages").scrollTop=$("messages").scrollHeight;
@@ -1425,15 +1431,15 @@
             role:"assistant",content:persisted,sources:recovered.sources||[],fallback:false,
             failover_plan:"C",strict_precision:true,offline_turbines:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V3.3 • BOOLEAN EXACT • sem fuzzy matching";
+          if($("backendText")) $("backendText").textContent="Plano C V4.0 • BOOLEAN EXACT • sem fuzzy matching";
         }else{
-          const silence="Nenhuma correspondência exata encontrada na biblioteca.";
+          const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
           appendElegantSilence(silence);
           history.push({
             role:"assistant",content:silence,sources:[],fallback:false,
             failover_plan:"C",strict_precision:true,strict_empty:true,zero_noise:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V3.3 • BOOLEAN EXACT • zero resultados";
+          if($("backendText")) $("backendText").textContent="Plano C V4.0 • BOOLEAN EXACT • zero resultados";
         }
         saveHistory();
         setAvatar("closed");
@@ -1508,13 +1514,13 @@
         if(recovered?.ok){
           const resposta=String(recovered.answer || recovered.text || "");
           if(recovered.plan==="C" && recovered.strict_empty===true){
-            const silence="Nenhuma correspondência exata encontrada na biblioteca.";
+            const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
             appendElegantSilence(silence);
             history.push({
               role:"assistant",content:silence,sources:[],fallback:false,
               failover_plan:"C",strict_empty:true,zero_noise:true,ts:Date.now()
             });
-            if($("backendText")) $("backendText").textContent="Plano C V3.3 • zero-noise • nenhuma correspondência válida";
+            if($("backendText")) $("backendText").textContent="Plano C V4.0 • zero-noise • nenhuma correspondência válida";
           }else if(recovered.plan==="C" && Array.isArray(recovered.cards) && recovered.cards.length){
             const rendered=appendOfflineTurbineResults(recovered);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
@@ -1530,7 +1536,7 @@
               failover_plan:"C",offline_turbines:true,ts:Date.now()
             });
             if($("backendText")){
-              $("backendText").textContent="Plano C V3.3 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
+              $("backendText").textContent="Plano C V4.0 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
             }
           }else{
             appendMessage("assistant",resposta,recovered.sources || [],false);
@@ -1585,7 +1591,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "V3.3 • Plano A ativo • precisão estrita + zero-noise"
+        ? "V4.0 • Omni Library • frase exata online/offline"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
