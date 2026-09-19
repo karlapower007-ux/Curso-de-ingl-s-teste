@@ -149,7 +149,7 @@ jobs:
           grep -q 'require_lexical_match: false' src/index.js
           grep -q 'FONTES E REFERÊNCIAS' src/index.js
           grep -q 'whisper-local.js' public/index.html
-          grep -q 'rag-cascade.js' public/index.html
+          grep -q 'rag-cascade.js' public/app.js
           test -f public/rag-cascade.js
           test -f public/rag-search-worker.js
           test -f public/opfs-sqlite-worker.js
