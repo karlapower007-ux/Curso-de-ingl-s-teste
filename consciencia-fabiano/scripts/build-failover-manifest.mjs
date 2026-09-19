@@ -20,11 +20,11 @@ for(const [name,raw] of candidates){
   mirrors.push({name,base_url,enabled:true,timeout_ms:5000});
 }
 const manifest={
-  version:"3.1.0",
+  version:"3.2.0",
   generated_at:new Date().toISOString(),
   strategy:"A->B->C->D->E->F",
   mirrors,
-  plan_c:{engine:"cpu-aware-web-worker-pool",logical_task_capacity:1000,physical_worker_cap:16,scoring:"bm25+idf+coverage+phrase+proximity",virtualized_cards:true,card_gap_px:40},
+  plan_c:{engine:"cpu-aware-web-worker-pool-v3.2",logical_task_capacity:1000,physical_worker_cap:16,scoring:"bm25+idf+coverage+phrase+proximity",virtualized_cards:true,card_gap_px:40,window_expansion:{before:2,after:4,full_chunk_fallback:true},sequential_chunk_merge:true,canonical_reference_elevation:true},
   plans:{
     A:"Cloudflare Edge + Groq + Supabase",
     B:"Multi-cloud standby endpoint list",
