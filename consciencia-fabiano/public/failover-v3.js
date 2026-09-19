@@ -92,9 +92,25 @@ async function planCLocalAnalytic(payload){
     const engine=await loadLocalEngine();
     const result=engine?.offlineSearch ? await engine.offlineSearch(payload.question) : await engine?.search?.(payload.question,null);
     const matches=Array.isArray(result?.matches)?result.matches:[];
-    if(!matches.length) return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
 
-    const turbines=await import("/local-turbine-pool.js?v=3.2.0");
+    if(!matches.length){
+      const stats=await engine?.localStats?.().catch?.(()=>null);
+      if(Number(stats?.chunks||0)>0){
+        return {
+          ok:true,plan:"C",provider:"indexeddb-local-worker-swarm",
+          strict_empty:true,terminal:true,zero_noise:true,
+          strict_mode:"hard-threshold",
+          answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+          sources:[],cards:[],matches:[],
+          hard_threshold:3.25,min_coverage:0.50,
+          logical_capacity:1000,logical_tasks:0,physical_workers:0,
+          main_thread_extraction:false
+        };
+      }
+      return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
+    }
+
+    const turbines=await import("/local-turbine-pool.js?v=3.3.0");
     const extraction=await turbines.runLocalTurbines({
       question:String(payload.question||""),
       matches,
@@ -106,7 +122,7 @@ async function planCLocalAnalytic(payload){
         ok:true,
         plan:"C",
         provider:"indexeddb-local-worker-swarm",
-        answer:"Modo Offline V3.2: "+cards.length+" trechos relevantes foram extraídos localmente sem IA remota.",
+        answer:"Modo Offline V3.3: "+cards.length+" correspondências de alta confiança foram extraídas localmente.",
         sources:cards.slice(0,24).map(card=>({
           arquivo:card.filename || card.title,
           titulo:card.title,
@@ -119,7 +135,37 @@ async function planCLocalAnalytic(payload){
         matches,
         cards,
         virtualized:true,
-        offline_intelligence:"bm25+idf+coverage+phrase+proximity",
+        zero_noise:true,
+        strict_mode:String(extraction.strict_mode||"hard-threshold"),
+        exact_target:String(extraction.exact_target||""),
+        hard_threshold:Number(extraction.hard_threshold||3.25),
+        min_coverage:Number(extraction.min_coverage||0.50),
+        rejected_by_threshold:Number(extraction.rejected_by_threshold||0),
+        rejected_by_boolean:Number(extraction.rejected_by_boolean||0),
+        offline_intelligence:"boolean-exact-or-bm25-hard-threshold",
+        logical_capacity:Number(extraction.logical_capacity||1000),
+        logical_tasks:Number(extraction.logical_tasks||0),
+        physical_workers:Number(extraction.physical_workers||0),
+        hardware_concurrency:extraction.hardware_concurrency ?? null,
+        main_thread_extraction:false
+      };
+    }
+    if(extraction?.strict_empty===true){
+      return {
+        ok:true,
+        plan:"C",
+        provider:"indexeddb-local-worker-swarm",
+        strict_empty:true,
+        terminal:true,
+        zero_noise:true,
+        strict_mode:String(extraction.strict_mode||"hard-threshold"),
+        exact_target:String(extraction.exact_target||""),
+        answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+        sources:[],cards:[],matches:[],
+        hard_threshold:Number(extraction.hard_threshold||3.25),
+        min_coverage:Number(extraction.min_coverage||0.50),
+        rejected_by_threshold:Number(extraction.rejected_by_threshold||0),
+        rejected_by_boolean:Number(extraction.rejected_by_boolean||0),
         logical_capacity:Number(extraction.logical_capacity||1000),
         logical_tasks:Number(extraction.logical_tasks||0),
         physical_workers:Number(extraction.physical_workers||0),
