@@ -35,6 +35,31 @@ async function all(store){
     req.onerror=()=>{const e=req.error;db.close();reject(e);};
   });
 }
+async function countStore(store){
+  const db=await openDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readonly"),req=tx.objectStore(store).count();
+    req.onsuccess=()=>{const v=Number(req.result||0);db.close();resolve(v);};
+    req.onerror=()=>{const e=req.error;db.close();reject(e);};
+  });
+}
+async function pageStore(store,offset=0,limit=50){
+  const db=await openDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(store,"readonly"),os=tx.objectStore(store),rows=[];
+    const req=os.openCursor();
+    let skipped=false;
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(!cursor || rows.length>=limit){db.close();resolve(rows);return;}
+      if(!skipped && offset>0){skipped=true;cursor.advance(offset);return;}
+      skipped=true;
+      rows.push(cursor.value);
+      cursor.continue();
+    };
+    req.onerror=()=>{const e=req.error;db.close();reject(e);};
+  });
+}
 function cosine(a,b){
   if(!a||!b||a.length!==b.length||!a.length)return -1;
   let dot=0,na=0,nb=0;
@@ -42,7 +67,7 @@ function cosine(a,b){
   return (!na||!nb)?-1:dot/(Math.sqrt(na)*Math.sqrt(nb));
 }
 function fold(text){return String(text||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu," ").replace(/\s+/g," ").trim();}
-function terms(q){const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","um","uma","que","sobre","para","por","com","como","quero","versiculo","passagem","citacao","referencia"]);return [...new Set(fold(q).split(" ").filter(x=>x.length>=3&&!stop.has(x)))].slice(0,12);}
+function terms(q){const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre","para","por","com","como","quero","saber","saiba","conhecer","conheca","informacao","informação","versiculo","versículo","passagem","citacao","citação","referencia","referência"]);return [...new Set(fold(q).split(" ").filter(x=>x.length>=3&&!stop.has(x)))].slice(0,18);}
 async function semantic(query,topK,minScore){
   const rows=await all("vectors"),out=[];
   for(const r of rows){const score=cosine(query,r.vector);if(score>=minScore)out.push({...r,score});}
@@ -98,6 +123,19 @@ self.onmessage=async e=>{
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||100),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="search-bm25"){const matches=await bm25(d.question||"",Number(d.top_k||100));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="local-stats"){
+      const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);
+      self.postMessage({id,ok:true,chunks,vectors});
+      return;
+    }
+    if(d.type==="export-vectors"){
+      const offset=Math.max(0,Number(d.offset||0));
+      const limit=Math.max(1,Math.min(100,Number(d.limit||50)));
+      const total=await countStore("vectors");
+      const records=await pageStore("vectors",offset,limit);
+      self.postMessage({id,ok:true,total,offset,records,next_offset:offset+records.length,done:(offset+records.length)>=total});
+      return;
+    }
     if(d.type==="list-documents"){const documents=await listDocuments();self.postMessage({id,ok:true,documents});return;}
     if(d.type==="get-document-chunks"){
       const documentId=String(d.document_id||"");
