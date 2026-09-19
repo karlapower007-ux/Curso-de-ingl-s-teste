@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: V4.0 OMNI LIBRARY SYMMETRY release =="
+log "== Consciência do Fabiano :: V6.0 OMNI AGENT SWARM release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -43,8 +43,8 @@ node scripts/build-failover-manifest.mjs
 node scripts/build-static-vault.mjs
 test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
 test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
-node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="4.0.0")process.exit(1)'
-node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="4.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="6.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="6.0.0")process.exit(1)'
 log "RESILIENCE_ASSETS_BUILT=yes"
 
 log "3/7 Deploy Worker"
@@ -127,8 +127,8 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "4.0.0-omni-library-symmetry"
-    and .architecture == "cloudflare-v4-omni-library-symmetry"
+    and .version == "6.0.0-omni-agent-swarm"
+    and .architecture == "cloudflare-v6-omni-agent-swarm"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
     and .llm_provider == "groq"
@@ -152,6 +152,22 @@ for i in $(seq 1 15); do
     and .omni_physical_worker_cap == 16
     and .omni_virtual_scroller == true
     and .omni_card_gap_px == 40
+    and .agent_swarm_enabled == true
+    and .agent_swarm_logical_nodes == 10
+    and .agent_swarm_physical_worker_cap == 10
+    and .agent1_literal_exact == true
+    and .agent2_transformers_semantic == true
+    and .agent10_bouncer == true
+    and .semantic_fallback_after_literal_miss == true
+    and .reference_queries_remain_exact == true
+    and .phantom_daemon == true
+    and .phantom_daemon_target_interval_ms == 180000
+    and .phantom_daemon_service_worker == true
+    and .phantom_daemon_periodic_sync_best_effort == true
+    and .omni_sync_cloud_fingerprint == true
+    and .omni_sync_generation_gc == true
+    and .omni_sync_manual_button == false
+    and .omni_sync_zero_touch_after_authorization == true
     and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
     and .plan_c_main_thread_extraction == false
     and .plan_c_offline_intelligence == "strict-same-paragraph-phrase-v4"
@@ -170,9 +186,9 @@ if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.jso
 
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
-jq -e '.version == "4.0.0"
+jq -e '.version == "6.0.0"
   and .strategy == "A->B->C->D->E->F"
-  and .plan_c.engine == "omni-library-strict-v4"
+  and .plan_c.engine == "omni-agent-swarm-v6"
   and .plan_c.logical_task_capacity == 1000
   and .plan_c.physical_worker_cap == 16
   and .plan_c.strict_match_core == "strict-match-core-v4"
@@ -183,10 +199,28 @@ jq -e '.version == "4.0.0"
   and .plan_c.omni_sync_memory_flush == true
   and .plan_c.omni_search_all_documents == true
   and .plan_c.virtualized_cards == true
-  and .plan_c.card_gap_px == 40' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
+  and .plan_c.card_gap_px == 40
+  and .plan_c.logical_agent_count == 10
+  and .plan_c.agent_physical_worker_cap == 10
+  and .plan_c.agent2_transformers_semantic == true
+  and .plan_c.agent10_bouncer == true
+  and .plan_c.phantom_daemon == true
+  and .plan_c.phantom_daemon_target_interval_ms == 180000
+  and .plan_c.omni_sync_cloud_fingerprint == true
+  and .plan_c.omni_sync_generation_gc == true
+  and .plan_c.manual_sync_button == false' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
 curl -fsS "$BASE/steel/index.json" | tee /tmp/steel-index.json >/dev/null
-jq -e '.version == "4.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
+jq -e '.version == "6.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
 curl -fsS "$BASE/sw-v3.js" >/tmp/sw-v3.js || die "SERVICE_WORKER_MISSING"
+curl -fsS "$BASE/agent-swarm.js" >/tmp/agent-swarm.js || die "AGENT_SWARM_ASSET_MISSING"
+curl -fsS "$BASE/agent-node-worker.js" >/tmp/agent-node-worker.js || die "AGENT_NODE_ASSET_MISSING"
+grep -q 'DAEMON_INTERVAL_MS=3\*60\*1000' /tmp/sw-v3.js || die "PHANTOM_DAEMON_INTERVAL_BAD"
+grep -q 'periodicsync' /tmp/sw-v3.js || die "PHANTOM_PERIODIC_SYNC_MISSING"
+grep -q '/api/admin/omni-sync-state' /tmp/sw-v3.js || die "PHANTOM_CLOUD_FINGERPRINT_MISSING"
+grep -q 'sync_generation' /tmp/sw-v3.js || die "PHANTOM_GENERATION_GC_MISSING"
+grep -q 'rows.length=0' /tmp/sw-v3.js || die "PHANTOM_ROWS_FLUSH_MISSING"
+grep -q 'rows=null' /tmp/sw-v3.js || die "PHANTOM_ROWS_RELEASE_MISSING"
+grep -q 'payload=null' /tmp/sw-v3.js || die "PHANTOM_PAYLOAD_RELEASE_MISSING"
 curl -fsS "$BASE/strict-match-core.js" >/tmp/strict-match-core.js || die "STRICT_MATCH_CORE_MISSING"
 curl -fsS "$BASE/omni-sync-worker.js" >/tmp/omni-sync-worker.js || die "OMNI_SYNC_WORKER_MISSING"
 curl -fsS "$BASE/local-turbine-pool.js" >/tmp/local-turbine-pool.js || die "LOCAL_TURBINE_POOL_MISSING"
@@ -212,12 +246,22 @@ grep -q '/search-strict' src/index.js || die "CLOUD_STRICT_ROUTE_MISSING"
 grep -q 'retrieveSupabaseStrictContext' src/index.js || die "SUPABASE_STRICT_RETRIEVAL_MISSING"
 grep -q 'retrieveContextV4Strict' src/index.js || die "V4_STRICT_RETRIEVAL_MISSING"
 grep -q '/api/admin/omni-sync-page' src/index.js || die "OMNI_SYNC_API_MISSING"
+grep -q '/api/admin/omni-sync-state' src/index.js || die "OMNI_SYNC_STATE_API_MISSING"
+grep -q 'supabaseOmniSyncState' src/index.js || die "OMNI_SYNC_STATE_FUNCTION_MISSING"
 grep -q 'strictParagraphMatch' src/index.js || die "SERVER_SHARED_MATCH_CORE_MISSING"
 
-grep -q 'omniSyncBtn' public/app.js || die "OMNI_SYNC_BUTTON_WIRING_MISSING"
-grep -q 'new Worker("/omni-sync-worker.js?v=4.0.0")' public/app.js || die "OMNI_SYNC_CLIENT_WORKER_MISSING"
-grep -q 'maybeAutoOmniSync' public/app.js || die "OMNI_AUTO_SYNC_MISSING"
-grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js || die "V4_ELEGANT_SILENCE_MISSING"
+grep -q 'configurePhantomDaemon' public/app.js || die "PHANTOM_DAEMON_CLIENT_CONFIG_MISSING"
+grep -q 'PHANTOM_DAEMON_INTERVAL_MS=3\*60\*1000' public/app.js || die "PHANTOM_DAEMON_HEARTBEAT_BAD"
+grep -q 'omni-daemon-tick' public/app.js || die "PHANTOM_DAEMON_TICK_MISSING"
+if grep -q 'id="omniSyncBtn"' public/index.html; then die "MANUAL_SYNC_BUTTON_STILL_PRESENT"; fi
+grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js || die "V6_ELEGANT_SILENCE_MISSING"
+grep -q 'omniAgentSearch' public/rag-cascade.js || die "V6_AGENT_SEARCH_MISSING"
+grep -q 'runAgentSwarm' public/agent-swarm.js || die "V6_AGENT_SWARM_MISSING"
+grep -q 'LOGICAL_AGENT_COUNT=10' public/agent-swarm.js || die "V6_AGENT_COUNT_BAD"
+grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js || die "V6_AGENT_CPU_GOVERNOR_MISSING"
+grep -q 'agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker"' public/agent-swarm.js || die "V6_TRANSFORMERS_AGENT_MISSING"
+grep -q 'The Bouncer' public/agent-node-worker.js || die "V6_BOUNCER_MISSING"
+grep -q 'The Sweeper' public/agent-node-worker.js || die "V6_SWEEPERS_MISSING"
 grep -q 'offline-turbine-source-subtitle' public/app.js || die "SEMANTIC_SUBTITLE_MISSING"
 grep -q 'white-space:pre-wrap' public/style.css || die "OFFLINE_PRE_WRAP_MISSING"
 grep -q 'margin-bottom:2.5rem' public/style.css || die "OFFLINE_CARD_GAP_BAD"
