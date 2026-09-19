@@ -24,7 +24,26 @@ const manifest={
   generated_at:new Date().toISOString(),
   strategy:"A->B->C->D->E->F",
   mirrors,
-  plan_c:{engine:"omni-library-strict-v4",logical_task_capacity:1000,physical_worker_cap:16,scoring:"strict-same-paragraph-phrase-v4",virtualized_cards:true,card_gap_px:40,window_expansion:{before:2,after:4,full_chunk_fallback:true},sequential_chunk_merge:true,canonical_reference_elevation:true,strict_match_core:"strict-match-core-v4",same_paragraph_phrase_required:true,fuzzy_matching_disabled:true,or_matching_disabled:true,omni_sync_batch_size:200,omni_sync_memory_flush:true,omni_search_all_documents:true},sequential_chunk_merge:true,canonical_reference_elevation:true,boolean_exact_match:true,hard_bm25_threshold:3.25,hard_min_coverage:0.50,zero_noise:true,elegant_silence:true,fuzzy_compensation_disabled:true},
+  plan_c:{
+    engine:"omni-library-strict-v4",
+    logical_task_capacity:1000,
+    physical_worker_cap:16,
+    scoring:"strict-same-paragraph-phrase-v4",
+    virtualized_cards:true,
+    card_gap_px:40,
+    window_expansion:{before:2,after:4,full_chunk_fallback:true},
+    sequential_chunk_merge:true,
+    canonical_reference_elevation:true,
+    strict_match_core:"strict-match-core-v4",
+    same_paragraph_phrase_required:true,
+    fuzzy_matching_disabled:true,
+    or_matching_disabled:true,
+    omni_sync_batch_size:200,
+    omni_sync_memory_flush:true,
+    omni_search_all_documents:true,
+    zero_noise:true,
+    elegant_silence:true
+  },
   plans:{
     A:"Cloudflare Edge + Groq + Supabase",
     B:"Multi-cloud standby endpoint list",
@@ -34,5 +53,6 @@ const manifest={
     F:"raw-vault OS folder"
   }
 };
+
 await writeFile("public/failover-manifest.json",JSON.stringify(manifest,null,2));
 console.log("FAILOVER_MIRRORS="+mirrors.length);
