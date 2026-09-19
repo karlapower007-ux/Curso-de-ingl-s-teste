@@ -1214,22 +1214,61 @@ async function externalRagProviderSearch(request, env) {
   const cfg=ragProviderConfig(env,provider);
   if(!cfg) return json({ok:false,configured:false,provider,message:"Provedor RAG desconhecido."},404);
   if(!cfg.url || !cfg.token) return json({ok:false,configured:false,provider,matches:[]},503);
-  const headers={"Content-Type":"application/json",[cfg.header]:cfg.prefix+String(cfg.token)};
-  if(provider==="supabase") headers.apikey=String(cfg.token);
+
+  const queryEmbedding=Array.isArray(body?.query_embedding)?body.query_embedding.map(Number).filter(Number.isFinite).slice(0,2048):[];
+  if(queryEmbedding.length<64) return json({ok:true,configured:true,provider,matches:[]});
+
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),1800);
   try{
-    const res=await fetch(String(cfg.url),{
-      method:"POST",headers,signal:controller.signal,
-      body:JSON.stringify({
-        question:String(body?.question || body?.pergunta || "").slice(0,8000),
-        query_embedding:Array.isArray(body?.query_embedding)?body.query_embedding.slice(0,2048):null,
-        top_k:TOP_K,
-      })
-    });
+    let res;
+    if(provider==="supabase"){
+      res=await fetch(String(cfg.url),{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":"Bearer "+String(cfg.token),
+          "apikey":String(cfg.token)
+        },
+        signal:controller.signal,
+        body:JSON.stringify({query_embedding:queryEmbedding,match_count:TOP_K})
+      });
+    }else if(provider==="pinecone"){
+      res=await fetch(String(cfg.url),{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Api-Key":String(cfg.token)},
+        signal:controller.signal,
+        body:JSON.stringify({vector:queryEmbedding,topK:TOP_K,includeMetadata:true,namespace:"fabiano"})
+      });
+    }else{
+      const headers={"Content-Type":"application/json",[cfg.header]:cfg.prefix+String(cfg.token)};
+      res=await fetch(String(cfg.url),{
+        method:"POST",headers,signal:controller.signal,
+        body:JSON.stringify({
+          question:String(body?.question || body?.pergunta || "").slice(0,8000),
+          query_embedding:queryEmbedding,
+          top_k:TOP_K
+        })
+      });
+    }
+
     const data=await res.json().catch(()=>({}));
     if(!res.ok) return json({ok:false,configured:true,provider,status:res.status,matches:[]},res.status);
-    const matches=normalizeClientContext(data?.matches || data?.data || []);
+
+    let raw=[];
+    if(provider==="supabase"){
+      raw=Array.isArray(data)?data:(data?.data || data?.matches || []);
+    }else if(provider==="pinecone"){
+      raw=(data?.matches || []).map(m=>({
+        id:m.id,
+        ...(m.metadata || {}),
+        score:Number(m.score || 0),
+        text:String(m?.metadata?.text || "")
+      }));
+    }else{
+      raw=data?.matches || data?.data || [];
+    }
+    const matches=normalizeClientContext(raw);
     return json({ok:true,configured:true,provider,matches});
   }catch(error){
     return json({ok:false,configured:true,provider,matches:[],message:String(error?.message || error)},504);
