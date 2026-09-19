@@ -62,6 +62,13 @@ jobs:
           grep -q 'noiseSuppression: true' public/app.js
           grep -q 'echoCancellation: true' public/app.js
           grep -q 'autoGainControl: true' public/app.js
+          grep -q 'citation_four_paragraph_mode: true' src/index.js
+          grep -q 'pdf_noise_filter: true' src/index.js
+          grep -q 'humanDocumentName' src/index.js
+          grep -q 'cleanNarrativeText' src/index.js
+          grep -q 'EXATAMENTE QUATRO PARÁGRAFOS CURTOS' src/index.js
+          grep -q 'Obras Padrão' src/index.js
+          grep -q 'standard.*works' public/app.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js

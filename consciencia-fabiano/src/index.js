@@ -1,4 +1,4 @@
-const VERSION = "1.10.0-rag-audio-resilience";
+const VERSION = "1.11.0-tts-clean-synthesis";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -701,6 +701,36 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
   return retrieveLexicalContext(env, question);
 }
 
+function humanDocumentName(filename, title = "") {
+  const t=String(title || "").trim();
+  if(t && !/\.pdf$/i.test(t) && !/^[\w-]+\.pdf$/i.test(t)) return t;
+  const raw=String(filename || "").trim();
+  if(/standard[-_ ]?works/i.test(raw)) return "Obras Padrão";
+  const base=raw.replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\b\d{4,}\b/g," ").replace(/\s+/g," ").trim();
+  if(!base) return "Documento";
+  return base.replace(/\b\p{L}/gu,m=>m.toUpperCase());
+}
+
+function isReferenceNoiseLine(line) {
+  const s=String(line || "").trim();
+  if(!s) return true;
+  const refs=(s.match(/\b(?:D&C|G[eê]n\.?|Êx\.?|Lev\.?|N[uú]m\.?|Deut\.?|Jos\.?|Ju[ií]z\.?|Sal\.?|Prov\.?|Isa\.?|Jer\.?|Mat\.?|Mt\.?|Mar\.?|Mc\.?|Luc\.?|Lc\.?|Jo\.?|At\.?|Rom\.?|Cor\.?|G[aá]l\.?|Ef\.?|Fil\.?|Col\.?|Tes\.?|Tim\.?|Heb\.?|Tg\.?|Ped\.?|Pe\.?|Apoc\.?|Alma|Mosias|Hel\.?|M[oó]rmon|Mois\.?|Abra[aã]o|JS.?H|GEE|IE)\s*[\w.]*\s*\d{1,3}(?::\d{1,3})?/gi) || []).length;
+  const semicolons=(s.match(/;/g) || []).length;
+  const digits=(s.match(/\d/g) || []).length;
+  const letters=(s.match(/\p{L}/gu) || []).length;
+  return refs >= 2 || (refs >= 1 && semicolons >= 2) || (digits > 20 && letters < digits * 2);
+}
+
+function cleanNarrativeText(text) {
+  const raw=String(text || "").replace(/\u00ad/g,"").replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n");
+  const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean).filter(line=>!isReferenceNoiseLine(line));
+  return lines.join(" ")
+    .replace(/\s+/g," ")
+    .replace(/\b(?:GEE|IE)\b[^.!?]{0,140}(?=[.!?]|$)/gi," ")
+    .replace(/\s{2,}/g," ")
+    .trim();
+}
+
 function uniqueSources(context) {
   const seen = new Set();
   const sources = [];
@@ -708,14 +738,15 @@ function uniqueSources(context) {
     const key = `${item.document_id}:${item.page}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const humanName=humanDocumentName(item.filename,item.title);
     sources.push({
       document_id: item.document_id,
-      arquivo: item.filename,
-      titulo: item.title || item.filename,
+      arquivo: humanName,
+      titulo: humanName,
       autor: item.author || "",
       idioma: item.language || "unknown",
       pagina: item.page || null,
-      trecho: String(item.text || "").slice(0, 650),
+      trecho: cleanNarrativeText(item.text || "").slice(0, 520),
       score: Math.round(item.score * 10000) / 10000,
       retrieval_mode: item.retrieval_mode || "semantic",
     });
@@ -897,11 +928,12 @@ function buildRagContext(context, tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
   let used = 0;
   for (let i = 0; i < context.length; i++) {
     const c = context[i];
-    const header = "[F" + (i + 1) + "] " + (c.title || c.filename || "Fonte") +
+    const sourceName=humanDocumentName(c.filename,c.title);
+    const header = "[F" + (i + 1) + "] " + sourceName +
       (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
     const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
     if (remaining <= 180 && parts.length) break;
-    const excerpt = trimToTokenBudget(String(c.text || ""), Math.min(900, remaining));
+    const excerpt = trimToTokenBudget(cleanNarrativeText(c.text || ""), Math.min(900, remaining));
     const part = header + "\n" + excerpt;
     const cost = estimateTokens(part);
     if (parts.length && used + cost > tokenBudget) break;
@@ -974,16 +1006,17 @@ async function chat(request, env) {
     {
       role: "system",
       content:
-        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, calor humano e foco. " +
-        "Seja direto, conversacional e conciso. Responda somente ao que foi perguntado e não transforme pedidos simples em ensaios, tabelas ou catálogos. " +
-        "REGRA ESTRITA PARA CITAÇÕES: quando o usuário pedir uma escritura, versículo, passagem, citação, trecho ou referência, e não pedir várias opções, escolha APENAS UMA fonte principal. A resposta deve seguir exatamente esta ordem: " +
-        "(1) uma introdução amigável de uma frase; (2) a citação completa disponível na fonte recuperada, sem resumir, identificando livro/documento e página; (3) uma pergunta curta de engajamento, por exemplo: 'Quer ouvir outro versículo?'. " +
-        "Se o contexto trouxer apenas parte da citação, reproduza somente o que está efetivamente disponível e diga brevemente que o trecho integral não está completo no contexto. Nunca complete de memória. " +
-        "COFRE VAZIO / BAIXA RELEVÂNCIA: se o contexto fornecido NÃO contiver a resposta exata, NUNCA diga 'Sem resposta', 'não sei' de forma seca, nem invente. Responda exatamente em tom cordial: 'Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?'. " +
-        "NUNCA gere tabela Markdown (incluindo sintaxe |---|) ou listas longas, salvo se o usuário pedir explicitamente várias opções ou uma tabela. " +
-        "As fontes recuperadas aparecem como [F1], [F2] etc. Use somente marcadores realmente fornecidos. Nunca invente livro, autor, página, capítulo, versículo ou citação. " +
-        "Quando usar fonte em outro idioma fora de uma citação textual solicitada, traduza ou parafraseie para português preservando o sentido. Diferencie documento, interpretação e hipótese. " +
-        "Conhecimento geral pode ser usado quando necessário, mas deve ser claramente identificado como não proveniente dos PDFs. Use o histórico apenas como contexto de conversa, nunca como fonte documental."
+        "Você é o motor de síntese da Consciência do Fabiano, um sistema RAG focado em voz e texto limpo. Sua missão é transformar somente o contexto recuperado em uma resposta fluida e totalmente adequada a TTS. " +
+        "BLINDAGEM CONTRA LIXO DE PDF: o contexto pode conter índices remissivos, rodapés e referências cruzadas como 'D&C 52:15; 97:8' ou '21 a Gên. 4:3-7'. Você está estritamente proibido de repetir esse lixo. Extraia apenas o texto narrativo central que responde à pergunta. " +
+        "OTIMIZAÇÃO PARA ÁUDIO: na citação entregue ao usuário, remova números de versículos soltos no início ou no meio das frases quando forem apenas marcadores editoriais. Nunca leia abreviações de livros; use nomes completos, por exemplo 'Gênesis' em vez de 'Gên.'. Remova colchetes, notas entre parênteses, asteriscos e caracteres de formatação que prejudiquem a fala. " +
+        "NOME DO DOCUMENTO: nunca exponha nomes técnicos de arquivos PDF. Se a origem for um arquivo de Obras Padrão, diga 'Obras Padrão'. Para outros arquivos, use o título humano fornecido no contexto. " +
+        "PEDIDOS DE CITAÇÃO OU ESCRITURA: quando o usuário pedir um versículo, escritura, passagem, citação ou trecho e não pedir várias opções, escolha APENAS UMA fonte principal. A resposta deve conter EXATAMENTE QUATRO PARÁGRAFOS CURTOS nesta ordem: " +
+        "A) Introdução amigável com no máximo 15 palavras. " +
+        "B) Citação limpa: somente o texto narrativo contínuo disponível no contexto, sem números de versículos editoriais, sem índices, sem referências cruzadas e sem comentários adicionais. Não resuma. Não complete de memória. " +
+        "C) Identificação natural: diga onde encontrou usando o nome humano do documento e a página, por exemplo 'Esta passagem se encontra na página 15 das Obras Padrão.'. " +
+        "D) Engajamento: uma pergunta simples e direta para continuar a conversa. " +
+        "Se o contexto não contiver a resposta exata, não invente e nunca diga 'Sem resposta'. Diga: 'Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?'. " +
+        "Não gere tabelas Markdown, listas longas, cabeçalhos, marcadores técnicos [F1] na resposta final ou blocos de referência, a menos que o usuário peça explicitamente várias opções. Responda sempre em português brasileiro."
     },
     ...history,
     {
@@ -1091,6 +1124,9 @@ async function status(env) {
     semantic_min_score: SEMANTIC_MIN_SCORE,
     lexical_min_coverage: LEXICAL_MIN_COVERAGE,
     graceful_empty_answer: true,
+    tts_clean_synthesis: true,
+    citation_four_paragraph_mode: true,
+    pdf_noise_filter: true,
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),

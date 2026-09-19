@@ -334,14 +334,14 @@
         const row = document.createElement("div");
         row.className = "source";
         const strong = document.createElement("strong");
-        strong.textContent = item.titulo || item.arquivo || "Fonte";
+        strong.textContent = item.titulo || item.arquivo || "Documento";
         row.appendChild(strong);
 
         const meta = [];
         if (item.autor) meta.push("autor: " + item.autor);
         if (item.pagina) meta.push("página " + item.pagina);
         if (item.idioma && item.idioma !== "unknown") meta.push("idioma: " + item.idioma);
-        if (item.arquivo && item.titulo && item.arquivo !== item.titulo) meta.push(item.arquivo);
+        if (item.arquivo && item.titulo && item.arquivo !== item.titulo && !/\.pdf$/i.test(item.arquivo)) meta.push(item.arquivo);
         if (meta.length) {
           const details = document.createElement("div");
           details.className = "source-meta";
@@ -349,12 +349,7 @@
           row.appendChild(details);
         }
 
-        if (item.trecho) {
-          const excerpt = document.createElement("div");
-          excerpt.className = "source-excerpt";
-          excerpt.textContent = item.trecho;
-          row.appendChild(excerpt);
-        }
+        // O texto bruto recuperado não é repetido aqui; a síntese limpa já aparece na resposta.
         src.appendChild(row);
       });
       wrap.appendChild(src);
@@ -436,7 +431,7 @@
     }
     return {
       ok: true,
-      resposta: answer || "Sem resposta.",
+      resposta: answer || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?",
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
       memory_persisted: meta.memory_persisted === true,
@@ -455,15 +450,28 @@
 
   function markdownToSpeech(text) {
     return String(text || "")
-      .replace(/\`\`\`[^\n]*\n?/g, " ")
-      .replace(/\`\`\`/g, " ")
+      .replace(/```[^\n]*\n?/g, " ")
+      .replace(/```/g, " ")
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
       .replace(/^\s{0,3}#{1,6}\s+/gm, "")
       .replace(/^\s*>\s?/gm, "")
       .replace(/^\s*[-+*]\s+/gm, "")
       .replace(/^\s*\d+[.)]\s+/gm, "")
-      .replace(/[\`*_~#>|]/g, " ")
+      .replace(/(^|[.!?]\s+|\n)\d{1,3}\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/g, "$1")
+      .replace(/\s+\d{1,3}\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/g, " ")
+      .replace(/\bGên\.?\b/gi, "Gênesis")
+      .replace(/\bÊx\.?\b/gi, "Êxodo")
+      .replace(/\bLev\.?\b/gi, "Levítico")
+      .replace(/\bNúm\.?\b/gi, "Números")
+      .replace(/\bDeut\.?\b/gi, "Deuteronômio")
+      .replace(/\bMt\.?\b/gi, "Mateus")
+      .replace(/\bMc\.?\b/gi, "Marcos")
+      .replace(/\bLc\.?\b/gi, "Lucas")
+      .replace(/\bJo\.?\b/gi, "João")
+      .replace(/\bD&C\b/gi, "Doutrina e Convênios")
+      .replace(/standard[-_ ]?works[-_\w]*\.pdf/gi, "Obras Padrão")
+      .replace(/[\[\]{}()*_~#>|]/g, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s*\n+\s*/g, ". ")
       .replace(/\s{2,}/g, " ")
