@@ -22,12 +22,33 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V2.0 MASSIVE SCALE invariants
+          # V2.1 EXACT MATCH TURBINES + V2.0 analytical invariants
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
           grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
           grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
           grep -q 'MASSIVE_GROQ_MAX_RETRIES = 3' src/index.js
           grep -q 'SSE_KEEPALIVE_MS = 15000' src/index.js
+          grep -q 'EXACT_SWARM_NODE_COUNT = 1000' src/index.js
+          grep -q 'EXACT_MAX_CONCURRENT_REQUESTS = 50' src/index.js
+          grep -q 'EXACT_DEGRADED_CONCURRENCY = 25' src/index.js
+          grep -q 'EXACT_CIRCUIT_FAILURE_THRESHOLD = 3' src/index.js
+          grep -q 'EXACT_CIRCUIT_SLOW_MS = 5000' src/index.js
+          grep -q 'EXACT_CIRCUIT_BASE_PAUSE_MS = 3000' src/index.js
+          grep -q 'detectExactRetrievalIntent' src/index.js
+          grep -q 'directRetrievalPayload' src/index.js
+          grep -q '/api/rag/direct' src/index.js
+          grep -q '/chunks-range' src/index.js
+          grep -q 'supabaseExactDocumentChunks' src/index.js
+          grep -q 'exactGuardedFetch' src/index.js
+          grep -q 'stitchExactChunks' src/index.js
+          grep -q 'direct-retrieve' public/rag-search-worker.js
+          grep -q 'EXACT_SWARM_NODE_COUNT=1000' public/rag-search-worker.js
+          grep -q 'EXACT_MAX_CONCURRENCY=50' public/rag-search-worker.js
+          grep -q 'directRetrieve' public/rag-cascade.js
+          grep -q 'directRetrievalWithFailover' public/app.js
+          grep -q 'appendRawDocumentMessage' public/app.js
+          grep -q 'Modo Offline Ativado - Leitura Contínua Local' public/app.js
+          grep -q 'raw-document-text' public/style.css
           grep -q 'groqApiKeys' src/index.js
           grep -q 'runAsyncWorkerPool' src/index.js
           grep -q 'massivePipelineSynthesis' src/index.js
@@ -115,7 +136,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '2.0.0-massive-scale' src/index.js
+          grep -q '2.1.0-exact-match-turbines' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -132,7 +153,7 @@ jobs:
           grep -q 'master_node: \"final-fusion\"' src/index.js
           grep -q 'master_fusion_mode: "massive-dense-encyclopedic"' src/index.js
           grep -q 'post_master_llm_rewrite: false' src/index.js
-          # deploy health exposes V2.0 500-node async pool
+          # deploy health exposes V2.1 exact-match + V2.0 analytical pool
           grep -q 'micro_node_count: MASSIVE_NODE_COUNT' src/index.js
           grep -q 'micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE' src/index.js
           grep -q 'massiveMasterSynthesis' src/index.js
