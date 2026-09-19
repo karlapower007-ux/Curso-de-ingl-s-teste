@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: V2.0 MASSIVE SCALE release =="
+log "== Consciência do Fabiano :: V2.1 EXACT MATCH TURBINES release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -117,7 +117,7 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .version == "2.0.0-massive-scale" and .architecture == "cloudflare-v2-massive-scale" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .provider_auth_surface == "server-side-secrets-only" and .client_provider_keys_exposed == false and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .search_top_k == 500 and .micro_node_chain == false and .async_worker_pool == true and .micro_node_count == 500 and .micro_node_batch_size == 25 and .active_worker_limit == 25 and .sse_keepalive_ms == 15000 and .groq_round_robin_key_rotation == true and .groq_429_retry_limit == 3 and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true and .version == "2.1.0-exact-match-turbines" and .architecture == "cloudflare-v2.1-exact-match-turbines" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .provider_auth_surface == "server-side-secrets-only" and .client_provider_keys_exposed == false and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .search_top_k == 500 and .micro_node_chain == false and .async_worker_pool == true and .micro_node_count == 500 and .micro_node_batch_size == 25 and .active_worker_limit == 25 and .sse_keepalive_ms == 15000 and .groq_round_robin_key_rotation == true and .groq_429_retry_limit == 3 and .exact_match_llm_bypass == true and .exact_swarm_logical_nodes == 1000 and .exact_max_concurrent_requests == 50 and .exact_degraded_concurrency == 25 and .exact_circuit_failure_threshold == 3 and .exact_circuit_slow_ms == 5000 and .exact_ordered_buffer == true and .exact_local_indexeddb_takeover == true and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "DEPLOY_HEALTH_PASS=yes"
     break
