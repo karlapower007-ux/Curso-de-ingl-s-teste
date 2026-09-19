@@ -1,4 +1,4 @@
-const VERSION = "1.7.0-bulletproof-rag";
+const VERSION = "1.8.0-xeque-mate-local-embeddings";
 // External AI bypass activation: Groq chat/STT + Cohere multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -17,7 +17,9 @@ const CHUNK_OVERLAP = 250;
 const MIN_PAGE_LETTERS = 90;
 const MIN_CHUNK_LETTERS = 100;
 const TOP_K = 8;
-const VECTOR_SCAN_LIMIT = 1800;
+const VECTOR_SCAN_LIMIT = 7000;
+const LOCAL_EMBEDDING_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const MAX_SERVER_HISTORY = 40;
 const GROQ_HISTORY_MESSAGES = 10;
 const GROQ_INPUT_BUDGET_TOKENS = 9000;
@@ -607,26 +609,36 @@ async function deletePdf(request, env) {
   }));
 }
 
+async function localIngestStart(request, env) {
+  assertBindings(env);
+  const body=await request.json().catch(()=>({}));
+  return json(await libraryCall(env,"/local/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+}
+async function localIngestAppend(request, env) {
+  assertBindings(env);
+  const body=await request.json().catch(()=>({}));
+  return json(await libraryCall(env,"/local/append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+}
+async function localIngestCommit(request, env) {
+  assertBindings(env);
+  const body=await request.json().catch(()=>({}));
+  return json(await libraryCall(env,"/local/commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+}
+async function localVectorChunks(env, url) {
+  assertBindings(env);
+  const documentId=String(url.searchParams.get("document_id") || "").trim();
+  const limit=Math.max(1,Math.min(48,Number(url.searchParams.get("limit") || 12)));
+  return json(await libraryCall(env,"/local/chunks?document_id="+encodeURIComponent(documentId)+"&limit="+limit));
+}
+async function localVectorUpdate(request, env) {
+  assertBindings(env);
+  const body=await request.json().catch(()=>({}));
+  return json(await libraryCall(env,"/local/embeddings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+}
+
 async function reindexLibrary(request, env) {
   assertBindings(env);
-  const body = await request.json().catch(() => ({}));
-  const onlyId = String(body?.document_id || "").trim();
-  const data = await libraryCall(env, "/chunks" + (onlyId ? ("?document_id=" + encodeURIComponent(onlyId)) : ""));
-  const chunks = Array.isArray(data.chunks) ? data.chunks : [];
-  await embedChunksBatched(env, chunks);
-  for (let i = 0; i < chunks.length; i += 36) {
-    const group = chunks.slice(i, i + 36);
-    await libraryCall(env, "/embeddings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ updates: group.map(c => ({ id: c.id, embedding: c.embedding })) }),
-    });
-  }
-  const docs = await listBooks(env);
-  const resultados = (docs.livros || [])
-    .filter(d => !onlyId || d.id === onlyId)
-    .map(d => ({ ok: true, document_id: d.id, arquivo: d.arquivo }));
-  return json({ ok: true, resultados });
+  return json({ok:false,code:"LOCAL_EMBEDDINGS_REQUIRED",message:"Reindexação semântica agora é feita no navegador com Transformers.js e checkpoints locais."},409);
 }
 
 function foldSearchText(text) {
@@ -660,25 +672,22 @@ async function retrieveLexicalContext(env, question) {
     : [];
 }
 
-async function retrieveContext(env, question) {
+async function retrieveContext(env, question, suppliedEmbedding = null) {
   assertBindings(env);
-  try {
-    const qEmbedding = await generateEmbeddings(env, [question], "search_query");
-    const data = await libraryCall(env, "/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ embedding: qEmbedding[0], top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
-    });
-    return Array.isArray(data.matches)
-      ? data.matches.map(item => ({ ...item, retrieval_mode: "semantic" }))
-      : [];
-  } catch (error) {
-    if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
-    if (isRateLimitError(error) || isMonthlyQuotaError(error) || /cohere|embedding/i.test(String(error?.message || ""))) {
-      return retrieveLexicalContext(env, question);
-    }
-    throw error;
+  if (Array.isArray(suppliedEmbedding) && suppliedEmbedding.length >= 64 && suppliedEmbedding.every(Number.isFinite)) {
+    try {
+      const data = await libraryCall(env, "/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embedding: suppliedEmbedding, top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
+      });
+      const matches = Array.isArray(data.matches)
+        ? data.matches.map(item => ({ ...item, retrieval_mode: "local-semantic" }))
+        : [];
+      if (matches.length) return matches;
+    } catch {}
   }
+  return retrieveLexicalContext(env, question);
 }
 
 function uniqueSources(context) {
@@ -905,7 +914,6 @@ function enforceGroqBudget(messages, budget = GROQ_INPUT_BUDGET_TOKENS) {
 async function chat(request, env) {
   assertBindings(env);
   requireSecret(env, "GROQ_API_KEY");
-  requireSecret(env, "COHERE_API_KEY");
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
@@ -923,7 +931,7 @@ async function chat(request, env) {
 
   let context = [];
   try {
-    context = await retrieveContext(env, question);
+    context = await retrieveContext(env, question, Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
   } catch (error) {
     if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
     context = [];
@@ -1017,7 +1025,6 @@ async function status(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
   if (!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
-  if (!env.COHERE_API_KEY) missing.push("COHERE_API_KEY");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
@@ -1043,7 +1050,7 @@ async function status(env) {
     embedding_concurrency_limit: EMBED_CONCURRENCY,
     embedding_request_batch_limit: COHERE_API_BATCH,
     embedding_throttle_ms: COHERE_THROTTLE_MS,
-    embedding_adapter: embeddingAdapter.name,
+    embedding_adapter: "browser-web-worker",
     smart_chunking: true,
     lexical_rag_fallback: true,
     groq_history_window: GROQ_HISTORY_MESSAGES,
@@ -1051,7 +1058,10 @@ async function status(env) {
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
     llm_provider: "groq",
-    embedding_provider: "cohere",
+    embedding_provider: "browser-transformers",
+    legacy_embedding_provider: "cohere-disabled",
+    local_embedding_model: LOCAL_EMBEDDING_MODEL,
+    local_embedding_dimensions: LOCAL_EMBEDDING_DIMENSIONS,
     workers_ai_used: false,
     render_dependency: false,
     bindings_missing: missing,
@@ -1097,6 +1107,11 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
     if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
     if (url.pathname === "/api/admin/delete-pdf" && request.method === "POST") return await deletePdf(request, env);
+    if (url.pathname === "/api/admin/local-ingest-start" && request.method === "POST") return await localIngestStart(request, env);
+    if (url.pathname === "/api/admin/local-ingest-append" && request.method === "POST") return await localIngestAppend(request, env);
+    if (url.pathname === "/api/admin/local-ingest-commit" && request.method === "POST") return await localIngestCommit(request, env);
+    if (url.pathname === "/api/admin/local-vector-chunks" && request.method === "GET") return await localVectorChunks(env, url);
+    if (url.pathname === "/api/admin/local-vector-update" && request.method === "POST") return await localVectorUpdate(request, env);
     if (url.pathname === "/api/admin/reindex" && request.method === "POST") return await reindexLibrary(request, env);
     return json({ ok: false, message: "Rota não encontrada." }, 404);
   } catch (error) {
@@ -1186,6 +1201,8 @@ export class LibraryDO {
       addJobColumn("processed_pages","INTEGER NOT NULL DEFAULT 0");
       const docColumns=[...this.sql.exec("PRAGMA table_info(documents)")].map(row=>String(row.name || ""));
       if(!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
+      if(!docColumns.includes("embedding_model")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_model TEXT");
+      if(!docColumns.includes("embedding_dimensions")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_dimensions INTEGER NOT NULL DEFAULT 0");
       const pending=[...this.sql.exec("SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY updated_at LIMIT 1")][0] || null;
       if(pending?.id) await this.ctx.storage.setAlarm(Date.now()+250);
     });
@@ -1407,6 +1424,156 @@ export class LibraryDO {
       if (url.pathname === "/jobs/upload" && request.method === "POST") {
         return json({ok:false,code:"CLIENT_EXTRACTION_REQUIRED",message:"PDF binário não é aceito pelo backend."},410);
       }
+      if (url.pathname === "/local/start" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const filename=safeName(body.filename || "documento.pdf");
+        const expectedPages=Math.max(1,Math.min(10000,Number(body.page_count || 1)));
+        const contentSha=String(body.content_sha256 || "").toLowerCase();
+        if(!/^[0-9a-f]{64}$/.test(contentSha)) return json({ok:false,message:"SHA-256 inválido."},400);
+
+        const existing=[...this.sql.exec(
+          "SELECT id,filename,status,page_count,chunk_count,embedding_model FROM documents WHERE sha256=? LIMIT 1",
+          contentSha
+        )][0] || null;
+        if(existing){
+          return json({
+            ok:true,duplicate:true,document_id:existing.id,arquivo:existing.filename,status:existing.status,
+            paginas:Number(existing.page_count || 0),chunks:Number(existing.chunk_count || 0),
+            embedding_model:existing.embedding_model || ""
+          });
+        }
+
+        const documentId=uuidCompact();
+        const jobId=uuidCompact();
+        const now=new Date().toISOString();
+        this.sql.exec(
+          "INSERT INTO documents (id,filename,title,author,language,sha256,size_bytes,page_count,chunk_count,status,created_at,r2_key,embedding_model,embedding_dimensions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          documentId,filename,String(body.title || "").slice(0,500),String(body.author || "").slice(0,500),"unknown",
+          contentSha,Math.max(0,Number(body.size_bytes || 0)),expectedPages,0,"lexical_loading",now,
+          String(body.original_r2_key || "").slice(0,700) || null,LOCAL_EMBEDDING_MODEL,LOCAL_EMBEDDING_DIMENSIONS
+        );
+        this.sql.exec(
+          "INSERT INTO index_jobs (id,kind,storage_key,filename,size_bytes,status,progress,attempts,error,document_id,pages,chunks,created_at,updated_at,expected_pages,received_pages,title,author,content_sha256,original_r2_key,processed_pages) VALUES (?, 'local-client', ?, ?, ?, 'receiving', 1, 0, NULL, ?, ?, 0, ?, ?, ?, 0, ?, ?, ?, ?, 0)",
+          jobId,"client://local/"+jobId,filename,Math.max(0,Number(body.size_bytes || 0)),documentId,expectedPages,now,now,
+          expectedPages,String(body.title || "").slice(0,500),String(body.author || "").slice(0,500),contentSha,
+          String(body.original_r2_key || "").slice(0,700)
+        );
+        return json({ok:true,job_id:jobId,document_id:documentId,status:"receiving",expected_pages:expectedPages},201);
+      }
+
+      if (url.pathname === "/local/append" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const jobId=String(body.job_id || "").trim();
+        const job=[...this.sql.exec(
+          "SELECT id,status,expected_pages,document_id FROM index_jobs WHERE id=? AND kind='local-client' LIMIT 1",jobId
+        )][0] || null;
+        if(!job) return json({ok:false,message:"Job local não encontrado."},404);
+        if(job.status!=="receiving") return json({ok:false,message:"Job local não está recebendo páginas."},409);
+
+        const pages=normalizeClientPages(body.pages); validateClientPageBatch(pages);
+        for(const page of pages){
+          this.sql.exec("INSERT OR REPLACE INTO job_text_pages (job_id,page,text) VALUES (?,?,?)",jobId,page.page,page.text);
+          this.sql.exec("DELETE FROM chunks WHERE document_id=? AND page=?",job.document_id,page.page);
+          const pieces=chunkText(page.text);
+          for(let i=0;i<pieces.length;i++){
+            const text=cleanDocumentText(pieces[i]);
+            if(!isUsefulChunkText(text)) continue;
+            const chunkId=uuidCompact();
+            const chunkIndex=(Number(page.page || 1)*10000)+i;
+            this.sql.exec(
+              "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,'[]',?)",
+              chunkId,job.document_id,Number(page.page || 1),chunkIndex,text,new Date().toISOString()
+            );
+          }
+        }
+
+        const stats=[...this.sql.exec(
+          "SELECT COUNT(*) AS pages,COALESCE(SUM(LENGTH(text)),0) AS chars FROM job_text_pages WHERE job_id=?",jobId
+        )][0] || {pages:0,chars:0};
+        const received=Number(stats.pages || 0), totalChars=Number(stats.chars || 0);
+        if(totalChars>MAX_TEXT_CHARS) return json({ok:false,message:"Texto extraído acima do limite de segurança."},413);
+        const chunkCount=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",job.document_id)][0]?.n || 0);
+        const expected=Math.max(1,Number(job.expected_pages || 1));
+        const progress=Math.min(95,5+Math.round((received/expected)*85));
+        this.sql.exec(
+          "UPDATE index_jobs SET received_pages=?,chunks=?,progress=?,updated_at=? WHERE id=?",
+          received,chunkCount,progress,new Date().toISOString(),jobId
+        );
+        this.sql.exec(
+          "UPDATE documents SET chunk_count=?,status=? WHERE id=?",
+          chunkCount,chunkCount>0?"lexical_ready":"lexical_loading",job.document_id
+        );
+        return json({ok:true,job_id:jobId,document_id:job.document_id,status:"receiving",received_pages:received,expected_pages:expected,chunks:chunkCount,chars_received:totalChars});
+      }
+
+      if (url.pathname === "/local/commit" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const jobId=String(body.job_id || "").trim();
+        const job=[...this.sql.exec(
+          "SELECT id,status,expected_pages,document_id FROM index_jobs WHERE id=? AND kind='local-client' LIMIT 1",jobId
+        )][0] || null;
+        if(!job) return json({ok:false,message:"Job local não encontrado."},404);
+        const received=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM job_text_pages WHERE job_id=?",jobId)][0]?.n || 0);
+        const expected=Math.max(1,Number(job.expected_pages || 1));
+        if(received<expected) return json({ok:false,message:"Páginas incompletas: "+received+" de "+expected+"."},409);
+        const chunkCount=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",job.document_id)][0]?.n || 0);
+        const sample=[...this.sql.exec("SELECT text FROM chunks WHERE document_id=? ORDER BY page LIMIT 8",job.document_id)]
+          .map(r=>String(r.text || "").slice(0,10000)).join("\n");
+        const language=detectLanguage(sample);
+        this.sql.exec(
+          "UPDATE documents SET page_count=?,chunk_count=?,language=?,status='lexical_ready',embedding_model=?,embedding_dimensions=? WHERE id=?",
+          expected,chunkCount,language || "unknown",LOCAL_EMBEDDING_MODEL,LOCAL_EMBEDDING_DIMENSIONS,job.document_id
+        );
+        this.sql.exec(
+          "UPDATE index_jobs SET status='ready',progress=100,received_pages=?,pages=?,chunks=?,processed_pages=?,updated_at=? WHERE id=?",
+          received,expected,chunkCount,expected,new Date().toISOString(),jobId
+        );
+        this.cleanupJobText(jobId);
+        return json({ok:true,job_id:jobId,document_id:job.document_id,status:"lexical_ready",received_pages:received,expected_pages:expected,chunks:chunkCount},200);
+      }
+
+      if (url.pathname === "/local/chunks" && request.method === "GET") {
+        const documentId=String(url.searchParams.get("document_id") || "").trim();
+        const limit=Math.max(1,Math.min(48,Number(url.searchParams.get("limit") || 12)));
+        if(!documentId) return json({ok:false,message:"document_id ausente."},400);
+        const doc=[...this.sql.exec("SELECT id,status,chunk_count,embedding_model,embedding_dimensions FROM documents WHERE id=? LIMIT 1",documentId)][0] || null;
+        if(!doc) return json({ok:false,message:"Documento não encontrado."},404);
+        const rows=[...this.sql.exec(
+          "SELECT id,page,chunk_index,text FROM chunks WHERE document_id=? AND (embedding='[]' OR embedding='' OR embedding IS NULL) ORDER BY page,chunk_index LIMIT ?",
+          documentId,limit
+        )];
+        const remaining=Number([...this.sql.exec(
+          "SELECT COUNT(*) AS n FROM chunks WHERE document_id=? AND (embedding='[]' OR embedding='' OR embedding IS NULL)",documentId
+        )][0]?.n || 0);
+        return json({ok:true,document_id:documentId,status:doc.status,chunks:rows,remaining,total:Number(doc.chunk_count || 0),embedding_model:doc.embedding_model || LOCAL_EMBEDDING_MODEL,embedding_dimensions:Number(doc.embedding_dimensions || LOCAL_EMBEDDING_DIMENSIONS)});
+      }
+
+      if (url.pathname === "/local/embeddings" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const documentId=String(body.document_id || "").trim();
+        const updates=Array.isArray(body.updates)?body.updates.slice(0,48):[];
+        if(!documentId || !updates.length) return json({ok:false,message:"Atualizações locais ausentes."},400);
+        let dimensions=0;
+        for(const u of updates){
+          const id=String(u?.id || "").trim();
+          const vector=Array.isArray(u?.embedding)?u.embedding.map(Number):[];
+          if(!id || vector.length<64 || vector.length>2048 || vector.some(v=>!Number.isFinite(v))) continue;
+          if(!dimensions) dimensions=vector.length;
+          if(vector.length!==dimensions) return json({ok:false,message:"Dimensões inconsistentes no lote local."},400);
+          this.sql.exec("UPDATE chunks SET embedding=? WHERE id=? AND document_id=?",JSON.stringify(vector),id,documentId);
+        }
+        const remaining=Number([...this.sql.exec(
+          "SELECT COUNT(*) AS n FROM chunks WHERE document_id=? AND (embedding='[]' OR embedding='' OR embedding IS NULL)",documentId
+        )][0]?.n || 0);
+        const total=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks WHERE document_id=?",documentId)][0]?.n || 0);
+        const status=remaining>0?"vectorizing_local":"ready_local";
+        this.sql.exec(
+          "UPDATE documents SET status=?,chunk_count=?,embedding_model=?,embedding_dimensions=? WHERE id=?",
+          status,total,String(body.embedding_model || LOCAL_EMBEDDING_MODEL).slice(0,180),dimensions || LOCAL_EMBEDDING_DIMENSIONS,documentId
+        );
+        return json({ok:true,document_id:documentId,status,updated:updates.length,remaining,total});
+      }
+
       if (url.pathname === "/jobs/text-start" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const id=String(body.id || "").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,120);
@@ -1593,7 +1760,7 @@ export class LibraryDO {
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
                  d.filename,d.title,d.author,d.language
           FROM chunks c JOIN documents d ON d.id=c.document_id
-          WHERE d.status IN ('ready','indexing')
+          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
           ORDER BY c.created_at DESC LIMIT ?
         `, scanLimit)];
 
@@ -1629,12 +1796,12 @@ export class LibraryDO {
         const body = await request.json().catch(() => ({}));
         const query = Array.isArray(body.embedding) ? body.embedding : [];
         const topK = Math.max(1, Math.min(20, Number(body.top_k || 8)));
-        const scanLimit = Math.max(50, Math.min(3000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
+        const scanLimit = Math.max(50, Math.min(10000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
         const rows = [...this.sql.exec(`
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
                  d.filename,d.title,d.author,d.language
           FROM chunks c JOIN documents d ON d.id=c.document_id
-          WHERE d.status IN ('ready','indexing') ORDER BY c.created_at DESC LIMIT ?
+          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local') ORDER BY c.created_at DESC LIMIT ?
         `, scanLimit)];
         const matches = [];
         for (const row of rows) {

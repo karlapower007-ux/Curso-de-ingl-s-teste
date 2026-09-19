@@ -25,7 +25,6 @@ jobs:
           node --check scripts/browser-voice-smoke.mjs
           node --check scripts/browser-ingest-smoke.mjs
           bash -n scripts/autonomous-release.sh
-          grep -q 'embed-multilingual-v3.0' src/index.js
           grep -q 'whisper-large-v3-turbo' src/index.js
           grep -q 'browser-local-pt-BR' src/index.js
           grep -q 'class LibraryDO' src/index.js
@@ -36,13 +35,18 @@ jobs:
           grep -q 'job_text_pages' src/index.js
           grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
           grep -q 'EMBED_CONCURRENCY = 50' src/index.js
-          grep -q 'COHERE_API_BATCH = 95' src/index.js
-          grep -q 'COHERE_THROTTLE_MS' src/index.js
           grep -q 'GROQ_HISTORY_MESSAGES' src/index.js
           grep -q 'GROQ_INPUT_BUDGET_TOKENS' src/index.js
           grep -q 'isUsefulChunkText' src/index.js
           grep -q 'embeddingAdapter' src/index.js
           grep -q 'lexical_rag_fallback: true' src/index.js
+          grep -q 'embedding_provider: "browser-transformers"' src/index.js
+          grep -q 'LOCAL_EMBEDDING_MODEL' src/index.js
+          grep -q 'local-ingest-start' public/app.js
+          grep -q 'indexedDB' public/app.js
+          grep -q 'embedding-worker.js' public/app.js
+          test -f public/embedding-worker.js
+          grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js
           grep -q 'never split a rate-limited batch' src/index.js
           grep -q 'parallelMapLimit' src/index.js
@@ -57,8 +61,6 @@ jobs:
           grep -q 'waitForIndexJob' public/app.js
           grep -q 'voiceLoopEnabled' public/app.js
           grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
-          grep -q 'api.cohere.com/v2/embed' src/index.js
-          ! grep -q 'generativelanguage.googleapis.com' src/index.js
           grep -q 'text/event-stream' src/index.js
           grep -q 'streamChat' public/app.js
           ! grep -q 'env.AI' src/index.js

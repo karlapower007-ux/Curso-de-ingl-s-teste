@@ -6,6 +6,10 @@
   const MAX_HISTORY = 60;
   const INLINE_TEXT_LIMIT = 320000;
   const PAGE_BATCH_LIMIT = 300000;
+  const LOCAL_EMBED_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+  const LOCAL_EMBED_DB = "fns_local_embeddings_v1";
+  const LOCAL_EMBED_DB_VERSION = 1;
+  const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
 
   let history = [];
   let speakingTimer = null;
@@ -19,12 +23,163 @@
   let activeAudioUrl = "";
   let activeAudioDone = null;
   let audioStopSerial = 0;
+  let embeddingWorker = null;
+  let embeddingWorkerReady = false;
+  let embeddingWorkerBusy = false;
+  let embeddingWorkerSeq = 0;
+  const embeddingWorkerPending = new Map();
+  const activeVectorJobs = new Set();
 
   const frames = {
     closed: "/fabiano-fechado.png",
     talking: "/fabiano-falando.png",
     open: "/fabiano-aberto.png"
   };
+
+  function openEmbeddingDb() {
+    return new Promise((resolve, reject) => {
+      const req=indexedDB.open(LOCAL_EMBED_DB,LOCAL_EMBED_DB_VERSION);
+      req.onupgradeneeded=()=>{
+        const db=req.result;
+        if(!db.objectStoreNames.contains("jobs")) db.createObjectStore("jobs",{keyPath:"document_id"});
+        if(!db.objectStoreNames.contains("checkpoints")){
+          const store=db.createObjectStore("checkpoints",{keyPath:"key"});
+          store.createIndex("document_id","document_id",{unique:false});
+        }
+      };
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+  }
+  async function idbPut(storeName,value){
+    const db=await openEmbeddingDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(storeName,"readwrite");
+      tx.objectStore(storeName).put(value);
+      tx.oncomplete=()=>{db.close();resolve(value);};
+      tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
+    });
+  }
+  async function idbGetAll(storeName){
+    const db=await openEmbeddingDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(storeName,"readonly");
+      const req=tx.objectStore(storeName).getAll();
+      req.onsuccess=()=>{const v=req.result || [];db.close();resolve(v);};
+      req.onerror=()=>{const e=req.error;db.close();reject(e);};
+    });
+  }
+  async function idbCheckpointsFor(documentId,onlyUnsynced=false){
+    const all=await idbGetAll("checkpoints");
+    return all.filter(x=>x.document_id===documentId && (!onlyUnsynced || x.synced!==true)).sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+  }
+  function ensureEmbeddingWorker(){
+    if(embeddingWorker) return embeddingWorker;
+    embeddingWorker=new Worker("/embedding-worker.js?v=1",{type:"module"});
+    embeddingWorker.onmessage=e=>{
+      const data=e.data || {};
+      if(data.type==="status"){
+        if(data.stage==="ready") embeddingWorkerReady=true;
+        if(data.stage==="error") embeddingWorkerReady=false;
+        if($("adminStatus") && data.message && !activeVectorJobs.size) $("adminStatus").textContent=data.message;
+        return;
+      }
+      const pending=embeddingWorkerPending.get(data.id);
+      if(!pending) return;
+      embeddingWorkerPending.delete(data.id);
+      embeddingWorkerBusy=false;
+      if(data.ok===false) pending.reject(new Error(data.error || "Falha no motor local."));
+      else pending.resolve(data);
+    };
+    embeddingWorker.onerror=e=>{
+      embeddingWorkerReady=false; embeddingWorkerBusy=false;
+      for(const [,p] of embeddingWorkerPending){p.reject(new Error(e.message || "Web Worker de embeddings falhou."));}
+      embeddingWorkerPending.clear();
+    };
+    const preferWebGPU=Boolean(navigator.gpu && Number(navigator.deviceMemory || 4)>=8);
+    embeddingWorker.postMessage({type:"init",preferWebGPU});
+    return embeddingWorker;
+  }
+  function workerRequest(type,payload={},priority="normal"){
+    const worker=ensureEmbeddingWorker();
+    const id="ew-"+(++embeddingWorkerSeq)+"-"+Date.now();
+    return new Promise((resolve,reject)=>{
+      embeddingWorkerPending.set(id,{resolve,reject});
+      embeddingWorkerBusy=true;
+      worker.postMessage({id,type,priority,...payload});
+    });
+  }
+  async function saveVectorCheckpoint(documentId,batchId,chunks,vectors){
+    const record={
+      key:documentId+":"+batchId,document_id:documentId,batch_id:batchId,created_at:Date.now(),
+      last_page:Math.max(...chunks.map(x=>Number(x.page || 0)),0),synced:false,
+      updates:chunks.map((chunk,i)=>({id:chunk.id,embedding:Array.from(vectors[i] || [])}))
+    };
+    await idbPut("checkpoints",record);
+    return record;
+  }
+  async function syncVectorCheckpoint(record){
+    if(!record?.updates?.length) return;
+    await api("/api/admin/local-vector-update",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({document_id:record.document_id,embedding_model:LOCAL_EMBED_MODEL,updates:record.updates})
+    });
+    record.synced=true; record.synced_at=Date.now(); await idbPut("checkpoints",record);
+  }
+  async function flushPendingVectorCheckpoints(documentId){
+    const pending=await idbCheckpointsFor(documentId,true);
+    for(const record of pending) await syncVectorCheckpoint(record);
+  }
+  async function runLocalVectorization(job){
+    const documentId=String(job?.document_id || "");
+    if(!documentId || activeVectorJobs.has(documentId)) return;
+    activeVectorJobs.add(documentId);
+    try{
+      await idbPut("jobs",{...job,state:"vectorizing",updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+      await flushPendingVectorCheckpoints(documentId);
+      let batchNo=Number(job.batch_no || 0);
+      while(true){
+        const data=await api("/api/admin/local-vector-chunks?document_id="+encodeURIComponent(documentId)+"&limit="+LOCAL_EMBED_BATCH,{method:"GET"});
+        const list=Array.isArray(data?.chunks)?data.chunks:[];
+        if(!list.length){
+          await idbPut("jobs",{...job,state:"done",batch_no:batchNo,remaining:0,updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+          if($("adminStatus")) $("adminStatus").textContent="Vetorização local concluída para "+(job.filename || "o PDF")+".";
+          await loadBooks(); await checkBackend(); return;
+        }
+        if($("adminStatus")) $("adminStatus").textContent="PDF já disponível por busca lexical. Vetorização local em segundo plano: "+Math.max(0,Number(data.total||0)-Number(data.remaining||0))+"/"+Number(data.total||0)+" trechos.";
+        const result=await workerRequest("embed-batch",{texts:list.map(x=>String(x.text||""))},"normal");
+        const vectors=Array.isArray(result.vectors)?result.vectors:[];
+        if(vectors.length!==list.length) throw new Error("Worker local retornou lote incompleto.");
+        const checkpoint=await saveVectorCheckpoint(documentId,++batchNo,list,vectors);
+        await syncVectorCheckpoint(checkpoint);
+        await idbPut("jobs",{...job,state:"vectorizing",batch_no:batchNo,last_page:checkpoint.last_page,remaining:Math.max(0,Number(data.remaining||0)-list.length),updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+        await new Promise(resolve=>setTimeout(resolve,40));
+      }
+    }catch(error){
+      await idbPut("jobs",{...job,state:"paused",error:String(error?.message||error),updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+      if($("adminStatus")) $("adminStatus").textContent="Vetorização local pausada com checkpoint preservado: "+String(error?.message||error);
+    }finally{
+      activeVectorJobs.delete(documentId); embeddingWorkerBusy=false;
+    }
+  }
+  async function resumeLocalEmbeddingJobs(showStatus=false){
+    const jobs=await idbGetAll("jobs").catch(()=>[]);
+    const pending=jobs.filter(j=>j.state!=="done" && j.document_id);
+    if(showStatus && !pending.length && $("adminStatus")) $("adminStatus").textContent="Nenhum checkpoint local pendente.";
+    for(const job of pending) runLocalVectorization(job);
+    return pending.length;
+  }
+  async function localQueryEmbedding(text){
+    if(!embeddingWorkerReady || embeddingWorkerBusy) return null;
+    try{
+      const result=await Promise.race([
+        workerRequest("embed-query",{text:String(text||"")},"high"),
+        new Promise(resolve=>setTimeout(()=>resolve(null),900))
+      ]);
+      if(!result || !Array.isArray(result.vector)) return null;
+      return result.vector;
+    }catch{return null;}
+  }
 
   function loadHistory() {
     try {
@@ -390,9 +545,12 @@
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
+      const queryEmbedding=await localQueryEmbedding(q);
       const data = await streamChat({
         pergunta: q,
         turn_id: turnId,
+        query_embedding: queryEmbedding,
+        query_embedding_model: queryEmbedding ? LOCAL_EMBED_MODEL : "",
         historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
       });
       const resposta = String(data.resposta || "Sem resposta.");
@@ -423,7 +581,7 @@
       const up = data?.ok === true && data?.architecture === "cloudflare-router-external-ai";
       $("backendDot").className = "dot " + (up ? "ok" : "bad");
       $("backendText").textContent = up
-        ? "RAG Groq + Cohere • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
+        ? "RAG Groq + Local • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
         : "Infraestrutura documental ainda não provisionada";
     } catch {
       $("backendDot").className = "dot bad";
@@ -691,18 +849,18 @@
     if(!res.ok)throw new Error("Falha no upload direto ao R2: HTTP "+res.status);
     return {stored:true,r2_key:presign.r2_key,etag:res.headers.get("etag") || ""};
   }
-  async function submitExtractedText(extracted,originalR2Key=""){
+  async function submitExtractedTextLocal(extracted,originalR2Key=""){
     const common={filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,title:extracted.title,author:extracted.author,content_sha256:extracted.content_sha256,original_r2_key:originalR2Key};
-    if(extracted.total_chars<=INLINE_TEXT_LIMIT){
-      return api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"inline",...common,pages:extracted.pages})});
-    }
-    const started=await api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"start",...common})});
+    const started=await api("/api/admin/local-ingest-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(common)});
+    if(started.duplicate) return started;
     const batches=pageBatches(extracted.pages);
     for(let i=0;i<batches.length;i++){
-      $("adminStatus").textContent="Carga leve de texto: lote "+(i+1)+"/"+batches.length+"…";
-      await api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"append",job_id:started.job_id,pages:batches[i]})});
+      $("adminStatus").textContent="Disponibilizando busca lexical: lote "+(i+1)+"/"+batches.length+"…";
+      await api("/api/admin/local-ingest-append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:started.job_id,pages:batches[i]})});
+      if(i===0){await loadBooks();await checkBackend();}
+      await new Promise(resolve=>setTimeout(resolve,0));
     }
-    return api("/api/trigger-index",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"commit",job_id:started.job_id})});
+    return api("/api/admin/local-ingest-commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:started.job_id})});
   }
   async function uploadPdf(){
     const file=$("pdfInput").files?.[0];
@@ -711,19 +869,24 @@
     $("uploadBtn").disabled=true; const startedAt=performance.now();
     try{
       const extracted=await extractPdfLocally(file);
-      $("adminStatus").textContent="Texto extraído localmente. Preparando R2 direto e Matriz 50/50…";
+      $("adminStatus").textContent="Texto extraído. Ativando busca lexical imediatamente…";
       const presign=await requestR2Presign(file);
       const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
-      const queued=await submitExtractedText(extracted,presign.available?presign.r2_key:"");
-      if(!queued?.job_id)throw new Error("Servidor não retornou o job de indexação.");
-      const [done,vault]=await Promise.all([waitForIndexJob(queued.job_id,extracted.filename),vaultPromise]);
+      const ready=await submitExtractedTextLocal(extracted,presign.available?presign.r2_key:"");
+      const vault=await vaultPromise.catch(()=>({stored:false}));
       const seconds=((performance.now()-startedAt)/1000).toFixed(1);
-      const vaultText=vault.stored?" • original salvo direto no R2":" • R2 não configurado; binário não passou pelo Worker";
-      $("adminStatus").textContent=done.duplicate
-        ?"Já indexado: "+(done.arquivo || file.name)+vaultText+" • "+seconds+"s"
-        :"Concluído: "+(done.arquivo || file.name)+" • "+(done.chunks || 0)+" chunks • Matriz 50/50"+vaultText+" • "+seconds+"s";
-      $("pdfInput").value="";await loadBooks();await checkBackend();
-    }catch(error){$("adminStatus").textContent=error.message;}finally{$("uploadBtn").disabled=false;}
+      const vaultText=vault.stored?" • original salvo direto no R2":" • R2 não configurado";
+      if(ready.duplicate){
+        $("adminStatus").textContent="PDF já existente na biblioteca • busca disponível"+vaultText+" • "+seconds+"s";
+      }else{
+        $("adminStatus").textContent="Busca lexical pronta: "+(ready.chunks||0)+" trechos. Vetorização local continuará em segundo plano"+vaultText+" • "+seconds+"s";
+        const job={document_id:ready.document_id,filename:extracted.filename,content_sha256:extracted.content_sha256,total_chunks:Number(ready.chunks||0),state:"queued",batch_no:0,created_at:Date.now()};
+        await idbPut("jobs",job);
+        runLocalVectorization(job);
+      }
+      $("pdfInput").value=""; await loadBooks(); await checkBackend();
+    }catch(error){$("adminStatus").textContent=error.message;}
+    finally{$("uploadBtn").disabled=false;}
   }
 
   async function loadBooks() {
@@ -776,24 +939,12 @@
   }
 
   async function reindex() {
-    $("reindexBtn").disabled = true;
-    $("adminStatus").textContent = "Reindexando a biblioteca…";
-    try {
-      const data = await api("/api/admin/reindex", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}"
-      });
-      const ok = (data.resultados || []).filter(x => x.ok).length;
-      const total = (data.resultados || []).length;
-      $("adminStatus").textContent = "Reindexação concluída: " + ok + " de " + total + " documentos.";
-      await loadBooks();
-      await checkBackend();
-    } catch (e) {
-      $("adminStatus").textContent = e.message;
-    } finally {
-      $("reindexBtn").disabled = false;
-    }
+    $("reindexBtn").disabled=true;
+    try{
+      const count=await resumeLocalEmbeddingJobs(true);
+      if(count>0) $("adminStatus").textContent="Retomando "+count+" job(s) local(is) a partir dos checkpoints do IndexedDB.";
+    }catch(e){$("adminStatus").textContent=e.message;}
+    finally{$("reindexBtn").disabled=false;}
   }
 
   $("chatTab").onclick = () => switchPanel("chat");
@@ -827,4 +978,5 @@
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
   loadBooks();
+  setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
 })();

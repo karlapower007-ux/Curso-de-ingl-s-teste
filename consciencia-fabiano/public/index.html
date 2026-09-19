@@ -13,7 +13,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">SISTEMA NATIVO V1.6</span>
+      <span class="header-kicker">SISTEMA NATIVO V1.8</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -66,7 +66,7 @@
             <p class="eyebrow">MEMÓRIA DOCUMENTAL</p>
             <h2>Biblioteca de PDFs</h2>
           </div>
-          <button id="reindexBtn" class="secondary" type="button">Reindexar</button>
+          <button id="reindexBtn" class="secondary" type="button">Retomar vetores</button>
         </div>
 
         <label class="dropzone" for="pdfInput">
@@ -76,7 +76,7 @@
         </label>
         <button id="uploadBtn" class="primary full" type="button">Extrair localmente e indexar</button>
         <p id="adminStatus" class="status"></p>
-        <p class="client-extract-note">⚡ pdf.js abre o PDF no seu aparelho. O Worker recebe somente texto. O binário nunca é processado pelo backend.</p>
+        <p class="client-extract-note">⚡ pdf.js extrai o texto localmente. A busca lexical fica disponível primeiro; os embeddings são gerados em Web Worker no navegador e salvos em checkpoints no IndexedDB para retomada automática após falhas ou atualização da aba.</p>
 
         <div class="library-note">
           <strong>Regra de resposta</strong>
@@ -95,6 +95,6 @@
       return mod;
     });
   </script>
-  <script src="/app.js?v=6" defer></script>
+  <script src="/app.js?v=8" defer></script>
 </body>
 </html>

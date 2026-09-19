@@ -7,14 +7,8 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
-: "${COHERE_API_KEY:?COHERE_API_KEY is required}"
 
 GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
-COHERE_API_KEY_CLEAN=$(printf '%s' "$COHERE_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
-log "COHERE_KEY_LENGTH=${#COHERE_API_KEY_CLEAN}"
-if [ "${#COHERE_API_KEY_CLEAN}" -lt 20 ]; then
-  die "COHERE_SECRET_TRUNCATED_OR_WRONG_VALUE"
-fi
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
@@ -45,21 +39,6 @@ curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization:
 jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
 log "GROQ_PREFLIGHT_PASS=yes"
 
-cohere_code=$(curl -sS -o /tmp/cohere-preflight.json -w '%{http_code}' "https://api.cohere.com/v2/embed" \
-  -H "Authorization: Bearer $COHERE_API_KEY_CLEAN" \
-  -H 'Content-Type: application/json' \
-  --data '{"model":"embed-multilingual-v3.0","texts":["ping"],"input_type":"search_document","embedding_types":["float"],"truncate":"END"}')
-if [ "$cohere_code" = "429" ]; then
-  cat /tmp/cohere-preflight.json || true
-  log "COHERE_PREFLIGHT_RATE_LIMITED=warning"
-elif [ "$cohere_code" != "200" ]; then
-  cat /tmp/cohere-preflight.json || true
-  die "COHERE_PREFLIGHT_HTTP_$cohere_code"
-else
-  jq -e '((.embeddings.float // .embeddings.float_ // .embeddings) | type == "array" and length > 0)' /tmp/cohere-preflight.json >/dev/null || { cat /tmp/cohere-preflight.json; die "COHERE_PREFLIGHT_BAD_RESPONSE"; }
-  log "COHERE_PREFLIGHT_PASS=yes"
-fi
-
 log "3/7 Deploy Worker"
 npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
@@ -67,7 +46,7 @@ log "DEPLOY_COMMAND=success"
 log "4/7 Install runtime secrets"
 printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
 printf '%s' "$COHERE_API_KEY_CLEAN" | npx wrangler secret put COHERE_API_KEY >/dev/null
-log "EXTERNAL_AI_SECRETS_INSTALLED=yes"
+log "GROQ_SECRET_INSTALLED=yes"
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
@@ -121,7 +100,7 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "cohere" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "NATIVE_HEALTH_PASS=yes"
     break
