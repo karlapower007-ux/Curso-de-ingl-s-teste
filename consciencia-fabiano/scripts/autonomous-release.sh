@@ -129,6 +129,19 @@ if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.jso
 
 log "6/7 Broad-term RAG regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
+if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  SUPABASE_BASE=$(printf '%s' "$SUPABASE_URL" | sed 's:/*$::')
+  supa_rows=$(curl -fsS --max-time 15 \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+    -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+    "$SUPABASE_BASE/rest/v1/rag_embeddings?select=id&limit=1" | jq 'length' || echo 0)
+  supa_jesus=$(curl -fsS --max-time 15 \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+    -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+    "$SUPABASE_BASE/rest/v1/rag_embeddings?select=id&text=ilike.*Jesus*&limit=1" | jq 'length' || echo 0)
+  log "SUPABASE_RAG_ANY_ROW=$supa_rows"
+  log "SUPABASE_RAG_JESUS_ROW=$supa_jesus"
+fi
 curl -fsS --max-time 25 "$BASE/api/rag/search" \
   -H 'Content-Type: application/json' \
   --data '{"question":"Jesus"}' >/tmp/rag-broad-probe.json || { cat /tmp/rag-broad-probe.json 2>/dev/null || true; die "RAG_BROAD_PROBE_HTTP_FAILED"; }
