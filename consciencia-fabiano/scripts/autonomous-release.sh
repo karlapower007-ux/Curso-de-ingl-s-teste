@@ -9,8 +9,8 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
 : "${GEMINI_API_KEY:?GEMINI_API_KEY is required}"
 
-GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY_CLEAN" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
-GEMINI_API_KEY_CLEAN=$(printf '%s' "$GEMINI_API_KEY_CLEAN" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
+GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
+GEMINI_API_KEY_CLEAN=$(printf '%s' "$GEMINI_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
 case "$GEMINI_API_KEY_CLEAN" in
   AQ.*) log "GEMINI_KEY_FORMAT=auth" ;;
   AIza*) log "GEMINI_KEY_FORMAT=standard" ;;
