@@ -2502,10 +2502,10 @@
     // Browser-controlled Periodic Background Sync is best-effort and may be clamped.
     if(reg.periodicSync?.register){
       try{
-        await reg.periodicSync.register("fns-omni-daemon-v6",{minInterval:PHANTOM_DAEMON_INTERVAL_MS});
+        await reg.periodicSync.register("fns-omni-daemon-v7-r2",{minInterval:PHANTOM_DAEMON_INTERVAL_MS});
       }catch{}
     }else if(reg.sync?.register){
-      try{await reg.sync.register("fns-omni-daemon-v6");}catch{}
+      try{await reg.sync.register("fns-omni-daemon-v7-r2");}catch{}
     }
     return true;
   }
