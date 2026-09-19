@@ -527,7 +527,9 @@
       if (fallback) {
         const note = document.createElement("div");
         note.className = "source";
-        note.textContent = "Não encontrei uma passagem documental direta nesta busca; tente ampliar os termos.";
+        note.textContent = /índices de busca estão temporariamente indisponíveis/i.test(String(content || ""))
+          ? "A biblioteca não foi considerada vazia. O índice remoto está indisponível e a recuperação local continua ativa."
+          : "Não encontrei uma passagem documental direta nesta busca; tente ampliar os termos.";
         src.appendChild(note);
       }
       (sources || []).forEach(item => {
