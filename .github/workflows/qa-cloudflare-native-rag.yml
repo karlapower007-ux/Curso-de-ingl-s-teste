@@ -48,6 +48,19 @@ jobs:
           grep -q 'agent_swarm_physical_worker_cap: 10' src/index.js
           grep -q 'agent2_transformers_semantic: true' src/index.js
           grep -q 'agent10_bouncer: true' src/index.js
+          grep -q 'agent11_short_entity_hunter: true' src/index.js
+          grep -q 'agent12_long_form_explainer: true' src/index.js
+          grep -q 'agent13_freshness_sentinel: true' src/index.js
+          grep -q 'agent14_ocr_rescue: true' src/index.js
+          grep -q 'agent15_definition_specialist: true' src/index.js
+          grep -q 'agent16_chronology_mapper: true' src/index.js
+          grep -q 'agent17_cross_library_balancer: true' src/index.js
+          grep -q 'agent18_citation_specialist: true' src/index.js
+          grep -q 'agent19_conflict_auditor: true' src/index.js
+          grep -q 'agent20_mission_master: true' src/index.js
+          grep -q 'cross_device_library_mirror: true' src/index.js
+          grep -q 'cross_device_library_table: "library_chunks"' src/index.js
+          grep -q 'cross_device_mobile_hydration: true' src/index.js
           grep -q 'semantic_fallback_after_literal_miss: true' src/index.js
           grep -q 'phantom_daemon: true' src/index.js
           grep -q 'phantom_daemon_target_interval_ms: 180000' src/index.js
@@ -104,7 +117,7 @@ jobs:
           grep -q 'fuzzy_disabled:true' public/local-turbine-pool.js
           grep -q 'or_disabled:true' public/local-turbine-pool.js
           grep -q 'strictParagraphMatch' public/local-turbine-worker.js
-          grep -q 'LOGICAL_AGENT_COUNT=10' public/agent-swarm.js
+          grep -q 'LOGICAL_AGENT_COUNT=20' public/agent-swarm.js
           grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js
           grep -q 'embedding-worker.js' public/rag-cascade.js
           grep -q 'omniAgentSearch' public/rag-cascade.js
@@ -115,6 +128,19 @@ jobs:
           grep -q 'The Reference Judge' public/agent-node-worker.js
           grep -q 'The Sweeper' public/agent-node-worker.js
           grep -q 'The Bouncer' public/agent-node-worker.js
+          grep -q 'Short Entity Hunter' public/agent-node-worker.js
+          grep -q 'Long Form Explainer' public/agent-node-worker.js
+          grep -q 'Freshness Sentinel' public/agent-node-worker.js
+          grep -q 'OCR Rescue' public/agent-node-worker.js
+          grep -q 'Definition Specialist' public/agent-node-worker.js
+          grep -q 'Chronology Mapper' public/agent-node-worker.js
+          grep -q 'Cross Library Balancer' public/agent-node-worker.js
+          grep -q 'Citation Specialist' public/agent-node-worker.js
+          grep -q 'Conflict and Duplicate Auditor' public/agent-node-worker.js
+          grep -q 'Mission Master' public/agent-node-worker.js
+          grep -q 'backfillLibraryChunksToCloud' public/app.js
+          grep -q '/api/admin/library-mirror-upsert' public/app.js
+          grep -q '/api/admin/library-mirror-upsert' src/index.js
           grep -q 'STRICT_PHRASE_MISS' public/local-turbine-worker.js
           grep -q 'CONTEXT_BEFORE=2' public/local-turbine-worker.js
           grep -q 'CONTEXT_AFTER=4' public/local-turbine-worker.js
@@ -159,11 +185,11 @@ jobs:
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
           # Service-worker cache and V6 manifest
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v6"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v7"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
-          grep -q '"version": "6.0.0"' public/failover-manifest.json
-          grep -q '"engine": "omni-agent-swarm-v6"' public/failover-manifest.json
+          grep -q '"version": "7.0.0"' public/failover-manifest.json
+          grep -q '"engine": "twenty-agent-cross-device-v7"' public/failover-manifest.json
           grep -q '"logical_agent_count": 10' public/failover-manifest.json
           grep -q '"agent2_transformers_semantic": true' public/failover-manifest.json
           grep -q '"agent10_bouncer": true' public/failover-manifest.json
