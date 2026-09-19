@@ -66,9 +66,22 @@ function scoreParagraph(text,question,idf={}){
   if(dl<6)score*=.4;
   return {score,coverage,hits,exact:exactPhrase};
 }
+function paragraphIdf(ps,question){
+  const terms=queryTerms(question);
+  const folded=ps.map(fold);
+  const N=Math.max(1,folded.length);
+  const idf={};
+  for(const term of terms){
+    let df=0;
+    for(const text of folded)if(text.includes(term))df++;
+    idf[term]=Math.log(1+((N-df+.5)/(df+.5)));
+  }
+  return idf;
+}
 function extract(task){
   const ps=paragraphs(task.text);
-  const ranked=ps.map((text,index)=>({text,index,...scoreParagraph(text,task.question,task.idf)}))
+  const idf=paragraphIdf(ps,task.question);
+  const ranked=ps.map((text,index)=>({text,index,...scoreParagraph(text,task.question,idf)}))
     .filter(x=>x.score>0)
     .sort((a,b)=>b.score-a.score);
   const best=ranked[0]||null;
