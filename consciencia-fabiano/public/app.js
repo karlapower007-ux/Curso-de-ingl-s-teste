@@ -979,4 +979,5 @@
   checkBackend();
   loadBooks();
   setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
+  setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
 })();
