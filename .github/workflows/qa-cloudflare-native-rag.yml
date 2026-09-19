@@ -22,360 +22,135 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V3.3 STRICT PRECISION + V2 analytical engine invariants
-          grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
-          grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
-          grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
-          grep -q 'MASSIVE_GROQ_MAX_RETRIES = 3' src/index.js
-          grep -q 'SSE_KEEPALIVE_MS = 15000' src/index.js
-          grep -q 'EXACT_SWARM_NODE_COUNT = 1000' src/index.js
-          grep -q 'EXACT_MAX_CONCURRENT_REQUESTS = 50' src/index.js
-          grep -q 'EXACT_DEGRADED_CONCURRENCY = 25' src/index.js
-          grep -q 'EXACT_CIRCUIT_FAILURE_THRESHOLD = 3' src/index.js
-          grep -q 'EXACT_CIRCUIT_SLOW_MS = 5000' src/index.js
-          grep -q 'EXACT_CIRCUIT_BASE_PAUSE_MS = 3000' src/index.js
-          grep -q 'detectExactRetrievalIntent' src/index.js
-          grep -q 'directRetrievalPayload' src/index.js
-          grep -q '/api/rag/direct' src/index.js
-          grep -q '/chunks-range' src/index.js
-          grep -q 'supabaseExactDocumentChunks' src/index.js
-          grep -q 'exactGuardedFetch' src/index.js
-          grep -q 'stitchExactChunks' src/index.js
-          grep -q 'direct-retrieve' public/rag-search-worker.js
-          grep -q 'EXACT_SWARM_NODE_COUNT=1000' public/rag-search-worker.js
-          grep -q 'EXACT_MAX_CONCURRENCY=50' public/rag-search-worker.js
-          grep -q 'directRetrieve' public/rag-cascade.js
-          grep -q 'directRetrievalWithFailover' public/app.js
-          grep -q 'appendRawDocumentMessage' public/app.js
-          grep -q 'Modo Offline Ativado - Leitura Contínua Local' public/app.js
-          grep -q 'raw-document-text' public/style.css
-          # V3 strict lazy loading + six-tier failover
-          grep -q 'strict_lazy_local_engines: true' src/index.js
-          grep -q 'failover_tiers: 6' src/index.js
-          grep -q 'service_worker_static_vault: true' src/index.js
-          grep -q 'desktop_fallback_port: 8788' src/index.js
-          grep -q 'raw_vault_fallback: true' src/index.js
-          # V3.1 CPU-aware local worker swarm + intelligent extraction + virtual cards
-          grep -q 'plan_c_local_worker_pool: true' src/index.js
-          grep -q 'plan_c_logical_task_capacity: 1000' src/index.js
-          grep -q 'plan_c_physical_worker_cap: 16' src/index.js
-          grep -q 'plan_c_worker_count_source: "navigator.hardwareConcurrency"' src/index.js
-          grep -q 'plan_c_main_thread_extraction: false' src/index.js
-          grep -q 'plan_c_offline_intelligence: "boolean-exact-or-bm25-hard-threshold"' src/index.js
-          grep -q 'plan_c_virtualized_result_cards: true' src/index.js
-          grep -q 'plan_c_card_gap_px: 40' src/index.js
-          grep -q 'plan_c_window_expansion: true' src/index.js
-          grep -q 'plan_c_context_before: 2' src/index.js
-          grep -q 'plan_c_context_after: 4' src/index.js
-          grep -q 'plan_c_full_chunk_fallback: true' src/index.js
-          grep -q 'plan_c_sequential_chunk_merge: true' src/index.js
-          grep -q 'plan_c_canonical_reference_elevation: true' src/index.js
-          grep -q 'plan_c_boolean_exact_match: true' src/index.js
-          grep -q 'plan_c_hard_bm25_threshold: 3.25' src/index.js
-          grep -q 'plan_c_hard_min_coverage: 0.50' src/index.js
-          grep -q 'plan_c_zero_noise: true' src/index.js
-          grep -q 'plan_c_elegant_silence: true' src/index.js
-          grep -q 'plan_c_fuzzy_compensation_disabled: true' src/index.js
-          grep -q 'plan_c_strict_reference_local_first: true' src/index.js
-          grep -q 'plan_c_strict_reference_cloud_fuzzy_bypass: true' src/index.js
-          grep -q 'plan_c_terminal_zero_hit: true' src/index.js
+          node --check scripts/browser-voice-smoke.mjs
+          node --check scripts/browser-ingest-smoke.mjs
+          bash -n scripts/autonomous-release.sh
+
+          # Core V4.0 identity
+          grep -q '4.0.0-omni-library-symmetry' src/index.js
+          grep -q 'cloudflare-v4-omni-library-symmetry' src/index.js
+          grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
+          grep -q 'online_offline_search_symmetry: true' src/index.js
+          grep -q 'same_paragraph_phrase_required: true' src/index.js
+          grep -q 'fuzzy_matching_disabled: true' src/index.js
+          grep -q 'or_matching_disabled: true' src/index.js
+          grep -q 'omni_library_sync: true' src/index.js
+          grep -q 'omni_sync_batch_size: 200' src/index.js
+          grep -q 'omni_sync_worker: true' src/index.js
+          grep -q 'omni_sync_memory_flush: true' src/index.js
+          grep -q 'omni_search_all_documents: true' src/index.js
+          grep -q 'omni_logical_task_capacity: 1000' src/index.js
+          grep -q 'omni_physical_worker_cap: 16' src/index.js
+          grep -q 'omni_virtual_scroller: true' src/index.js
+          grep -q 'omni_card_gap_px: 40' src/index.js
+
+          # One shared exact phrase engine for server and browser
+          test -f public/strict-match-core.js
+          grep -q 'STRICT_MATCH_VERSION="4.0.0"' public/strict-match-core.js
+          grep -q 'STRICT_LOGICAL_TASK_CAP=1000' public/strict-match-core.js
+          grep -q 'strictParagraphMatch' public/strict-match-core.js
+          grep -q 'deriveStrictPhrase' public/strict-match-core.js
+          grep -q 'paragraphBlocks' public/strict-match-core.js
+          grep -q 'extractSemanticReference' public/strict-match-core.js
+          grep -q 'from "../public/strict-match-core.js"' src/index.js
+          grep -q 'strictParagraphMatch' src/index.js
+
+          # Cloudflare + Supabase strict full-library path
+          grep -q 'retrieveDurableStrictContext' src/index.js
+          grep -q 'retrieveSupabaseStrictContext' src/index.js
+          grep -q 'retrieveContextV4Strict' src/index.js
+          grep -q '"/search-strict"' src/index.js
+          grep -q 'strict-phrase-durable-v4' src/index.js
+          grep -q 'strict-phrase-supabase-v4' src/index.js
+          grep -q 'text","ilike.\*"' src/index.js
+          grep -q 'pushStrictHit' src/index.js
+          grep -q 'roundRobinStrictHits' src/index.js
+          grep -q 'void suppliedEmbedding' src/index.js
+          grep -q 'strict-phrase-provider-v4' src/index.js
+          grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' src/index.js
+
+          # IndexedDB strict scan across all local documents
+          test -f public/rag-search-worker.js
+          grep -q 'search-strict' public/rag-search-worker.js
+          grep -q 'strictSearchAll' public/rag-search-worker.js
+          grep -q 'openCursor' public/rag-search-worker.js
+          grep -q 'strict-phrase-indexeddb-v4' public/rag-search-worker.js
+          grep -q 'roundRobinStrictHits' public/rag-search-worker.js
+          grep -q 'OFFLINE_TOP_K=1000' public/rag-cascade.js
+          grep -q '"search-strict"' public/rag-cascade.js
+          grep -q 'IndexedDB strict phrase full-library' public/rag-cascade.js
+
+          # 1000 logical local tasks, hardware-governed worker pool
           test -f public/local-turbine-pool.js
           test -f public/local-turbine-worker.js
           grep -q 'LOGICAL_NODE_CAPACITY=1000' public/local-turbine-pool.js
           grep -q 'MAX_PHYSICAL_WORKERS=16' public/local-turbine-pool.js
           grep -q 'navigator.hardwareConcurrency' public/local-turbine-pool.js
-          grep -q 'new Worker("/local-turbine-worker.js' public/local-turbine-pool.js
-          grep -q 'BM25_K1=1.35' public/local-turbine-worker.js
-          grep -q 'proximityBonus' public/local-turbine-worker.js
-          grep -q 'exactPhrase' public/local-turbine-worker.js
-          grep -q 'runLocalTurbines' public/failover-v3.js
-          grep -q 'OFFLINE_TOP_K=1000' public/rag-cascade.js
-          grep -q 'offlineSearch' public/rag-cascade.js
-          grep -q 'IndexedDB offline BM25 1000' public/rag-cascade.js
-          grep -q 'engine?.offlineSearch' public/failover-v3.js
-          grep -q 'paragraphIdf' public/local-turbine-worker.js
+          grep -q 'new Worker("/local-turbine-worker.js?v=4.0.0",{type:"module"})' public/local-turbine-pool.js
+          grep -q 'strict-same-paragraph-phrase-v4' public/local-turbine-pool.js
+          grep -q 'fuzzy_disabled:true' public/local-turbine-pool.js
+          grep -q 'or_disabled:true' public/local-turbine-pool.js
+          grep -q 'strictParagraphMatch' public/local-turbine-worker.js
+          grep -q 'STRICT_PHRASE_MISS' public/local-turbine-worker.js
           grep -q 'CONTEXT_BEFORE=2' public/local-turbine-worker.js
           grep -q 'CONTEXT_AFTER=4' public/local-turbine-worker.js
-          grep -q 'contextWindow' public/local-turbine-worker.js
-          grep -q 'full_chunk_fallback' public/local-turbine-worker.js
-          grep -q 'CANONICAL_REFERENCE_RE' public/local-turbine-worker.js
-          grep -q 'canonicalReference' public/local-turbine-worker.js
-          grep -q 'semantic_title' public/local-turbine-worker.js
-          grep -q 'HARD_BM25_THRESHOLD=3.25' public/local-turbine-worker.js
-          grep -q 'HARD_MIN_COVERAGE=0.50' public/local-turbine-worker.js
-          grep -q 'STRICT_SCRIPTURE_QUERY_RE' public/local-turbine-worker.js
-          grep -q 'STRICT_BOOK_QUERY_RE' public/local-turbine-worker.js
-          grep -q 'exactIntent' public/local-turbine-worker.js
-          grep -q 'containsExactTarget' public/local-turbine-worker.js
-          grep -q 'BOOLEAN_EXACT_MISS' public/local-turbine-worker.js
-          grep -q 'HARD_THRESHOLD_REJECT' public/local-turbine-worker.js
-          grep -q 'strict_mode:"boolean-exact"' public/local-turbine-worker.js
-          grep -q 'MIN_RESULT_SCORE=3.25' public/local-turbine-pool.js
-          grep -q 'HARD_MIN_COVERAGE=0.50' public/local-turbine-pool.js
-          grep -q 'strict_empty:cards.length===0' public/local-turbine-pool.js
-          grep -q 'zero_noise:true' public/local-turbine-pool.js
-          grep -q 'Nenhuma correspondência exata encontrada na biblioteca.' public/failover-v3.js
-          grep -q 'terminal:true' public/failover-v3.js
+          grep -q 'extractSemanticReference' public/local-turbine-worker.js
+
+          # Omni Library sync: max 200 rows resident per page, then explicit release
+          test -f public/omni-sync-worker.js
+          grep -q 'BATCH_SIZE=200' public/omni-sync-worker.js
+          grep -q 'rows.length=0' public/omni-sync-worker.js
+          grep -q 'rows=null' public/omni-sync-worker.js
+          grep -q 'payload=null' public/omni-sync-worker.js
+          grep -q '/api/admin/omni-sync-page' src/index.js
+          grep -q 'Math.min(200' src/index.js
+          grep -q 'memory_bounded:true' src/index.js
+          grep -q 'omniSyncBtn' public/index.html
+          grep -q 'SINCRONIZAR BIBLIOTECA COMPLETA' public/index.html
+          grep -q 'new Worker("/omni-sync-worker.js?v=4.0.0")' public/app.js
+          grep -q 'maybeAutoOmniSync' public/app.js
+          grep -q 'OMNI_SYNC_STAMP_KEY' public/app.js
+
+          # Rendering parity and zero-noise UI
+          grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js
           grep -q 'appendElegantSilence' public/app.js
-          grep -q 'isStrictPrecisionReferenceIntent' public/app.js
-          grep -q 'recoverStrictPrecision' public/failover-v3.js
-          grep -q 'BOOLEAN EXACT' public/app.js
-          grep -q 'strict-empty-msg' public/app.js
-          grep -q 'strict-empty-text' public/style.css
-          grep -q 'mergeSequentialOfflineCards' public/app.js
-          grep -q 'appendTextWithoutDuplicate' public/app.js
-          grep -q 'canonicalHeader' public/app.js
-          grep -q 'resultados sequenciais costurados' public/app.js
-          grep -q 'indexeddb-local-worker-swarm' public/failover-v3.js
-          grep -q 'appendOfflineTurbineResults' public/app.js
-          grep -q 'offline-turbine-card' public/app.js
-          grep -q 'const GAP=40' public/app.js
-          grep -q 'offline-turbine-viewport' public/style.css
+          grep -q 'offline-turbine-source-subtitle' public/app.js
+          grep -q 'offline-turbine-source-subtitle' public/style.css
           grep -q 'white-space:pre-wrap' public/style.css
-          grep -q 'slot.style.paddingBottom=GAP' public/app.js
-          grep -q 'ensureFailoverV3' public/app.js
-          grep -q 'ensureRagCascade' public/app.js
-          grep -q 'activateHeavyLocalSubsystems' public/app.js
-          grep -q 'recoverAnalytic' public/failover-v3.js
-          grep -q 'recoverDirect' public/failover-v3.js
-          grep -q 'planB' public/failover-v3.js
-          grep -q 'planCLocalAnalytic' public/failover-v3.js
-          grep -q 'planDAnalytic' public/failover-v3.js
-          grep -q 'planE' public/failover-v3.js
-          grep -q 'planF' public/failover-v3.js
-          grep -q 'DecompressionStream' public/failover-v3.js
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-3"' public/sw-v3.js
-          grep -q 'A->B->C->D->E->F' public/failover-manifest.json
-          test -f public/steel/index.json
-          test -f scripts/build-static-vault.mjs
-          test -f scripts/build-failover-manifest.mjs
-          test -f scripts/local-fallback-server.mjs
-          test -f scripts/export-raw-vault.mjs
-          test -f raw-vault/README.md
-          test -f standby/core.mjs
-          test -f standby/vercel/api/index.mjs
-          test -f standby/deno/main.ts
-          ! grep -q '__ragCascadeReady' public/index.html
-          ! grep -q 'window.__pdfjsReady = import' public/index.html
-          grep -q 'groqApiKeys' src/index.js
-          grep -q 'runAsyncWorkerPool' src/index.js
-          grep -q 'massivePipelineSynthesis' src/index.js
-          grep -q 'massivePipelineStreamResponse' src/index.js
-          grep -q 'provider_auth_surface: "server-side-secrets-only"' src/index.js
-          grep -q 'client_provider_keys_exposed: false' src/index.js
-          grep -q 'supabase_transport: "postgrest-https"' src/index.js
-          grep -q 'createNodeProgressVirtualizer' public/app.js
-          grep -q 'NODE_VIRTUAL_MAX = 500' public/app.js
-          grep -q 'event === "node"' public/app.js
-          grep -q 'event === "keepalive"' public/app.js
-          node --check scripts/browser-voice-smoke.mjs
-          node --check scripts/browser-ingest-smoke.mjs
-          bash -n scripts/autonomous-release.sh
-          grep -q 'whisper-large-v3-turbo' src/index.js
-          grep -q 'browser-local-pt-BR' src/index.js
-          grep -q 'class LibraryDO' src/index.js
-          grep -q 'env.LIBRARY' src/index.js
-          grep -q 'durable_objects' wrangler.jsonc
-          grep -q 'new_sqlite_classes' wrangler.jsonc
-          grep -q 'conversation_messages' src/index.js
-          grep -q 'job_text_pages' src/index.js
-          grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
-          grep -q 'EMBED_CONCURRENCY = 50' src/index.js
-          grep -q 'GROQ_HISTORY_MESSAGES' src/index.js
-          grep -q 'GROQ_INPUT_BUDGET_TOKENS' src/index.js
-          grep -q 'isUsefulChunkText' src/index.js
-          grep -q 'embeddingAdapter' src/index.js
-          grep -q 'lexical_rag_fallback: true' src/index.js
-          grep -q 'embedding_provider: "browser-transformers"' src/index.js
-          grep -q 'LOCAL_EMBEDDING_MODEL' src/index.js
-          grep -q 'local-ingest-start' public/app.js
-          grep -q 'indexedDB' public/app.js
-          grep -q 'embedding-worker.js' public/app.js
-          grep -q 'marked@15.0.12' public/index.html
-          grep -q 'dompurify@3.2.6' public/index.html
-          grep -q 'DOMPurify' public/app.js
-          grep -q 'safeMarkdownHtml' public/app.js
-          grep -q 'isFocusedCitationRequest' src/index.js
-          grep -q 'LEXICAL_MIN_COVERAGE = 0.50' src/index.js
-          grep -q 'gracefulEmptyAnswer' src/index.js
-          grep -q 'Não encontrei informações nos documentos indexados para responder a esta pergunta.' src/index.js
-          grep -q 'transcribeBlobWithRetry' public/app.js
-          grep -q 'scheduleVoiceReconnect' public/app.js
-          grep -q 'unlockAudioOutput' public/app.js
-          grep -q 'noiseSuppression: true' public/app.js
-          grep -q 'echoCancellation: true' public/app.js
-          grep -q 'autoGainControl: true' public/app.js
-          grep -q 'pdf_noise_filter: true' src/index.js
-          grep -q 'humanDocumentName' src/index.js
-          grep -q 'cleanNarrativeText' src/index.js
-          grep -q 'Obras Padrão' src/index.js
-          grep -q 'standard.*works' public/app.js
-          grep -q 'BM25_K1' src/index.js
-          grep -q 'bm25-fallback' src/index.js
-          grep -q 'chunking_density: "paragraph-verse-granular"' src/index.js
-          grep -q 'aggressiveGroqMessages' src/index.js
-          grep -q 'GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS' src/index.js
-          grep -q 'idbDelete' public/app.js
-          grep -q 'pruneIndexedDbPointers' public/app.js
-          grep -q 'Date.now()' public/index.html
-          grep -q 'no-cache, no-store, must-revalidate' src/index.js
-          grep -q '/api/admin/ping' src/index.js
-          grep -q '/health/deploy' src/index.js
-          grep -q 'deploy-only-no-storage-read' src/index.js
-          grep -q 'semantic_min_score: 0.38' src/index.js
-          grep -q 'top_k: 500' src/index.js
-          grep -q 'require_lexical_match: false' src/index.js
-          grep -q 'FONTES E REFERÊNCIAS' src/index.js
-          grep -q 'whisper-local.js' public/index.html
-          grep -q 'rag-cascade.js' public/app.js
-          test -f public/rag-cascade.js
-          test -f public/rag-search-worker.js
-          test -f public/opfs-sqlite-worker.js
-          test -f public/biblioteca.json
-          grep -q 'fns_rag_resilience_v1' public/rag-search-worker.js
-          grep -q '@sqlite.org/sqlite-wasm@3.53.4-build1' public/opfs-sqlite-worker.js
-          grep -q 'Localhost ChromaDB' public/rag-cascade.js
-          grep -q 'Supabase pgvector' public/rag-cascade.js
-          grep -q 'Pinecone Serverless' public/rag-cascade.js
-          grep -q 'MongoDB Atlas Vector Search' public/rag-cascade.js
-          grep -q 'DataStax Astra DB' public/rag-cascade.js
-          grep -q 'BM25 local bruto' public/rag-cascade.js
-          grep -q '/api/rag/search' src/index.js
-          grep -q '/api/rag/provider-search' src/index.js
-          grep -q 'normalizeClientContext' src/index.js
-          grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '3.3.0-strict-precision' src/index.js
-          grep -q 'local_library_catalog: true' src/index.js
-          grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
-          grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
-          grep -q 'if(password===LOCAL_ADMIN_PASSWORD)' public/app.js
-          grep -q 'MAP_BATCH_SIZE = 5' src/index.js
-          grep -q 'mapReduceContext' src/index.js
-          grep -q 'MICRO_NODE_COUNT = 20' src/index.js
-          grep -q 'MICRO_NODE_BATCH_SIZE = 5' src/index.js
-          grep -q 'processMicroRelayNode' src/index.js
-          grep -q 'runMasterNode20' src/index.js
-          grep -q 'precomputedRelayStreamResponse' src/index.js
-          grep -q 'micro_node_chain: false' src/index.js
-          grep -q 'streaming_relay: "async-worker-pool"' src/index.js
-          grep -q 'master_node: \"final-fusion\"' src/index.js
-          grep -q 'master_fusion_mode: "massive-dense-encyclopedic"' src/index.js
-          grep -q 'post_master_llm_rewrite: false' src/index.js
-          # deploy health exposes V3 failover umbrella + V2 analytical pool
-          grep -q 'micro_node_count: MASSIVE_NODE_COUNT' src/index.js
-          grep -q 'micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE' src/index.js
-          grep -q 'massiveMasterSynthesis' src/index.js
-          grep -q 'rag_map_reduce: true' src/index.js
-          grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
-          grep -q 'groq_temperature: 0.0' src/index.js
-          grep -q 'deterministic_reference_rendering: true' src/index.js
-          grep -q 'cross_document_citation_mode: "mandatory"' src/index.js
-          grep -q 'anti_bibliographic_isolation: true' src/index.js
-          grep -q 'false_negative_synthesis_guard: true' src/index.js
-          grep -q 'failure_message_requires_zero_sources: true' src/index.js
-          grep -q 'total_source_release: true' src/index.js
-          grep -q 'map_stage_can_filter_sources: false' src/index.js
-          grep -q 'deterministic_sources_use_cited_only: true' src/index.js
-          grep -q 'encyclopedic_dictionary_mode: true' src/index.js
-          grep -q 'transversal_mass_scan: true' src/index.js
-          grep -q 'diversity_round_robin: true' src/index.js
-          grep -q 'diversifyContextAcrossDocuments' src/index.js
-          grep -q 'crossLibraryLedger' src/index.js
-          grep -q 'compactIndependentEvidenceFromSources' src/index.js
-          grep -q 'MODO DICIONÁRIO DENSO' src/index.js
-          grep -q 'CATÁLOGO TRANSVERSAL:' src/index.js
-          grep -q 'buildMapBatchContext' src/index.js
-          grep -q 'const mappedContext = diversifyContextAcrossDocuments' src/index.js
-          grep -Fq 'nenhum [F#] recebido pode ser ignorado silenciosamente' src/index.js
-          grep -q 'repairFalseNegativeSynthesis' src/index.js
-          grep -q 'deterministicSynthesisFromSources' src/index.js
-          grep -q 'fallback = sources.length === 0' src/index.js
-          grep -q 'Examine TODOS os trechos do lote individualmente' src/index.js
-          grep -q 'Não selecione apenas a fonte mais óbvia' src/index.js
-          grep -q 'Se existirem evidências ALTA ou MÉDIA de vários livros/autores' src/index.js
-          grep -q 'crossLibraryStats' src/index.js
-          grep -q 'independent_documents' src/index.js
-          grep -q 'selectCitedSources' src/index.js
-          grep -q 'repairSparseCitationCoverage' src/index.js
-          grep -q 'retrieval_candidates_are_not_evidence: true' src/index.js
-          grep -q 'encyclopedic_cohesion_guard: true' src/index.js
-          grep -q 'raw_excerpt_dump_in_references: false' src/index.js
-          grep -q 'inline_citation_grounding: true' src/index.js
-          grep -q 'RELEVÂNCIA=ALTA|MÉDIA|BAIXA|NENHUMA' src/index.js
-          grep -q 'hasDeterministicReferenceSection' public/app.js
-          grep -q 'mirror_queue' public/app.js
-          grep -q 'processMirrorQueue' public/app.js
-          grep -q 'MIRROR_BATCH_SIZE=50' scripts/export-multicloud.mjs
-          grep -q 'EXPORT_DELAY_MS=1200' scripts/export-multicloud.mjs
-          grep -q 'MIRROR_DELAY_MS=900' scripts/export-multicloud.mjs
-          grep -q 'mirrorSupabase' src/index.js
-          grep -q 'mirrorPinecone' src/index.js
-          grep -q 'SUPABASE_SERVICE_ROLE_KEY' src/index.js
-          grep -q 'PINECONE_API_KEY' src/index.js
-          grep -q 'force row level security' supabase/migrations/001_rag_embeddings_rls.sql
-          grep -q 'grant select, insert, update, delete on table public.rag_embeddings to service_role' supabase/migrations/001_rag_embeddings_rls.sql
-          grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
-          grep -q 'Cite only source IDs selected by Map stages' ../.git/logs/HEAD || true
-          grep -q 'mirrorSupabase' src/index.js
-          grep -q 'mirrorPinecone' src/index.js
-          grep -q '/api/admin/export-library' src/index.js
-          grep -q '/export-page' src/index.js
-          test -f supabase/migrations/001_rag_embeddings_rls.sql
-          grep -q 'force row level security' supabase/migrations/001_rag_embeddings_rls.sql
-          test -f scripts/export-multicloud.mjs
-          grep -q 'biblioteca_backup' scripts/export-multicloud.mjs
-          grep -q 'TOP_K=500' public/rag-cascade.js
-          grep -q 'hydrateStaticBackup' public/rag-cascade.js
-          test -f public/biblioteca_backup.json
-          grep -q 'expected_embeddings' public/biblioteca_backup.json
-          grep -q 'Tempo limite de 8 segundos' public/whisper-local.js
-          grep -q 'webkitSpeechRecognition' public/whisper-local.js
-          grep -q '/api/stt' public/whisper-local.js
-          grep -q 'library_catalog' public/app.js
-          grep -q 'sync_queue' public/app.js
-          grep -q 'offline_vector_jobs' public/app.js
-          grep -q 'processSyncQueue' public/app.js
-          grep -q 'queueOfflineVectorization' public/app.js
-          grep -q 'getDocumentChunks' public/rag-cascade.js
-          grep -q 'get-document-chunks' public/rag-search-worker.js
-          grep -q 'IndexedDB local' public/app.js
-          grep -q 'token.length < 4' src/index.js
-          grep -q 'Senha da biblioteca:' public/app.js
-          grep -q 'localBookCatalog' public/app.js
-          grep -q 'lista foi carregada do IndexedDB local' public/app.js
-          grep -q 'listDocuments' public/rag-cascade.js
-          grep -q 'deleteDocument' public/rag-cascade.js
-          grep -q 'list-documents' public/rag-search-worker.js
-          test -f public/whisper-local.js
-          test -f public/whisper-worker.js
-          grep -q 'Xenova/whisper-tiny' public/whisper-worker.js
-          grep -q '@xenova/transformers@2.17.2' public/whisper-worker.js
-          grep -q 'noiseSuppression:true' public/whisper-local.js
-          grep -q 'echoCancellation:true' public/whisper-local.js
-          grep -q 'autoGainControl:true' public/whisper-local.js
-          test -f public/embedding-worker.js
-          grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
-          grep -q 'search-lexical' src/index.js
-          grep -q 'never split a rate-limited batch' src/index.js
-          grep -q 'parallelMapLimit' src/index.js
-          grep -q 'embedOneWithRetry' src/index.js
-          grep -q 'matrixChunkPages' src/index.js
-          grep -q 'server_pdf_parsing: false' src/index.js
-          grep -q 'R2_DIRECT_DISABLED' src/index.js
-          grep -q '/api/admin/r2-presign' src/index.js
-          grep -q 'extractPdfLocally' public/app.js
-          grep -q 'uploadOriginalDirectToR2' public/app.js
-          grep -q 'pdfjs-dist@4.10.38' public/app.js
-          grep -q 'waitForIndexJob' public/app.js
-          grep -q 'voiceLoopEnabled' public/app.js
+          grep -q 'margin-bottom:2.5rem' public/style.css
+          grep -q 'offline-turbine-viewport' public/style.css
+          grep -q 'layer.replaceChildren(fragment)' public/app.js
+          grep -q 'const GAP=40' public/app.js
+          grep -q 'mergeSequentialOfflineCards' public/app.js
+
+          # Service-worker cache and V4 manifest
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v4"' public/sw-v3.js
+          grep -q '"/strict-match-core.js"' public/sw-v3.js
+          grep -q '"/omni-sync-worker.js"' public/sw-v3.js
+          grep -q '"version": "4.0.0"' public/failover-manifest.json
+          grep -q '"engine": "omni-library-strict-v4"' public/failover-manifest.json
+          grep -q '"same_paragraph_phrase_required": true' public/failover-manifest.json
+          grep -q '"omni_sync_batch_size": 200' public/failover-manifest.json
+
+          # Existing production invariants kept intact
+          grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
+          grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
+          grep -q 'SSE_KEEPALIVE_MS = 15000' src/index.js
+          grep -q 'EXACT_SWARM_NODE_COUNT = 1000' src/index.js
+          grep -q 'EXACT_MAX_CONCURRENT_REQUESTS = 50' src/index.js
           grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
           grep -q 'text/event-stream' src/index.js
-          grep -q 'streamChat' public/app.js
+          grep -q 'provider_auth_surface: "server-side-secrets-only"' src/index.js
+          grep -q 'client_provider_keys_exposed: false' src/index.js
+          grep -q 'class LibraryDO' src/index.js
+          grep -q 'durable_objects' wrangler.jsonc
+          grep -q 'new_sqlite_classes' wrangler.jsonc
+          grep -q 'pdfjs-dist@4.10.38' public/app.js
+          grep -q 'whisper-large-v3-turbo' src/index.js
           ! grep -q 'env.AI' src/index.js
           ! grep -q '@cf/' src/index.js
           ! grep -qi 'gemini' src/index.js
           ! grep -q 'AI.toMarkdown' src/index.js
           ! grep -q 'request.formData' src/index.js
           ! grep -q 'readPdfBuffer' src/index.js
-          ! grep -q 'job_pdf_parts' src/index.js
-          ! grep -q 'onrender.com' src/index.js
+
