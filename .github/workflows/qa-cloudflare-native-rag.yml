@@ -98,13 +98,24 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.19.1-dense-dictionary-mode' src/index.js
+          grep -q '1.20.0-twenty-node-relay' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
           grep -q 'if(password===LOCAL_ADMIN_PASSWORD)' public/app.js
-          grep -q 'MAP_BATCH_SIZE = 20' src/index.js
+          grep -q 'MAP_BATCH_SIZE = 5' src/index.js
           grep -q 'mapReduceContext' src/index.js
+          grep -q 'MICRO_NODE_COUNT = 20' src/index.js
+          grep -q 'MICRO_NODE_BATCH_SIZE = 5' src/index.js
+          grep -q 'processMicroRelayNode' src/index.js
+          grep -q 'runMasterNode20' src/index.js
+          grep -q 'precomputedRelayStreamResponse' src/index.js
+          grep -q 'micro_node_chain: true' src/index.js
+          grep -q 'streaming_relay: "sequential-accumulator"' src/index.js
+          grep -q 'master_node: 20' src/index.js
+          grep -q 'master_fusion_mode: "dense-encyclopedic"' src/index.js
+          grep -q 'post_master_llm_rewrite: false' src/index.js
+          grep -q 'Não existe uma 21ª chamada de LLM' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
           grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
           grep -q 'groq_temperature: 0.0' src/index.js

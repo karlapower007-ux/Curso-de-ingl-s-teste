@@ -1,4 +1,4 @@
-const VERSION = "1.19.1-dense-dictionary-mode";
+const VERSION = "1.20.0-twenty-node-relay";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -37,7 +37,12 @@ const GROQ_HISTORY_BUDGET_TOKENS = 900;
 const GROQ_RAG_BUDGET_TOKENS = 6100;
 const GROQ_MAX_COMPLETION_TOKENS = 2600;
 const MAP_REDUCE_THRESHOLD = 20;
-const MAP_BATCH_SIZE = 20;
+const MAP_BATCH_SIZE = 5;
+const MICRO_NODE_COUNT = 20;
+const MICRO_NODE_BATCH_SIZE = 5;
+const MICRO_NODE_RELAY_BUDGET_TOKENS = 5600;
+const MICRO_NODE_MAX_COMPLETION_TOKENS = 520;
+const MASTER_NODE_MAX_COMPLETION_TOKENS = 3600;
 const MAP_MAX_COMPLETION_TOKENS = 1000;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
@@ -1276,36 +1281,231 @@ function crossLibraryStats(context) {
   };
 }
 
-async function mapReduceContext(env, question, context) {
+function microNodeFallbackBatch(batch,question,nodeIndex) {
+  const raw=buildMapBatchContext(batch,question,nodeIndex);
+  return raw.split(/\n\n+/).map(block=>{
+    const line=String(block||"").replace(/\s+/g," ").trim();
+    if(!line) return "";
+    const ref=(line.match(/\[F\d+\]/)||["[F?]"])[0];
+    return ref+" | RELEVÂNCIA=NÃO AVALIADA | EVIDÊNCIA="+line.slice(0,360);
+  }).filter(Boolean).join("\n");
+}
+
+function relayRelevantRefIds(relayText) {
+  const ids=new Set();
+  const text=String(relayText || "");
+  const re=/\[F(\d{1,3})\][^\n]*RELEVÂNCIA=(ALTA|MÉDIA)/gi;
+  let match;
+  while((match=re.exec(text))!==null) ids.add("F"+Number(match[1]));
+  return [...ids];
+}
+
+async function processMicroRelayNode(env,question,batch,nodeIndex,baton) {
+  const raw=buildMapBatchContext(batch,question,nodeIndex);
+  if(!raw) return {ok:true,text:"",skipped:true};
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Você é o MICRO-NÚCLEO "+(nodeIndex+1)+" de "+MICRO_NODE_COUNT+" numa cadeia documental. Temperature 0.0. " +
+        "Receba o bastão acumulado somente para manter continuidade e evitar contradições, mas analise EXCLUSIVAMENTE o bloco novo deste núcleo. " +
+        "Não reescreva nem apague o bastão anterior: o servidor fará a concatenação determinística. " +
+        "Para CADA [F#] do bloco novo, devolva exatamente uma linha no formato '[F#] | RELEVÂNCIA=ALTA|MÉDIA|BAIXA|NENHUMA | EVIDÊNCIA=resumo factual de até 28 palavras | PAPEL=definição|apoio|contraste|contexto'. " +
+        "Use apenas o texto explícito da fonte. É proibido inventar autor, livro, capítulo, página, citação, fato ou relação causal. " +
+        "Não descarte uma fonte só por score menor; classifique-a. Preserve ALTA e MÉDIA para o núcleo mestre."
+    },
+    {
+      role:"user",
+      content:
+        "PERGUNTA:\n"+trimToTokenBudget(question,450)+
+        "\n\nBASTÃO ACUMULADO DOS NÚCLEOS ANTERIORES:\n"+trimToTokenBudget(baton || "(início da cadeia)",MICRO_NODE_RELAY_BUDGET_TOKENS)+
+        "\n\nBLOCO NOVO DO NÚCLEO "+(nodeIndex+1)+":\n"+raw
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:7600,
+      max_completion_tokens:MICRO_NODE_MAX_COMPLETION_TOKENS,
+      temperature:0.0
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(text) return {ok:true,text,skipped:false};
+  }catch(error){
+    return {ok:false,text:microNodeFallbackBatch(batch,question,nodeIndex),skipped:false,error:String(error?.message||error)};
+  }
+  return {ok:false,text:microNodeFallbackBatch(batch,question,nodeIndex),skipped:false,error:"empty-node-output"};
+}
+
+async function runMasterNode20(env,question,lastBatch,baton,history,source) {
+  const lastRaw=buildMapBatchContext(lastBatch,question,MICRO_NODE_COUNT-1);
+  const relevantRefs=relayRelevantRefIds(baton);
+  const cross=crossLibraryStats(source);
+  const ledger=crossLibraryLedger(source);
+  const messages=enforceGroqBudget([
+    {
+      role:"system",
+      content:
+        "Você é o NÚCLEO MESTRE 20 de 20 da malha documental da Consciência do Fabiano. Temperature 0.0. " +
+        "Sua função é fundir toda a cadeia num VERBETE ENCICLOPÉDICO DENSO, profundo, articulado e documentalmente rigoroso. " +
+        "Use SOMENTE as evidências recebidas no bastão e no bloco final. É proibido inventar fatos, autores, livros, capítulos, páginas, citações ou preencher lacunas com conhecimento externo. " +
+        "Se existirem evidências ALTA ou MÉDIA de vários livros/autores, costure todas elas transversalmente em prosa contínua; não afunile em uma única fonte. " +
+        "Produza de 6 a 10 parágrafos substanciais quando houver material suficiente, com definição central, desenvolvimento, convergências, complementos, contrastes e síntese integradora. " +
+        "É proibido entregar frases soltas, listas telegráficas, lixo textual, colagem de citações ou sequência de nomes sem explicação. " +
+        "Cite inline os identificadores [F#] logo após as afirmações que eles sustentam. Procure incorporar todos os [F#] classificados como ALTA ou MÉDIA, sem forçar fontes BAIXA/NENHUMA. " +
+        "Não escreva a seção final de fontes: o servidor montará o rodapé deterministicamente a partir dos metadados originais."
+    },
+    ...Array.from(history || []).slice(-4),
+    {
+      role:"user",
+      content:
+        "PERGUNTA:\n"+trimToTokenBudget(question,650)+
+        "\n\nABRANGÊNCIA: "+cross.independent_documents+" documento(s) independente(s) candidato(s)."+
+        "\nIDENTIFICADORES ALTA/MÉDIA PRESERVADOS PELOS NÚCLEOS 1-19: "+(relevantRefs.length?relevantRefs.map(x=>"["+x+"]").join(" "):"(nenhum classificado ainda)")+
+        "\n\nCATÁLOGO TRANSVERSAL:\n"+trimToTokenBudget(ledger,1400)+
+        "\n\nBASTÃO ACUMULADO DOS NÚCLEOS 1-19:\n"+trimToTokenBudget(baton || "(sem conteúdo acumulado)",5600)+
+        "\n\nBLOCO FINAL DO NÚCLEO 20:\n"+(lastRaw || "(sem novos trechos neste núcleo; faça a fusão do bastão acumulado)")+
+        "\n\nREDAJA AGORA SOMENTE A SÍNTESE PRINCIPAL ENCICLOPÉDICA."
+    }
+  ],9200);
+
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:9200,
+      max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
+      temperature:0.0
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text};
+  }catch(error){
+    return {ok:false,text:deterministicSynthesisFromSources(uniqueSources(source)),error:String(error?.message||error)};
+  }
+  return {ok:false,text:deterministicSynthesisFromSources(uniqueSources(source)),error:"empty-master-output"};
+}
+
+async function mapReduceContext(env, question, context, history=[]) {
   const source=Array.from(context || []).slice(0,TOP_K);
-  if(source.length<=MAP_REDUCE_THRESHOLD){
+  if(!source.length){
     return {
-      text:buildRagContext(source,question),
+      text:"",
+      masterSynthesis:EMPTY_GROUNDED_ANSWER,
       used:false,
-      batches:1,
-      releasedIndexes:source.map((_,i)=>i)
+      batches:0,
+      micro_nodes_total:MICRO_NODE_COUNT,
+      micro_nodes_executed:0,
+      micro_nodes_failed:0,
+      relay_mode:"sequential-accumulator",
+      releasedIndexes:[]
     };
   }
 
-  const batches=[];
-  for(let i=0;i<source.length;i+=MAP_BATCH_SIZE) batches.push(source.slice(i,i+MAP_BATCH_SIZE));
-  const mapped=await Promise.all(batches.map((batch,index)=>mapExtractReferences(env,question,batch,index)));
-  const combined=mapped.filter(Boolean).join("\n");
+  const batches=Array.from({length:MICRO_NODE_COUNT},(_,index)=>
+    source.slice(index*MICRO_NODE_BATCH_SIZE,(index+1)*MICRO_NODE_BATCH_SIZE)
+  );
+
+  let baton="";
+  let executed=0;
+  let failed=0;
+  const trace=[];
+
+  // Núcleos 1-19: relay sequencial. O servidor concatena cada saída ao bastão,
+  // impedindo que um núcleo posterior apague informação já preservada.
+  for(let nodeIndex=0;nodeIndex<MICRO_NODE_COUNT-1;nodeIndex++){
+    const batch=batches[nodeIndex];
+    if(!batch.length){
+      trace.push({node:nodeIndex+1,items:0,status:"pass-through"});
+      continue;
+    }
+    const result=await processMicroRelayNode(env,question,batch,nodeIndex,baton);
+    executed++;
+    if(!result.ok) failed++;
+    const nodeText=String(result.text || "").trim();
+    if(nodeText){
+      baton+=(baton?"\n":"")+"NÚCLEO "+(nodeIndex+1)+":\n"+nodeText;
+    }
+    trace.push({node:nodeIndex+1,items:batch.length,status:result.ok?"ok":"fallback"});
+  }
+
+  // Núcleo 20: recebe o bastão inteiro + último bloco e faz a fusão enciclopédica.
+  const master=await runMasterNode20(env,question,batches[MICRO_NODE_COUNT-1],baton,history,source);
+  executed++;
+  if(!master.ok) failed++;
+  trace.push({node:20,items:batches[19].length,status:master.ok?"master-ok":"master-fallback"});
 
   return {
-    text:
-      "MAP-REDUCE: "+source.length+" candidatos documentais examinados transversalmente em "+
-      batches.length+" lotes. Os trechos recuperados são candidatos, não uma lista de citações obrigatórias. " +
-      "A síntese deve privilegiar evidências ALTA/MÉDIA, cruzar documentos independentes e rejeitar ruído sem relação direta.\n\n"+
-      trimToTokenBudget(combined,4700),
+    text:trimToTokenBudget(baton,6500),
+    masterSynthesis:master.text,
     used:true,
-    batches:batches.length,
+    batches:Math.ceil(source.length/MICRO_NODE_BATCH_SIZE),
+    micro_nodes_total:MICRO_NODE_COUNT,
+    micro_nodes_executed:executed,
+    micro_nodes_failed:failed,
+    relay_mode:"sequential-accumulator",
+    master_node:20,
+    trace,
     releasedIndexes:source.map((_,i)=>i)
   };
 }
 
+
 function sseFrame(event, payload) {
   return "event: " + event + "\n" + "data: " + JSON.stringify(payload) + "\n\n";
+}
+
+async function precomputedRelayStreamResponse(env,answer,meta) {
+  const sources=Array.isArray(meta.sources)?meta.sources:[];
+  let safe=String(answer || "").trim();
+  if(sources.length && isEmptyGroundedFailure(safe)) safe=deterministicSynthesisFromSources(sources);
+  if(!sources.length) safe=EMPTY_GROUNDED_ANSWER;
+  const finalAnswer=finalizeGroundedAnswer(safe,sources);
+  const usedSources=selectCitedSources(finalAnswer,sources);
+  const memoryPersisted=await persistChatTurn(
+    env,meta.ownerId,meta.body,meta.question,finalAnswer,usedSources,meta.fallback
+  );
+  const frames=
+    sseFrame("meta",{
+      fontes:usedSources,
+      fallback:meta.fallback,
+      provider:"groq+20-node-relay",
+      retrieval_level:meta.retrievalLevel || 0,
+      embedding_model:LOCAL_EMBEDDING_MODEL,
+      chat_model:CHAT_MODEL,
+      map_reduce:true,
+      map_batches:Number(meta.mapBatches || 0),
+      independent_documents:Number(meta.independentDocuments || 0),
+      micro_nodes_total:MICRO_NODE_COUNT,
+      micro_nodes_executed:Number(meta.microNodesExecuted || 0),
+      micro_nodes_failed:Number(meta.microNodesFailed || 0),
+      relay_mode:"sequential-accumulator",
+      master_node:20
+    })+
+    sseFrame("delta",{text:finalAnswer})+
+    sseFrame("done",{
+      ok:true,
+      resposta:finalAnswer,
+      fontes:usedSources,
+      fallback:meta.fallback,
+      memory_persisted:memoryPersisted,
+      provider:"groq+20-node-relay",
+      retrieval_level:meta.retrievalLevel || 0,
+      embedding_model:LOCAL_EMBEDDING_MODEL,
+      chat_model:CHAT_MODEL,
+      map_reduce:true,
+      map_batches:Number(meta.mapBatches || 0),
+      independent_documents:Number(meta.independentDocuments || 0),
+      micro_nodes_total:MICRO_NODE_COUNT,
+      micro_nodes_executed:Number(meta.microNodesExecuted || 0),
+      micro_nodes_failed:Number(meta.microNodesFailed || 0),
+      relay_mode:"sequential-accumulator",
+      master_node:20,
+      false_negative_guard:true
+    });
+  return new Response(frames,{headers:securityHeaders(new Headers({
+    "Content-Type":"text/event-stream; charset=utf-8",
+    "Cache-Control":"no-cache, no-transform",
+    "X-Accel-Buffering":"no"
+  }))});
 }
 
 async function groqStreamResponse(env, messages, meta) {
@@ -1757,43 +1957,15 @@ async function chat(request, env) {
   const focusedCitation = isFocusedCitationRequest(question);
   const multipleSourcesRequested = wantsMultipleSources(question);
   const promptContext = diversifyContextAcrossDocuments(context,TOP_K);
-  const reduced = await mapReduceContext(env,question,promptContext);
+  const reduced = await mapReduceContext(env,question,promptContext,history);
   // Liberação total: a etapa MAP organiza o conteúdo, mas NÃO decide quais fontes sobrevivem.
   // Todas as fontes efetivamente recuperadas (até TOP_K) permanecem elegíveis para síntese e referências.
   const mappedContext = promptContext;
   const contextText = reduced.text;
   const crossLibrary = crossLibraryStats(mappedContext);
 
-  const messages = enforceGroqBudget([
-    {
-      role: "system",
-      content:
-        "És um assistente de pesquisa documental de alta densidade. Usa exclusivamente os trechos fornecidos. " +
-        "É expressamente proibido inventar autores, livros, capítulos, páginas, citações, fatos ou conteúdos que não estejam explícitos no contexto. " +
-        "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
-        "Se houver evidência documental válida, sintetiza somente o que ela realmente sustenta. Os trechos recuperados são CANDIDATOS de busca, não uma obrigação de citar tudo. " +
-        "Escreve apenas a seção 1. SÍNTESE PRINCIPAL; o servidor anexará depois apenas as referências [F#] efetivamente citadas, usando metadados originais e determinísticos. " +
-        "MODO DICIONÁRIO DENSO: responde como um verbete enciclopédico profundo, com definição central clara, desenvolvimento conceitual, relações entre ideias, contexto, convergências, complementos, nuances e diferenças somente quando sustentadas pelos trechos. " +
-        "Quando houver material suficiente, produz de 6 a 10 parágrafos substanciais e articulados. Cada parágrafo deve desenvolver uma ideia completa, conectá-la ao argumento geral e integrar múltiplas evidências quando possível. " +
-        "É proibido entregar frases soltas, texto vazio, notas telegráficas, sequência de nomes de livros, colagem de citações ou referências isoladas sem explicação. " +
-        "A resposta deve ter densidade de verbete: explicar o que o tema é, como as fontes o desenvolvem, onde convergem, como se complementam e quais distinções documentais aparecem. " +
-        "Cruza várias fontes dentro do mesmo raciocínio sempre que elas sustentarem o mesmo ponto. Evita a fórmula repetitiva 'a fonte X diz'; integra a evidência em prosa contínua e acadêmica. " +
-        "Depois de cada afirmação factual ou conjunto de afirmações, cita inline os identificadores [F#] que realmente a sustentam, por exemplo [F3][F8]. " +
-        "Maximiza a pluralidade de livros, autores e documentos independentes quando forem diretamente relevantes, sem criar cota artificial e sem citar fonte irrelevante apenas para aumentar quantidade. " +
-        "Não uses conhecimento externo para preencher lacunas, não transformes inferências em fatos e não repitas o texto bruto dos trechos."
-    },
-    ...history,
-    {
-      role: "user",
-      content:
-        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) candidato(s) recuperado(s).\n" +
-        "Use a maior pluralidade possível SOMENTE entre documentos que sustentem diretamente a pergunta; não trate ruído de busca como evidência.\n" +
-        "O catálogo abaixo contém metadados, não prova temática: nunca infira conteúdo pelo título.\n\n" +
-        "CATÁLOGO TRANSVERSAL DE DOCUMENTOS:\n"+crossLibraryLedger(mappedContext)+"\n\n" +
-        "MAP-REDUCE DOS TRECHOS:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
-    },
-  ]);
-
+  // A síntese final já foi produzida pelo Núcleo Mestre 20.
+  // Não existe uma 21ª chamada de LLM: o rodapé é determinístico.
   const allSources = uniqueSources(mappedContext);
   const sources = allSources;
   const fallback = sources.length === 0;
@@ -1823,17 +1995,18 @@ async function chat(request, env) {
   }
 
   if (wantsStream) {
-    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel, mapReduceUsed:reduced.used, mapBatches:reduced.batches, independentDocuments:crossLibrary.independent_documents });
+    return precomputedRelayStreamResponse(env,reduced.masterSynthesis,{
+      ownerId,body,question,sources,fallback,retrievalLevel,
+      mapBatches:reduced.batches,
+      independentDocuments:crossLibrary.independent_documents,
+      microNodesExecuted:reduced.micro_nodes_executed,
+      microNodesFailed:reduced.micro_nodes_failed
+    });
   }
 
-  const result = await (await groqCompletion(env, messages, false)).json();
-  let answer = String(result?.choices?.[0]?.message?.content || "").trim();
-  if(sources.length>0 && isEmptyGroundedFailure(answer)){
-    answer=await repairFalseNegativeSynthesis(env,question,sources);
-  }else if(!answer || /^sem resposta\.?$/i.test(answer)){
-    answer=gracefulEmptyAnswer();
-  }
-  answer = await repairSparseCitationCoverage(env,question,answer,sources);
+  let answer = String(reduced.masterSynthesis || "").trim();
+  if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
+  if(!sources.length) answer=gracefulEmptyAnswer();
   answer = finalizeGroundedAnswer(answer,sources);
   const usedSources=selectCitedSources(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, fallback);
@@ -1851,6 +2024,11 @@ async function chat(request, env) {
     map_reduce: reduced.used,
     map_batches: reduced.batches,
     independent_documents: crossLibrary.independent_documents,
+    micro_nodes_total: MICRO_NODE_COUNT,
+    micro_nodes_executed: reduced.micro_nodes_executed,
+    micro_nodes_failed: reduced.micro_nodes_failed,
+    relay_mode: reduced.relay_mode,
+    master_node: 20,
   });
 }
 
@@ -1946,6 +2124,14 @@ async function status(env) {
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
+    micro_node_chain: true,
+    micro_node_count: MICRO_NODE_COUNT,
+    micro_node_batch_size: MICRO_NODE_BATCH_SIZE,
+    streaming_relay: "sequential-accumulator",
+    master_node: 20,
+    master_fusion_mode: "dense-encyclopedic",
+    micro_node_temperature: 0.0,
+    post_master_llm_rewrite: false,
     require_lexical_match: REQUIRE_LEXICAL_MATCH,
     lexical_ranker: "bm25",
     bm25_k1: BM25_K1,
