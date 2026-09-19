@@ -22,7 +22,7 @@ const searchConfig = Object.freeze({
   require_lexical_match: false,
 });
 const TOP_K = searchConfig.top_k;
-const VECTOR_SCAN_LIMIT = 7000;
+const VECTOR_SCAN_LIMIT = 30000;
 const SEMANTIC_MIN_SCORE = searchConfig.semantic_min_score;
 const REQUIRE_LEXICAL_MATCH = searchConfig.require_lexical_match;
 const LEXICAL_MIN_COVERAGE = 0.50;
@@ -708,11 +708,11 @@ function semanticAnchorCoverage(text, question) {
 function lexicalTerms(question) {
   const stop = new Set([
     "a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre",
-    "para","por","com","como","qual","quais","fala","falar","quero","desejo","mostre","mostrar",
+    "para","por","com","como","qual","quais","fala","falar","quero","desejo","mostre","mostrar","saber","saiba","conhecer","conheca","informacao","informação",
     "versiculo","versículo","passagem","citacao","citação","referencia","referência","trecho","escritura",
     "the","and","of","to","in","is","what","about"
   ]);
-  return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 10);
+  return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 18);
 }
 
 async function retrieveLexicalContext(env, question) {
@@ -721,15 +721,39 @@ async function retrieveLexicalContext(env, question) {
   const data = await libraryCall(env, "/search-lexical", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: 7000 }),
+    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: 30000 }),
   });
   return Array.isArray(data.matches)
-    ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-fallback" }))
+    ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-full-library" }))
     : [];
+}
+
+function mergeRetrievedMatches(...groups) {
+  const seen = new Set();
+  const merged = [];
+  for (const group of groups) {
+    for (const item of (Array.isArray(group) ? group : [])) {
+      const text = String(item?.text || item?.trecho || "").trim();
+      if (!text) continue;
+      const key =
+        String(item?.id || "").trim() ||
+        [
+          String(item?.document_id || item?.filename || item?.title || ""),
+          Number(item?.page || item?.pagina || 0),
+          Number(item?.chunk_index || 0),
+          foldSearchText(text).slice(0, 180)
+        ].join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  return diversifyContextAcrossDocuments(merged, TOP_K);
 }
 
 async function retrieveContext(env, question, suppliedEmbedding = null) {
   assertBindings(env);
+  let semantic = [];
   if (Array.isArray(suppliedEmbedding) && suppliedEmbedding.length >= 64 && suppliedEmbedding.every(Number.isFinite)) {
     try {
       const data = await libraryCall(env, "/search", {
@@ -742,18 +766,25 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
           min_score: SEMANTIC_MIN_SCORE
         }),
       });
-      let matches = Array.isArray(data.matches)
+      semantic = Array.isArray(data.matches)
         ? data.matches
             .filter(item => Number(item?.score ?? -1) >= SEMANTIC_MIN_SCORE)
             .map(item => ({ ...item, retrieval_mode: "local-semantic" }))
         : [];
       if (REQUIRE_LEXICAL_MATCH && isFocusedCitationRequest(question)) {
-        matches = matches.filter(item => semanticAnchorCoverage(item.text,question) >= LEXICAL_MIN_COVERAGE);
+        semantic = semantic.filter(item => semanticAnchorCoverage(item.text,question) >= LEXICAL_MIN_COVERAGE);
       }
-      if (matches.length) return matches;
     } catch {}
   }
-  return retrieveLexicalContext(env, question);
+
+  let lexical = [];
+  try {
+    lexical = await retrieveLexicalContext(env, question);
+  } catch {}
+
+  // V1.20 hotfix: busca semântica e BM25 deixam de se excluir.
+  // Qualquer uma das duas pode abrir a malha; o servidor funde os candidatos antes dos 20 núcleos.
+  return mergeRetrievedMatches(semantic, lexical);
 }
 
 function humanDocumentName(filename, title = "") {
@@ -1943,14 +1974,24 @@ async function chat(request, env) {
     : clientHistory;
   const history = slidingHistory(historySource);
 
-  let context = normalizeClientContext(body?.client_context);
-  const retrievalLevel=Number(body?.retrieval_level || 0) || (context.length ? 2 : 0);
-  if(!context.length && env.LIBRARY){
+  const clientContext = normalizeClientContext(body?.client_context);
+  let context = clientContext;
+  let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
+
+  // V1.20 hotfix: um hit local jamais pode bloquear a leitura do acervo central.
+  // Sempre consultamos o Durable Object/BM25 e fundimos com o contexto do navegador.
+  if(env.LIBRARY){
     try {
-      context = await retrieveContext(env, question, Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
+      const serverContext = await retrieveContext(
+        env,
+        question,
+        Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null
+      );
+      context = mergeRetrievedMatches(clientContext, serverContext);
+      if(serverContext.length) retrievalLevel=Math.max(retrievalLevel,5);
     } catch (error) {
       if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
-      context = [];
+      context = clientContext;
     }
   }
 
@@ -2109,6 +2150,10 @@ async function status(env) {
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
+    full_library_recall_hotfix: true,
+    client_and_server_context_merge: true,
+    lexical_full_scan_limit: 30000,
+    lexical_single_anchor_opens_pipeline: true,
     failure_message_requires_zero_sources: true,
     total_source_release: true,
     map_stage_can_filter_sources: false,
@@ -2909,10 +2954,10 @@ export class LibraryDO {
         const body = await request.json().catch(() => ({}));
         const query = foldSearchText(body.query || "");
         const terms = Array.isArray(body.terms)
-          ? body.terms.map(foldSearchText).filter(Boolean).slice(0, 10)
+          ? body.terms.map(foldSearchText).filter(Boolean).slice(0, 18)
           : lexicalTerms(query);
         const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
-        const scanLimit = Math.max(200, Math.min(10000, Number(body.scan_limit || 7000)));
+        const scanLimit = Math.max(200, Math.min(50000, Number(body.scan_limit || 30000)));
         if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "bm25-fallback" });
 
         const rows = [...this.sql.exec(`
@@ -2954,7 +2999,7 @@ export class LibraryDO {
           }
           if(!matchedTerms) continue;
           const coverage=matchedTerms/terms.length;
-          const minMatched=terms.length<=1?1:Math.min(2,Math.ceil(terms.length*LEXICAL_MIN_COVERAGE));
+          const minMatched=1;
           const folded=foldSearchText(d.row.text);
           const exactPhrase=phrase.length>=5 && folded.includes(phrase);
           if(matchedTerms<minMatched && !exactPhrase) continue;
@@ -2971,7 +3016,7 @@ export class LibraryDO {
         const query = Array.isArray(body.embedding) ? body.embedding : [];
         const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
         const minScore = Math.max(-1, Math.min(1, Number(body.min_score ?? SEMANTIC_MIN_SCORE)));
-        const scanLimit = Math.max(50, Math.min(10000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
+        const scanLimit = Math.max(50, Math.min(50000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
         const rows = [...this.sql.exec(`
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
                  d.filename,d.title,d.author,d.language
