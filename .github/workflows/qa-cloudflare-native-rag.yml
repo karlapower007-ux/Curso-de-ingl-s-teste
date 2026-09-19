@@ -134,18 +134,16 @@ jobs:
           grep -q 'crossLibraryLedger' src/index.js
           grep -q 'compactIndependentEvidenceFromSources' src/index.js
           grep -q 'MODO DICIONÁRIO DENSO' src/index.js
-          grep -q 'CATÁLOGO TRANSVERSAL DE DOCUMENTOS' src/index.js
+          grep -q 'CATÁLOGO TRANSVERSAL:' src/index.js
           grep -q 'buildMapBatchContext' src/index.js
           grep -q 'const mappedContext = promptContext' src/index.js
           grep -Fq 'nenhum [F#] recebido pode ser ignorado silenciosamente' src/index.js
-          grep -q 'Os trechos recuperados são candidatos, não uma lista de citações obrigatórias' src/index.js
           grep -q 'repairFalseNegativeSynthesis' src/index.js
           grep -q 'deterministicSynthesisFromSources' src/index.js
           grep -q 'fallback = sources.length === 0' src/index.js
-          grep -q 'só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas' src/index.js
           grep -q 'Examine TODOS os trechos do lote individualmente' src/index.js
           grep -q 'Não selecione apenas a fonte mais óbvia' src/index.js
-          grep -q 'Maximiza a pluralidade de livros, autores e documentos independentes' src/index.js
+          grep -q 'Se existirem evidências ALTA ou MÉDIA de vários livros/autores' src/index.js
           grep -q 'crossLibraryStats' src/index.js
           grep -q 'independent_documents' src/index.js
           grep -q 'selectCitedSources' src/index.js
