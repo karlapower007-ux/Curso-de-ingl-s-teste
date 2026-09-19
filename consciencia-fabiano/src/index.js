@@ -760,10 +760,8 @@ async function retrieveLexicalContext(env, question) {
 }
 
 function supabaseLexicalConfigured(env) {
-  return Boolean(
-    String(env?.SUPABASE_URL || "").trim() &&
-    String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim()
-  );
+  void env;
+  return false;
 }
 
 async function retrieveSupabaseLexicalContext(env, question) {
@@ -3204,8 +3202,8 @@ async function status(env) {
     client_and_server_context_merge: true,
     lexical_full_scan_limit: VECTOR_SCAN_LIMIT,
     lexical_single_anchor_opens_pipeline: true,
-    supabase_lexical_fallback: true,
-    durable_object_quota_fails_open_to_supabase: true,
+    supabase_lexical_fallback: false,
+    durable_object_quota_fails_open_to_supabase: false,
     empty_mirror_is_not_empty_library: true,
     retrieval_unavailable_is_distinct_from_no_match: true,
     failure_message_requires_zero_sources: true,
@@ -3220,10 +3218,10 @@ async function status(env) {
     raw_excerpt_dump_in_references: false,
     inline_citation_grounding: true,
     synthesis_independent_document_cap: TOP_K,
-    multicloud_mirror: true,
+    multicloud_mirror: false,
     provider_auth_surface: "server-side-secrets-only",
     client_provider_keys_exposed: false,
-    supabase_transport: "postgrest-https",
+    supabase_transport: "disabled-official-build",
     direct_postgres_connections: 0,
     logical_worker_nodes: MASSIVE_NODE_COUNT,
     worker_pool_concurrency: MASSIVE_WORKER_CONCURRENCY,
@@ -3368,7 +3366,7 @@ async function status(env) {
     rag_cloudflare_level: 5,
     rag_external_slots: [],
     supabase_mirror_configured: false,
-    pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
+    pinecone_mirror_configured: false,
     local_library_catalog: true,
     admin_access_password_version: "gadu-v1",
     groq_history_window: GROQ_HISTORY_MESSAGES,
@@ -3384,7 +3382,6 @@ async function status(env) {
     local_embedding_dimensions: LOCAL_EMBEDDING_DIMENSIONS,
     workers_ai_used: false,
     render_dependency: false,
-    r2_direct_ready: Boolean(env.PDFS),
     r2_bucket: "consciencia-fabiano-pdfs",
     official_workers_host: "consciencia-fabiano.focoeepoder2.workers.dev",
     bindings_missing: missing,
@@ -3418,10 +3415,12 @@ async function handleApi(request, env, url, ctx) {
         ok:true,
         levels:10,
         providers:{
-          supabase:Boolean(env.SUPABASE_RAG_SEARCH_URL && env.SUPABASE_RAG_KEY),
-          pinecone:Boolean(env.PINECONE_RAG_SEARCH_URL && env.PINECONE_API_KEY),
-          mongodb:Boolean(env.MONGODB_RAG_SEARCH_URL && env.MONGODB_RAG_API_KEY),
-          astra:Boolean(env.ASTRA_RAG_SEARCH_URL && env.ASTRA_DB_APPLICATION_TOKEN)
+          supabase:false,
+          pinecone:false,
+          mongodb:false,
+          astra:false,
+          cloudflare_r2:true,
+          durable_objects:true
         }
       });
     }
@@ -4291,7 +4290,7 @@ export default {
         llm_provider: "groq",
         provider_auth_surface: "server-side-secrets-only",
         client_provider_keys_exposed: false,
-        supabase_transport: "postgrest-https",
+        supabase_transport: "disabled-official-build",
         direct_postgres_connections: 0,
         embedding_provider: "browser-transformers",
         server_pdf_parsing: false,
@@ -4419,7 +4418,7 @@ export default {
         static_backup_expected_embeddings: 25199,
         static_backup_payload_status: "scheduled-export",
         supabase_mirror_configured: false,
-        pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
+        pinecone_mirror_configured: false,
         whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
         rag_resilience_levels: 10,
