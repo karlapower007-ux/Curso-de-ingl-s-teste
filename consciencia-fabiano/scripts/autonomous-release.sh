@@ -142,13 +142,18 @@ if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   log "SUPABASE_RAG_ANY_ROW=$supa_rows"
   log "SUPABASE_RAG_JESUS_ROW=$supa_jesus"
 fi
-curl -fsS --max-time 25 "$BASE/api/rag/search" \
+rag_http=$(curl -sS --max-time 25 -o /tmp/rag-broad-probe.json -w '%{http_code}' "$BASE/api/rag/search" \
   -H 'Content-Type: application/json' \
-  --data '{"question":"Jesus"}' >/tmp/rag-broad-probe.json || { cat /tmp/rag-broad-probe.json 2>/dev/null || true; die "RAG_BROAD_PROBE_HTTP_FAILED"; }
+  --data '{"question":"Jesus"}' || echo 000)
 
-rag_count=$(jq -r 'if (.matches|type)=="array" then (.matches|length) else 0 end' /tmp/rag-broad-probe.json)
+rag_count=$(jq -r 'if (.matches|type)=="array" then (.matches|length) else 0 end' /tmp/rag-broad-probe.json 2>/dev/null || echo 0)
 runtime_ok=$(jq -r '.ok // false' /tmp/runtime-status.json 2>/dev/null || echo false)
 supa_rows=${supa_rows:-0}
+
+if [ "$rag_http" != "200" ] && { [ "$runtime_ok" = "true" ] || [ "$supa_rows" -gt 0 ]; }; then
+  cat /tmp/rag-broad-probe.json 2>/dev/null || true
+  die "RAG_BROAD_PROBE_HTTP_$rag_http"
+fi
 
 if [ "$rag_count" -gt 0 ]; then
   jq -e '[.matches[] | select((.text // "") | test("Jesus"; "i"))] | length > 0' /tmp/rag-broad-probe.json >/dev/null || {
