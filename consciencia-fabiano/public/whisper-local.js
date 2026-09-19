@@ -1,6 +1,6 @@
 (() => {
-  const btn = document.getElementById("btn-whisper");
-  const status = document.getElementById("status-whisper");
+  const btn = document.getElementById("micBtn");
+  const status = document.getElementById("status-whisper") || document.getElementById("micStatus");
   const input = document.getElementById("questionInput");
   const autoSend = document.getElementById("autoSendVoice");
   const sendBtn = document.getElementById("sendBtn");

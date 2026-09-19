@@ -1,4 +1,4 @@
-const VERSION = "1.13.0-local-whisper-deep-rag";
+const VERSION = "1.14.0-rag-ten-level-resilience";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -889,7 +889,8 @@ async function groqStreamResponse(env, messages, meta) {
         controller.enqueue(encoder.encode(sseFrame("meta", {
           fontes: meta.sources,
           fallback: meta.fallback,
-          provider: "groq+local-rag",
+          provider: "groq+resilient-rag",
+          retrieval_level: meta.retrievalLevel || 0,
           embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
@@ -927,7 +928,8 @@ async function groqStreamResponse(env, messages, meta) {
           fontes: meta.sources,
           fallback: meta.fallback,
           memory_persisted: memoryPersisted,
-          provider: "groq+local-rag",
+          provider: "groq+resilient-rag",
+          retrieval_level: meta.retrievalLevel || 0,
           embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
@@ -1077,8 +1079,69 @@ function isFocusedCitationRequest(question) {
   return /\b(escritura|vers[ií]culo|passagem|cita[cç][aã]o|refer[eê]ncia|trecho|onde\s+(?:fala|diz)|o\s+que\s+.{0,80}(?:fala|diz)\s+sobre)\b/i.test(q);
 }
 
+function normalizeClientContext(items) {
+  if(!Array.isArray(items)) return [];
+  const out=[];
+  for(const raw of items.slice(0,TOP_K)){
+    const text=String(raw?.text || raw?.trecho || "").trim();
+    if(!text) continue;
+    out.push({
+      id:String(raw?.id || raw?.key || crypto.randomUUID()).slice(0,180),
+      document_id:String(raw?.document_id || raw?.doc_key || "client-local").slice(0,180),
+      page:Number(raw?.page || raw?.pagina || 0) || null,
+      chunk_index:Number(raw?.chunk_index || 0) || 0,
+      text:text.slice(0,6000),
+      filename:String(raw?.filename || raw?.arquivo || raw?.title || "Documento local").slice(0,300),
+      title:String(raw?.title || raw?.titulo || raw?.filename || "Documento local").slice(0,500),
+      author:String(raw?.author || raw?.autor || "").slice(0,300),
+      language:String(raw?.language || raw?.idioma || "pt").slice(0,40),
+      score:Number(raw?.score || 0),
+      retrieval_mode:String(raw?.retrieval_mode || "client-resilience").slice(0,80),
+    });
+  }
+  return out;
+}
+
+function ragProviderConfig(env, provider) {
+  const p=String(provider || "").toLowerCase();
+  const map={
+    supabase:{url:env.SUPABASE_RAG_SEARCH_URL,token:env.SUPABASE_RAG_KEY,header:"Authorization",prefix:"Bearer "},
+    pinecone:{url:env.PINECONE_RAG_SEARCH_URL,token:env.PINECONE_API_KEY,header:"Api-Key",prefix:""},
+    mongodb:{url:env.MONGODB_RAG_SEARCH_URL,token:env.MONGODB_RAG_API_KEY,header:"Authorization",prefix:"Bearer "},
+    astra:{url:env.ASTRA_RAG_SEARCH_URL,token:env.ASTRA_DB_APPLICATION_TOKEN,header:"Token",prefix:""},
+  };
+  return map[p] || null;
+}
+
+async function externalRagProviderSearch(request, env) {
+  const body=await request.json().catch(()=>({}));
+  const provider=String(body?.provider || "").toLowerCase();
+  const cfg=ragProviderConfig(env,provider);
+  if(!cfg) return json({ok:false,configured:false,provider,message:"Provedor RAG desconhecido."},404);
+  if(!cfg.url || !cfg.token) return json({ok:false,configured:false,provider,matches:[]},503);
+  const headers={"Content-Type":"application/json",[cfg.header]:cfg.prefix+String(cfg.token)};
+  if(provider==="supabase") headers.apikey=String(cfg.token);
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),1800);
+  try{
+    const res=await fetch(String(cfg.url),{
+      method:"POST",headers,signal:controller.signal,
+      body:JSON.stringify({
+        question:String(body?.question || body?.pergunta || "").slice(0,8000),
+        query_embedding:Array.isArray(body?.query_embedding)?body.query_embedding.slice(0,2048):null,
+        top_k:TOP_K,
+      })
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok) return json({ok:false,configured:true,provider,status:res.status,matches:[]},res.status);
+    const matches=normalizeClientContext(data?.matches || data?.data || []);
+    return json({ok:true,configured:true,provider,matches});
+  }catch(error){
+    return json({ok:false,configured:true,provider,matches:[],message:String(error?.message || error)},504);
+  }finally{clearTimeout(timer);}
+}
+
 async function chat(request, env) {
-  assertBindings(env);
   requireSecret(env, "GROQ_API_KEY");
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
@@ -1095,12 +1158,15 @@ async function chat(request, env) {
     : clientHistory;
   const history = slidingHistory(historySource);
 
-  let context = [];
-  try {
-    context = await retrieveContext(env, question, Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
-  } catch (error) {
-    if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
-    context = [];
+  let context = normalizeClientContext(body?.client_context);
+  const retrievalLevel=Number(body?.retrieval_level || 0) || (context.length ? 2 : 0);
+  if(!context.length && env.LIBRARY){
+    try {
+      context = await retrieveContext(env, question, Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
+    } catch (error) {
+      if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
+      context = [];
+    }
   }
 
   const focusedCitation = isFocusedCitationRequest(question);
@@ -1137,7 +1203,7 @@ async function chat(request, env) {
     body?.stream === true;
 
   if (wantsStream) {
-    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback });
+    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel });
   }
 
   const result = await (await groqCompletion(env, messages, false)).json();
@@ -1151,7 +1217,8 @@ async function chat(request, env) {
     fontes: sources,
     fallback,
     memory_persisted: memoryPersisted,
-    provider: "groq+local-rag",
+    provider: "groq+resilient-rag",
+    retrieval_level: retrievalLevel,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
@@ -1241,6 +1308,10 @@ async function status(env) {
     cache_busting: "dynamic",
     local_whisper_stt: true,
     local_whisper_model: "Xenova/whisper-tiny",
+    rag_resilience_levels: 10,
+    rag_local_levels: [1,2,3,10],
+    rag_cloudflare_level: 5,
+    rag_external_slots: ["supabase","pinecone","mongodb","astra"],
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     groq_aggressive_budget_tokens: GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS,
@@ -1274,6 +1345,31 @@ async function handleApi(request, env, url, ctx) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
+        if (url.pathname === "/api/rag/config" && request.method === "GET") {
+      return json({
+        ok:true,
+        levels:10,
+        providers:{
+          supabase:Boolean(env.SUPABASE_RAG_SEARCH_URL && env.SUPABASE_RAG_KEY),
+          pinecone:Boolean(env.PINECONE_RAG_SEARCH_URL && env.PINECONE_API_KEY),
+          mongodb:Boolean(env.MONGODB_RAG_SEARCH_URL && env.MONGODB_RAG_API_KEY),
+          astra:Boolean(env.ASTRA_RAG_SEARCH_URL && env.ASTRA_DB_APPLICATION_TOKEN)
+        }
+      });
+    }
+    if (url.pathname === "/api/rag/provider-search" && request.method === "POST") return externalRagProviderSearch(request,env);
+    if (url.pathname === "/api/rag/search" && request.method === "POST") {
+      const body=await request.json().catch(()=>({}));
+      const question=String(body?.question || body?.pergunta || "").trim();
+      if(!question) return json({ok:true,matches:[],retrieval_level:5});
+      if(!env.LIBRARY) return json({ok:false,matches:[],retrieval_level:5,code:"LIBRARY_UNAVAILABLE"},503);
+      try{
+        const matches=await retrieveContext(env,question,Array.isArray(body?.query_embedding)?body.query_embedding.map(Number):null);
+        return json({ok:true,matches,retrieval_level:5});
+      }catch(error){
+        return json({ok:false,matches:[],retrieval_level:5,code:error?.code || "RAG_LEVEL5_FAILED",message:String(error?.message || error)},503);
+      }
+    }
         if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (url.pathname === "/api/memory" && request.method === "GET") {
@@ -2057,6 +2153,7 @@ export default {
         search_top_k: TOP_K,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         local_whisper_stt: true,
+        rag_resilience_levels: 10,
         bindings_missing: missing,
         probe: "deploy-only-no-storage-read"
       });

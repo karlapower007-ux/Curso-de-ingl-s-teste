@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <title>Consciência do Fabiano - V1.13</title>
+  <title>Consciência do Fabiano - V1.14</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
@@ -13,7 +13,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">SISTEMA NATIVO V1.13</span>
+      <span class="header-kicker">SISTEMA NATIVO V1.14</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -51,8 +51,7 @@
           </div>
           <p id="micStatus" class="status" aria-live="polite"></p>
           <div class="input-area">
-            <button id="micBtn" class="secondary" type="button">🎙️ Falar</button>
-            <button id="btn-whisper" class="whisper-btn" type="button" disabled>Carregando IA de Voz...</button>
+            <button id="micBtn" class="whisper-btn" type="button" disabled>Carregando IA de Voz...</button>
             <button id="stopAudioBtn" class="ghost" type="button" disabled>🔇 Parar áudio</button>
             <button id="sendBtn" class="primary" type="button">Enviar</button>
           </div>
@@ -104,6 +103,8 @@
       const buildStamp = Date.now();
       const css = document.getElementById("mainStylesheet");
       if (css) css.href = "/style.css?v=" + buildStamp;
+      window.__ragCascadeReady = import("/rag-cascade.js?v=" + buildStamp).catch(() => null);
+
       const app = document.createElement("script");
       app.src = "/app.js?v=" + buildStamp;
       app.async = false;

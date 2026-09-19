@@ -81,8 +81,24 @@ jobs:
           grep -q 'require_lexical_match: false' src/index.js
           grep -q 'processar TODOS os trechos de contexto fornecidos' src/index.js
           grep -q 'FONTES E REFERÊNCIAS' src/index.js
-          grep -q 'btn-whisper' public/index.html
           grep -q 'whisper-local.js' public/index.html
+          grep -q 'rag-cascade.js' public/index.html
+          test -f public/rag-cascade.js
+          test -f public/rag-search-worker.js
+          test -f public/opfs-sqlite-worker.js
+          test -f public/biblioteca.json
+          grep -q 'fns_rag_resilience_v1' public/rag-search-worker.js
+          grep -q '@sqlite.org/sqlite-wasm@3.53.4-build1' public/opfs-sqlite-worker.js
+          grep -q 'Localhost ChromaDB' public/rag-cascade.js
+          grep -q 'Supabase pgvector' public/rag-cascade.js
+          grep -q 'Pinecone Serverless' public/rag-cascade.js
+          grep -q 'MongoDB Atlas Vector Search' public/rag-cascade.js
+          grep -q 'DataStax Astra DB' public/rag-cascade.js
+          grep -q 'BM25 local bruto' public/rag-cascade.js
+          grep -q '/api/rag/search' src/index.js
+          grep -q '/api/rag/provider-search' src/index.js
+          grep -q 'normalizeClientContext' src/index.js
+          grep -q 'rag_resilience_levels: 10' src/index.js
           test -f public/whisper-local.js
           test -f public/whisper-worker.js
           grep -q 'Xenova/whisper-tiny' public/whisper-worker.js

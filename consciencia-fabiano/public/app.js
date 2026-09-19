@@ -175,6 +175,16 @@
         const result=await workerRequest("embed-batch",{texts:list.map(x=>String(x.text||""))},"normal");
         const vectors=Array.isArray(result.vectors)?result.vectors:[];
         if(vectors.length!==list.length) throw new Error("Worker local retornou lote incompleto.");
+        if(window.FNSRagCascade?.persistVectors){
+          await window.FNSRagCascade.persistVectors({
+            document_id:documentId,
+            filename:job.filename || "",
+            title:job.title || "",
+            author:job.author || "",
+            chunks:list,
+            vectors
+          }).catch(()=>{});
+        }
         const checkpoint=await saveVectorCheckpoint(documentId,++batchNo,list,vectors);
         await syncVectorCheckpoint(checkpoint);
         await idbPut("jobs",{...job,state:"vectorizing",batch_no:batchNo,last_page:checkpoint.last_page,remaining:Math.max(0,Number(data.remaining||0)-list.length),updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
@@ -455,7 +465,7 @@
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
       memory_persisted: meta.memory_persisted === true,
-      provider: meta.provider || "groq+local-rag"
+      provider: meta.provider || "groq+resilient-rag"
     };
   }
 
@@ -724,11 +734,19 @@
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const queryEmbedding=await localQueryEmbedding(q);
+      let resilient={matches:[],level:0,name:"none"};
+      try{
+        if(window.__ragCascadeReady) await window.__ragCascadeReady;
+        if(window.FNSRagCascade?.search) resilient=await window.FNSRagCascade.search(q,queryEmbedding);
+      }catch{}
       const data = await streamChat({
         pergunta: q,
         turn_id: turnId,
         query_embedding: queryEmbedding,
         query_embedding_model: queryEmbedding ? LOCAL_EMBED_MODEL : "",
+        client_context:Array.isArray(resilient?.matches)?resilient.matches:[],
+        retrieval_level:Number(resilient?.level || 0),
+        retrieval_level_name:String(resilient?.name || ""),
         historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
       });
       const resposta = String(data.resposta || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?");
@@ -755,15 +773,16 @@
 
   async function checkBackend() {
     try {
-      const data = await api("/api/status");
-      const up = data?.ok === true && data?.architecture === "cloudflare-router-external-ai";
-      $("backendDot").className = "dot " + (up ? "ok" : "bad");
-      $("backendText").textContent = up
-        ? "RAG Groq + Local • " + (data.documents || 0) + " PDFs • " + (data.chunks || 0) + " trechos"
-        : "Infraestrutura documental ainda não provisionada";
+      const res=await fetch("/health/deploy",{cache:"no-store"});
+      const data=await res.json();
+      const up=data?.ok===true;
+      $("backendDot").className="dot "+(up?"ok":"bad");
+      $("backendText").textContent=up
+        ? "RAG resiliente 10 níveis • Groq + Local"
+        : "Modo local resiliente ativo";
     } catch {
-      $("backendDot").className = "dot bad";
-      $("backendText").textContent = "Biblioteca indisponível";
+      $("backendDot").className="dot ok";
+      $("backendText").textContent="Modo local resiliente ativo";
     }
   }
 
@@ -1046,7 +1065,12 @@
     $("uploadBtn").disabled=true; const startedAt=performance.now();
     try{
       const extracted=await extractPdfLocally(file);
-      $("adminStatus").textContent="Texto extraído. Ativando busca lexical imediatamente…";
+      $("adminStatus").textContent="Texto extraído. Salvando espelho local resiliente…";
+      try{
+        if(window.__ragCascadeReady) await window.__ragCascadeReady;
+        if(window.FNSRagCascade?.persistExtracted) await window.FNSRagCascade.persistExtracted(extracted);
+      }catch{}
+      $("adminStatus").textContent="Texto local seguro. Ativando busca lexical e sincronização em nuvem…";
       const presign=await requestR2Presign(file);
       const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
       const ready=await submitExtractedTextLocal(extracted,presign.available?presign.r2_key:"");
@@ -1057,7 +1081,7 @@
         $("adminStatus").textContent="PDF já existente na biblioteca • busca disponível"+vaultText+" • "+seconds+"s";
       }else{
         $("adminStatus").textContent="Busca lexical pronta: "+(ready.chunks||0)+" trechos. Vetorização local continuará em segundo plano"+vaultText+" • "+seconds+"s";
-        const job={document_id:ready.document_id,filename:extracted.filename,content_sha256:extracted.content_sha256,total_chunks:Number(ready.chunks||0),state:"queued",batch_no:0,created_at:Date.now()};
+        const job={document_id:ready.document_id,filename:extracted.filename,title:extracted.title||"",author:extracted.author||"",content_sha256:extracted.content_sha256,total_chunks:Number(ready.chunks||0),state:"queued",batch_no:0,created_at:Date.now()};
         await idbPut("jobs",job);
         runLocalVectorization(job);
       }
@@ -1139,7 +1163,7 @@
   $("questionInput").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
   });
-  $("micBtn").onclick = () => startVoice().catch(e => appendMessage("assistant", "Microfone indisponível: " + e.message));
+  // O botão micBtn é controlado exclusivamente pelo Whisper local em whisper-local.js.
   $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
@@ -1163,7 +1187,6 @@
   syncPersistentHistory();
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
-  loadBooks();
   setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
   setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
   setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
