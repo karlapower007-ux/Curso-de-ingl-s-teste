@@ -1,4 +1,4 @@
-const CACHE_NAME="fns-ultimate-resilience-v3-2";
+const CACHE_NAME="fns-ultimate-resilience-v3-3";
 const CORE=[
   "/",
   "/index.html",
