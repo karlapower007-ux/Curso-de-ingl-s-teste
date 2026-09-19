@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: V3.3 STRICT PRECISION release =="
+log "== Consciência do Fabiano :: V4.0 OMNI LIBRARY SYMMETRY release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -43,8 +43,8 @@ node scripts/build-failover-manifest.mjs
 node scripts/build-static-vault.mjs
 test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
 test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
-node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="3.3.0")process.exit(1)'
-node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="3.3.0")process.exit(1)'
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="4.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="4.0.0")process.exit(1)'
 log "RESILIENCE_ASSETS_BUILT=yes"
 
 log "3/7 Deploy Worker"
@@ -126,7 +126,39 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .version == "3.3.0-strict-precision" and .architecture == "cloudflare-v3.3-strict-precision" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .provider_auth_surface == "server-side-secrets-only" and .client_provider_keys_exposed == false and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .search_top_k == 500 and .micro_node_chain == false and .async_worker_pool == true and .micro_node_count == 500 and .micro_node_batch_size == 25 and .active_worker_limit == 25 and .sse_keepalive_ms == 15000 and .groq_round_robin_key_rotation == true and .groq_429_retry_limit == 3 and .exact_match_llm_bypass == true and .exact_swarm_logical_nodes == 1000 and .exact_max_concurrent_requests == 50 and .exact_degraded_concurrency == 25 and .exact_circuit_failure_threshold == 3 and .exact_circuit_slow_ms == 5000 and .exact_ordered_buffer == true and .exact_local_indexeddb_takeover == true and .strict_lazy_local_engines == true and .failover_tiers == 6 and .service_worker_static_vault == true and .desktop_fallback_port == 8788 and .raw_vault_fallback == true and .plan_c_local_worker_pool == true and .plan_c_logical_task_capacity == 1000 and .plan_c_physical_worker_cap == 16 and .plan_c_worker_count_source == "navigator.hardwareConcurrency" and .plan_c_main_thread_extraction == false and .plan_c_offline_intelligence == "boolean-exact-or-bm25-hard-threshold" and .plan_c_virtualized_result_cards == true and .plan_c_card_gap_px == 40 and .plan_c_window_expansion == true and .plan_c_context_before == 2 and .plan_c_context_after == 4 and .plan_c_full_chunk_fallback == true and .plan_c_sequential_chunk_merge == true and .plan_c_canonical_reference_elevation == true and .plan_c_boolean_exact_match == true and .plan_c_hard_bm25_threshold == 3.25 and .plan_c_hard_min_coverage == 0.5 and .plan_c_zero_noise == true and .plan_c_elegant_silence == true and .plan_c_fuzzy_compensation_disabled == true and .plan_c_strict_reference_local_first == true and .plan_c_strict_reference_cloud_fuzzy_bypass == true and .plan_c_terminal_zero_hit == true and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true
+    and .version == "4.0.0-omni-library-symmetry"
+    and .architecture == "cloudflare-v4-omni-library-symmetry"
+    and .storage_backend == "durable-object-sqlite"
+    and .workers_ai_used == false
+    and .llm_provider == "groq"
+    and .provider_auth_surface == "server-side-secrets-only"
+    and .client_provider_keys_exposed == false
+    and .server_pdf_parsing == false
+    and .exact_match_llm_bypass == true
+    and .exact_swarm_logical_nodes == 1000
+    and .strict_lazy_local_engines == true
+    and .universal_strict_match_core == "strict-match-core-v4"
+    and .online_offline_search_symmetry == true
+    and .same_paragraph_phrase_required == true
+    and .fuzzy_matching_disabled == true
+    and .or_matching_disabled == true
+    and .omni_library_sync == true
+    and .omni_sync_batch_size == 200
+    and .omni_sync_worker == true
+    and .omni_sync_memory_flush == true
+    and .omni_search_all_documents == true
+    and .omni_logical_task_capacity == 1000
+    and .omni_physical_worker_cap == 16
+    and .omni_virtual_scroller == true
+    and .omni_card_gap_px == 40
+    and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
+    and .plan_c_main_thread_extraction == false
+    and .plan_c_offline_intelligence == "strict-same-paragraph-phrase-v4"
+    and .plan_c_virtualized_result_cards == true
+    and .plan_c_card_gap_px == 40
+    and .chunk_concurrency_limit == 50
+    and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "DEPLOY_HEALTH_PASS=yes"
     break
@@ -136,40 +168,63 @@ for i in $(seq 1 15); do
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
 
-log "5.5/7 Resilience asset probes"
+log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
-jq -e '.version == "3.3.0" and .strategy == "A->B->C->D->E->F" and .plan_c.logical_task_capacity == 1000 and .plan_c.physical_worker_cap == 16 and .plan_c.virtualized_cards == true and .plan_c.card_gap_px == 40 and .plan_c.window_expansion.before == 2 and .plan_c.window_expansion.after == 4 and .plan_c.window_expansion.full_chunk_fallback == true and .plan_c.sequential_chunk_merge == true and .plan_c.canonical_reference_elevation == true and .plan_c.boolean_exact_match == true and .plan_c.hard_bm25_threshold == 3.25 and .plan_c.hard_min_coverage == 0.5 and .plan_c.zero_noise == true and .plan_c.elegant_silence == true and .plan_c.fuzzy_compensation_disabled == true' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
+jq -e '.version == "4.0.0"
+  and .strategy == "A->B->C->D->E->F"
+  and .plan_c.engine == "omni-library-strict-v4"
+  and .plan_c.logical_task_capacity == 1000
+  and .plan_c.physical_worker_cap == 16
+  and .plan_c.strict_match_core == "strict-match-core-v4"
+  and .plan_c.same_paragraph_phrase_required == true
+  and .plan_c.fuzzy_matching_disabled == true
+  and .plan_c.or_matching_disabled == true
+  and .plan_c.omni_sync_batch_size == 200
+  and .plan_c.omni_sync_memory_flush == true
+  and .plan_c.omni_search_all_documents == true
+  and .plan_c.virtualized_cards == true
+  and .plan_c.card_gap_px == 40' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
 curl -fsS "$BASE/steel/index.json" | tee /tmp/steel-index.json >/dev/null
-jq -e '.version == "3.3.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
+jq -e '.version == "4.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
 curl -fsS "$BASE/sw-v3.js" >/tmp/sw-v3.js || die "SERVICE_WORKER_MISSING"
+curl -fsS "$BASE/strict-match-core.js" >/tmp/strict-match-core.js || die "STRICT_MATCH_CORE_MISSING"
+curl -fsS "$BASE/omni-sync-worker.js" >/tmp/omni-sync-worker.js || die "OMNI_SYNC_WORKER_MISSING"
 curl -fsS "$BASE/local-turbine-pool.js" >/tmp/local-turbine-pool.js || die "LOCAL_TURBINE_POOL_MISSING"
 curl -fsS "$BASE/local-turbine-worker.js" >/tmp/local-turbine-worker.js || die "LOCAL_TURBINE_WORKER_MISSING"
+
+grep -q 'strictParagraphMatch' /tmp/strict-match-core.js || die "STRICT_MATCH_FUNCTION_MISSING"
+grep -q 'deriveStrictPhrase' /tmp/strict-match-core.js || die "STRICT_PHRASE_FUNCTION_MISSING"
+grep -q 'paragraphBlocks' /tmp/strict-match-core.js || die "STRICT_PARAGRAPH_FUNCTION_MISSING"
+grep -q 'STRICT_LOGICAL_TASK_CAP=1000' /tmp/strict-match-core.js || die "STRICT_TASK_CAP_BAD"
+
+grep -q 'BATCH_SIZE=200' /tmp/omni-sync-worker.js || die "OMNI_BATCH_SIZE_BAD"
+grep -q 'rows.length=0' /tmp/omni-sync-worker.js || die "OMNI_ROWS_FLUSH_MISSING"
+grep -q 'rows=null' /tmp/omni-sync-worker.js || die "OMNI_ROWS_RELEASE_MISSING"
+grep -q 'payload=null' /tmp/omni-sync-worker.js || die "OMNI_PAYLOAD_RELEASE_MISSING"
+
 grep -q 'navigator.hardwareConcurrency' /tmp/local-turbine-pool.js || die "LOCAL_CPU_GOVERNOR_MISSING"
 grep -q 'LOGICAL_NODE_CAPACITY=1000' /tmp/local-turbine-pool.js || die "LOCAL_LOGICAL_CAPACITY_BAD"
 grep -q 'MAX_PHYSICAL_WORKERS=16' /tmp/local-turbine-pool.js || die "LOCAL_PHYSICAL_CAP_BAD"
-grep -q 'CONTEXT_BEFORE=2' /tmp/local-turbine-worker.js || die "LOCAL_CONTEXT_BEFORE_BAD"
-grep -q 'CONTEXT_AFTER=4' /tmp/local-turbine-worker.js || die "LOCAL_CONTEXT_AFTER_BAD"
-grep -q 'full_chunk_fallback' /tmp/local-turbine-worker.js || die "LOCAL_FULL_CHUNK_FALLBACK_MISSING"
-grep -q 'CANONICAL_REFERENCE_RE' /tmp/local-turbine-worker.js || die "LOCAL_REFERENCE_PARSER_MISSING"
-grep -q 'semantic_title' /tmp/local-turbine-worker.js || die "LOCAL_SEMANTIC_TITLE_MISSING"
-grep -q 'mergeSequentialOfflineCards' public/app.js || die "LOCAL_SEQUENTIAL_MERGE_MISSING"
-grep -q 'appendTextWithoutDuplicate' public/app.js || die "LOCAL_TEXT_STITCH_MISSING"
-grep -q 'canonicalHeader' public/app.js || die "LOCAL_CANONICAL_HEADER_MISSING"
-grep -q 'HARD_BM25_THRESHOLD=3.25' /tmp/local-turbine-worker.js || die "STRICT_HARD_THRESHOLD_BAD"
-grep -q 'HARD_MIN_COVERAGE=0.50' /tmp/local-turbine-worker.js || die "STRICT_MIN_COVERAGE_BAD"
-grep -q 'STRICT_SCRIPTURE_QUERY_RE' /tmp/local-turbine-worker.js || die "STRICT_SCRIPTURE_PARSER_MISSING"
-grep -q 'STRICT_BOOK_QUERY_RE' /tmp/local-turbine-worker.js || die "STRICT_BOOK_PARSER_MISSING"
-grep -q 'BOOLEAN_EXACT_MISS' /tmp/local-turbine-worker.js || die "STRICT_BOOLEAN_FILTER_MISSING"
-grep -q 'HARD_THRESHOLD_REJECT' /tmp/local-turbine-worker.js || die "STRICT_THRESHOLD_FILTER_MISSING"
-grep -q 'Nenhuma correspondência exata encontrada na biblioteca.' public/app.js || die "STRICT_ELEGANT_SILENCE_MISSING"
-grep -q 'appendElegantSilence' public/app.js || die "STRICT_EMPTY_RENDERER_MISSING"
-grep -q 'isStrictPrecisionReferenceIntent' public/app.js || die "STRICT_REFERENCE_ROUTE_MISSING"
-grep -q 'recoverStrictPrecision' public/failover-v3.js || die "STRICT_RECOVERY_PATH_MISSING"
-grep -q 'BOOLEAN EXACT' public/app.js || die "STRICT_UI_STATUS_MISSING"
+grep -q 'strictParagraphMatch' /tmp/local-turbine-worker.js || die "LOCAL_STRICT_MATCH_MISSING"
+grep -q 'STRICT_PHRASE_MISS' /tmp/local-turbine-worker.js || die "LOCAL_STRICT_REJECTION_MISSING"
+
+grep -q '/search-strict' src/index.js || die "CLOUD_STRICT_ROUTE_MISSING"
+grep -q 'retrieveSupabaseStrictContext' src/index.js || die "SUPABASE_STRICT_RETRIEVAL_MISSING"
+grep -q 'retrieveContextV4Strict' src/index.js || die "V4_STRICT_RETRIEVAL_MISSING"
+grep -q '/api/admin/omni-sync-page' src/index.js || die "OMNI_SYNC_API_MISSING"
+grep -q 'strictParagraphMatch' src/index.js || die "SERVER_SHARED_MATCH_CORE_MISSING"
+
+grep -q 'omniSyncBtn' public/app.js || die "OMNI_SYNC_BUTTON_WIRING_MISSING"
+grep -q 'new Worker("/omni-sync-worker.js?v=4.0.0")' public/app.js || die "OMNI_SYNC_CLIENT_WORKER_MISSING"
+grep -q 'maybeAutoOmniSync' public/app.js || die "OMNI_AUTO_SYNC_MISSING"
+grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js || die "V4_ELEGANT_SILENCE_MISSING"
+grep -q 'offline-turbine-source-subtitle' public/app.js || die "SEMANTIC_SUBTITLE_MISSING"
 grep -q 'white-space:pre-wrap' public/style.css || die "OFFLINE_PRE_WRAP_MISSING"
-grep -q 'const GAP=40' public/app.js || die "OFFLINE_CARD_GAP_BAD"
+grep -q 'margin-bottom:2.5rem' public/style.css || die "OFFLINE_CARD_GAP_BAD"
+grep -q 'offline-turbine-viewport' public/style.css || die "VIRTUAL_SCROLLER_STYLE_MISSING"
+
 grep -q 'FNS_DESKTOP_FALLBACK' scripts/local-fallback-server.mjs || die "DESKTOP_FALLBACK_SOURCE_MISSING"
-log "FAILOVER_UMBRELLA_ASSETS_PASS=yes"
+log "V4_OMNI_LIBRARY_ASSETS_PASS=yes"
 
 log "6/7 Broad-term RAG regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
