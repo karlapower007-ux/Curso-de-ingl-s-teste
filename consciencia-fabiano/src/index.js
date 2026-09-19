@@ -251,7 +251,6 @@ async function embedTexts(env, texts) {
       requests: list.map(text => ({
         model: modelPath,
         content: { parts: [{ text }] },
-        outputDimensionality: 768,
       })),
     }),
   });
@@ -262,7 +261,7 @@ async function embedTexts(env, texts) {
     throw err;
   }
   const vectors = Array.isArray(body?.embeddings)
-    ? body.embeddings.map(item => item?.values)
+    ? body.embeddings.map(item => Array.isArray(item?.values) ? item.values.slice(0, 768) : item?.values)
     : [];
   if (vectors.length !== list.length || vectors.some(v => !Array.isArray(v) || !v.length)) {
     throw new Error("Gemini não retornou todos os embeddings esperados.");

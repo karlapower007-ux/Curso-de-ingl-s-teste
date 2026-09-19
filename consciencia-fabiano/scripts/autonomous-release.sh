@@ -37,7 +37,11 @@ curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization:
 jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
 log "GROQ_PREFLIGHT_PASS=yes"
 
-curl -fsS "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY"   -H 'Content-Type: application/json'   --data '{"content":{"parts":[{"text":"ping"}]},"outputDimensionality":768}'   >/tmp/gemini-preflight.json || { cat /tmp/gemini-preflight.json 2>/dev/null || true; die "GEMINI_KEY_INVALID"; }
+gemini_code=$(curl -sS -o /tmp/gemini-preflight.json -w '%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY"   -H 'Content-Type: application/json'   --data '{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"ping"}]}}')
+if [ "$gemini_code" != "200" ]; then
+  cat /tmp/gemini-preflight.json || true
+  die "GEMINI_PREFLIGHT_HTTP_$gemini_code"
+fi
 jq -e '.embedding.values | type == "array" and length > 0' /tmp/gemini-preflight.json >/dev/null || { cat /tmp/gemini-preflight.json; die "GEMINI_PREFLIGHT_BAD_RESPONSE"; }
 log "GEMINI_PREFLIGHT_PASS=yes"
 
