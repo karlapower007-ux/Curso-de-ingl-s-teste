@@ -1,4 +1,4 @@
-const VERSION = "1.16.0-instant-auth-whisper-fallback-map-reduce";
+const VERSION = "1.17.0-grounded-multicloud-rag";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -41,6 +41,7 @@ const MAP_BATCH_SIZE = 20;
 const MAP_MAX_COMPLETION_TOKENS = 650;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
+const EMPTY_GROUNDED_ANSWER = "Não encontrei informações nos documentos indexados para responder a esta pergunta.";
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
@@ -830,7 +831,36 @@ async function persistChatTurn(env, ownerId, body, question, answer, sources, fa
 }
 
 function gracefulEmptyAnswer() {
-  return "Fabiano, não encontrei uma referência direta a este tema neste trecho. Quer que eu busque em outras partes do documento?";
+  return EMPTY_GROUNDED_ANSWER;
+}
+
+function groundedReferencesMarkdown(sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!rows.length) return "";
+  const lines=rows.map((s,index)=>{
+    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+    const author=String(s?.autor || "Autor não informado").replace(/[\r\n]+/g," ").trim();
+    const page=s?.pagina ? "Página "+Number(s.pagina) : "Página não informada";
+    const excerpt=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,420);
+    return "- **"+name+" | "+page+" | "+author+":** "+(excerpt ? "“"+excerpt+"”" : "Trecho recuperado sem prévia textual.");
+  });
+  return "2. 📚 FONTES E REFERÊNCIAS\n\n"+lines.join("\n");
+}
+
+function stripModelReferenceSection(answer) {
+  return String(answer || "")
+    .replace(/\n\s*(?:2\.?\s*)?(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\s*:?[^]*$/i,"")
+    .trim();
+}
+
+function finalizeGroundedAnswer(answer,sources) {
+  const base=stripModelReferenceSection(answer);
+  if(!Array.isArray(sources) || !sources.length) return EMPTY_GROUNDED_ANSWER;
+  const synthesis=base || "1. SÍNTESE PRINCIPAL:\n\nAs fontes recuperadas estão listadas abaixo.";
+  const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(synthesis)
+    ? synthesis
+    : "1. SÍNTESE PRINCIPAL:\n\n"+synthesis;
+  return normalized+"\n\n"+groundedReferencesMarkdown(sources);
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
@@ -845,7 +875,7 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
   const inputBudget=Math.max(1200,Number(options.input_budget || GROQ_INPUT_BUDGET_TOKENS));
   const model=String(options.model || CHAT_MODEL);
   const maxCompletionTokens=Math.max(100,Number(options.max_completion_tokens || GROQ_MAX_COMPLETION_TOKENS));
-  const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.35;
+  const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.05;
   let safeMessages=enforceGroqBudget(messages,inputBudget);
   const execute=async(payloadMessages)=>{
     return fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -886,9 +916,9 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
     {
       role:"system",
       content:
-        "Você é a etapa MAP de um sistema RAG. Não escreva síntese. Extraia somente fontes diretamente úteis à pergunta. " +
-        "Para cada fonte útil, devolva uma linha no formato: - Livro/Documento | Capítulo ou Página | Autor | Citação ou descrição factual curta. " +
-        "Não invente informações ausentes. Preserve páginas e nomes quando existirem."
+        "Você é a etapa MAP de um sistema RAG documental. Não escreva síntese e não invente metadados. " +
+        "Use somente fatos literalmente presentes nos trechos recebidos. Para cada trecho útil, preserve o identificador [F#] e devolva uma linha curta com esse identificador e a ideia factual extraída. " +
+        "É proibido criar autor, livro, capítulo, página ou citação ausente do contexto."
     },
     {
       role:"user",
@@ -971,8 +1001,13 @@ async function groqStreamResponse(env, messages, meta) {
         }
         if (!String(answer || "").trim() || /^sem resposta\.?$/i.test(String(answer || "").trim())) {
           answer = gracefulEmptyAnswer();
-          controller.enqueue(encoder.encode(sseFrame("delta", { text: answer })));
         }
+        const finalAnswer=finalizeGroundedAnswer(answer,meta.sources);
+        const refs=groundedReferencesMarkdown(meta.sources);
+        if(refs){
+          controller.enqueue(encoder.encode(sseFrame("delta",{text:"\n\n"+refs})));
+        }
+        answer=finalAnswer;
         const memoryPersisted = await persistChatTurn(
           env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
         );
@@ -1235,15 +1270,11 @@ async function chat(request, env) {
     {
       role: "system",
       content:
-        "Você é o motor analítico da \"Consciência do Fabiano\", projetado para estudos profundos.\n" +
-        "Sua missão é processar TODOS os trechos de contexto fornecidos e organizar a resposta estritamente nesta estrutura em duas partes:\n\n" +
-        "1. SÍNTESE PRINCIPAL:\n" +
-        "Escreva um texto fluido, rico e direto respondendo à pergunta do usuário. Conecte as ideias principais dos documentos recuperados de forma inteligente. Não mencione números de páginas ou versículos nesta seção de texto, apenas explique o conceito ou a história.\n\n" +
-        "2. 📚 FONTES E REFERÊNCIAS:\n" +
-        "Pule uma linha e crie uma lista rigorosa de todas as passagens usadas na sua síntese.\n" +
-        "Para CADA trecho recuperado que for útil, crie um bullet point EXATAMENTE neste formato:\n" +
-        "- **[Nome do Livro/Documento] | Capítulo:Versículo (ou Página) | Autor:** [Breve descrição do que este trecho específico diz ou a citação exata].\n\n" +
-        "Regra Absoluta: Você tem liberdade total para conectar os temas, mas é OBRIGADO a listar as referências na segunda parte. Não esconda fontes. Organize a informação para que o usuário possa continuar estudando infinitamente."
+        "És um assistente de pesquisa documental de alta densidade. Usa exclusivamente os trechos fornecidos. " +
+        "É expressamente proibido inventar autores, livros, capítulos, páginas, citações, fatos ou conteúdos que não estejam explícitos no contexto. " +
+        "Se o contexto for vazio ou insuficiente, a resposta deve ser EXATAMENTE: \""+EMPTY_GROUNDED_ANSWER+"\". " +
+        "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
+        "Não uses conhecimento externo para preencher lacunas e não transformes inferências em fatos."
     },
     ...history,
     {
@@ -1259,6 +1290,27 @@ async function chat(request, env) {
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
     body?.stream === true;
 
+  if(fallback){
+    if(wantsStream){
+      const payload=sseFrame("done",{
+        ok:true,resposta:EMPTY_GROUNDED_ANSWER,fontes:[],fallback:true,
+        provider:"grounding-guard",retrieval_level:retrievalLevel,
+        embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
+        map_reduce:false,map_batches:0
+      });
+      return new Response(payload,{headers:securityHeaders(new Headers({
+        "Content-Type":"text/event-stream; charset=utf-8",
+        "Cache-Control":"no-cache, no-transform"
+      }))});
+    }
+    return json({
+      ok:true,resposta:EMPTY_GROUNDED_ANSWER,fontes:[],fallback:true,
+      provider:"grounding-guard",retrieval_level:retrievalLevel,
+      embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
+      map_reduce:false,map_batches:0
+    });
+  }
+
   if (wantsStream) {
     return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel, mapReduceUsed:reduced.used, mapBatches:reduced.batches });
   }
@@ -1266,6 +1318,7 @@ async function chat(request, env) {
   const result = await (await groqCompletion(env, messages, false)).json();
   let answer = String(result?.choices?.[0]?.message?.content || "").trim();
   if (!answer || /^sem resposta\.?$/i.test(answer)) answer = gracefulEmptyAnswer();
+  answer = finalizeGroundedAnswer(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
   return json({
@@ -1354,6 +1407,10 @@ async function status(env) {
     semantic_min_score: SEMANTIC_MIN_SCORE,
     search_top_k: TOP_K,
     rag_map_reduce: true,
+    anti_hallucination_mode: "strict-grounded",
+    groq_temperature: 0.05,
+    deterministic_reference_rendering: true,
+    multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     require_lexical_match: REQUIRE_LEXICAL_MATCH,
