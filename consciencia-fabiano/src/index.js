@@ -1,3 +1,4 @@
+import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 const VERSION = "3.3.0-strict-precision";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
@@ -74,7 +75,7 @@ const MASTER_NODE_MAX_COMPLETION_TOKENS = 3600;
 const MAP_MAX_COMPLETION_TOKENS = 1000;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
-const EMPTY_GROUNDED_ANSWER = "Não encontrei informações nos documentos indexados para responder a esta pergunta.";
+const EMPTY_GROUNDED_ANSWER = "Nenhuma correspondência exata encontrada na biblioteca total.";
 const RETRIEVAL_UNAVAILABLE_ANSWER = "A biblioteca continua cadastrada, mas os índices de busca estão temporariamente indisponíveis. Não vou tratar isso como ausência de conteúdo. Tente novamente em instantes; se houver índice local neste navegador, ele será usado automaticamente.";
 const enc = new TextEncoder();
 
@@ -863,60 +864,136 @@ function mergeRetrievedMatches(...groups) {
   return diversifyContextAcrossDocuments(merged, TOP_K);
 }
 
-async function retrieveContext(env, question, suppliedEmbedding = null) {
-  assertBindings(env);
-  let semantic = [];
-  if (Array.isArray(suppliedEmbedding) && suppliedEmbedding.length >= 64 && suppliedEmbedding.every(Number.isFinite)) {
-    try {
-      const data = await libraryCall(env, "/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          embedding: suppliedEmbedding,
-          top_k: TOP_K,
-          scan_limit: VECTOR_SCAN_LIMIT,
-          min_score: SEMANTIC_MIN_SCORE
-        }),
+async function retrieveDurableStrictContext(env,question){
+  const data=await libraryCall(env,"/search-strict",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({query:String(question||""),top_k:STRICT_LOGICAL_TASK_CAP})
+  });
+  return {
+    matches:Array.isArray(data?.matches)?data.matches:[],
+    readable:true,
+    scanned:Number(data?.scanned||0),
+    documents_hit:Number(data?.documents_hit||0)
+  };
+}
+
+async function retrieveSupabaseStrictContext(env,question){
+  const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
+  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
+  const target=deriveStrictPhrase(question);
+  const anchor=firstStrictAnchor(question);
+  if(!base||!token||!target||!anchor)return {matches:[],readable:false,scanned:0,documents_hit:0};
+  const perDocument=new Map();
+  let offset=0,scanned=0;
+  const pageSize=200;
+  while(true){
+    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
+    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+    endpoint.searchParams.set("text","ilike.*"+anchor.replace(/[,*()]/g,"")+"*");
+    endpoint.searchParams.set("order","document_id.asc,chunk_index.asc");
+    endpoint.searchParams.set("limit",String(pageSize));
+    endpoint.searchParams.set("offset",String(offset));
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),5000);
+    let rows=[];
+    try{
+      const res=await fetch(endpoint.toString(),{
+        headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json"},
+        signal:controller.signal
       });
-      semantic = Array.isArray(data.matches)
-        ? data.matches
-            .filter(item => Number(item?.score ?? -1) >= SEMANTIC_MIN_SCORE)
-            .map(item => ({ ...item, retrieval_mode: "local-semantic" }))
-        : [];
-      if (REQUIRE_LEXICAL_MATCH && isFocusedCitationRequest(question)) {
-        semantic = semantic.filter(item => semanticAnchorCoverage(item.text,question) >= LEXICAL_MIN_COVERAGE);
-      }
-    } catch {}
-  }
-
-  let lexical = [];
-  let durableObjectReadable = false;
-  try {
-    lexical = await retrieveLexicalContext(env, question);
-    durableObjectReadable = true;
-  } catch {}
-
-  let supabaseLexical = [];
-  let supabaseReadable = false;
-  if (supabaseLexicalConfigured(env)) {
-    try {
-      supabaseLexical = await retrieveSupabaseLexicalContext(env, question);
-      supabaseReadable = true;
-    } catch {}
-  }
-
-  // V1.20 hotfix: semântica, BM25 do Durable Object e Supabase lexical deixam de se excluir.
-  // Se o Durable Object atingir quota de leitura, o Supabase continua abrindo a malha documental.
-  const merged = mergeRetrievedMatches(semantic, lexical, supabaseLexical);
-  if (!merged.length && !durableObjectReadable) {
-    const mirrorHasRows = supabaseLexicalConfigured(env) ? await supabaseMirrorHasAnyRows(env) : null;
-    if (!supabaseReadable || mirrorHasRows !== true) {
-      const err = new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
-      err.code = "RAG_RETRIEVAL_UNAVAILABLE";
-      throw err;
+      if(!res.ok)throw new Error("Supabase strict HTTP "+res.status);
+      rows=await res.json().catch(()=>[]);
+      if(!Array.isArray(rows))rows=[];
+    }finally{clearTimeout(timer);}
+    for(const row of rows){
+      scanned++;
+      const match=strictParagraphMatch(row?.text||"",question);
+      if(!match.matched)continue;
+      pushStrictHit(perDocument,{
+        ...row,score:100,coverage:1,
+        strict_phrase:match.target,
+        strict_paragraph_index:match.paragraph_index,
+        retrieval_mode:"strict-phrase-supabase-v4"
+      },STRICT_PER_DOCUMENT_HIT_CAP);
     }
+    const count=rows.length;
+    rows.length=0;
+    rows=null;
+    if(count<pageSize)break;
+    offset+=count;
   }
-  return merged;
+  return {
+    matches:roundRobinStrictHits(perDocument,STRICT_LOGICAL_TASK_CAP),
+    readable:true,scanned,documents_hit:perDocument.size,target
+  };
+}
+
+async function supabaseOmniSyncPage(env,url){
+  const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
+  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
+  if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
+  const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
+  const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
+  const endpoint=new URL(base+"/rest/v1/rag_embeddings");
+  endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+  endpoint.searchParams.set("order","document_id.asc,chunk_index.asc");
+  endpoint.searchParams.set("limit",String(limit));
+  endpoint.searchParams.set("offset",String(offset));
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),6000);
+  try{
+    const res=await fetch(endpoint.toString(),{
+      headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json","Prefer":"count=exact"},
+      signal:controller.signal
+    });
+    if(!res.ok)return json({ok:false,code:"SUPABASE_SYNC_FAILED",message:"Supabase sync HTTP "+res.status},res.status);
+    const rows=await res.json().catch(()=>[]);
+    const range=String(res.headers.get("content-range")||"");
+    const totalMatch=range.match(/\/(\d+)$/);
+    const total=totalMatch?Number(totalMatch[1]):null;
+    const count=Array.isArray(rows)?rows.length:0;
+    return json({
+      ok:true,
+      rows:Array.isArray(rows)?rows:[],
+      offset,limit,
+      next_offset:offset+count,
+      done:count<limit || (Number.isFinite(total)&&offset+count>=total),
+      total,
+      batch_size:limit,
+      memory_bounded:true
+    });
+  }finally{clearTimeout(timer);}
+}
+
+async function retrieveContextV4Strict(env,question){
+  assertBindings(env);
+  let durable={matches:[],readable:false,scanned:0,documents_hit:0};
+  let supabase={matches:[],readable:false,scanned:0,documents_hit:0};
+  try{durable=await retrieveDurableStrictContext(env,question);}catch{}
+  if(supabaseLexicalConfigured(env)){
+    try{supabase=await retrieveSupabaseStrictContext(env,question);}catch{}
+  }
+  const seen=new Set(),perDocument=new Map();
+  for(const row of [...(durable.matches||[]),...(supabase.matches||[])]){
+    const key=String(row?.id||"")||[row?.document_id||"",row?.chunk_index||0,String(row?.text||"").slice(0,160)].join("|");
+    if(seen.has(key))continue;
+    seen.add(key);
+    pushStrictHit(perDocument,row,STRICT_PER_DOCUMENT_HIT_CAP);
+  }
+  const matches=roundRobinStrictHits(perDocument,STRICT_LOGICAL_TASK_CAP);
+  if(!matches.length&&!durable.readable&&!supabase.readable){
+    const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+    err.code="RAG_RETRIEVAL_UNAVAILABLE";
+    throw err;
+  }
+  return matches;
+}
+
+async function retrieveContext(env, question, suppliedEmbedding = null) {
+  // V4: suppliedEmbedding é deliberadamente ignorado. Online e offline usam o mesmo núcleo de frase exata.
+  void suppliedEmbedding;
+  return retrieveContextV4Strict(env,question);
 }
 
 function humanDocumentName(filename, title = "") {
@@ -3161,6 +3238,7 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
     if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
+    if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return supabaseOmniSyncPage(env,url);
         if (url.pathname === "/api/rag/config" && request.method === "GET") {
       return json({
         ok:true,
