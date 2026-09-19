@@ -7,59 +7,27 @@ function fold(text){
   return String(text||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
     .replace(/[^\p{L}\p{N}\s:]/gu," ").replace(/\s+/g," ").trim();
 }
-function queryTerms(question){
-  const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre","para","por","com","como","quero","saber","saiba","mostre","mostrar","qual","quais","quem","onde","quando","porque","porquê","ser","estar","foi","era"]);
-  return [...new Set(fold(question).split(" ").filter(t=>t.length>=3&&!stop.has(t)))].slice(0,24);
-}
-function splitParagraphs(text){
-  const raw=String(text||"").replace(/\r/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
-  if(!raw)return[];
-  let parts=raw.split(/\n\s*\n+/).map(x=>x.trim()).filter(x=>x.length>=24);
-  if(parts.length<=1 && raw.length>900){
-    parts=raw.split(/(?<=[.!?;:])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9])/u).map(x=>x.trim()).filter(x=>x.length>=24);
-  }
-  return parts.length?parts:[raw];
-}
-function buildIdf(rows,question){
-  const terms=queryTerms(question);
-  const docs=Array.from(rows||[]).map(r=>fold(r?.text||""));
-  const N=Math.max(1,docs.length);
-  const out={};
-  for(const term of terms){
-    let df=0;
-    for(const d of docs)if(d.includes(term))df++;
-    out[term]=Math.log(1+((N-df+.5)/(df+.5)));
-  }
-  return out;
-}
 function candidateTasks(matches,question){
-  const idf=buildIdf(matches,question);
   const tasks=[];
   let logical=1;
-  outer:for(const row of Array.from(matches||[])){
-    const base={
-      document_id:String(row?.document_id||row?.doc_key||""),
-      filename:String(row?.filename||row?.arquivo||""),
-      title:String(row?.title||row?.titulo||row?.filename||row?.arquivo||"Documento"),
-      author:String(row?.author||row?.autor||""),
-      page:Number(row?.page||row?.pagina||0)||null,
-      chunk_index:Number(row?.chunk_index||0),
-      language:String(row?.language||row?.idioma||"")
-    };
-    const ps=splitParagraphs(row?.text||row?.trecho||"");
-    for(let i=0;i<ps.length;i++){
-      tasks.push({
-        id:base.document_id+":"+base.chunk_index+":"+i,
-        logical_node:logical++,
-        question,
-        idf,
-        text:ps[i],
-        source:base
-      });
-      if(tasks.length>=LOGICAL_NODE_CAPACITY)break outer;
-    }
+  for(const row of Array.from(matches||[]).slice(0,LOGICAL_NODE_CAPACITY)){
+    tasks.push({
+      id:String(row?.id||row?.key||((row?.document_id||row?.doc_key||"doc")+":"+(row?.chunk_index||logical))),
+      logical_node:logical++,
+      question,
+      text:String(row?.text||row?.trecho||""),
+      source:{
+        document_id:String(row?.document_id||row?.doc_key||""),
+        filename:String(row?.filename||row?.arquivo||""),
+        title:String(row?.title||row?.titulo||row?.filename||row?.arquivo||"Documento"),
+        author:String(row?.author||row?.autor||""),
+        page:Number(row?.page||row?.pagina||0)||null,
+        chunk_index:Number(row?.chunk_index||0),
+        language:String(row?.language||row?.idioma||"")
+      }
+    });
   }
-  return tasks;
+  return tasks.filter(task=>task.text.trim().length>=24);
 }
 function physicalWorkerCount(){
   const hc=Math.max(1,Number(navigator.hardwareConcurrency||4));
@@ -150,7 +118,7 @@ export async function runLocalTurbines({question,matches,onProgress}){
     logical_tasks:tasks.length,
     physical_workers:workerCount,
     hardware_concurrency:Number(navigator.hardwareConcurrency||0)||null,
-    scoring:"bm25+idf+coverage+phrase+proximity",
+    scoring:"worker-side-bm25+idf+coverage+phrase+proximity",
     main_thread_extraction:false
   };
 }
