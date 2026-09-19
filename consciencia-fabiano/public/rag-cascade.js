@@ -180,11 +180,11 @@ async function persistVectors(payload){
 
 async function level2(question,queryEmbedding){
   if(!Array.isArray(queryEmbedding)||queryEmbedding.length<64)return [];
-  const r=await rpc(searchWorker,"search-semantic",{query:queryEmbedding,top_k:TOP_K,min_score:SEMANTIC_MIN_SCORE},1800);
+  const r=await rpc(searchWorker,"search-semantic",{query:queryEmbedding,top_k:TOP_K,min_score:SEMANTIC_MIN_SCORE},6000);
   return (r.matches||[]).map(x=>normalizeMatch(x,"indexeddb-semantic"));
 }
 async function level3(question){
-  const r=await rpc(opfsWorker,"search",{question,top_k:TOP_K},1300);
+  const r=await rpc(opfsWorker,"search",{question,top_k:TOP_K},5000);
   return (r.matches||[]).map(x=>normalizeMatch(x,"opfs-sqlite"));
 }
 async function level4(question,queryEmbedding){
@@ -233,7 +233,7 @@ async function cloudSlot(provider,question,queryEmbedding){
   return matches;
 }
 async function level10(question){
-  const r=await rpc(searchWorker,"search-bm25",{question,top_k:TOP_K},2200);
+  const r=await rpc(searchWorker,"search-bm25",{question,top_k:TOP_K},8000);
   return (r.matches||[]).map(x=>normalizeMatch(x,"bm25-local"));
 }
 
