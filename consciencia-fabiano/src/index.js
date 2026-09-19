@@ -2406,8 +2406,10 @@ async function externalRagProviderSearch(request, env) {
     }else{
       raw=data?.matches || data?.data || [];
     }
-    const matches=normalizeClientContext(raw);
-    return json({ok:true,configured:true,provider,matches});
+    const matches=normalizeClientContext(raw)
+      .filter(row=>strictParagraphMatch(row?.text||"",body?.question||body?.pergunta||"").matched)
+      .map(row=>({...row,score:100,coverage:1,retrieval_mode:"strict-phrase-provider-v4"}));
+    return json({ok:true,configured:true,provider,matches,fuzzy_disabled:true,or_disabled:true});
   }catch(error){
     return json({ok:false,configured:true,provider,matches:[],message:String(error?.message || error)},504);
   }finally{clearTimeout(timer);}
@@ -2942,6 +2944,9 @@ async function chat(request, env) {
     }
   }
 
+  context=(Array.isArray(context)?context:[])
+    .filter(row=>strictParagraphMatch(row?.text||row?.trecho||"",question).matched)
+    .map(row=>({...row,score:100,coverage:1,retrieval_mode:String(row?.retrieval_mode||"strict-phrase-v4")}));
   const mappedContext = diversifyContextAcrossDocuments(context,TOP_K);
   const crossLibrary = crossLibraryStats(mappedContext);
   const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
