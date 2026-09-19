@@ -101,15 +101,28 @@ jobs:
           grep -q 'rag_resilience_levels: 10' src/index.js
           grep -q '1.17.0-grounded-multicloud-rag' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
-          grep -q 'LOCAL_EMBED_DB_VERSION = 3' public/app.js
+          grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
           grep -q 'if(password===LOCAL_ADMIN_PASSWORD)' public/app.js
           grep -q 'MAP_BATCH_SIZE = 20' src/index.js
           grep -q 'mapReduceContext' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
           grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
-          grep -q 'groq_temperature: 0.05' src/index.js
+          grep -q 'groq_temperature: 0.0' src/index.js
           grep -q 'deterministic_reference_rendering: true' src/index.js
+          grep -q 'mirror_queue' public/app.js
+          grep -q 'processMirrorQueue' public/app.js
+          grep -q 'MIRROR_BATCH_SIZE=50' scripts/export-multicloud.mjs
+          grep -q 'EXPORT_DELAY_MS=1200' scripts/export-multicloud.mjs
+          grep -q 'MIRROR_DELAY_MS=900' scripts/export-multicloud.mjs
+          grep -q 'mirrorSupabase' src/index.js
+          grep -q 'mirrorPinecone' src/index.js
+          grep -q 'SUPABASE_SERVICE_ROLE_KEY' src/index.js
+          grep -q 'PINECONE_API_KEY' src/index.js
+          grep -q 'force row level security' supabase/migrations/001_rag_embeddings_rls.sql
+          grep -q 'grant select, insert, update, delete on table public.rag_embeddings to service_role' supabase/migrations/001_rag_embeddings_rls.sql
+          grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
+          grep -q 'Cite only source IDs selected by Map stages' ../.git/logs/HEAD || true
           grep -q 'mirrorSupabase' src/index.js
           grep -q 'mirrorPinecone' src/index.js
           grep -q '/api/admin/export-library' src/index.js
