@@ -27,8 +27,8 @@ jobs:
           bash -n scripts/autonomous-release.sh
 
           # Core V4.0 identity
-          grep -q '6.0.0-omni-agent-swarm' src/index.js
-          grep -q 'cloudflare-v6-omni-agent-swarm' src/index.js
+          grep -q '7.0.0-twenty-agent-cross-device' src/index.js
+          grep -q 'cloudflare-v7-twenty-agent-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
           grep -q 'online_offline_search_symmetry: true' src/index.js
           grep -q 'same_paragraph_phrase_required: true' src/index.js
@@ -44,8 +44,8 @@ jobs:
           grep -q 'omni_virtual_scroller: true' src/index.js
           grep -q 'omni_card_gap_px: 40' src/index.js
           grep -q 'agent_swarm_enabled: true' src/index.js
-          grep -q 'agent_swarm_logical_nodes: 10' src/index.js
-          grep -q 'agent_swarm_physical_worker_cap: 10' src/index.js
+          grep -q 'agent_swarm_logical_nodes: 20' src/index.js
+          grep -q 'agent_swarm_physical_worker_cap: 16' src/index.js
           grep -q 'agent2_transformers_semantic: true' src/index.js
           grep -q 'agent10_bouncer: true' src/index.js
           grep -q 'agent11_short_entity_hunter: true' src/index.js
