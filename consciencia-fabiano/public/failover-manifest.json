@@ -1,0 +1,13 @@
+{
+  "version": "3.0.0",
+  "strategy": "A->B->C->D->E->F",
+  "mirrors": [],
+  "plans": {
+    "A": "Cloudflare Edge + Groq + Supabase",
+    "B": "Multi-cloud standby endpoint list",
+    "C": "IndexedDB local lazy takeover",
+    "D": "Service Worker cached compressed static vault",
+    "E": "http://127.0.0.1:8788 standalone Node.js",
+    "F": "raw-vault OS folder"
+  }
+}
