@@ -731,7 +731,7 @@ async function retrieveLexicalContext(env, question) {
   const data = await libraryCall(env, "/search-lexical", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: 30000 }),
+    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
   });
   return Array.isArray(data.matches)
     ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-full-library" }))
@@ -2546,7 +2546,7 @@ async function tts(request, env) {
 async function status(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
-  if (!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
+  if (!groqApiKeys(env).length) missing.push("GROQ_API_KEY_POOL");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
@@ -2562,7 +2562,7 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-router-external-ai",
+    architecture: "cloudflare-v2-massive-scale",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
@@ -2586,7 +2586,7 @@ async function status(env) {
     false_negative_synthesis_guard: true,
     full_library_recall_hotfix: true,
     client_and_server_context_merge: true,
-    lexical_full_scan_limit: 30000,
+    lexical_full_scan_limit: VECTOR_SCAN_LIMIT,
     lexical_single_anchor_opens_pipeline: true,
     supabase_lexical_fallback: true,
     durable_object_quota_fails_open_to_supabase: true,
@@ -2605,11 +2605,19 @@ async function status(env) {
     inline_citation_grounding: true,
     synthesis_independent_document_cap: TOP_K,
     multicloud_mirror: true,
+    provider_auth_surface: "server-side-secrets-only",
+    client_provider_keys_exposed: false,
+    supabase_transport: "postgrest-https",
+    direct_postgres_connections: 0,
+    logical_worker_nodes: MASSIVE_NODE_COUNT,
+    worker_pool_concurrency: MASSIVE_WORKER_CONCURRENCY,
+    queue_strategy: "fifo-exponential-backoff",
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
-    micro_node_chain: true,
+    micro_node_chain: false,
+    async_worker_pool: true,
     micro_node_count: MASSIVE_NODE_COUNT,
-    micro_node_batch_size: MICRO_NODE_BATCH_SIZE,
+    micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE,
     streaming_relay: "async-worker-pool",
     master_node: "final-fusion",
     master_fusion_mode: "massive-dense-encyclopedic",
@@ -3399,7 +3407,7 @@ export class LibraryDO {
         const terms = Array.isArray(body.terms)
           ? body.terms.map(foldSearchText).filter(Boolean).slice(0, 18)
           : lexicalTerms(query);
-        const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
+        const topK = Math.max(1, Math.min(MASSIVE_NODE_COUNT, Number(body.top_k || TOP_K)));
         const scanLimit = Math.max(200, Math.min(50000, Number(body.scan_limit || 30000)));
         if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "bm25-fallback" });
 
@@ -3457,7 +3465,7 @@ export class LibraryDO {
       if (url.pathname === "/search" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const query = Array.isArray(body.embedding) ? body.embedding : [];
-        const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
+        const topK = Math.max(1, Math.min(MASSIVE_NODE_COUNT, Number(body.top_k || TOP_K)));
         const minScore = Math.max(-1, Math.min(1, Number(body.min_score ?? SEMANTIC_MIN_SCORE)));
         const scanLimit = Math.max(50, Math.min(50000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
         const rows = [...this.sql.exec(`
@@ -3491,15 +3499,19 @@ export default {
     if (url.pathname === "/health/deploy") {
       const missing=[];
       if(!env.LIBRARY) missing.push("LIBRARY");
-      if(!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
+      if(!groqApiKeys(env).length) missing.push("GROQ_API_KEY_POOL");
       return json({
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-router-external-ai",
+        architecture: "cloudflare-v2-massive-scale",
         storage_backend: "durable-object-sqlite",
         workers_ai_used: false,
         llm_provider: "groq",
+        provider_auth_surface: "server-side-secrets-only",
+        client_provider_keys_exposed: false,
+        supabase_transport: "postgrest-https",
+        direct_postgres_connections: 0,
         embedding_provider: "browser-transformers",
         server_pdf_parsing: false,
         chunk_concurrency_limit: CHUNK_CONCURRENCY,
@@ -3509,9 +3521,10 @@ export default {
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         rag_map_reduce: true,
         map_batch_size: MAP_BATCH_SIZE,
-        micro_node_chain: true,
+        micro_node_chain: false,
+        async_worker_pool: true,
         micro_node_count: MASSIVE_NODE_COUNT,
-        micro_node_batch_size: MICRO_NODE_BATCH_SIZE,
+        micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE,
         streaming_relay: "async-worker-pool",
         master_node: "final-fusion",
         master_fusion_mode: "massive-dense-encyclopedic",
