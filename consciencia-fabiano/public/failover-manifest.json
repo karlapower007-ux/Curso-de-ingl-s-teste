@@ -3,7 +3,7 @@
   "strategy": "A->B->C->D->E->F",
   "mirrors": [],
   "plans": {
-    "A": "Cloudflare Edge + Groq + Supabase",
+    "A": "Cloudflare Worker + Durable Objects SQLite + R2 + Groq",
     "B": "Multi-cloud standby endpoint list",
     "C": "IndexedDB local lazy takeover",
     "D": "Service Worker cached compressed static vault",
