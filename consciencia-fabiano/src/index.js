@@ -686,7 +686,7 @@ async function groqStreamResponse(env, messages, meta) {
 async function chat(request, env) {
   assertBindings(env);
   requireSecret(env, "GROQ_API_KEY");
-  requireSecret(env, "GEMINI_API_KEY");
+  requireSecret(env, "COHERE_API_KEY");
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
