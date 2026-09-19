@@ -115,6 +115,9 @@ jobs:
           grep -q 'master_node: 20' src/index.js
           grep -q 'master_fusion_mode: "dense-encyclopedic"' src/index.js
           grep -q 'post_master_llm_rewrite: false' src/index.js
+          # deploy health exposes 20-node relay
+          grep -q 'micro_node_count: MICRO_NODE_COUNT' src/index.js
+          grep -q 'micro_node_batch_size: MICRO_NODE_BATCH_SIZE' src/index.js
           grep -q 'Não existe uma 21ª chamada de LLM' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
           grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
