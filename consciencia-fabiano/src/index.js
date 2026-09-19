@@ -776,7 +776,7 @@ async function retrieveSupabaseLexicalContext(env, question) {
     .filter(Boolean);
   if (!safeTerms.length) return [];
 
-  const endpoint = new URL(base + "/rest/v1/rag_embeddings");
+  const endpoint = new URL(base + "/rest/v1/library_chunks");
   endpoint.searchParams.set("select", "id,document_id,filename,title,author,language,page,chunk_index,text");
   endpoint.searchParams.set("or", "(" + safeTerms.map(term => "text.ilike.*" + term + "*").join(",") + ")");
   endpoint.searchParams.set("limit", String(TOP_K));
@@ -822,7 +822,7 @@ async function supabaseMirrorHasAnyRows(env) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const endpoint = base + "/rest/v1/rag_embeddings?select=id&limit=1";
+    const endpoint = base + "/rest/v1/library_chunks?select=id&limit=1";
     const res = await fetch(endpoint, {
       headers: {
         "Authorization": "Bearer " + token,
