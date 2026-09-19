@@ -53,6 +53,7 @@
     setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
     setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
     setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
+    setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),1900);
   }
 
   let history = [];
@@ -339,6 +340,7 @@
   function unlockUI() {
     sessionStorage.setItem(OWNER_TOKEN_KEY,LOCAL_ADMIN_PASSWORD);
     setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),250);
+    setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),300);
     setTimeout(()=>configurePhantomDaemon({force:true}).catch(()=>{}),350);
     return true;
   }
@@ -458,6 +460,79 @@
 
   const MIRROR_BACKFILL_STATE_KEY="fns_rag_mirror_backfill_v2";
   let mirrorBackfillRunning=false;
+
+  const LIBRARY_CHUNK_BACKFILL_STATE_KEY="fns_library_chunk_backfill_v7";
+  let libraryChunkBackfillRunning=false;
+
+  async function backfillLibraryChunksToCloud(){
+    if(libraryChunkBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    libraryChunkBackfillRunning=true;
+    try{
+      await ensureRagCascade("cross-device-library-backfill");
+      const docs=await window.FNSRagCascade?.listDocuments?.();
+      const list=Array.isArray(docs)?docs:[];
+      if(!list.length)return;
+
+      let state={doc_index:0,chunk_offset:0,updated_at:0};
+      try{state=JSON.parse(localStorage.getItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY)||"{}")||state;}catch{}
+      let docIndex=Math.max(0,Number(state.doc_index||0));
+      let chunkOffset=Math.max(0,Number(state.chunk_offset||0));
+      let batches=0;
+
+      while(docIndex<list.length && batches<6){
+        const doc=list[docIndex]||{};
+        const documentId=String(doc.document_id||doc.id||"");
+        if(!documentId){docIndex++;chunkOffset=0;continue;}
+
+        const rows=await window.FNSRagCascade.getDocumentChunks(documentId,chunkOffset,200);
+        if(!rows.length){
+          docIndex++;chunkOffset=0;
+          localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({doc_index:docIndex,chunk_offset:0,updated_at:Date.now()}));
+          continue;
+        }
+
+        const records=rows.map((r,i)=>({
+          id:String(r.id||r.key||documentId+":"+Number(r.chunk_index??(chunkOffset+i))),
+          document_id:documentId,
+          filename:String(r.filename||doc.filename||doc.arquivo||doc.title||"Documento"),
+          title:String(r.title||doc.title||doc.titulo||doc.filename||"Documento"),
+          author:String(r.author||doc.author||doc.autor||""),
+          language:String(r.language||doc.language||doc.idioma||"pt"),
+          page:Number(r.page||0)||0,
+          chunk_index:Number(r.chunk_index??(chunkOffset+i)),
+          text:String(r.text||"")
+        })).filter(x=>x.text);
+
+        if(records.length){
+          await api("/api/admin/library-mirror-upsert",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({records})
+          },false);
+        }
+
+        chunkOffset+=rows.length;
+        batches++;
+        localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({
+          doc_index:docIndex,chunk_offset:chunkOffset,updated_at:Date.now()
+        }));
+        await new Promise(resolve=>setTimeout(resolve,550));
+      }
+
+      if(docIndex>=list.length){
+        localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({
+          doc_index:0,chunk_offset:0,done:true,completed_at:Date.now(),updated_at:Date.now()
+        }));
+        configurePhantomDaemon({force:true}).catch(()=>{});
+      }else if(batches>0){
+        setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),2500);
+      }
+    }catch{
+      setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),10*60*1000);
+    }finally{
+      libraryChunkBackfillRunning=false;
+    }
+  }
 
   async function backfillLocalVectorMirror(){
     if(mirrorBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
@@ -2518,6 +2593,7 @@
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
+    backfillLibraryChunksToCloud().catch(()=>{});
   },20*60*1000);
 
   window.addEventListener("offline",()=>{
