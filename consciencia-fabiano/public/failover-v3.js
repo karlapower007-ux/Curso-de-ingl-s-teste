@@ -92,15 +92,44 @@ async function planCLocalAnalytic(payload){
     const engine=await loadLocalEngine();
     const result=await engine?.search?.(payload.question,null);
     const matches=Array.isArray(result?.matches)?result.matches:[];
-    if(matches.length){
+    if(!matches.length) return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
+
+    const turbines=await import("/local-turbine-pool.js?v=3.1.0");
+    const extraction=await turbines.runLocalTurbines({
+      question:String(payload.question||""),
+      matches,
+      onProgress:payload?.on_local_progress
+    });
+    const cards=Array.isArray(extraction?.cards)?extraction.cards:[];
+    if(cards.length){
       return {
-        ok:true,plan:"C",provider:"indexeddb-local",
-        answer:deterministicEvidenceAnswer(matches,"Plano C"),
-        sources:matches.slice(0,12),
-        matches
+        ok:true,
+        plan:"C",
+        provider:"indexeddb-local-worker-swarm",
+        answer:"Modo Offline V3.1: "+cards.length+" trechos relevantes foram extraídos localmente sem IA remota.",
+        sources:cards.slice(0,24).map(card=>({
+          arquivo:card.filename || card.title,
+          titulo:card.title,
+          autor:card.author,
+          pagina:card.page,
+          chunk_index:card.chunk_index,
+          document_id:card.document_id,
+          score:card.score
+        })),
+        matches,
+        cards,
+        virtualized:true,
+        offline_intelligence:"bm25+idf+coverage+phrase+proximity",
+        logical_capacity:Number(extraction.logical_capacity||1000),
+        logical_tasks:Number(extraction.logical_tasks||0),
+        physical_workers:Number(extraction.physical_workers||0),
+        hardware_concurrency:extraction.hardware_concurrency ?? null,
+        main_thread_extraction:false
       };
     }
-  }catch{}
+  }catch(error){
+    return {ok:false,plan:"C",code:"LOCAL_TURBINE_POOL_FAILED",message:String(error?.message||error)};
+  }
   return {ok:false,plan:"C",code:"LOCAL_INDEX_UNAVAILABLE"};
 }
 async function planCLocalDirect(payload){
