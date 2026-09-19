@@ -74,13 +74,18 @@ jobs:
           grep -q 'proximityBonus' public/local-turbine-worker.js
           grep -q 'exactPhrase' public/local-turbine-worker.js
           grep -q 'runLocalTurbines' public/failover-v3.js
+          grep -q 'OFFLINE_TOP_K=1000' public/rag-cascade.js
+          grep -q 'offlineSearch' public/rag-cascade.js
+          grep -q 'IndexedDB offline BM25 1000' public/rag-cascade.js
+          grep -q 'engine?.offlineSearch' public/failover-v3.js
+          grep -q 'paragraphIdf' public/local-turbine-worker.js
           grep -q 'indexeddb-local-worker-swarm' public/failover-v3.js
           grep -q 'appendOfflineTurbineResults' public/app.js
           grep -q 'offline-turbine-card' public/app.js
           grep -q 'const GAP=40' public/app.js
           grep -q 'offline-turbine-viewport' public/style.css
           grep -q 'white-space:pre-wrap' public/style.css
-          grep -q 'padding-bottom=GAP' public/app.js
+          grep -q 'slot.style.paddingBottom=GAP' public/app.js
           grep -q 'ensureFailoverV3' public/app.js
           grep -q 'ensureRagCascade' public/app.js
           grep -q 'activateHeavyLocalSubsystems' public/app.js
