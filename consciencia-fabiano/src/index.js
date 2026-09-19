@@ -1,4 +1,4 @@
-const VERSION = "1.17.0-grounded-multicloud-rag";
+const VERSION = "1.17.1-supabase-comaster-active";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
