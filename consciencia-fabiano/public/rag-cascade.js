@@ -305,9 +305,18 @@ async function search(question,queryEmbedding){
 async function getDocumentChunks(documentId,offset=0,limit=20){
   await ready;
   try{
-    const r=await rpc(searchWorker,"get-document-chunks",{document_id:String(documentId||""),offset:Number(offset||0),limit:Math.max(1,Math.min(100,Number(limit||20)))},4000);
+    const r=await rpc(searchWorker,"get-document-chunks",{document_id:String(documentId||""),offset:Number(offset||0),limit:Math.max(1,Math.min(1000,Number(limit||20)))},12000);
     return Array.isArray(r.chunks)?r.chunks:[];
   }catch{return [];}
+}
+
+async function directRetrieve(question){
+  await ready;
+  try{
+    return await rpc(searchWorker,"direct-retrieve",{question:String(question||"")},20000);
+  }catch(error){
+    return {ok:false,direct:true,code:"LOCAL_DIRECT_RETRIEVAL_FAILED",message:String(error?.message||error)};
+  }
 }
 
 async function listDocuments(){
@@ -339,5 +348,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
