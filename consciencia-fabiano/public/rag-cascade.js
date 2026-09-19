@@ -1,4 +1,5 @@
 const TOP_K=500;
+const OFFLINE_TOP_K=1000;
 const SEMANTIC_MIN_SCORE=0.38;
 const RAM_LIMIT=1600;
 const LEVELS=[
@@ -302,6 +303,17 @@ async function search(question,queryEmbedding){
   return {matches:[],level:0,name:"none",attempts};
 }
 
+async function offlineSearch(question){
+  await ready;
+  try{
+    const r=await rpc(searchWorker,"search-bm25",{question:String(question||""),top_k:OFFLINE_TOP_K},15000);
+    const matches=(r.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"indexeddb-offline-bm25"));
+    return {matches,level:10,name:"IndexedDB offline BM25 1000",logical_capacity:OFFLINE_TOP_K};
+  }catch(error){
+    return {matches:[],level:0,name:"offline-unavailable",logical_capacity:OFFLINE_TOP_K,error:String(error?.message||error)};
+  }
+}
+
 async function getDocumentChunks(documentId,offset=0,limit=20){
   await ready;
   try{
@@ -348,5 +360,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,offlineSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,offlineSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
