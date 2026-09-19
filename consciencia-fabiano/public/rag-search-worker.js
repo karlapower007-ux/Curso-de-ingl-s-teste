@@ -96,8 +96,8 @@ self.onmessage=async e=>{
   try{
     if(d.type==="persist-chunks"){const count=await putMany("chunks",d.chunks||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
-    if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||15),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
-    if(d.type==="search-bm25"){const matches=await bm25(d.question||"",Number(d.top_k||15));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||100),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="search-bm25"){const matches=await bm25(d.question||"",Number(d.top_k||100));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="list-documents"){const documents=await listDocuments();self.postMessage({id,ok:true,documents});return;}
     if(d.type==="get-document-chunks"){
       const documentId=String(d.document_id||"");
