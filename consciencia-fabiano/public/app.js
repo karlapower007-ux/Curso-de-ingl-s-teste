@@ -280,6 +280,7 @@
   function ownerToken() { return sessionStorage.getItem(OWNER_TOKEN_KEY) || ""; }
   function unlockUI() {
     sessionStorage.setItem(OWNER_TOKEN_KEY,LOCAL_ADMIN_PASSWORD);
+    setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),250);
     return true;
   }
   function ensureLocalAdminAccess() {
@@ -395,6 +396,55 @@
   }
 
   window.FNSRagMirrorBatch = enqueueMirrorRecords;
+
+  const MIRROR_BACKFILL_STATE_KEY="fns_rag_mirror_backfill_v2";
+  let mirrorBackfillRunning=false;
+
+  async function backfillLocalVectorMirror(){
+    if(mirrorBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    if(!window.FNSRagCascade?.localStats || !window.FNSRagCascade?.exportVectors) return;
+    mirrorBackfillRunning=true;
+    try{
+      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      const stats=await window.FNSRagCascade.localStats();
+      const total=Math.max(0,Number(stats?.vectors||0));
+      if(!total) return;
+
+      let state={offset:0,total:0,updated_at:0};
+      try{state=JSON.parse(localStorage.getItem(MIRROR_BACKFILL_STATE_KEY)||"{}")||state;}catch{}
+      if(Number(state.total||0)!==total || Number(state.offset||0)>total) state={offset:0,total,updated_at:Date.now()};
+
+      let offset=Math.max(0,Number(state.offset||0));
+      let batches=0;
+      while(offset<total && batches<8){
+        const page=await window.FNSRagCascade.exportVectors(offset,50);
+        const records=Array.isArray(page?.records)?page.records:[];
+        if(!records.length) break;
+
+        const result=await api("/api/admin/mirror-upsert",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({records})
+        },false);
+
+        if(result?.any_configured===false || result?.any_upserted!==true) break;
+        offset=Number(page.next_offset||offset+records.length);
+        batches++;
+        localStorage.setItem(MIRROR_BACKFILL_STATE_KEY,JSON.stringify({offset,total,updated_at:Date.now()}));
+        await new Promise(resolve=>setTimeout(resolve,950));
+      }
+
+      if(offset>=total){
+        localStorage.setItem(MIRROR_BACKFILL_STATE_KEY,JSON.stringify({offset:total,total,done:true,updated_at:Date.now()}));
+      }else if(batches>0){
+        setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),4000);
+      }
+    }catch{
+      setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),15*60*1000);
+    }finally{
+      mirrorBackfillRunning=false;
+    }
+  }
 
   function setAvatar(mode) {
     const img = $("avatarImg");
@@ -1670,11 +1720,14 @@
   setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
   setTimeout(()=>processSyncQueue().catch(()=>{}),5000);
   setTimeout(()=>processMirrorQueue().catch(()=>{}),7000);
+  setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),9000);
   setInterval(()=>processSyncQueue().catch(()=>{}),15*60*1000);
   setInterval(()=>processMirrorQueue().catch(()=>{}),10*60*1000);
+  setInterval(()=>backfillLocalVectorMirror().catch(()=>{}),20*60*1000);
   window.addEventListener("online",()=>{
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
+    backfillLocalVectorMirror().catch(()=>{});
   });
   document.addEventListener("visibilitychange",()=>{
     if(document.visibilityState==="visible"){
