@@ -2083,8 +2083,10 @@
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
 
-  // Apenas o Service Worker leve é preparado no arranque. Motores locais pesados dormem.
-  ensureFailoverV3().then(mod=>mod.warmServiceWorker?.()).catch(()=>{});
+  // Apenas o Service Worker leve é preparado no arranque. O módulo B-F continua sem ser importado.
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/sw-v3.js",{scope:"/"}).catch(()=>{});
+  }
 
   setInterval(()=>{
     if(!heavyLocalSubsystemsActivated) return;
