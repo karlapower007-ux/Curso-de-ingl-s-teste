@@ -2467,7 +2467,7 @@ function stitchExactChunks(rows) {
   return out;
 }
 
-function exactChapterSlice(text,chapterNumber) {
+function exactChapterSlice(text,chapterNumber,allowOpenEnd=false) {
   const raw=String(text || "");
   const n=Number(chapterNumber || 0);
   if(!raw || !n) return null;
@@ -2479,6 +2479,7 @@ function exactChapterSlice(text,chapterNumber) {
   const tailStart=startMatch.index+startMatch[0].length;
   const nextRe=new RegExp("(?:^|\\n)\\s*(?:CAP[ÍI]TULO|CAPITULO|CHAPTER)\\s+"+(n+1)+"\\b","im");
   const nextMatch=nextRe.exec(raw.slice(tailStart));
+  if(!nextMatch && !allowOpenEnd) return null;
   const end=nextMatch ? tailStart+nextMatch.index : raw.length;
   const chapter=raw.slice(start,end).replace(/\s+$/,"");
   return chapter || null;
@@ -2525,20 +2526,21 @@ function directWindowLimit(intent) {
   return 48;
 }
 
-function directAssemble(rows,intent,anchor) {
+function directAssemble(rows,intent,anchor,windowExhausted=false) {
   const ordered=sortSequentialChunks(rows);
   if(!ordered.length) return {text:"",scope:"none",chunks:0};
   const stitched=stitchExactChunks(ordered);
 
   if(intent?.mode==="full-chapter" && intent?.chapter_number){
-    const chapter=exactChapterSlice(stitched,intent.chapter_number);
+    const chapter=exactChapterSlice(stitched,intent.chapter_number,windowExhausted);
     if(chapter) return {text:chapter,scope:"full-chapter",chunks:ordered.length};
+    return {text:"",scope:"chapter-boundary-incomplete",chunks:ordered.length};
   }
 
   if(intent?.mode==="exact-verse"){
     let base=stitched;
     if(intent?.chapter_number){
-      const chapter=exactChapterSlice(stitched,intent.chapter_number);
+      const chapter=exactChapterSlice(stitched,intent.chapter_number,windowExhausted);
       if(chapter) base=chapter;
     }
     if(intent?.verse_number){
@@ -2656,7 +2658,8 @@ async function supabaseExactDocumentChunks(env,documentId,startChunk,limit) {
     const rows=await res.json().catch(()=>[]);
     return Array.isArray(rows)?rows:[];
   });
-  return sortSequentialChunks(results.flat().filter(Array.isArray).flat()).slice(0,wanted);
+  const rows=sortSequentialChunks(results.filter(Array.isArray).flat()).slice(0,wanted);
+  return {rows,exhausted:rows.length<wanted};
 }
 
 async function durableExactDocumentChunks(env,documentId,startChunk,limit) {
@@ -2666,7 +2669,10 @@ async function durableExactDocumentChunks(env,documentId,startChunk,limit) {
       "&start_chunk="+Math.max(0,Number(startChunk || 0))+
       "&limit="+Math.max(1,Math.min(EXACT_MAX_CHUNKS,Number(limit || EXACT_MAX_CHUNKS)))
   );
-  return Array.isArray(data?.chunks) ? data.chunks : [];
+  return {
+    rows:Array.isArray(data?.chunks) ? data.chunks : [],
+    exhausted:data?.has_more===false
+  };
 }
 
 async function directRetrievalPayload(env,body) {
@@ -2698,20 +2704,26 @@ async function directRetrievalPayload(env,body) {
   const startChunk=directWindowStart(anchor,intent);
   const limit=directWindowLimit(intent);
   let rows=[];
+  let windowExhausted=false;
   let provider="durable-object";
   try{
-    rows=await durableExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+    const durable=await durableExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+    rows=durable.rows;
+    windowExhausted=durable.exhausted===true;
   }catch{}
 
   if(!rows.length){
     provider="supabase-postgrest";
     try{
-      rows=await supabaseExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+      const supabase=await supabaseExactDocumentChunks(env,anchor.document_id,startChunk,limit);
+      rows=supabase.rows;
+      windowExhausted=supabase.exhausted===true;
     }catch{}
   }
 
   if(!rows.length){
     rows=[anchor];
+    windowExhausted=false;
     provider=String(anchor?.retrieval_mode || "anchor-only");
   }
 
@@ -2726,7 +2738,7 @@ async function directRetrievalPayload(env,body) {
     })
   );
   const ordered=sortSequentialChunks(processed);
-  const assembled=directAssemble(ordered,intent,anchor);
+  const assembled=directAssemble(ordered,intent,anchor,windowExhausted);
   if(!assembled.text){
     return {ok:false,direct:true,bypass_llm:true,code:"DIRECT_TEXT_EMPTY",intent,provider};
   }
@@ -3772,8 +3784,9 @@ export class LibraryDO {
           FROM chunks c JOIN documents d ON d.id=c.document_id
           WHERE c.document_id=? AND c.chunk_index>=?
           ORDER BY c.chunk_index ASC LIMIT ?
-        `,id,startChunk,limit)];
-        return json({ok:true,chunks:rows,start_chunk:startChunk,limit});
+        `,id,startChunk,limit+1)];
+        const hasMore=rows.length>limit;
+        return json({ok:true,chunks:rows.slice(0,limit),start_chunk:startChunk,limit,has_more:hasMore});
       }
 
       if (url.pathname === "/embeddings" && request.method === "POST") {
