@@ -37,6 +37,18 @@ export function paragraphBlocks(text){
   return explicit.length ? explicit : [raw];
 }
 
+const CANONICAL_REFERENCE_RE=/\b(?:(?:[1-4]\s*)?(?:N[eé]fi|Nephi|Alma|M[oó]rmon|Mormon|Mor[oô]ni|Moroni|Mosias|Mosiah|Jac[oó]|Jacob|Enos|Jarom|Omni)|Palavras\s+de\s+M[oó]rmon|Words\s+of\s+Mormon|[EÉ]ter|Ether|G[eê]nesis|Genesis|[EÊ]xodo|Exodus|Lev[ií]tico|Leviticus|N[uú]meros|Numbers|Deuteron[oô]mio|Deuteronomy|Josu[eé]|Joshua|Ju[ií]zes|Judges|Rute|Ruth|Samuel|Reis|Kings|Cr[oô]nicas|Chronicles|Esdras|Ezra|Neemias|Nehemiah|Ester|Esther|J[oó]|Job|Salmos?|Psalms?|Prov[eé]rbios|Proverbs|Eclesiastes|Ecclesiastes|Cantares|Isa[ií]as|Isaiah|Jeremias|Jeremiah|Lamenta[cç][oõ]es|Ezequiel|Ezekiel|Daniel|Oseias|Hosea|Joel|Am[oó]s|Amos|Obadias|Obadiah|Jonas|Jonah|Miqueias|Micah|Naum|Nahum|Habacuque|Habakkuk|Sofonias|Zephaniah|Ageu|Haggai|Zacarias|Zechariah|Malaquias|Malachi|Mateus|Matthew|Marcos|Mark|Lucas|Luke|Jo[aã]o|John|Atos|Acts|Romanos|Romans|Cor[ií]ntios|Corinthians|G[aá]latas|Galatians|Ef[eé]sios|Ephesians|Filipenses|Philippians|Colossenses|Colossians|Tessalonicenses|Thessalonians|Tim[oó]teo|Timothy|Tito|Titus|Filemom|Philemon|Hebreus|Hebrews|Tiago|James|Pedro|Peter|Judas|Jude|Apocalipse|Revelation|Doutrina\s+e\s+Conv[eê]nios|Doctrine\s+and\s+Covenants|D\s*&\s*C|Mois[eé]s|Moses|Abra[aã]o|Abraham|Joseph\s+Smith(?:—|-|\s)+Hist[oó]ria|Joseph\s+Smith(?:—|-|\s)+History|Regras\s+de\s+F[eé]|Articles\s+of\s+Faith)\s+\d{1,4}(?::\d{1,4}(?:\s*[-–]\s*\d{1,4})?)?/iu;
+const GENERIC_BOOK_REFERENCE_RE=/\b([\p{L}][\p{L}\p{M}.'’ -]{1,48})\s+(Livro|Book)\s+([IVXLCDM]+|\d{1,3})\b/iu;
+
+export function extractSemanticReference(text){
+  const raw=String(text||"");
+  const scripture=raw.match(CANONICAL_REFERENCE_RE);
+  if(scripture)return scripture[0].replace(/\s+/g," ").replace(/\s*([:–-])\s*/g,"$1").trim();
+  const book=raw.match(GENERIC_BOOK_REFERENCE_RE);
+  if(book)return book[0].replace(/\s+/g," ").trim();
+  return "";
+}
+
 export function strictParagraphMatch(text,question){
   const target=deriveStrictPhrase(question);
   if(!target)return {matched:false,target:"",paragraph:"",paragraph_index:-1};
