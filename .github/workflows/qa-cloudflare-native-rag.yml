@@ -98,7 +98,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.17.4-total-source-release' src/index.js
+          grep -q '1.18.0-encyclopedic-cross-library' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -116,9 +116,17 @@ jobs:
           grep -q 'total_source_release: true' src/index.js
           grep -q 'map_stage_can_filter_sources: false' src/index.js
           grep -q 'deterministic_sources_use_all_retrieved: true' src/index.js
+          grep -q 'encyclopedic_dictionary_mode: true' src/index.js
+          grep -q 'transversal_mass_scan: true' src/index.js
+          grep -q 'diversity_round_robin: true' src/index.js
+          grep -q 'diversifyContextAcrossDocuments' src/index.js
+          grep -q 'crossLibraryLedger' src/index.js
+          grep -q 'compactIndependentEvidenceFromSources' src/index.js
+          grep -q 'MODO DICIONÁRIO/ENCICLOPÉDICO' src/index.js
+          grep -q 'CATÁLOGO TRANSVERSAL DE DOCUMENTOS' src/index.js
           grep -q 'buildMapBatchContext' src/index.js
           grep -q 'const mappedContext = promptContext' src/index.js
-          grep -q 'nenhum \[F#\] recebido pode ser ignorado silenciosamente' src/index.js
+          grep -Fq 'nenhum [F#] recebido pode ser ignorado silenciosamente' src/index.js
           grep -q 'a etapa MAP não tem permissão para afunilar a biblioteca' src/index.js
           grep -q 'repairFalseNegativeSynthesis' src/index.js
           grep -q 'deterministicSynthesisFromSources' src/index.js

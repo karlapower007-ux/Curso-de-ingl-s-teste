@@ -1,4 +1,4 @@
-const VERSION = "1.17.4-total-source-release";
+const VERSION = "1.18.0-encyclopedic-cross-library";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -32,13 +32,13 @@ const LOCAL_EMBEDDING_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const MAX_SERVER_HISTORY = 40;
 const GROQ_HISTORY_MESSAGES = 6;
-const GROQ_INPUT_BUDGET_TOKENS = 6800;
+const GROQ_INPUT_BUDGET_TOKENS = 9000;
 const GROQ_HISTORY_BUDGET_TOKENS = 900;
-const GROQ_RAG_BUDGET_TOKENS = 4800;
-const GROQ_MAX_COMPLETION_TOKENS = 1400;
+const GROQ_RAG_BUDGET_TOKENS = 6100;
+const GROQ_MAX_COMPLETION_TOKENS = 1900;
 const MAP_REDUCE_THRESHOLD = 20;
 const MAP_BATCH_SIZE = 20;
-const MAP_MAX_COMPLETION_TOKENS = 650;
+const MAP_MAX_COMPLETION_TOKENS = 800;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
 const EMPTY_GROUNDED_ANSWER = "Não encontrei informações nos documentos indexados para responder a esta pergunta.";
@@ -875,10 +875,10 @@ function deterministicSynthesisFromSources(sources) {
       excerpts:[]
     });
     const text=String(s?.trecho || "").replace(/\s+/g," ").trim();
-    if(text && docs.get(key).excerpts.length<2) docs.get(key).excerpts.push(text.slice(0,360));
+    if(text && docs.get(key).excerpts.length<1) docs.get(key).excerpts.push(text.slice(0,220));
   }
   const parts=[];
-  for(const doc of [...docs.values()].slice(0,12)){
+  for(const doc of [...docs.values()].slice(0,TOP_K)){
     const label=doc.author ? doc.name+" de "+doc.author : doc.name;
     const evidence=doc.excerpts.filter(Boolean).join(" ");
     if(evidence) parts.push(label+" apresenta a seguinte evidência documental: "+evidence);
@@ -890,13 +890,7 @@ function deterministicSynthesisFromSources(sources) {
 async function repairFalseNegativeSynthesis(env,question,sources) {
   const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
-  const evidence=rows.map((s,i)=>{
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "página "+Number(s.pagina) : "página não informada";
-    const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,520);
-    return "[S"+(i+1)+"] "+name+(author?" — "+author:"")+", "+page+"\n"+text;
-  }).join("\n\n");
+  const evidence=compactIndependentEvidenceFromSources(rows);
   const messages=[
     {
       role:"system",
@@ -908,12 +902,12 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
     },
     {
       role:"user",
-      content:"PERGUNTA:\n"+trimToTokenBudget(question,700)+"\n\nFONTES DOCUMENTAIS CONFIRMADAS:\n"+trimToTokenBudget(evidence,4300)
+      content:"PERGUNTA:\n"+trimToTokenBudget(question,700)+"\n\nFONTES INDEPENDENTES CONFIRMADAS:\n"+trimToTokenBudget(evidence,5200)
     }
   ];
   try{
     const res=await groqCompletion(env,messages,false,{
-      input_budget:5600,
+      input_budget:7000,
       max_completion_tokens:900,
       temperature:0.0
     });
@@ -1012,6 +1006,66 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
   }catch{
     return raw;
   }
+}
+
+function diversifyContextAcrossDocuments(context,limit=TOP_K) {
+  const rows=Array.from(context || []).slice(0,Math.max(limit,TOP_K));
+  if(rows.length<=1) return rows.slice(0,limit);
+
+  const groups=new Map();
+  const order=[];
+  for(const item of rows){
+    const id=String(item?.document_id || item?.title || item?.filename || "unknown");
+    if(!groups.has(id)){groups.set(id,[]);order.push(id);}
+    groups.get(id).push(item);
+  }
+  if(groups.size<=1) return rows.slice(0,limit);
+
+  for(const list of groups.values()){
+    list.sort((a,b)=>Number(b?.score||0)-Number(a?.score||0));
+  }
+
+  const out=[];
+  let round=0;
+  while(out.length<limit){
+    let added=false;
+    for(const id of order){
+      const item=groups.get(id)?.[round];
+      if(item){
+        out.push(item);
+        added=true;
+        if(out.length>=limit) break;
+      }
+    }
+    if(!added) break;
+    round++;
+  }
+  return out;
+}
+
+function crossLibraryLedger(context) {
+  const stats=crossLibraryStats(context);
+  const lines=stats.documents.map((doc,index)=>{
+    const author=doc.author ? " — "+doc.author : "";
+    return "- "+(index+1)+". "+doc.name+author+" ("+doc.hits+" trecho(s) recuperado(s))";
+  });
+  return lines.join("\n");
+}
+
+function compactIndependentEvidenceFromSources(sources) {
+  const docs=new Map();
+  for(const s of (sources || [])){
+    const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
+    if(docs.has(key)) continue;
+    docs.set(key,s);
+  }
+  return [...docs.values()].slice(0,TOP_K).map((s,index)=>{
+    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
+    const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
+    const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,150);
+    return "[D"+(index+1)+"] "+name+(author?" — "+author:"")+" — "+page+" — "+text;
+  }).join("\n");
 }
 
 function documentIdentity(item) {
@@ -1514,7 +1568,7 @@ async function chat(request, env) {
 
   const focusedCitation = isFocusedCitationRequest(question);
   const multipleSourcesRequested = wantsMultipleSources(question);
-  const promptContext = context.slice(0,TOP_K);
+  const promptContext = diversifyContextAcrossDocuments(context,TOP_K);
   const reduced = await mapReduceContext(env,question,promptContext);
   // Liberação total: a etapa MAP organiza o conteúdo, mas NÃO decide quais fontes sobrevivem.
   // Todas as fontes efetivamente recuperadas (até TOP_K) permanecem elegíveis para síntese e referências.
@@ -1531,7 +1585,8 @@ async function chat(request, env) {
         "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
         "Se houver uma ou mais fontes válidas no contexto, é PROIBIDO declarar ausência de informação: deves sintetizar o conteúdo efetivamente presente nesses trechos. " +
         "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
-        "Faz uma varredura transversal de TODAS as evidências recuperadas pelo RAG e organizadas pelo Map-Reduce; a etapa MAP não tem permissão para afunilar a biblioteca. " +
+        "MODO DICIONÁRIO/ENCICLOPÉDICO: produz um verbete de consulta profunda, com definição central clara e integração transversal das evidências documentais. " +
+        "Faz uma varredura transversal MASSIVA de TODAS as evidências recuperadas pelo RAG e organizadas pelo Map-Reduce; a etapa MAP não tem permissão para afunilar a biblioteca. " +
         "Sempre que múltiplos livros, capítulos ou documentos da biblioteca abordarem o tema da pergunta, é obrigatório cruzar as informações e citar todas as fontes independentes encontradas, incluindo vários livros e autores diferentes quando existirem, enriquecendo a resposta com a pluralidade do acervo e nunca limitando a evidência a um único documento isolado. " +
         "Se a busca retornar 5, 10, 15 ou mais fontes válidas, a síntese deve representar coletivamente essas fontes, sem reduzir a resposta a um único livro. " +
         "Não privilegies uma única fonte apenas por ter score maior quando outras fontes recuperadas também sustentarem a resposta. Expõe convergências, complementos e diferenças somente quando estiverem explicitamente sustentados pelos trechos. " +
@@ -1541,9 +1596,10 @@ async function chat(request, env) {
     {
       role: "user",
       content:
-        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) relevante(s) selecionado(s).\n" +
-        "A síntese deve representar transversalmente todas essas fontes independentes quando houver mais de uma.\n\n" +
-        "BIBLIOTECA RECUPERADA:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
+        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) relevante(s) recuperado(s).\n" +
+        "A síntese deve representar transversalmente TODAS essas fontes independentes quando houver mais de uma.\n\n" +
+        "CATÁLOGO TRANSVERSAL DE DOCUMENTOS:\n"+crossLibraryLedger(mappedContext)+"\n\n" +
+        "MAP-REDUCE DOS TRECHOS:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
     },
   ]);
 
@@ -1686,6 +1742,10 @@ async function status(env) {
     total_source_release: true,
     map_stage_can_filter_sources: false,
     deterministic_sources_use_all_retrieved: true,
+    encyclopedic_dictionary_mode: true,
+    transversal_mass_scan: true,
+    diversity_round_robin: true,
+    synthesis_independent_document_cap: TOP_K,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
