@@ -22,6 +22,23 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
+          # V2.0 MASSIVE SCALE invariants
+          grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
+          grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
+          grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
+          grep -q 'MASSIVE_GROQ_MAX_RETRIES = 3' src/index.js
+          grep -q 'SSE_KEEPALIVE_MS = 15000' src/index.js
+          grep -q 'groqApiKeys' src/index.js
+          grep -q 'runAsyncWorkerPool' src/index.js
+          grep -q 'massivePipelineSynthesis' src/index.js
+          grep -q 'massivePipelineStreamResponse' src/index.js
+          grep -q 'provider_auth_surface: "server-side-secrets-only"' src/index.js
+          grep -q 'client_provider_keys_exposed: false' src/index.js
+          grep -q 'supabase_transport: "postgrest-https"' src/index.js
+          grep -q 'createNodeProgressVirtualizer' public/app.js
+          grep -q 'NODE_VIRTUAL_MAX = 500' public/app.js
+          grep -q 'event === "node"' public/app.js
+          grep -q 'event === "keepalive"' public/app.js
           node --check scripts/browser-voice-smoke.mjs
           node --check scripts/browser-ingest-smoke.mjs
           bash -n scripts/autonomous-release.sh
@@ -77,7 +94,7 @@ jobs:
           grep -q '/health/deploy' src/index.js
           grep -q 'deploy-only-no-storage-read' src/index.js
           grep -q 'semantic_min_score: 0.38' src/index.js
-          grep -q 'top_k: 100' src/index.js
+          grep -q 'top_k: 500' src/index.js
           grep -q 'require_lexical_match: false' src/index.js
           grep -q 'FONTES E REFERÊNCIAS' src/index.js
           grep -q 'whisper-local.js' public/index.html
@@ -98,7 +115,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.20.0-twenty-node-relay' src/index.js
+          grep -q '2.0.0-massive-scale' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -112,11 +129,11 @@ jobs:
           grep -q 'precomputedRelayStreamResponse' src/index.js
           grep -q 'micro_node_chain: true' src/index.js
           grep -q 'streaming_relay: "sequential-accumulator"' src/index.js
-          grep -q 'master_node: 20' src/index.js
+          grep -q 'master_node: \"final-fusion\"' src/index.js
           grep -q 'master_fusion_mode: "dense-encyclopedic"' src/index.js
           grep -q 'post_master_llm_rewrite: false' src/index.js
-          # deploy health exposes 20-node relay
-          grep -q 'micro_node_count: MICRO_NODE_COUNT' src/index.js
+          # deploy health exposes V2.0 500-node async pool
+          grep -q 'micro_node_count: MASSIVE_NODE_COUNT' src/index.js
           grep -q 'micro_node_batch_size: MICRO_NODE_BATCH_SIZE' src/index.js
           grep -q 'Não existe uma 21ª chamada de LLM' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
@@ -139,7 +156,7 @@ jobs:
           grep -q 'MODO DICIONÁRIO DENSO' src/index.js
           grep -q 'CATÁLOGO TRANSVERSAL:' src/index.js
           grep -q 'buildMapBatchContext' src/index.js
-          grep -q 'const mappedContext = promptContext' src/index.js
+          grep -q 'const mappedContext = diversifyContextAcrossDocuments' src/index.js
           grep -Fq 'nenhum [F#] recebido pode ser ignorado silenciosamente' src/index.js
           grep -q 'repairFalseNegativeSynthesis' src/index.js
           grep -q 'deterministicSynthesisFromSources' src/index.js
@@ -178,7 +195,7 @@ jobs:
           grep -q 'force row level security' supabase/migrations/001_rag_embeddings_rls.sql
           test -f scripts/export-multicloud.mjs
           grep -q 'biblioteca_backup' scripts/export-multicloud.mjs
-          grep -q 'TOP_K=100' public/rag-cascade.js
+          grep -q 'TOP_K=500' public/rag-cascade.js
           grep -q 'hydrateStaticBackup' public/rag-cascade.js
           test -f public/biblioteca_backup.json
           grep -q 'expected_embeddings' public/biblioteca_backup.json
