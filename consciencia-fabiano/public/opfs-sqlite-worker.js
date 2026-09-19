@@ -39,6 +39,7 @@ self.onmessage=async e=>{
   try{
     if(d.type==="persist-chunks"){await persist(d.chunks||[]);self.postMessage({id,ok:true,count:(d.chunks||[]).length});return;}
     if(d.type==="search"){const matches=await search(d.question||"",Number(d.top_k||15));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="delete-document"){const db=await getDb();db.exec({sql:"DELETE FROM chunks WHERE document_id=?",bind:[String(d.document_id||"")]});self.postMessage({id,ok:true});return;}
     self.postMessage({id,ok:false,error:"unknown operation"});
   }catch(error){self.postMessage({id,ok:false,error:String(error?.message||error)});}
 };

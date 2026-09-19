@@ -221,5 +221,23 @@ async function search(question,queryEmbedding){
   return {matches,level:matches.length?10:0,name:matches.length?LEVELS[9][1]:"none",attempts};
 }
 
-window.FNSRagCascade={ready,search,persistExtracted,persistVectors,levels:LEVELS};
-export {ready,search,persistExtracted,persistVectors,LEVELS};
+async function listDocuments(){
+  await ready;
+  try{
+    const r=await rpc(searchWorker,"list-documents",{},3000);
+    return Array.isArray(r.documents)?r.documents:[];
+  }catch{return [];}
+}
+async function deleteDocument(documentId){
+  const id=String(documentId||"");
+  if(!id)return false;
+  for(let i=ramCorpus.length-1;i>=0;i--){
+    if(String(ramCorpus[i].document_id||ramCorpus[i].doc_key||"")===id) ramCorpus.splice(i,1);
+  }
+  try{await rpc(searchWorker,"delete-document",{document_id:id},4000);}catch{}
+  try{await rpc(opfsWorker,"delete-document",{document_id:id},4000);}catch{}
+  return true;
+}
+
+window.FNSRagCascade={ready,search,persistExtracted,persistVectors,listDocuments,deleteDocument,levels:LEVELS};
+export {ready,search,persistExtracted,persistVectors,listDocuments,deleteDocument,LEVELS};

@@ -1,4 +1,4 @@
-const VERSION = "1.14.0-rag-ten-level-resilience";
+const VERSION = "1.14.1-library-recovery-gadu";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -37,7 +37,7 @@ const GROQ_HISTORY_BUDGET_TOKENS = 900;
 const GROQ_RAG_BUDGET_TOKENS = 4800;
 const GROQ_MAX_COMPLETION_TOKENS = 850;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
-const OWNER_TOKEN_HASH = "8205541ffbdb2d6ee4d000427b0d8a0bc70f657087ba43d95712eeef0a9609ed";
+const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
@@ -127,7 +127,7 @@ async function adminAuthorized(request, env) {
   const automation = (request.headers.get("X-FNS-Automation") || "").trim();
   if (env.AUTOMATION_SECRET && automation && automation === env.AUTOMATION_SECRET) return true;
   const token = rawToken(request);
-  if (!token || token.length < 10) return false;
+  if (!token || token.length < 4) return false;
   return (await sha256Text(token)) === OWNER_TOKEN_HASH;
 }
 
@@ -1312,6 +1312,8 @@ async function status(env) {
     rag_local_levels: [1,2,3,10],
     rag_cloudflare_level: 5,
     rag_external_slots: ["supabase","pinecone","mongodb","astra"],
+    local_library_catalog: true,
+    admin_access_password_version: "gadu-v1",
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     groq_aggressive_budget_tokens: GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS,
@@ -2154,6 +2156,7 @@ export default {
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         local_whisper_stt: true,
         rag_resilience_levels: 10,
+        local_library_catalog: true,
         bindings_missing: missing,
         probe: "deploy-only-no-storage-read"
       });

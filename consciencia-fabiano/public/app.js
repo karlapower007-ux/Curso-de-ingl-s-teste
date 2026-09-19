@@ -270,8 +270,8 @@
     const ct=res.headers.get("content-type") || "";
     const body=ct.includes("application/json") ? await res.json() : await res.text();
     if(res.status===401 && canPrompt && isPrivateApi(path)){
-      const value=prompt("Informe a chave privada do proprietário para administrar a biblioteca:");
-      if(value && value.trim().length>=10){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
+      const value=prompt("Digite a senha de acesso da biblioteca:");
+      if(value && value.trim().length>=4){sessionStorage.setItem(OWNER_TOKEN_KEY,value.trim());return api(path,options,false);}
     }
     if(!res.ok){const err=new Error(body?.message || body?.detail || body?.error || String(body));err.code=body?.code || "";err.status=res.status;throw err;}
     return body;
@@ -1062,80 +1062,71 @@
     const file=$("pdfInput").files?.[0];
     if(!file){$("adminStatus").textContent="Escolha um PDF.";return;}
     if(file.type!=="application/pdf" && !/\.pdf$/i.test(file.name)){$("adminStatus").textContent="Selecione um PDF.";return;}
-    $("uploadBtn").disabled=true; const startedAt=performance.now();
+    $("uploadBtn").disabled=true;
+    const startedAt=performance.now();
     try{
       const extracted=await extractPdfLocally(file);
-      $("adminStatus").textContent="Texto extraído. Salvando espelho local resiliente…";
+      $("adminStatus").textContent="Texto extraído. Salvando a biblioteca local resiliente…";
+      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      await window.FNSRagCascade?.persistExtracted?.(extracted);
+      $("pdfInput").value="";
+      await loadBooks();
+
+      let cloudReady=null;
       try{
-        if(window.__ragCascadeReady) await window.__ragCascadeReady;
-        if(window.FNSRagCascade?.persistExtracted) await window.FNSRagCascade.persistExtracted(extracted);
-      }catch{}
-      $("adminStatus").textContent="Texto local seguro. Ativando busca lexical e sincronização em nuvem…";
-      const presign=await requestR2Presign(file);
-      const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
-      const ready=await submitExtractedTextLocal(extracted,presign.available?presign.r2_key:"");
-      const vault=await vaultPromise.catch(()=>({stored:false}));
-      const seconds=((performance.now()-startedAt)/1000).toFixed(1);
-      const vaultText=vault.stored?" • original salvo direto no R2":" • R2 não configurado";
-      if(ready.duplicate){
-        $("adminStatus").textContent="PDF já existente na biblioteca • busca disponível"+vaultText+" • "+seconds+"s";
-      }else{
-        $("adminStatus").textContent="Busca lexical pronta: "+(ready.chunks||0)+" trechos. Vetorização local continuará em segundo plano"+vaultText+" • "+seconds+"s";
-        const job={document_id:ready.document_id,filename:extracted.filename,title:extracted.title||"",author:extracted.author||"",content_sha256:extracted.content_sha256,total_chunks:Number(ready.chunks||0),state:"queued",batch_no:0,created_at:Date.now()};
+        const presign=await requestR2Presign(file);
+        const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
+        cloudReady=await submitExtractedTextLocal(extracted,presign.available?presign.r2_key:"");
+        await vaultPromise.catch(()=>({stored:false}));
+      }catch(cloudError){
+        const seconds=((performance.now()-startedAt)/1000).toFixed(1);
+        $("adminStatus").textContent="PDF salvo localmente e já pesquisável. A nuvem está temporariamente limitada; nada foi perdido • "+seconds+"s";
+        await loadBooks();
+        return;
+      }
+
+      if(cloudReady && !cloudReady.duplicate){
+        const job={
+          document_id:cloudReady.document_id,
+          filename:extracted.filename,
+          title:extracted.title||"",
+          author:extracted.author||"",
+          content_sha256:extracted.content_sha256,
+          total_chunks:Number(cloudReady.chunks||0),
+          state:"queued",batch_no:0,created_at:Date.now()
+        };
         await idbPut("jobs",job);
         runLocalVectorization(job);
       }
-      $("pdfInput").value=""; await loadBooks(); await checkBackend();
-    }catch(error){$("adminStatus").textContent=error.message;}
-    finally{$("uploadBtn").disabled=false;}
+      const seconds=((performance.now()-startedAt)/1000).toFixed(1);
+      $("adminStatus").textContent="PDF salvo localmente e sincronizado quando possível • "+seconds+"s";
+      await loadBooks();
+    }catch(error){
+      $("adminStatus").textContent="Falha ao processar o PDF localmente: "+String(error?.message || error);
+    }finally{
+      $("uploadBtn").disabled=false;
+    }
   }
 
   async function loadBooks() {
-    try {
-      const data = await api("/api/admin/livros");
-      const list = Array.isArray(data?.livros) ? data.livros : [];
-      $("booksList").innerHTML = "";
-      if (!list.length) {
-        $("booksList").innerHTML = '<div class="book"><div><strong>Nenhum PDF listado ainda.</strong><small>Adicione o primeiro livro acima.</small></div></div>';
-        return;
-      }
-      list.forEach(item => {
-        const row = document.createElement("div");
-        row.className = "book";
-        const info = document.createElement("div");
-        const strong = document.createElement("strong");
-        strong.textContent = item.arquivo;
-        const small = document.createElement("small");
-        small.textContent =
-          (item.titulo && item.titulo !== item.arquivo ? item.titulo + " • " : "") +
-          (item.autor ? item.autor + " • " : "") +
-          (item.paginas || 0) + " páginas • " +
-          (item.chunks || 0) + " trechos • " +
-          (item.idioma || "idioma não detectado") + " • " +
-          (item.status || "sem status");
-        info.append(strong, small);
-        const del = document.createElement("button");
-        del.className = "ghost danger";
-        del.textContent = "Excluir";
-        del.onclick = async () => {
-          if (!confirm("Excluir " + item.arquivo + " da biblioteca?")) return;
-          try {
-            await api("/api/admin/delete-pdf", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ arquivo: item.arquivo })
-            });
-            await loadBooks();
-          } catch (e) {
-            $("adminStatus").textContent = e.message;
-          }
-        };
-        row.append(info, del);
-        $("booksList").appendChild(row);
-      });
-    } catch (error) {
-      $("booksList").innerHTML = '<div class="book"><div><strong>Backend de biblioteca ainda não respondeu.</strong><small>' +
-        String(error.message).replace(/[<>]/g, "") + '</small></div></div>';
+    const local=await localBookCatalog();
+    renderBooks(local,false);
+    if(local.length){
+      $("adminStatus").textContent="Biblioteca local ativa: "+local.length+" PDF(s) disponível(is) neste navegador.";
+    }
+    try{
+      const data=await api("/api/admin/livros");
+      const cloud=Array.isArray(data?.livros)?data.livros:[];
+      const merged=mergeBookLists(local,cloud);
+      renderBooks(merged,true);
+      $("adminStatus").textContent="Biblioteca sincronizada: "+merged.length+" PDF(s) disponível(is).";
+    }catch(error){
+      const msg=String(error?.message || error || "");
+      const quota=/Exceeded allowed rows read|free tier|rows read/i.test(msg);
+      renderBooks(local,false);
+      $("adminStatus").textContent=quota
+        ? "Cloudflare atingiu a cota diária de leitura. Seus livros NÃO foram apagados; a cópia local continua disponível e a nuvem volta automaticamente após o reset."
+        : "Modo local ativo. A nuvem está temporariamente indisponível; seus livros locais continuam acessíveis.";
     }
   }
 

@@ -99,6 +99,15 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
+          grep -q '1.14.1-library-recovery-gadu' src/index.js
+          grep -q 'local_library_catalog: true' src/index.js
+          grep -q 'token.length < 4' src/index.js
+          grep -q 'Digite a senha de acesso da biblioteca' public/app.js
+          grep -q 'localBookCatalog' public/app.js
+          grep -q 'Seus livros NÃO foram apagados' public/app.js
+          grep -q 'listDocuments' public/rag-cascade.js
+          grep -q 'deleteDocument' public/rag-cascade.js
+          grep -q 'list-documents' public/rag-search-worker.js
           test -f public/whisper-local.js
           test -f public/whisper-worker.js
           grep -q 'Xenova/whisper-tiny' public/whisper-worker.js
