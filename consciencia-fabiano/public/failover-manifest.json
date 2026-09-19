@@ -1,5 +1,5 @@
 {
-  "version": "3.2.0",
+  "version": "3.3.0",
   "strategy": "A->B->C->D->E->F",
   "mirrors": [],
   "plans": {
@@ -11,7 +11,7 @@
     "F": "raw-vault OS folder"
   },
   "plan_c": {
-    "engine": "cpu-aware-web-worker-pool-v3.2",
+    "engine": "cpu-aware-web-worker-pool-v3.3",
     "logical_task_capacity": 1000,
     "physical_worker_cap": 16,
     "scoring": "bm25+idf+coverage+phrase+proximity",
@@ -23,6 +23,12 @@
       "full_chunk_fallback": true
     },
     "sequential_chunk_merge": true,
-    "canonical_reference_elevation": true
+    "canonical_reference_elevation": true,
+    "boolean_exact_match": true,
+    "hard_bm25_threshold": 3.25,
+    "hard_min_coverage": 0.5,
+    "zero_noise": true,
+    "elegant_silence": true,
+    "fuzzy_compensation_disabled": true
   }
 }
