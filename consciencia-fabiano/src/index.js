@@ -982,10 +982,13 @@ async function retrieveContextV4Strict(env,question){
     pushStrictHit(perDocument,row,STRICT_PER_DOCUMENT_HIT_CAP);
   }
   const matches=roundRobinStrictHits(perDocument,STRICT_LOGICAL_TASK_CAP);
-  if(!matches.length&&!durable.readable&&!supabase.readable){
-    const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
-    err.code="RAG_RETRIEVAL_UNAVAILABLE";
-    throw err;
+  if(!matches.length&&!durable.readable){
+    const mirrorHasRows=supabaseLexicalConfigured(env)?await supabaseMirrorHasAnyRows(env):null;
+    if(!supabase.readable || mirrorHasRows!==true){
+      const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+      err.code="RAG_RETRIEVAL_UNAVAILABLE";
+      throw err;
+    }
   }
   return matches;
 }
@@ -2961,6 +2964,7 @@ async function chat(request, env) {
     if(wantsStream){
       const payload=sseFrame("done",{
         ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
+        strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
         provider:emptyProvider,retrieval_level:retrievalLevel,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
         map_reduce:false,map_batches:0,
@@ -2974,6 +2978,7 @@ async function chat(request, env) {
     }
     return json({
       ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
+      strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
       provider:emptyProvider,retrieval_level:retrievalLevel,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
       map_reduce:false,map_batches:0,
