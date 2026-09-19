@@ -8,7 +8,7 @@ async function supabaseLexical(env,question,limit=120){
   const qs=terms(question);if(!base||!token||!qs.length)return [];
   const url=new URL(base+"/rest/v1/rag_embeddings");
   url.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
-  url.searchParams.set("or","("+qs.map(t=>"text.ilike.*"+encodeURIComponent(t).replace(/%/g,"")+"*").join(",")+")");
+  url.searchParams.set("or","("+qs.map(t=>"text.ilike.*"+String(t).replace(/[,*()]/g,"")+"*").join(",")+")");
   url.searchParams.set("limit",String(Math.max(1,Math.min(500,limit))));
   const res=await fetch(url,{headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json"}});
   if(!res.ok)throw new Error("Supabase "+res.status);
