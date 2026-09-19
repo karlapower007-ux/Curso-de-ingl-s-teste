@@ -98,7 +98,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.18.0-encyclopedic-cross-library' src/index.js
+          grep -q '1.19.0-encyclopedic-cohesion' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -115,7 +115,7 @@ jobs:
           grep -q 'failure_message_requires_zero_sources: true' src/index.js
           grep -q 'total_source_release: true' src/index.js
           grep -q 'map_stage_can_filter_sources: false' src/index.js
-          grep -q 'deterministic_sources_use_all_retrieved: true' src/index.js
+          grep -q 'deterministic_sources_use_cited_only: true' src/index.js
           grep -q 'encyclopedic_dictionary_mode: true' src/index.js
           grep -q 'transversal_mass_scan: true' src/index.js
           grep -q 'diversity_round_robin: true' src/index.js
@@ -127,16 +127,24 @@ jobs:
           grep -q 'buildMapBatchContext' src/index.js
           grep -q 'const mappedContext = promptContext' src/index.js
           grep -Fq 'nenhum [F#] recebido pode ser ignorado silenciosamente' src/index.js
-          grep -q 'a etapa MAP não tem permissão para afunilar a biblioteca' src/index.js
+          grep -q 'Os trechos recuperados são candidatos, não uma lista de citações obrigatórias' src/index.js
           grep -q 'repairFalseNegativeSynthesis' src/index.js
           grep -q 'deterministicSynthesisFromSources' src/index.js
           grep -q 'fallback = sources.length === 0' src/index.js
           grep -q 'é PROIBIDO declarar ausência de informação' src/index.js
           grep -q 'Examine TODOS os trechos do lote individualmente' src/index.js
           grep -q 'Não selecione apenas a fonte mais óbvia' src/index.js
-          grep -q 'é obrigatório cruzar as informações e citar todas as fontes independentes encontradas' src/index.js
+          grep -q 'Maximiza a pluralidade de livros, autores e documentos independentes' src/index.js
           grep -q 'crossLibraryStats' src/index.js
           grep -q 'independent_documents' src/index.js
+          grep -q 'selectCitedSources' src/index.js
+          grep -q 'repairSparseCitationCoverage' src/index.js
+          grep -q 'retrieval_candidates_are_not_evidence: true' src/index.js
+          grep -q 'encyclopedic_cohesion_guard: true' src/index.js
+          grep -q 'raw_excerpt_dump_in_references: false' src/index.js
+          grep -q 'inline_citation_grounding: true' src/index.js
+          grep -q 'RELEVÂNCIA=ALTA|MÉDIA|BAIXA|NENHUMA' src/index.js
+          grep -q 'hasDeterministicReferenceSection' public/app.js
           grep -q 'mirror_queue' public/app.js
           grep -q 'processMirrorQueue' public/app.js
           grep -q 'MIRROR_BATCH_SIZE=50' scripts/export-multicloud.mjs

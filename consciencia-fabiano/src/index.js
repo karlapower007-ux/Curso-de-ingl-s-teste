@@ -1,4 +1,4 @@
-const VERSION = "1.18.0-encyclopedic-cross-library";
+const VERSION = "1.19.0-encyclopedic-cohesion";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -35,10 +35,10 @@ const GROQ_HISTORY_MESSAGES = 6;
 const GROQ_INPUT_BUDGET_TOKENS = 9000;
 const GROQ_HISTORY_BUDGET_TOKENS = 900;
 const GROQ_RAG_BUDGET_TOKENS = 6100;
-const GROQ_MAX_COMPLETION_TOKENS = 1900;
+const GROQ_MAX_COMPLETION_TOKENS = 2600;
 const MAP_REDUCE_THRESHOLD = 20;
 const MAP_BATCH_SIZE = 20;
-const MAP_MAX_COMPLETION_TOKENS = 800;
+const MAP_MAX_COMPLETION_TOKENS = 1000;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
 const EMPTY_GROUNDED_ANSWER = "Não encontrei informações nos documentos indexados para responder a esta pergunta.";
@@ -784,12 +784,16 @@ function cleanNarrativeText(text) {
 function uniqueSources(context) {
   const seen = new Set();
   const sources = [];
-  for (const item of context) {
+  const rows=Array.from(context || []);
+  for (let index=0; index<rows.length; index++) {
+    const item=rows[index];
+    if(!item) continue;
     const key = `${item.document_id}:${item.page}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const humanName=humanDocumentName(item.filename,item.title);
     sources.push({
+      ref_id: "F"+(index+1),
       document_id: item.document_id,
       arquivo: humanName,
       titulo: humanName,
@@ -834,15 +838,58 @@ function gracefulEmptyAnswer() {
   return EMPTY_GROUNDED_ANSWER;
 }
 
+function sourceRefId(source,index=0) {
+  const explicit=String(source?.ref_id || "").trim().toUpperCase();
+  return /^F\d{1,3}$/.test(explicit) ? explicit : "F"+(index+1);
+}
+
+function citedSourceRefIds(answer) {
+  const ids=new Set();
+  const text=String(answer || "");
+  const re=/\[F(\d{1,3})\]/gi;
+  let match;
+  while((match=re.exec(text))!==null) ids.add("F"+Number(match[1]));
+  return ids;
+}
+
+function selectCitedSources(answer,sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const ids=citedSourceRefIds(answer);
+  if(!ids.size) return [];
+  const seen=new Set();
+  const selected=[];
+  for(let i=0;i<rows.length;i++){
+    const row=rows[i];
+    const ref=sourceRefId(row,i);
+    if(!ids.has(ref)) continue;
+    const key=String(row?.document_id || "")+":"+String(row?.pagina || "");
+    if(seen.has(key)) continue;
+    seen.add(key);
+    selected.push({...row,ref_id:ref});
+  }
+  return selected;
+}
+
+function compactCitationEvidence(sources) {
+  return (Array.isArray(sources)?sources:[]).slice(0,TOP_K).map((s,index)=>{
+    const ref=sourceRefId(s,index);
+    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
+    const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
+    const excerpt=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,220);
+    return "["+ref+"] "+name+(author?" — "+author:"")+" — "+page+" — "+excerpt;
+  }).join("\n");
+}
+
 function groundedReferencesMarkdown(sources) {
   const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
   if(!rows.length) return "";
   const lines=rows.map((s,index)=>{
+    const ref=sourceRefId(s,index);
     const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
     const author=String(s?.autor || "Autor não informado").replace(/[\r\n]+/g," ").trim();
     const page=s?.pagina ? "Página "+Number(s.pagina) : "Página não informada";
-    const excerpt=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,420);
-    return "- **"+name+" | "+page+" | "+author+":** "+(excerpt ? "“"+excerpt+"”" : "Trecho recuperado sem prévia textual.");
+    return "- **["+ref+"] "+name+"** — "+author+"; "+page+".";
   });
   return "2. 📚 FONTES E REFERÊNCIAS\n\n"+lines.join("\n");
 }
@@ -867,24 +914,31 @@ function deterministicSynthesisFromSources(sources) {
   const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
   const docs=new Map();
-  for(const s of rows){
+  for(let index=0; index<rows.length; index++){
+    const s=rows[index];
     const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
     if(!docs.has(key)) docs.set(key,{
       name:String(s?.titulo || s?.arquivo || "Documento").trim(),
       author:String(s?.autor || "").trim(),
-      excerpts:[]
+      excerpts:[],
+      refs:[]
     });
+    const entry=docs.get(key);
     const text=String(s?.trecho || "").replace(/\s+/g," ").trim();
-    if(text && docs.get(key).excerpts.length<1) docs.get(key).excerpts.push(text.slice(0,220));
+    if(text && entry.excerpts.length<2){
+      entry.excerpts.push(text.slice(0,260));
+      entry.refs.push(sourceRefId(s,index));
+    }
   }
   const parts=[];
   for(const doc of [...docs.values()].slice(0,TOP_K)){
     const label=doc.author ? doc.name+" de "+doc.author : doc.name;
     const evidence=doc.excerpts.filter(Boolean).join(" ");
-    if(evidence) parts.push(label+" apresenta a seguinte evidência documental: "+evidence);
+    const refs=doc.refs.map(ref=>"["+ref+"]").join("");
+    if(evidence) parts.push(label+" sustenta este ponto documental: "+evidence+" "+refs);
   }
-  if(!parts.length) return "Há referências documentais válidas recuperadas para esta pergunta; consulte as fontes listadas abaixo.";
-  return "As fontes recuperadas apresentam evidências convergentes e complementares sobre o tema. "+parts.join(" ");
+  if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser sintetizada com segurança.";
+  return "Os documentos recuperados permitem construir uma síntese sustentada pelas evidências abaixo. "+parts.join(" ");
 }
 
 async function repairFalseNegativeSynthesis(env,question,sources) {
@@ -897,7 +951,8 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
       content:
         "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
         "Produza somente a seção 1. SÍNTESE PRINCIPAL usando exclusivamente as evidências fornecidas. " +
-        "Cruze todas as fontes independentes relevantes, preservando a pluralidade de livros e autores. " +
+        "Cruze as fontes independentes diretamente relevantes em prosa coesa, com densidade enciclopédica, sem despejar trechos ou nomes em sequência. " +
+        "Depois de cada afirmação factual, mantenha os identificadores [F#] das evidências que realmente a sustentam. " +
         "Não invente fatos, autores, páginas, capítulos ou citações e não acrescente uma seção de referências."
     },
     {
@@ -918,15 +973,72 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
   return deterministicSynthesisFromSources(rows);
 }
 
+function citationCoverageTarget(sources) {
+  const rows=Array.isArray(sources)?sources:[];
+  if(rows.length>=20) return 6;
+  if(rows.length>=8) return 4;
+  if(rows.length>=3) return 2;
+  return rows.length ? 1 : 0;
+}
+
+async function repairSparseCitationCoverage(env,question,answer,sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!rows.length) return answer;
+  const current=selectCitedSources(answer,rows);
+  const target=citationCoverageTarget(rows);
+  if(current.length>=target) return answer;
+
+  const evidence=compactCitationEvidence(rows);
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Reescreva o rascunho como uma síntese enciclopédica coesa e substancial, usando EXCLUSIVAMENTE as evidências fornecidas. " +
+        "Não faça uma lista de fontes e não despeje trechos. Organize um argumento contínuo: definição/núcleo, desenvolvimento, convergências, nuances ou diferenças sustentadas e conclusão integradora. " +
+        "Use [F#] imediatamente após cada afirmação ou conjunto de afirmações sustentadas. Integre o maior número possível de documentos independentes DIRETAMENTE RELEVANTES, mas jamais cite uma fonte só para aumentar quantidade. " +
+        "Elimine afirmações que não possam ser sustentadas por pelo menos uma evidência [F#]. Não invente fatos, autores, páginas, capítulos ou citações. Não escreva a seção de referências."
+    },
+    {
+      role:"user",
+      content:
+        "PERGUNTA:\n"+trimToTokenBudget(question,700)+
+        "\n\nRASCUNHO:\n"+trimToTokenBudget(stripModelReferenceSection(answer),1800)+
+        "\n\nEVIDÊNCIAS DISPONÍVEIS:\n"+trimToTokenBudget(evidence,5200)
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:8200,
+      max_completion_tokens:2400,
+      temperature:0.0
+    });
+    const data=await res.json().catch(()=>({}));
+    const repaired=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(repaired && !isEmptyGroundedFailure(repaired)){
+      const repairedCoverage=selectCitedSources(repaired,rows).length;
+      if(repairedCoverage>=Math.max(1,current.length)) return stripModelReferenceSection(repaired);
+    }
+  }catch{}
+  return answer;
+}
+
 function finalizeGroundedAnswer(answer,sources) {
   const rows=Array.isArray(sources)?sources:[];
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
   let base=stripModelReferenceSection(answer);
   if(isEmptyGroundedFailure(base)) base=deterministicSynthesisFromSources(rows);
+
+  let cited=selectCitedSources(base,rows);
+  if(!cited.length){
+    base=deterministicSynthesisFromSources(rows);
+    cited=selectCitedSources(base,rows);
+  }
+
   const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
     ? base
     : "1. SÍNTESE PRINCIPAL:\n\n"+base;
-  return normalized+"\n\n"+groundedReferencesMarkdown(rows);
+  const references=groundedReferencesMarkdown(cited);
+  return normalized+(references?"\n\n"+references:"");
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
@@ -984,9 +1096,9 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
       content:
         "Você é a etapa MAP de um sistema RAG documental. Não escreva síntese e não invente metadados. " +
         "Examine TODOS os trechos do lote individualmente; nenhum [F#] recebido pode ser ignorado silenciosamente. " +
-        "Para CADA [F#], devolva exatamente uma linha curta no formato '[F#] — resumo factual em no máximo 25 palavras', usando somente o que está explícito no trecho. " +
-        "Não selecione apenas a fonte mais óbvia e não descarte livros, autores ou documentos por terem score menor. " +
-        "Quando várias fontes abordarem o tema, preserve TODAS no resultado MAP para que a etapa REDUCE possa cruzá-las. " +
+        "Para CADA [F#], devolva exatamente uma linha no formato '[F#] | RELEVÂNCIA=ALTA|MÉDIA|BAIXA|NENHUMA | EVIDÊNCIA=resumo factual em até 40 palavras | PAPEL=definição|apoio|contraste|contexto'. " +
+        "Marque RELEVÂNCIA=NENHUMA quando o trecho não sustentar a pergunta; não force conexão temática e não transforme ruído de recuperação em evidência. " +
+        "Não selecione apenas a fonte mais óbvia: examine também livros e autores com score menor e preserve toda evidência ALTA ou MÉDIA para a etapa REDUCE. " +
         "É proibido criar autor, livro, capítulo, página, citação ou conteúdo ausente do contexto."
     },
     {
@@ -1054,17 +1166,20 @@ function crossLibraryLedger(context) {
 
 function compactIndependentEvidenceFromSources(sources) {
   const docs=new Map();
-  for(const s of (sources || [])){
+  const rows=Array.isArray(sources)?sources:[];
+  for(let index=0; index<rows.length; index++){
+    const s=rows[index];
     const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
     if(docs.has(key)) continue;
-    docs.set(key,s);
+    docs.set(key,{...s,ref_id:sourceRefId(s,index)});
   }
-  return [...docs.values()].slice(0,TOP_K).map((s,index)=>{
+  return [...docs.values()].slice(0,TOP_K).map((s)=>{
+    const ref=sourceRefId(s,0);
     const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
     const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
     const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
-    const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,150);
-    return "[D"+(index+1)+"] "+name+(author?" — "+author:"")+" — "+page+" — "+text;
+    const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,180);
+    return "["+ref+"] "+name+(author?" — "+author:"")+" — "+page+" — "+text;
   }).join("\n");
 }
 
@@ -1110,8 +1225,9 @@ async function mapReduceContext(env, question, context) {
 
   return {
     text:
-      "MAP-REDUCE: "+source.length+" trechos recuperados e LIBERADOS integralmente para síntese transversal em "+
-      batches.length+" lotes. Nenhuma fonte recuperada pode ser descartada apenas por ranking.\n\n"+
+      "MAP-REDUCE: "+source.length+" candidatos documentais examinados transversalmente em "+
+      batches.length+" lotes. Os trechos recuperados são candidatos, não uma lista de citações obrigatórias. " +
+      "A síntese deve privilegiar evidências ALTA/MÉDIA, cruzar documentos independentes e rejeitar ruído sem relação direta.\n\n"+
       trimToTokenBudget(combined,4700),
     used:true,
     batches:batches.length,
@@ -1168,17 +1284,19 @@ async function groqStreamResponse(env, messages, meta) {
           answer=gracefulEmptyAnswer();
         }
 
+        answer=await repairSparseCitationCoverage(env,meta.question,answer,meta.sources);
         const finalAnswer=finalizeGroundedAnswer(answer,meta.sources);
+        const usedSources=selectCitedSources(finalAnswer,meta.sources);
         controller.enqueue(encoder.encode(sseFrame("delta",{text:finalAnswer})));
         answer=finalAnswer;
 
         const memoryPersisted = await persistChatTurn(
-          env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
+          env, meta.ownerId, meta.body, meta.question, answer, usedSources, meta.fallback
         );
         controller.enqueue(encoder.encode(sseFrame("done", {
           ok: true,
           resposta: answer,
-          fontes: meta.sources,
+          fontes: usedSources,
           fallback: meta.fallback,
           memory_persisted: memoryPersisted,
           provider: "groq+resilient-rag",
@@ -1583,21 +1701,22 @@ async function chat(request, env) {
         "És um assistente de pesquisa documental de alta densidade. Usa exclusivamente os trechos fornecidos. " +
         "É expressamente proibido inventar autores, livros, capítulos, páginas, citações, fatos ou conteúdos que não estejam explícitos no contexto. " +
         "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
-        "Se houver uma ou mais fontes válidas no contexto, é PROIBIDO declarar ausência de informação: deves sintetizar o conteúdo efetivamente presente nesses trechos. " +
-        "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
-        "MODO DICIONÁRIO/ENCICLOPÉDICO: produz um verbete de consulta profunda, com definição central clara e integração transversal das evidências documentais. " +
-        "Faz uma varredura transversal MASSIVA de TODAS as evidências recuperadas pelo RAG e organizadas pelo Map-Reduce; a etapa MAP não tem permissão para afunilar a biblioteca. " +
-        "Sempre que múltiplos livros, capítulos ou documentos da biblioteca abordarem o tema da pergunta, é obrigatório cruzar as informações e citar todas as fontes independentes encontradas, incluindo vários livros e autores diferentes quando existirem, enriquecendo a resposta com a pluralidade do acervo e nunca limitando a evidência a um único documento isolado. " +
-        "Se a busca retornar 5, 10, 15 ou mais fontes válidas, a síntese deve representar coletivamente essas fontes, sem reduzir a resposta a um único livro. " +
-        "Não privilegies uma única fonte apenas por ter score maior quando outras fontes recuperadas também sustentarem a resposta. Expõe convergências, complementos e diferenças somente quando estiverem explicitamente sustentados pelos trechos. " +
-        "Não uses conhecimento externo para preencher lacunas e não transformes inferências em fatos."
+        "Se houver evidência documental válida, sintetiza somente o que ela realmente sustenta. Os trechos recuperados são CANDIDATOS de busca, não uma obrigação de citar tudo. " +
+        "Escreve apenas a seção 1. SÍNTESE PRINCIPAL; o servidor anexará depois apenas as referências [F#] efetivamente citadas, usando metadados originais e determinísticos. " +
+        "MODO DICIONÁRIO/ENCICLOPÉDICO DE ALTA DENSIDADE: responde como um verbete profundo, com definição central clara, desenvolvimento conceitual, relações entre ideias, convergências, complementos, nuances e diferenças somente quando sustentadas pelos trechos. " +
+        "Quando houver material suficiente, produz de 6 a 10 parágrafos substanciais e articulados. Cada parágrafo deve construir argumento e significado; não escrevas uma sequência de notas, nomes de livros, fragmentos, citações soltas ou frases telegráficas. " +
+        "Cruza várias fontes dentro do mesmo raciocínio sempre que elas sustentarem o mesmo ponto. Evita a fórmula repetitiva 'a fonte X diz'; integra a evidência em prosa contínua e acadêmica. " +
+        "Depois de cada afirmação factual ou conjunto de afirmações, cita inline os identificadores [F#] que realmente a sustentam, por exemplo [F3][F8]. " +
+        "Maximiza a pluralidade de livros, autores e documentos independentes quando forem diretamente relevantes, sem criar cota artificial e sem citar fonte irrelevante apenas para aumentar quantidade. " +
+        "Não uses conhecimento externo para preencher lacunas, não transformes inferências em fatos e não repitas o texto bruto dos trechos."
     },
     ...history,
     {
       role: "user",
       content:
-        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) relevante(s) recuperado(s).\n" +
-        "A síntese deve representar transversalmente TODAS essas fontes independentes quando houver mais de uma.\n\n" +
+        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) candidato(s) recuperado(s).\n" +
+        "Use a maior pluralidade possível SOMENTE entre documentos que sustentem diretamente a pergunta; não trate ruído de busca como evidência.\n" +
+        "O catálogo abaixo contém metadados, não prova temática: nunca infira conteúdo pelo título.\n\n" +
         "CATÁLOGO TRANSVERSAL DE DOCUMENTOS:\n"+crossLibraryLedger(mappedContext)+"\n\n" +
         "MAP-REDUCE DOS TRECHOS:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
     },
@@ -1642,13 +1761,15 @@ async function chat(request, env) {
   }else if(!answer || /^sem resposta\.?$/i.test(answer)){
     answer=gracefulEmptyAnswer();
   }
+  answer = await repairSparseCitationCoverage(env,question,answer,sources);
   answer = finalizeGroundedAnswer(answer,sources);
-  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
+  const usedSources=selectCitedSources(answer,sources);
+  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, fallback);
 
   return json({
     ok: true,
     resposta: answer,
-    fontes: sources,
+    fontes: usedSources,
     fallback,
     memory_persisted: memoryPersisted,
     provider: "groq+resilient-rag",
@@ -1741,10 +1862,14 @@ async function status(env) {
     failure_message_requires_zero_sources: true,
     total_source_release: true,
     map_stage_can_filter_sources: false,
-    deterministic_sources_use_all_retrieved: true,
+    deterministic_sources_use_cited_only: true,
     encyclopedic_dictionary_mode: true,
     transversal_mass_scan: true,
     diversity_round_robin: true,
+    retrieval_candidates_are_not_evidence: true,
+    encyclopedic_cohesion_guard: true,
+    raw_excerpt_dump_in_references: false,
+    inline_citation_grounding: true,
     synthesis_independent_document_cap: TOP_K,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,

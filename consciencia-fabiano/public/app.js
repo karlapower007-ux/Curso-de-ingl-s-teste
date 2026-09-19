@@ -470,7 +470,8 @@
     else text.textContent = content;
     wrap.appendChild(text);
 
-    if (role === "assistant" && (sources?.length || fallback)) {
+    const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(String(content || ""));
+    if (role === "assistant" && !hasDeterministicReferenceSection && (sources?.length || fallback)) {
       const src = document.createElement("div");
       src.className = "sources";
       if (fallback) {
@@ -599,6 +600,7 @@
 
   function markdownToSpeech(text) {
     return String(text || "")
+      .replace(/\n\s*2\.\s*(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\s*:?[^]*$/i, " ")
       .replace(/```[^\n]*\n?/g, " ")
       .replace(/```/g, " ")
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
