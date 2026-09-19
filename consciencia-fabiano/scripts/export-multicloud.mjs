@@ -5,7 +5,10 @@ const BASE=(process.env.FNS_BASE_URL || "https://consciencia-fabiano.karlapower0
 const OWNER_TOKEN=String(process.env.FNS_OWNER_TOKEN || "gadu").trim();
 const OUT_DIR=path.resolve("public/biblioteca_backup");
 const MANIFEST=path.resolve("public/biblioteca_backup.json");
-const PAGE_SIZE=250;
+const PAGE_SIZE=100;
+const MIRROR_BATCH_SIZE=50;
+const EXPORT_DELAY_MS=1200;
+const MIRROR_DELAY_MS=900;
 const MAX_ATTEMPTS=6;
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -37,6 +40,7 @@ let offset=0,total=null,part=0,exported=0,vectors=0,mirrored=0;
 const parts=[];
 
 while(total===null || offset<total){
+  if(part>0) await sleep(EXPORT_DELAY_MS);
   const res=await request(BASE+"/api/admin/export-library?offset="+offset+"&limit="+PAGE_SIZE);
   const data=await res.json();
   if(data.ok!==true) throw new Error("Export page failed");
@@ -59,13 +63,18 @@ while(total===null || offset<total){
   exported+=records.length;vectors+=vectorRows.length;
 
   try{
-    const mirror=await request(BASE+"/api/admin/mirror-upsert",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({records:vectorRows})
-    });
-    const m=await mirror.json().catch(()=>({}));
-    if(m.any_upserted) mirrored+=vectorRows.length;
+    for(let i=0;i<vectorRows.length;i+=MIRROR_BATCH_SIZE){
+      const batch=vectorRows.slice(i,i+MIRROR_BATCH_SIZE);
+      if(!batch.length) continue;
+      if(i>0) await sleep(MIRROR_DELAY_MS);
+      const mirror=await request(BASE+"/api/admin/mirror-upsert",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({records:batch})
+      });
+      const m=await mirror.json().catch(()=>({}));
+      if(m.any_upserted) mirrored+=batch.length;
+    }
   }catch(error){
     console.warn("mirror warning:",error.message);
   }
@@ -82,6 +91,10 @@ const manifest={
   total_vectors:vectors,
   expected_embeddings:25199,
   mirrored_records:mirrored,
+  export_page_size:PAGE_SIZE,
+  mirror_batch_size:MIRROR_BATCH_SIZE,
+  export_delay_ms:EXPORT_DELAY_MS,
+  mirror_delay_ms:MIRROR_DELAY_MS,
   parts
 };
 await fs.writeFile(MANIFEST,JSON.stringify(manifest,null,2));
