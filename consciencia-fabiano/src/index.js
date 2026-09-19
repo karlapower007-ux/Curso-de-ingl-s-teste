@@ -1599,11 +1599,16 @@ export class LibraryDO {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/status") {
-        const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
-        const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
+        const docStats = [...this.sql.exec("SELECT COUNT(*) AS documents, COALESCE(SUM(chunk_count),0) AS chunks FROM documents")][0] || {documents:0,chunks:0};
         const m = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages")][0]?.n || 0;
         const j = [...this.sql.exec("SELECT COUNT(*) AS n FROM index_jobs WHERE status IN ('queued','processing','paused_quota')")][0]?.n || 0;
-        return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m), index_jobs: Number(j) });
+        return json({
+          ok: true,
+          documents: Number(docStats.documents || 0),
+          chunks: Number(docStats.chunks || 0),
+          memory_messages: Number(m),
+          index_jobs: Number(j)
+        });
       }
 
       if (url.pathname === "/duplicate") {
