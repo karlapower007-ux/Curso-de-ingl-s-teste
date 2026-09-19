@@ -1,0 +1,59 @@
+name: RAG Nightly Multi-Cloud Export
+
+on:
+  schedule:
+    # 21:00 BRT (UTC-3) = 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rag-nightly-multicloud-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply Supabase RLS migration when configured
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f consciencia-fabiano/supabase/migrations/001_rag_embeddings_rls.sql
+            echo "SUPABASE_RLS_APPLIED=yes"
+          else
+            echo "SUPABASE_RLS_APPLIED=skipped-no-secret"
+          fi
+
+      - name: Export Durable Object and mirror active clouds
+        working-directory: consciencia-fabiano
+        env:
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+        run: node scripts/export-multicloud.mjs
+
+      - name: Commit refreshed static backup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add consciencia-fabiano/public/biblioteca_backup.json consciencia-fabiano/public/biblioteca_backup
+          if git diff --cached --quiet; then
+            echo "BACKUP_COMMIT=unchanged"
+          else
+            git commit -m "Refresh nightly RAG static backup and multi-cloud mirror"
+            git push origin HEAD:consciencia-cloudflare-native-v1
+            echo "BACKUP_COMMIT=success"
+          fi
