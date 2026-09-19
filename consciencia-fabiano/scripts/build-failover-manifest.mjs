@@ -20,12 +20,12 @@ for(const [name,raw] of candidates){
   mirrors.push({name,base_url,enabled:true,timeout_ms:5000});
 }
 const manifest={
-  version:"6.0.0",
+  version:"7.0.0",
   generated_at:new Date().toISOString(),
   strategy:"A->B->C->D->E->F",
   mirrors,
   plan_c:{
-    engine:"omni-agent-swarm-v6",
+    engine:"twenty-agent-cross-device-v7",
     logical_task_capacity:1000,
     physical_worker_cap:16,
     scoring:"strict-same-paragraph-phrase-v4",
@@ -43,8 +43,8 @@ const manifest={
     omni_search_all_documents:true,
     zero_noise:true,
     elegant_silence:true,
-    logical_agent_count:10,
-    agent_physical_worker_cap:10,
+    logical_agent_count:20,
+    agent_physical_worker_cap:16,
     agent2_transformers_semantic:true,
     agent2_model:"Xenova/paraphrase-multilingual-MiniLM-L12-v2",
     agent10_bouncer:true,
@@ -55,7 +55,23 @@ const manifest={
     omni_sync_cloud_fingerprint:true,
     omni_sync_generation_gc:true,
     manual_sync_button:false,
-    zero_touch_after_authorization:true
+    zero_touch_after_authorization:true,
+    agent11_short_entity_hunter:true,
+    agent12_long_form_explainer:true,
+    agent13_freshness_sentinel:true,
+    agent14_ocr_rescue:true,
+    agent15_definition_specialist:true,
+    agent16_chronology_mapper:true,
+    agent17_cross_library_balancer:true,
+    agent18_citation_specialist:true,
+    agent19_conflict_auditor:true,
+    agent20_mission_master:true,
+    cross_device_library_mirror:true,
+    cross_device_library_table:"library_chunks",
+    cross_device_plaintext_chunk_sync:true,
+    cross_device_backfill_from_indexeddb:true,
+    cross_device_mobile_hydration:true,
+    cross_device_batch_size:200
   },
   plans:{
     A:"Cloudflare Edge + Groq + Supabase",
