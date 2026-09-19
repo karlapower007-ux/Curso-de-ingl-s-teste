@@ -63,20 +63,30 @@ jobs:
           grep -q 'cleanNarrativeText' src/index.js
           grep -q 'Obras Padrão' src/index.js
           grep -q 'standard.*works' public/app.js
-          grep -q 'SEMANTIC_MIN_SCORE = 0.52' src/index.js
           grep -q 'BM25_K1' src/index.js
           grep -q 'bm25-fallback' src/index.js
           grep -q 'chunking_density: "paragraph-verse-granular"' src/index.js
           grep -q 'Fabiano, não encontrei uma referência direta' src/index.js
-          grep -q 'citation_bullet_mode: true' src/index.js
-          grep -q 'liste TODAS as passagens relevantes' src/index.js
-          grep -q 'É TOTALMENTE PROIBIDO GERAR TABELAS MARKDOWN' src/index.js
           grep -q 'aggressiveGroqMessages' src/index.js
           grep -q 'GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS' src/index.js
           grep -q 'idbDelete' public/app.js
           grep -q 'pruneIndexedDbPointers' public/app.js
           grep -q 'Date.now()' public/index.html
           grep -q 'no-cache, no-store, must-revalidate' src/index.js
+          grep -q 'semantic_min_score: 0.38' src/index.js
+          grep -q 'top_k: 15' src/index.js
+          grep -q 'require_lexical_match: false' src/index.js
+          grep -q 'processar TODOS os trechos de contexto fornecidos' src/index.js
+          grep -q 'FONTES E REFERÊNCIAS' src/index.js
+          grep -q 'btn-whisper' public/index.html
+          grep -q 'whisper-local.js' public/index.html
+          test -f public/whisper-local.js
+          test -f public/whisper-worker.js
+          grep -q 'Xenova/whisper-tiny' public/whisper-worker.js
+          grep -q '@xenova/transformers@2.17.2' public/whisper-worker.js
+          grep -q 'noiseSuppression: true' public/whisper-local.js
+          grep -q 'echoCancellation: true' public/whisper-local.js
+          grep -q 'autoGainControl: true' public/whisper-local.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js

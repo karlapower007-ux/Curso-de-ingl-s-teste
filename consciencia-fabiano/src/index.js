@@ -1,4 +1,4 @@
-const VERSION = "1.12.0-definitive-stability-pack";
+const VERSION = "1.13.0-local-whisper-deep-rag";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -16,19 +16,25 @@ const CHUNK_CHARS = 900;
 const CHUNK_OVERLAP = 120;
 const MIN_PAGE_LETTERS = 50;
 const MIN_CHUNK_LETTERS = 35;
-const TOP_K = 8;
+const searchConfig = Object.freeze({
+  semantic_min_score: 0.38,
+  top_k: 15,
+  require_lexical_match: false,
+});
+const TOP_K = searchConfig.top_k;
 const VECTOR_SCAN_LIMIT = 7000;
-const SEMANTIC_MIN_SCORE = 0.52;
+const SEMANTIC_MIN_SCORE = searchConfig.semantic_min_score;
+const REQUIRE_LEXICAL_MATCH = searchConfig.require_lexical_match;
 const LEXICAL_MIN_COVERAGE = 0.50;
 const BM25_K1 = 1.35;
 const BM25_B = 0.75;
 const LOCAL_EMBEDDING_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const MAX_SERVER_HISTORY = 40;
-const GROQ_HISTORY_MESSAGES = 10;
-const GROQ_INPUT_BUDGET_TOKENS = 5600;
-const GROQ_HISTORY_BUDGET_TOKENS = 1500;
-const GROQ_RAG_BUDGET_TOKENS = 3000;
+const GROQ_HISTORY_MESSAGES = 6;
+const GROQ_INPUT_BUDGET_TOKENS = 6800;
+const GROQ_HISTORY_BUDGET_TOKENS = 900;
+const GROQ_RAG_BUDGET_TOKENS = 4800;
 const GROQ_MAX_COMPLETION_TOKENS = 850;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "8205541ffbdb2d6ee4d000427b0d8a0bc70f657087ba43d95712eeef0a9609ed";
@@ -732,7 +738,7 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
             .filter(item => Number(item?.score ?? -1) >= SEMANTIC_MIN_SCORE)
             .map(item => ({ ...item, retrieval_mode: "local-semantic" }))
         : [];
-      if (isFocusedCitationRequest(question)) {
+      if (REQUIRE_LEXICAL_MATCH && isFocusedCitationRequest(question)) {
         matches = matches.filter(item => semanticAnchorCoverage(item.text,question) >= LEXICAL_MIN_COVERAGE);
       }
       if (matches.length) return matches;
@@ -791,7 +797,7 @@ function uniqueSources(context) {
       retrieval_mode: item.retrieval_mode || "semantic",
     });
   }
-  return sources.slice(0, 8);
+  return sources.slice(0, TOP_K);
 }
 
 async function persistChatTurn(env, ownerId, body, question, answer, sources, fallback) {
@@ -912,12 +918,6 @@ async function groqStreamResponse(env, messages, meta) {
           answer = gracefulEmptyAnswer();
           controller.enqueue(encoder.encode(sseFrame("delta", { text: answer })));
         }
-        const finalized=ensureEngagementQuestion(answer,meta.fallback);
-        if(finalized!==answer){
-          const extra=finalized.slice(answer.length);
-          answer=finalized;
-          controller.enqueue(encoder.encode(sseFrame("delta", { text: extra })));
-        }
         const memoryPersisted = await persistChatTurn(
           env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
         );
@@ -1028,8 +1028,8 @@ function buildRagContext(context, question = "", tokenBudget = GROQ_RAG_BUDGET_T
       (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
     const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
     if (remaining <= 180 && parts.length) break;
-    const focused=focusExcerptForQuestion(c.text || "",question,1000);
-    const excerpt = trimToTokenBudget(focused, Math.min(850, remaining));
+    const focused=focusExcerptForQuestion(c.text || "",question,720);
+    const excerpt = trimToTokenBudget(focused, Math.min(260, remaining));
     if(!excerpt) continue;
     const part = header + "\n" + excerpt;
     const cost = estimateTokens(part);
@@ -1112,13 +1112,15 @@ async function chat(request, env) {
     {
       role: "system",
       content:
-        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, naturalidade e foco. " +
-        "RAG É LEI: use somente os trechos recuperados como evidência documental. Ignore índices remissivos, rodapés, cadeias de referências cruzadas e fragmentos sem relação direta com a pergunta. Nunca invente livro, capítulo, página, versículo ou citação. " +
-        "COFRE VAZIO: se os documentos fornecidos NÃO contiverem a informação pedida, você é ESTRITAMENTE PROIBIDO de dizer 'Sem resposta'. Responda: 'Fabiano, não encontrei uma referência direta a este tema neste trecho. Quer que eu busque em outras partes do documento?'. " +
-        "CITAÇÕES E ESCRITURAS: quando o usuário pedir referências, escrituras, versículos, passagens ou citações, liste TODAS as passagens relevantes presentes no contexto recuperado, sem duplicar a mesma página. Use EXCLUSIVAMENTE tópicos com hífen. Em cada tópico escreva em negrito o nome humano do livro ou documento, o capítulo somente se estiver explicitamente identificável no contexto, e a página. Em seguida coloque o texto literal recuperado entre aspas. Não resuma o texto citado e não complete lacunas de memória. " +
-        "É TOTALMENTE PROIBIDO GERAR TABELAS MARKDOWN ou sintaxe de tabela como |---|. Não exponha nomes técnicos de arquivos PDF nem marcadores internos como [F1]. " +
-        "Para respostas que não são pedidos de citação, seja conversacional e conciso. Toda resposta informativa deve terminar com UMA pergunta curta de engajamento, por exemplo: 'Gostaria de explorar outro versículo sobre isto?'. " +
-        "Para TTS, evite abreviações obscuras e caracteres desnecessários. Preserve o texto literal das citações, removendo apenas ruído editorial que não faça parte do conteúdo narrativo."
+        "Você é o motor analítico da \"Consciência do Fabiano\", projetado para estudos profundos.\n" +
+        "Sua missão é processar TODOS os trechos de contexto fornecidos e organizar a resposta estritamente nesta estrutura em duas partes:\n\n" +
+        "1. SÍNTESE PRINCIPAL:\n" +
+        "Escreva um texto fluido, rico e direto respondendo à pergunta do usuário. Conecte as ideias principais dos documentos recuperados de forma inteligente. Não mencione números de páginas ou versículos nesta seção de texto, apenas explique o conceito ou a história.\n\n" +
+        "2. 📚 FONTES E REFERÊNCIAS:\n" +
+        "Pule uma linha e crie uma lista rigorosa de todas as passagens usadas na sua síntese.\n" +
+        "Para CADA trecho recuperado que for útil, crie um bullet point EXATAMENTE neste formato:\n" +
+        "- **[Nome do Livro/Documento] | Capítulo:Versículo (ou Página) | Autor:** [Breve descrição do que este trecho específico diz ou a citação exata].\n\n" +
+        "Regra Absoluta: Você tem liberdade total para conectar os temas, mas é OBRIGADO a listar as referências na segunda parte. Não esconda fontes. Organize a informação para que o usuário possa continuar estudando infinitamente."
     },
     ...history,
     {
@@ -1141,7 +1143,6 @@ async function chat(request, env) {
   const result = await (await groqCompletion(env, messages, false)).json();
   let answer = String(result?.choices?.[0]?.message?.content || "").trim();
   if (!answer || /^sem resposta\.?$/i.test(answer)) answer = gracefulEmptyAnswer();
-  answer=ensureEngagementQuestion(answer,fallback);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
   return json({
@@ -1225,6 +1226,8 @@ async function status(env) {
     smart_chunking: true,
     lexical_rag_fallback: true,
     semantic_min_score: SEMANTIC_MIN_SCORE,
+    search_top_k: TOP_K,
+    require_lexical_match: REQUIRE_LEXICAL_MATCH,
     lexical_ranker: "bm25",
     bm25_k1: BM25_K1,
     bm25_b: BM25_B,
@@ -1236,6 +1239,8 @@ async function status(env) {
     pdf_noise_filter: true,
     indexeddb_gc: true,
     cache_busting: "dynamic",
+    local_whisper_stt: true,
+    local_whisper_model: "Xenova/whisper-tiny",
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     groq_aggressive_budget_tokens: GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS,
