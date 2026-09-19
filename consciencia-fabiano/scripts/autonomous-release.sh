@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: V6.0 OMNI AGENT SWARM release =="
+log "== Consciência do Fabiano :: V7.0 TWENTY AGENT CROSS DEVICE release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -43,8 +43,8 @@ node scripts/build-failover-manifest.mjs
 node scripts/build-static-vault.mjs
 test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
 test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
-node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="6.0.0")process.exit(1)'
-node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="6.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="7.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="7.0.0")process.exit(1)'
 log "RESILIENCE_ASSETS_BUILT=yes"
 
 log "3/7 Deploy Worker"
@@ -127,8 +127,8 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "6.0.0-omni-agent-swarm"
-    and .architecture == "cloudflare-v6-omni-agent-swarm"
+    and .version == "7.0.0-twenty-agent-cross-device"
+    and .architecture == "cloudflare-v7-twenty-agent-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
     and .llm_provider == "groq"
@@ -153,11 +153,21 @@ for i in $(seq 1 15); do
     and .omni_virtual_scroller == true
     and .omni_card_gap_px == 40
     and .agent_swarm_enabled == true
-    and .agent_swarm_logical_nodes == 10
-    and .agent_swarm_physical_worker_cap == 10
+    and .agent_swarm_logical_nodes == 20
+    and .agent_swarm_physical_worker_cap == 16
     and .agent1_literal_exact == true
     and .agent2_transformers_semantic == true
     and .agent10_bouncer == true
+    and .agent11_short_entity_hunter == true
+    and .agent12_long_form_explainer == true
+    and .agent13_freshness_sentinel == true
+    and .agent14_ocr_rescue == true
+    and .agent15_definition_specialist == true
+    and .agent16_chronology_mapper == true
+    and .agent17_cross_library_balancer == true
+    and .agent18_citation_specialist == true
+    and .agent19_conflict_auditor == true
+    and .agent20_mission_master == true
     and .semantic_fallback_after_literal_miss == true
     and .reference_queries_remain_exact == true
     and .phantom_daemon == true
@@ -168,6 +178,12 @@ for i in $(seq 1 15); do
     and .omni_sync_generation_gc == true
     and .omni_sync_manual_button == false
     and .omni_sync_zero_touch_after_authorization == true
+    and .cross_device_library_mirror == true
+    and .cross_device_library_table == "library_chunks"
+    and .cross_device_plaintext_chunk_sync == true
+    and .cross_device_backfill_from_indexeddb == true
+    and .cross_device_mobile_hydration == true
+    and .cross_device_batch_size == 200
     and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
     and .plan_c_main_thread_extraction == false
     and .plan_c_offline_intelligence == "strict-same-paragraph-phrase-v4"
@@ -186,9 +202,9 @@ if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.jso
 
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
-jq -e '.version == "6.0.0"
+jq -e '.version == "7.0.0"
   and .strategy == "A->B->C->D->E->F"
-  and .plan_c.engine == "omni-agent-swarm-v6"
+  and .plan_c.engine == "twenty-agent-cross-device-v7"
   and .plan_c.logical_task_capacity == 1000
   and .plan_c.physical_worker_cap == 16
   and .plan_c.strict_match_core == "strict-match-core-v4"
@@ -200,17 +216,31 @@ jq -e '.version == "6.0.0"
   and .plan_c.omni_search_all_documents == true
   and .plan_c.virtualized_cards == true
   and .plan_c.card_gap_px == 40
-  and .plan_c.logical_agent_count == 10
-  and .plan_c.agent_physical_worker_cap == 10
+  and .plan_c.logical_agent_count == 20
+  and .plan_c.agent_physical_worker_cap == 16
   and .plan_c.agent2_transformers_semantic == true
   and .plan_c.agent10_bouncer == true
   and .plan_c.phantom_daemon == true
   and .plan_c.phantom_daemon_target_interval_ms == 180000
   and .plan_c.omni_sync_cloud_fingerprint == true
   and .plan_c.omni_sync_generation_gc == true
-  and .plan_c.manual_sync_button == false' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
+  and .plan_c.manual_sync_button == false
+  and .plan_c.agent11_short_entity_hunter == true
+  and .plan_c.agent12_long_form_explainer == true
+  and .plan_c.agent13_freshness_sentinel == true
+  and .plan_c.agent14_ocr_rescue == true
+  and .plan_c.agent15_definition_specialist == true
+  and .plan_c.agent16_chronology_mapper == true
+  and .plan_c.agent17_cross_library_balancer == true
+  and .plan_c.agent18_citation_specialist == true
+  and .plan_c.agent19_conflict_auditor == true
+  and .plan_c.agent20_mission_master == true
+  and .plan_c.cross_device_library_mirror == true
+  and .plan_c.cross_device_library_table == "library_chunks"
+  and .plan_c.cross_device_mobile_hydration == true
+  and .plan_c.cross_device_batch_size == 200' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
 curl -fsS "$BASE/steel/index.json" | tee /tmp/steel-index.json >/dev/null
-jq -e '.version == "6.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
+jq -e '.version == "7.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
 curl -fsS "$BASE/sw-v3.js" >/tmp/sw-v3.js || die "SERVICE_WORKER_MISSING"
 curl -fsS "$BASE/agent-swarm.js" >/tmp/agent-swarm.js || die "AGENT_SWARM_ASSET_MISSING"
 curl -fsS "$BASE/agent-node-worker.js" >/tmp/agent-node-worker.js || die "AGENT_NODE_ASSET_MISSING"
@@ -254,14 +284,28 @@ grep -q 'configurePhantomDaemon' public/app.js || die "PHANTOM_DAEMON_CLIENT_CON
 grep -q 'PHANTOM_DAEMON_INTERVAL_MS=3\*60\*1000' public/app.js || die "PHANTOM_DAEMON_HEARTBEAT_BAD"
 grep -q 'omni-daemon-tick' public/app.js || die "PHANTOM_DAEMON_TICK_MISSING"
 if grep -q 'id="omniSyncBtn"' public/index.html; then die "MANUAL_SYNC_BUTTON_STILL_PRESENT"; fi
-grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js || die "V6_ELEGANT_SILENCE_MISSING"
-grep -q 'omniAgentSearch' public/rag-cascade.js || die "V6_AGENT_SEARCH_MISSING"
-grep -q 'runAgentSwarm' public/agent-swarm.js || die "V6_AGENT_SWARM_MISSING"
-grep -q 'LOGICAL_AGENT_COUNT=10' public/agent-swarm.js || die "V6_AGENT_COUNT_BAD"
-grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js || die "V6_AGENT_CPU_GOVERNOR_MISSING"
-grep -q 'agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker"' public/agent-swarm.js || die "V6_TRANSFORMERS_AGENT_MISSING"
-grep -q 'The Bouncer' public/agent-node-worker.js || die "V6_BOUNCER_MISSING"
-grep -q 'The Sweeper' public/agent-node-worker.js || die "V6_SWEEPERS_MISSING"
+grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' public/app.js || die "V7_ELEGANT_SILENCE_MISSING"
+grep -q 'omniAgentSearch' public/rag-cascade.js || die "V7_AGENT_SEARCH_MISSING"
+grep -q 'runAgentSwarm' public/agent-swarm.js || die "V7_AGENT_SWARM_MISSING"
+grep -q 'LOGICAL_AGENT_COUNT=20' public/agent-swarm.js || die "V7_AGENT_COUNT_BAD"
+grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js || die "V7_AGENT_CPU_GOVERNOR_MISSING"
+grep -q 'agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker"' public/agent-swarm.js || die "V7_TRANSFORMERS_AGENT_MISSING"
+grep -q 'The Bouncer' public/agent-node-worker.js || die "V7_BOUNCER_MISSING"
+grep -q 'Short Entity Hunter' public/agent-node-worker.js || die "V7_AGENT11_MISSING"
+grep -q 'Long Form Explainer' public/agent-node-worker.js || die "V7_AGENT12_MISSING"
+grep -q 'Freshness Sentinel' public/agent-node-worker.js || die "V7_AGENT13_MISSING"
+grep -q 'OCR Rescue' public/agent-node-worker.js || die "V7_AGENT14_MISSING"
+grep -q 'Definition Specialist' public/agent-node-worker.js || die "V7_AGENT15_MISSING"
+grep -q 'Chronology Mapper' public/agent-node-worker.js || die "V7_AGENT16_MISSING"
+grep -q 'Cross Library Balancer' public/agent-node-worker.js || die "V7_AGENT17_MISSING"
+grep -q 'Citation Specialist' public/agent-node-worker.js || die "V7_AGENT18_MISSING"
+grep -q 'Conflict and Duplicate Auditor' public/agent-node-worker.js || die "V7_AGENT19_MISSING"
+grep -q 'Mission Master' public/agent-node-worker.js || die "V7_AGENT20_MISSING"
+grep -q 'backfillLibraryChunksToCloud' public/app.js || die "CROSS_DEVICE_BACKFILL_MISSING"
+grep -q '/api/admin/library-mirror-upsert' public/app.js || die "CROSS_DEVICE_UPLOAD_ROUTE_MISSING"
+grep -q '/api/admin/library-mirror-upsert' src/index.js || die "CROSS_DEVICE_SERVER_ROUTE_MISSING"
+grep -q 'library_chunks' src/index.js || die "CROSS_DEVICE_LIBRARY_TABLE_MISSING"
+grep -q 'The Sweeper' public/agent-node-worker.js || die "V7_SWEEPERS_MISSING"
 grep -q 'offline-turbine-source-subtitle' public/app.js || die "SEMANTIC_SUBTITLE_MISSING"
 grep -q 'white-space:pre-wrap' public/style.css || die "OFFLINE_PRE_WRAP_MISSING"
 grep -q 'margin-bottom:2.5rem' public/style.css || die "OFFLINE_CARD_GAP_BAD"
