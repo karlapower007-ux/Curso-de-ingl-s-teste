@@ -512,6 +512,110 @@
     });
   }
 
+  const NODE_VIRTUAL_ROW_HEIGHT = 58;
+  const NODE_VIRTUAL_MAX = 500;
+
+  function createNodeProgressVirtualizer(host) {
+    const header=document.createElement("div");
+    header.className="node-progress-header";
+    header.textContent="RAG V2.0 • preparando 500 nós assíncronos";
+    const viewport=document.createElement("div");
+    viewport.className="node-progress-viewport";
+    viewport.setAttribute("aria-label","Progresso dos nós RAG");
+    const spacer=document.createElement("div");
+    spacer.className="node-progress-spacer";
+    const layer=document.createElement("div");
+    layer.className="node-progress-window";
+    viewport.appendChild(spacer);
+    viewport.appendChild(layer);
+    host.appendChild(header);
+    host.appendChild(viewport);
+
+    const items=[];
+    const indexByNode=new Map();
+    let raf=0;
+    let reduceDone=0;
+    let reduceTotal=0;
+
+    const schedule=()=>{
+      if(raf) return;
+      raf=requestAnimationFrame(()=>{
+        raf=0;
+        const h=Math.max(180,viewport.clientHeight || 260);
+        const overscan=5;
+        const start=Math.max(0,Math.floor(viewport.scrollTop/NODE_VIRTUAL_ROW_HEIGHT)-overscan);
+        const end=Math.min(items.length,Math.ceil((viewport.scrollTop+h)/NODE_VIRTUAL_ROW_HEIGHT)+overscan);
+        spacer.style.height=(items.length*NODE_VIRTUAL_ROW_HEIGHT)+"px";
+        layer.style.transform="translateY("+(start*NODE_VIRTUAL_ROW_HEIGHT)+"px)";
+        const fragment=document.createDocumentFragment();
+        for(let i=start;i<end;i++){
+          const item=items[i];
+          const row=document.createElement("div");
+          row.className="node-progress-row "+(item.status || "");
+          const badge=document.createElement("span");
+          badge.className="node-progress-badge";
+          badge.textContent="N"+String(item.node || i+1).padStart(3,"0");
+          const body=document.createElement("div");
+          body.className="node-progress-body";
+          const title=document.createElement("strong");
+          title.textContent=item.source || (item.status==="pass-through" ? "Sem trecho atribuído" : "Nó de análise");
+          const small=document.createElement("small");
+          small.textContent=item.summary || item.status || "concluído";
+          body.appendChild(title);
+          body.appendChild(small);
+          row.appendChild(badge);
+          row.appendChild(body);
+          fragment.appendChild(row);
+        }
+        layer.replaceChildren(fragment);
+      });
+    };
+
+    viewport.addEventListener("scroll",schedule,{passive:true});
+
+    return {
+      upsert(data){
+        const node=Math.max(1,Math.min(NODE_VIRTUAL_MAX,Number(data?.node || 0)));
+        if(!node) return;
+        const record={
+          node,
+          status:String(data?.status || "complete"),
+          source:String(data?.source || ""),
+          summary:String(data?.summary || "").replace(/\s+/g," ").slice(0,190),
+          completed:Number(data?.completed || 0),
+          total:Number(data?.total || NODE_VIRTUAL_MAX)
+        };
+        const existing=indexByNode.get(node);
+        if(existing===undefined){
+          if(items.length>=NODE_VIRTUAL_MAX) return;
+          indexByNode.set(node,items.length);
+          items.push(record);
+        }else{
+          items[existing]=record;
+        }
+        header.textContent="RAG V2.0 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
+          (reduceTotal ? " • síntese "+reduceDone+"/"+reduceTotal : "");
+        const nearBottom=(viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight)<90;
+        schedule();
+        if(nearBottom) requestAnimationFrame(()=>{viewport.scrollTop=viewport.scrollHeight;});
+      },
+      reduce(data){
+        reduceTotal=Math.max(reduceTotal,Number(data?.total_groups || 0));
+        reduceDone=Math.min(reduceTotal || Number.MAX_SAFE_INTEGER,reduceDone+1);
+        header.textContent="RAG V2.0 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
+      },
+      keepalive(){
+        header.dataset.live=String(Date.now());
+      },
+      complete(){
+        header.textContent="RAG V2.0 • fusão enciclopédica concluída";
+      },
+      destroy(){
+        if(raf) cancelAnimationFrame(raf);
+      }
+    };
+  }
+
   function appendMessage(role, content, sources = [], fallback = false) {
     const wrap = document.createElement("div");
     wrap.className = "msg " + role;
@@ -563,14 +667,18 @@
 
   function appendStreamingMessage() {
     const wrap = document.createElement("div");
-    wrap.className = "msg assistant";
+    wrap.className = "msg assistant streaming-msg";
+    const progressHost=document.createElement("div");
+    progressHost.className="node-progress-host";
+    const virtual=createNodeProgressVirtualizer(progressHost);
     const text = document.createElement("div");
-    text.className = "markdown-body";
+    text.className = "markdown-body streaming-answer";
     text.textContent = "";
+    wrap.appendChild(progressHost);
     wrap.appendChild(text);
     $("messages").appendChild(wrap);
     $("messages").scrollTop = $("messages").scrollHeight;
-    return { wrap, text };
+    return { wrap, text, virtual };
   }
 
   async function streamChat(payload) {
@@ -620,15 +728,25 @@
             answer += delta;
             scheduleAssistantMarkdown(live.text,answer);
             $("messages").scrollTop = $("messages").scrollHeight;
+          } else if (event === "node") {
+            live.virtual?.upsert(data);
+          } else if (event === "reduce") {
+            live.virtual?.reduce(data);
+          } else if (event === "keepalive") {
+            live.virtual?.keepalive(data);
           } else if (event === "meta" || event === "done") {
             meta = { ...meta, ...data };
-            if (event === "done" && data.resposta) answer = String(data.resposta);
+            if (event === "done") {
+              live.virtual?.complete();
+              if (data.resposta) answer = String(data.resposta);
+            }
           } else if (event === "error") {
             throw new Error(data.message || "Falha no streaming.");
           }
         }
       }
     } finally {
+      live.virtual?.destroy();
       live.wrap.remove();
     }
     return {
@@ -951,7 +1069,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "RAG resiliente 10 níveis • Groq + Local"
+        ? "RAG V2.0 • 500 nós • 25 workers • Groq + Local"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
