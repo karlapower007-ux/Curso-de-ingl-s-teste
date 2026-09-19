@@ -34,6 +34,9 @@ jobs:
       PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
       PINECONE_UPSERT_URL: ${{ secrets.PINECONE_UPSERT_URL }}
       PINECONE_QUERY_URL: ${{ secrets.PINECONE_QUERY_URL }}
+      VERCEL_STANDBY_URL: ${{ secrets.VERCEL_STANDBY_URL }}
+      DENO_STANDBY_URL: ${{ secrets.DENO_STANDBY_URL }}
+      SECONDARY_STANDBY_URL: ${{ secrets.SECONDARY_STANDBY_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
