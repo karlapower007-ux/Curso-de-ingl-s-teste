@@ -1,6 +1,6 @@
-// V6.0 OMNI AGENT SWARM — 10 logical agents, CPU-governed physical Web Workers.
-const LOGICAL_AGENT_COUNT=10;
-const MAX_PHYSICAL_AGENT_WORKERS=10;
+// V7.0 TWENTY AGENT MESH — 20 logical agents, CPU-governed physical Web Workers.
+const LOGICAL_AGENT_COUNT=20;
+const MAX_PHYSICAL_AGENT_WORKERS=16;
 const CARD_LIMIT=1000;
 
 function physicalCount(){
@@ -44,7 +44,7 @@ function toCard(row,index){
 }
 export async function runAgentSwarm({question,literalMatches=[],semanticMatches=[],onProgress}){
   const workerCount=physicalCount();
-  const workers=Array.from({length:workerCount},()=>new Worker("/agent-node-worker.js?v=6.0.0",{type:"module"}));
+  const workers=Array.from({length:workerCount},()=>new Worker("/agent-node-worker.js?v=7.0.0",{type:"module"}));
   const pending=new Map();let seq=0,cursor=0;
   for(const worker of workers){
     worker.onmessage=event=>{
@@ -90,7 +90,33 @@ export async function runAgentSwarm({question,literalMatches=[],semanticMatches=
     const swept=mergeRows(...sweep.map(x=>x.rows||[]));
     const a10=await run(10,{candidates:swept,literal_exists:literal.length>0});
     onProgress?.({agent:10,name:"Bouncer",count:a10.rows?.length||0});
-    const finalRows=Array.isArray(a10.rows)?a10.rows:[];
+    const gated=Array.isArray(a10.rows)?a10.rows:[];
+    if(!gated.length)return {
+      ok:false,cards:[],strict_empty:true,zero_noise:true,
+      logical_agents:LOGICAL_AGENT_COUNT,physical_workers:workerCount,
+      hardware_concurrency:Number(navigator.hardwareConcurrency||0)||null,
+      literal_hits:literal.length,semantic_candidates:semantic.length,
+      semantic_fallback_used:literal.length===0&&semantic.length>0,
+      agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker",
+      final_gate:"Agent 10 Bouncer",main_thread_analysis:false
+    };
+
+    const phaseTwoRoles=[11,12,13,14,15,16,17,18,19];
+    const phaseTwo=await Promise.all(phaseTwoRoles.map(role=>run(role,{candidates:gated})));
+    phaseTwo.forEach((r,i)=>{
+      const role=phaseTwoRoles[i];
+      const names={
+        11:"Short Entity Hunter",12:"Long Form Explainer",13:"Freshness Sentinel",
+        14:"OCR Rescue",15:"Definition Specialist",16:"Chronology Mapper",
+        17:"Cross Library Balancer",18:"Citation Specialist",19:"Conflict Auditor"
+      };
+      onProgress?.({agent:role,name:names[role],count:r.rows?.length||0});
+    });
+
+    const enriched=mergeRows(gated,...phaseTwo.map(x=>x.rows||[]));
+    const a20=await run(20,{candidates:enriched});
+    onProgress?.({agent:20,name:"Mission Master",count:a20.rows?.length||0});
+    const finalRows=Array.isArray(a20.rows)?a20.rows:enriched;
     const cards=finalRows.slice(0,CARD_LIMIT).map(toCard);
     return {
       ok:cards.length>0,cards,
@@ -102,7 +128,17 @@ export async function runAgentSwarm({question,literalMatches=[],semanticMatches=
       semantic_candidates:semantic.length,
       semantic_fallback_used:literal.length===0&&semantic.length>0,
       agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker",
-      final_gate:"Agent 10 Bouncer",
+      agent_11_short_terms:true,
+      agent_12_long_explanation:true,
+      agent_13_freshness:true,
+      agent_14_ocr_rescue:true,
+      agent_15_definition:true,
+      agent_16_chronology:true,
+      agent_17_cross_library:true,
+      agent_18_citation:true,
+      agent_19_conflict_audit:true,
+      agent_20_mission_master:true,
+      final_gate:"Agent 10 Bouncer + Agent 20 Mission Master",
       main_thread_analysis:false
     };
   }finally{
