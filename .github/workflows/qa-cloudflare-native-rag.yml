@@ -22,7 +22,7 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V2.1 EXACT MATCH TURBINES + V2.0 analytical invariants
+          # V3.0 ULTIMATE RESILIENCE + V2 analytical engine invariants
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
           grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
           grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
@@ -49,6 +49,36 @@ jobs:
           grep -q 'appendRawDocumentMessage' public/app.js
           grep -q 'Modo Offline Ativado - Leitura Contínua Local' public/app.js
           grep -q 'raw-document-text' public/style.css
+          # V3 strict lazy loading + six-tier failover
+          grep -q 'strict_lazy_local_engines: true' src/index.js
+          grep -q 'failover_tiers: 6' src/index.js
+          grep -q 'service_worker_static_vault: true' src/index.js
+          grep -q 'desktop_fallback_port: 8788' src/index.js
+          grep -q 'raw_vault_fallback: true' src/index.js
+          grep -q 'ensureFailoverV3' public/app.js
+          grep -q 'ensureRagCascade' public/app.js
+          grep -q 'activateHeavyLocalSubsystems' public/app.js
+          grep -q 'recoverAnalytic' public/failover-v3.js
+          grep -q 'recoverDirect' public/failover-v3.js
+          grep -q 'planB' public/failover-v3.js
+          grep -q 'planCLocalAnalytic' public/failover-v3.js
+          grep -q 'planDAnalytic' public/failover-v3.js
+          grep -q 'planE' public/failover-v3.js
+          grep -q 'planF' public/failover-v3.js
+          grep -q 'DecompressionStream' public/failover-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3"' public/sw-v3.js
+          grep -q 'A->B->C->D->E->F' public/failover-manifest.json
+          test -f public/steel/index.json
+          test -f scripts/build-static-vault.mjs
+          test -f scripts/build-failover-manifest.mjs
+          test -f scripts/local-fallback-server.mjs
+          test -f scripts/export-raw-vault.mjs
+          test -f raw-vault/README.md
+          test -f standby/core.mjs
+          test -f standby/vercel/api/index.mjs
+          test -f standby/deno/main.ts
+          ! grep -q '__ragCascadeReady' public/index.html
+          ! grep -q 'window.__pdfjsReady = import' public/index.html
           grep -q 'groqApiKeys' src/index.js
           grep -q 'runAsyncWorkerPool' src/index.js
           grep -q 'massivePipelineSynthesis' src/index.js
@@ -136,7 +166,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '2.1.0-exact-match-turbines' src/index.js
+          grep -q '3.0.0-ultimate-resilience' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -153,7 +183,7 @@ jobs:
           grep -q 'master_node: \"final-fusion\"' src/index.js
           grep -q 'master_fusion_mode: "massive-dense-encyclopedic"' src/index.js
           grep -q 'post_master_llm_rewrite: false' src/index.js
-          # deploy health exposes V2.1 exact-match + V2.0 analytical pool
+          # deploy health exposes V3 failover umbrella + V2 analytical pool
           grep -q 'micro_node_count: MASSIVE_NODE_COUNT' src/index.js
           grep -q 'micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE' src/index.js
           grep -q 'massiveMasterSynthesis' src/index.js
@@ -257,7 +287,7 @@ jobs:
           grep -q '/api/admin/r2-presign' src/index.js
           grep -q 'extractPdfLocally' public/app.js
           grep -q 'uploadOriginalDirectToR2' public/app.js
-          grep -q 'pdfjs-dist@4.10.38' public/index.html
+          grep -q 'pdfjs-dist@4.10.38' public/app.js
           grep -q 'waitForIndexJob' public/app.js
           grep -q 'voiceLoopEnabled' public/app.js
           grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
