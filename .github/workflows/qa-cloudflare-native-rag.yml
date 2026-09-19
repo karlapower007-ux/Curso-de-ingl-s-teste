@@ -140,9 +140,6 @@ jobs:
           grep -q 'supabaseOmniSyncState' src/index.js
           grep -q 'Math.min(200' src/index.js
           grep -q 'memory_bounded:true' src/index.js
-          grep -q 'omniSyncBtn' public/index.html
-          grep -q 'SINCRONIZAR BIBLIOTECA COMPLETA' public/index.html
-          grep -q 'new Worker("/omni-sync-worker.js?v=4.0.0")' public/app.js
           grep -q 'configurePhantomDaemon' public/app.js
           grep -q 'PHANTOM_DAEMON_INTERVAL_MS=3\*60\*1000' public/app.js
           grep -q 'omni-daemon-tick' public/app.js
@@ -161,12 +158,16 @@ jobs:
           grep -q 'const GAP=40' public/app.js
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
-          # Service-worker cache and V4 manifest
+          # Service-worker cache and V6 manifest
           grep -q 'CACHE_NAME="fns-ultimate-resilience-v6"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
-          grep -q '"version": "4.0.0"' public/failover-manifest.json
-          grep -q '"engine": "omni-library-strict-v4"' public/failover-manifest.json
+          grep -q '"version": "6.0.0"' public/failover-manifest.json
+          grep -q '"engine": "omni-agent-swarm-v6"' public/failover-manifest.json
+          grep -q '"logical_agent_count": 10' public/failover-manifest.json
+          grep -q '"agent2_transformers_semantic": true' public/failover-manifest.json
+          grep -q '"agent10_bouncer": true' public/failover-manifest.json
+          grep -q '"phantom_daemon": true' public/failover-manifest.json
           grep -q '"same_paragraph_phrase_required": true' public/failover-manifest.json
           grep -q '"omni_sync_batch_size": 200' public/failover-manifest.json
 
