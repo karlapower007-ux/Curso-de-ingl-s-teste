@@ -1,7 +1,7 @@
 {
   "name": "consciencia-do-fabiano",
   "private": true,
-  "version": "3.1.0",
+  "version": "3.2.0",
   "scripts": {
     "check": "node --check public/app.js && node --check public/failover-v3.js && node --check public/sw-v3.js && node --check public/local-turbine-pool.js && node --check public/local-turbine-worker.js && node --check scripts/build-static-vault.mjs && node --check scripts/build-failover-manifest.mjs && node --check scripts/local-fallback-server.mjs && node --check scripts/export-raw-vault.mjs && node --check standby/core.mjs && node --check standby/vercel/api/index.mjs && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "build": "npm run check",
