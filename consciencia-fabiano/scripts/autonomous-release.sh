@@ -7,23 +7,18 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
-: "${GEMINI_API_KEY:?GEMINI_API_KEY is required}"
+: "${COHERE_API_KEY:?COHERE_API_KEY is required}"
 
 GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
-GEMINI_API_KEY_CLEAN=$(printf '%s' "$GEMINI_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
-case "$GEMINI_API_KEY_CLEAN" in
-  AQ.*) log "GEMINI_KEY_FORMAT=auth" ;;
-  AIza*) log "GEMINI_KEY_FORMAT=standard" ;;
-  *) log "GEMINI_KEY_FORMAT=unknown"; die "GEMINI_SECRET_NOT_API_KEY" ;;
-esac
-log "GEMINI_KEY_LENGTH=${#GEMINI_API_KEY_CLEAN}"
-if [ "${#GEMINI_API_KEY_CLEAN}" -lt 35 ]; then
-  die "GEMINI_SECRET_TRUNCATED_OR_WRONG_VALUE"
+COHERE_API_KEY_CLEAN=$(printf '%s' "$COHERE_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
+log "COHERE_KEY_LENGTH=${#COHERE_API_KEY_CLEAN}"
+if [ "${#COHERE_API_KEY_CLEAN}" -lt 20 ]; then
+  die "COHERE_SECRET_TRUNCATED_OR_WRONG_VALUE"
 fi
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: Groq + Gemini external AI bypass release =="
+log "== Consciência do Fabiano :: Groq + Cohere external AI bypass release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -35,7 +30,8 @@ grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
 grep -q 'EMBED_CONCURRENCY = 50' src/index.js
 grep -q 'pdfjs-dist@4.10.38' public/index.html
 grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
-grep -q 'generativelanguage.googleapis.com' src/index.js
+grep -q 'api.cohere.com/v2/embed' src/index.js
+! grep -q 'generativelanguage.googleapis.com' src/index.js
 grep -q 'text/event-stream' src/index.js
 ! grep -q 'env.AI' src/index.js
 ! grep -q '@cf/' src/index.js
@@ -49,13 +45,16 @@ curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization:
 jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
 log "GROQ_PREFLIGHT_PASS=yes"
 
-gemini_code=$(curl -sS -o /tmp/gemini-preflight.json -w '%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY_CLEAN"   -H 'Content-Type: application/json'   --data '{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"ping"}]}}')
-if [ "$gemini_code" != "200" ]; then
-  cat /tmp/gemini-preflight.json || true
-  die "GEMINI_PREFLIGHT_HTTP_$gemini_code"
+cohere_code=$(curl -sS -o /tmp/cohere-preflight.json -w '%{http_code}' "https://api.cohere.com/v2/embed" \
+  -H "Authorization: Bearer $COHERE_API_KEY_CLEAN" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"embed-multilingual-v3.0","texts":["ping"],"input_type":"search_document","embedding_types":["float"],"truncate":"END"}')
+if [ "$cohere_code" != "200" ]; then
+  cat /tmp/cohere-preflight.json || true
+  die "COHERE_PREFLIGHT_HTTP_$cohere_code"
 fi
-jq -e '.embedding.values | type == "array" and length > 0' /tmp/gemini-preflight.json >/dev/null || { cat /tmp/gemini-preflight.json; die "GEMINI_PREFLIGHT_BAD_RESPONSE"; }
-log "GEMINI_PREFLIGHT_PASS=yes"
+jq -e '((.embeddings.float // .embeddings.float_ // .embeddings) | type == "array" and length > 0)' /tmp/cohere-preflight.json >/dev/null || { cat /tmp/cohere-preflight.json; die "COHERE_PREFLIGHT_BAD_RESPONSE"; }
+log "COHERE_PREFLIGHT_PASS=yes"
 
 log "3/7 Deploy Worker"
 npx wrangler deploy | tee /tmp/deploy.log
@@ -63,7 +62,7 @@ log "DEPLOY_COMMAND=success"
 
 log "4/7 Install runtime secrets"
 printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
-printf '%s' "$GEMINI_API_KEY_CLEAN" | npx wrangler secret put GEMINI_API_KEY >/dev/null
+printf '%s' "$COHERE_API_KEY_CLEAN" | npx wrangler secret put COHERE_API_KEY >/dev/null
 log "EXTERNAL_AI_SECRETS_INSTALLED=yes"
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
@@ -118,7 +117,7 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "google-gemini" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true and .architecture == "cloudflare-router-external-ai" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .embedding_provider == "cohere" and .server_pdf_parsing == false and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "NATIVE_HEALTH_PASS=yes"
     break

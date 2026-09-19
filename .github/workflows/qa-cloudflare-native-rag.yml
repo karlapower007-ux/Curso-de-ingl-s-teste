@@ -25,7 +25,7 @@ jobs:
           node --check scripts/browser-voice-smoke.mjs
           node --check scripts/browser-ingest-smoke.mjs
           bash -n scripts/autonomous-release.sh
-          grep -q 'gemini-embedding-001' src/index.js
+          grep -q 'embed-multilingual-v3.0' src/index.js
           grep -q 'whisper-large-v3-turbo' src/index.js
           grep -q 'browser-local-pt-BR' src/index.js
           grep -q 'class LibraryDO' src/index.js
@@ -48,11 +48,13 @@ jobs:
           grep -q 'waitForIndexJob' public/app.js
           grep -q 'voiceLoopEnabled' public/app.js
           grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
-          grep -q 'generativelanguage.googleapis.com' src/index.js
+          grep -q 'api.cohere.com/v2/embed' src/index.js
+          ! grep -q 'generativelanguage.googleapis.com' src/index.js
           grep -q 'text/event-stream' src/index.js
           grep -q 'streamChat' public/app.js
           ! grep -q 'env.AI' src/index.js
           ! grep -q '@cf/' src/index.js
+          ! grep -qi 'gemini' src/index.js
           ! grep -q 'AI.toMarkdown' src/index.js
           ! grep -q 'request.formData' src/index.js
           ! grep -q 'readPdfBuffer' src/index.js

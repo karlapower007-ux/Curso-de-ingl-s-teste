@@ -1,7 +1,6 @@
-const VERSION = "1.4.0-external-ai-groq-gemini";
-// External AI bypass activation: Groq chat/STT + Gemini embeddings.
-// Gemini REST payload verified against current API shape.
-const EMBEDDING_MODEL = "gemini-embedding-001";
+const VERSION = "1.5.0-external-ai-groq-cohere";
+// External AI bypass activation: Groq chat/STT + Cohere multilingual embeddings.
+const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
 const STT_MODEL = "whisper-large-v3-turbo";
 const TTS_MODEL = "browser-local-pt-BR";
@@ -237,35 +236,38 @@ function detectLanguage(text) {
   return bestScore >= 4 ? best : "unknown";
 }
 
-async function embedTexts(env, texts) {
-  const apiKey = requireSecret(env, "GEMINI_API_KEY");
+async function embedTexts(env, texts, inputType = "search_document") {
+  const apiKey = requireSecret(env, "COHERE_API_KEY");
   const list = Array.from(texts || []).map(text => String(text || ""));
   if (!list.length) return [];
-  const modelPath = "models/" + EMBEDDING_MODEL;
-  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/" + modelPath + ":batchEmbedContents", {
+  const safeInputType = inputType === "search_query" ? "search_query" : "search_document";
+  const res = await fetch("https://api.cohere.com/v2/embed", {
     method: "POST",
     headers: {
+      "Authorization": "Bearer " + apiKey,
       "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
+      "X-Client-Name": "consciencia-fabiano",
     },
     body: JSON.stringify({
-      requests: list.map(text => ({
-        model: modelPath,
-        content: { parts: [{ text }] },
-      })),
+      model: EMBEDDING_MODEL,
+      texts: list,
+      input_type: safeInputType,
+      embedding_types: ["float"],
+      truncate: "END",
     }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(body?.error?.message || ("Gemini embeddings HTTP " + res.status));
+    const err = new Error(body?.message || body?.error?.message || ("Cohere embeddings HTTP " + res.status));
     err.status = res.status;
     throw err;
   }
-  const vectors = Array.isArray(body?.embeddings)
-    ? body.embeddings.map(item => Array.isArray(item?.values) ? item.values.slice(0, 768) : item?.values)
-    : [];
+  const vectors =
+    body?.embeddings?.float ||
+    body?.embeddings?.float_ ||
+    (Array.isArray(body?.embeddings) ? body.embeddings : []);
   if (vectors.length !== list.length || vectors.some(v => !Array.isArray(v) || !v.length)) {
-    throw new Error("Gemini não retornou todos os embeddings esperados.");
+    throw new Error("Cohere não retornou todos os embeddings esperados.");
   }
   return vectors;
 }
@@ -338,6 +340,16 @@ async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 5) {
   }
 
   return [await embedOneWithRetry(env, String(list[0]?.text || ""), maxAttempts)];
+}
+
+async function embedChunksBatched(env, chunks) {
+  const list = Array.from(chunks || []);
+  for (let offset = 0; offset < list.length; offset += EMBED_CONCURRENCY) {
+    const batch = list.slice(offset, offset + EMBED_CONCURRENCY);
+    const vectors = await embedWaveBatchedWithRetry(env, batch);
+    for (let i = 0; i < batch.length; i++) batch[i].embedding = vectors[i];
+  }
+  return list;
 }
 
 async function matrixChunkPages(pageRows) {
@@ -517,7 +529,7 @@ async function reindexLibrary(request, env) {
 
 async function retrieveContext(env, question) {
   assertBindings(env);
-  const qEmbedding = await embedTexts(env, [question]);
+  const qEmbedding = await embedTexts(env, [question], "search_query");
   const data = await libraryCall(env, "/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -614,7 +626,7 @@ async function groqStreamResponse(env, messages, meta) {
         controller.enqueue(encoder.encode(sseFrame("meta", {
           fontes: meta.sources,
           fallback: meta.fallback,
-          provider: "groq+gemini-rag",
+          provider: "groq+cohere-rag",
           embedding_model: EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
@@ -648,7 +660,7 @@ async function groqStreamResponse(env, messages, meta) {
           fontes: meta.sources,
           fallback: meta.fallback,
           memory_persisted: memoryPersisted,
-          provider: "groq+gemini-rag",
+          provider: "groq+cohere-rag",
           embedding_model: EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
@@ -746,7 +758,7 @@ async function chat(request, env) {
     fontes: sources,
     fallback,
     memory_persisted: memoryPersisted,
-    provider: "groq+gemini-rag",
+    provider: "groq+cohere-rag",
     embedding_model: EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
   });
@@ -792,7 +804,7 @@ async function status(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
   if (!env.GROQ_API_KEY) missing.push("GROQ_API_KEY");
-  if (!env.GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
+  if (!env.COHERE_API_KEY) missing.push("COHERE_API_KEY");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   if (!missing.length) {
     try {
@@ -811,7 +823,7 @@ async function status(env) {
     architecture: "cloudflare-router-external-ai",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
-    ingest_backend: "client-pdfjs-matrix-50x50-gemini",
+    ingest_backend: "client-pdfjs-matrix-50x50-cohere",
     client_pdf_extraction: "pdf.js",
     server_pdf_parsing: false,
     chunk_concurrency_limit: CHUNK_CONCURRENCY,
@@ -819,7 +831,7 @@ async function status(env) {
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
     llm_provider: "groq",
-    embedding_provider: "google-gemini",
+    embedding_provider: "cohere",
     workers_ai_used: false,
     render_dependency: false,
     bindings_missing: missing,
