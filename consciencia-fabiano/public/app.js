@@ -1551,6 +1551,15 @@
           return;
         }
 
+        if(data?.strict_empty===true && data?.retrieval_unavailable!==true){
+          const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
+          appendElegantSilence(silence);
+          history.push({role:"assistant",content:silence,sources:[],fallback:false,strict_empty:true,zero_noise:true,ts:Date.now()});
+          saveHistory();
+          if($("backendText")) $("backendText").textContent="V4.0 • biblioteca total • 0 correspondências exatas";
+          setAvatar("closed");
+          return;
+        }
         if(data?.resposta){
           const resposta=String(data.resposta);
           appendMessage("assistant",resposta,data.fontes||[],true);
