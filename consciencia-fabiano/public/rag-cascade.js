@@ -383,7 +383,7 @@ async function omniAgentSearch(question,{onProgress}={}){
     }catch{}
   }
 
-  const swarm=await import("/agent-swarm.js?v=6.0.0");
+  const swarm=await import("/agent-swarm.js?v=7.0.0");
   const result=await swarm.runAgentSwarm({
     question:q,literalMatches,semanticMatches,onProgress
   });
