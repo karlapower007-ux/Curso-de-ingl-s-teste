@@ -28,6 +28,12 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_RAG_SEARCH_URL: ${{ secrets.SUPABASE_RAG_SEARCH_URL }}
+      PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+      PINECONE_UPSERT_URL: ${{ secrets.PINECONE_UPSERT_URL }}
+      PINECONE_QUERY_URL: ${{ secrets.PINECONE_QUERY_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
