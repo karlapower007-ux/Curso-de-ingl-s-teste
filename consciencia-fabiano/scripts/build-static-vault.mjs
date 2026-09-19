@@ -14,7 +14,7 @@ for(const name of await readdir(outDir).catch(()=>[])){
 }
 
 const index={
-  version:"4.0.0",
+  version:"6.0.0",
   generated_at:new Date().toISOString(),
   source:supabase&&token?"supabase-rag_embeddings":"unconfigured",
   compression:"gzip",
