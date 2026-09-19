@@ -1165,5 +1165,6 @@
   checkBackend();
   loadBooks();
   setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
+  setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
   setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
 })();
