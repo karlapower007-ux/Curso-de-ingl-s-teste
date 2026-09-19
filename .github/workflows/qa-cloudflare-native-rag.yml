@@ -61,7 +61,7 @@ jobs:
           grep -q 'plan_c_physical_worker_cap: 16' src/index.js
           grep -q 'plan_c_worker_count_source: "navigator.hardwareConcurrency"' src/index.js
           grep -q 'plan_c_main_thread_extraction: false' src/index.js
-          grep -q 'plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity"' src/index.js
+          grep -q 'plan_c_offline_intelligence: "boolean-exact-or-bm25-hard-threshold"' src/index.js
           grep -q 'plan_c_virtualized_result_cards: true' src/index.js
           grep -q 'plan_c_card_gap_px: 40' src/index.js
           grep -q 'plan_c_window_expansion: true' src/index.js
@@ -76,6 +76,9 @@ jobs:
           grep -q 'plan_c_zero_noise: true' src/index.js
           grep -q 'plan_c_elegant_silence: true' src/index.js
           grep -q 'plan_c_fuzzy_compensation_disabled: true' src/index.js
+          grep -q 'plan_c_strict_reference_local_first: true' src/index.js
+          grep -q 'plan_c_strict_reference_cloud_fuzzy_bypass: true' src/index.js
+          grep -q 'plan_c_terminal_zero_hit: true' src/index.js
           test -f public/local-turbine-pool.js
           test -f public/local-turbine-worker.js
           grep -q 'LOGICAL_NODE_CAPACITY=1000' public/local-turbine-pool.js
@@ -114,6 +117,9 @@ jobs:
           grep -q 'Nenhuma correspondência exata encontrada na biblioteca.' public/failover-v3.js
           grep -q 'terminal:true' public/failover-v3.js
           grep -q 'appendElegantSilence' public/app.js
+          grep -q 'isStrictPrecisionReferenceIntent' public/app.js
+          grep -q 'recoverStrictPrecision' public/failover-v3.js
+          grep -q 'BOOLEAN EXACT' public/app.js
           grep -q 'strict-empty-msg' public/app.js
           grep -q 'strict-empty-text' public/style.css
           grep -q 'mergeSequentialOfflineCards' public/app.js
