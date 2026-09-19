@@ -2108,7 +2108,7 @@ export class LibraryDO {
         const terms = Array.isArray(body.terms)
           ? body.terms.map(foldSearchText).filter(Boolean).slice(0, 10)
           : lexicalTerms(query);
-        const topK = Math.max(1, Math.min(20, Number(body.top_k || TOP_K)));
+        const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
         const scanLimit = Math.max(200, Math.min(10000, Number(body.scan_limit || 7000)));
         if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "bm25-fallback" });
 
@@ -2166,7 +2166,7 @@ export class LibraryDO {
       if (url.pathname === "/search" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const query = Array.isArray(body.embedding) ? body.embedding : [];
-        const topK = Math.max(1, Math.min(20, Number(body.top_k || 8)));
+        const topK = Math.max(1, Math.min(100, Number(body.top_k || TOP_K)));
         const minScore = Math.max(-1, Math.min(1, Number(body.min_score ?? SEMANTIC_MIN_SCORE)));
         const scanLimit = Math.max(50, Math.min(10000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
         const rows = [...this.sql.exec(`
@@ -2216,6 +2216,12 @@ export default {
         semantic_min_score: SEMANTIC_MIN_SCORE,
         search_top_k: TOP_K,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
+        rag_map_reduce: true,
+        map_batch_size: MAP_BATCH_SIZE,
+        static_backup_hydration: true,
+        static_backup_expected_embeddings: 25199,
+        static_backup_payload_status: "awaiting-source-export",
+        whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
         rag_resilience_levels: 10,
         local_library_catalog: true,
