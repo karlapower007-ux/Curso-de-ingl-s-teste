@@ -576,7 +576,7 @@
   function createNodeProgressVirtualizer(host) {
     const header=document.createElement("div");
     header.className="node-progress-header";
-    header.textContent="RAG V2.1 • preparando 500 nós assíncronos";
+    header.textContent="RAG V3.1 • preparando 500 nós assíncronos";
     const viewport=document.createElement("div");
     viewport.className="node-progress-viewport";
     viewport.setAttribute("aria-label","Progresso dos nós RAG");
@@ -651,7 +651,7 @@
         }else{
           items[existing]=record;
         }
-        header.textContent="RAG V2.1 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
+        header.textContent="RAG V3.1 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
           (reduceTotal ? " • síntese "+reduceDone+"/"+reduceTotal : "");
         const nearBottom=(viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight)<90;
         schedule();
@@ -660,13 +660,13 @@
       reduce(data){
         reduceTotal=Math.max(reduceTotal,Number(data?.total_groups || 0));
         reduceDone=Math.min(reduceTotal || Number.MAX_SAFE_INTEGER,reduceDone+1);
-        header.textContent="RAG V2.1 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
+        header.textContent="RAG V3.1 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
       },
       keepalive(){
         header.dataset.live=String(Date.now());
       },
       complete(){
-        header.textContent="RAG V2.1 • fusão enciclopédica concluída";
+        header.textContent="RAG V3.1 • fusão enciclopédica concluída";
       },
       destroy(){
         if(raf) cancelAnimationFrame(raf);
@@ -817,6 +817,131 @@
 
     $("messages").appendChild(wrap);
     $("messages").scrollTop = $("messages").scrollHeight;
+  }
+
+
+  function offlineParagraphs(text){
+    const raw=String(text||"").replace(/\r/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+    const parts=raw.split(/\n\s*\n+/).map(x=>x.trim()).filter(Boolean);
+    return parts.length?parts:[raw];
+  }
+
+  function buildOfflineTurbineCard(item,index){
+    const card=document.createElement("article");
+    card.className="offline-turbine-card";
+    card.dataset.node=String(item?.node || index+1);
+
+    const top=document.createElement("div");
+    top.className="offline-turbine-card-head";
+    const badge=document.createElement("span");
+    badge.className="offline-turbine-badge";
+    badge.textContent="T"+String(item?.node || index+1).padStart(4,"0");
+    const title=document.createElement("strong");
+    title.textContent=String(item?.title || item?.filename || "Documento");
+    top.appendChild(badge);
+    top.appendChild(title);
+    card.appendChild(top);
+
+    const meta=document.createElement("div");
+    meta.className="offline-turbine-meta";
+    const bits=[];
+    if(item?.author) bits.push("autor: "+item.author);
+    if(item?.page) bits.push("página "+item.page);
+    if(Number.isFinite(Number(item?.score))) bits.push("relevância "+Number(item.score).toFixed(2));
+    if(item?.chunk_index!=null) bits.push("chunk "+item.chunk_index);
+    meta.textContent=bits.join(" • ");
+    if(bits.length) card.appendChild(meta);
+
+    const body=document.createElement("div");
+    body.className="offline-turbine-text";
+    for(const paragraph of offlineParagraphs(item?.text || "")){
+      if(!paragraph) continue;
+      const p=document.createElement("p");
+      p.textContent=paragraph;
+      body.appendChild(p);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  function appendOfflineTurbineResults(data){
+    const cards=Array.isArray(data?.cards)?data.cards:[];
+    const wrap=document.createElement("div");
+    wrap.className="msg assistant offline-turbine-results";
+
+    const status=document.createElement("div");
+    status.className="offline-turbine-status";
+    const physical=Math.max(0,Number(data?.physical_workers||0));
+    const logical=Math.max(0,Number(data?.logical_tasks||0));
+    status.textContent="Plano C V3.1 • "+cards.length+" resultados relevantes • "+logical+" tarefas lógicas • "+physical+" Web Workers ativos";
+    wrap.appendChild(status);
+
+    const viewport=document.createElement("div");
+    viewport.className="offline-turbine-viewport";
+    viewport.setAttribute("aria-label","Resultados offline inteligentes");
+    const spacer=document.createElement("div");
+    spacer.className="offline-turbine-spacer";
+    const layer=document.createElement("div");
+    layer.className="offline-turbine-layer";
+    viewport.appendChild(spacer);
+    viewport.appendChild(layer);
+    wrap.appendChild(viewport);
+    $("messages").appendChild(wrap);
+
+    const GAP=40;
+    const ESTIMATE=260;
+    const heights=cards.map(()=>ESTIMATE+GAP);
+    let raf=0;
+
+    const offsets=()=>{
+      const out=new Array(cards.length+1);
+      out[0]=0;
+      for(let i=0;i<cards.length;i++) out[i+1]=out[i]+heights[i];
+      return out;
+    };
+
+    const schedule=()=>{
+      if(raf)return;
+      raf=requestAnimationFrame(()=>{
+        raf=0;
+        const prefix=offsets();
+        spacer.style.height=(prefix[cards.length]||0)+"px";
+        const top=Math.max(0,viewport.scrollTop-520);
+        const bottom=viewport.scrollTop+Math.max(360,viewport.clientHeight||520)+520;
+        const fragment=document.createDocumentFragment();
+
+        for(let i=0;i<cards.length;i++){
+          const y=prefix[i],next=prefix[i+1];
+          if(next<top || y>bottom) continue;
+          const slot=document.createElement("div");
+          slot.className="offline-turbine-slot";
+          slot.style.top=y+"px";
+          slot.style.paddingBottom=GAP+"px";
+          slot.dataset.index=String(i);
+          slot.appendChild(buildOfflineTurbineCard(cards[i],i));
+          fragment.appendChild(slot);
+        }
+        layer.replaceChildren(fragment);
+
+        requestAnimationFrame(()=>{
+          let changed=false;
+          for(const slot of layer.querySelectorAll(".offline-turbine-slot")){
+            const i=Number(slot.dataset.index);
+            const h=Math.ceil(slot.getBoundingClientRect().height);
+            if(Number.isFinite(h)&&h>40&&Math.abs(heights[i]-h)>2){
+              heights[i]=h;
+              changed=true;
+            }
+          }
+          if(changed)schedule();
+        });
+      });
+    };
+
+    viewport.addEventListener("scroll",schedule,{passive:true});
+    schedule();
+    $("messages").scrollTop=$("messages").scrollHeight;
+    return {wrap,viewport};
   }
 
   function appendStreamingMessage() {
@@ -1253,13 +1378,31 @@
 
         if(recovered?.ok){
           const resposta=String(recovered.answer || recovered.text || "");
-          appendMessage("assistant",resposta,recovered.sources || [],false);
-          history.push({
-            role:"assistant",content:resposta,sources:recovered.sources || [],fallback:false,
-            failover_plan:recovered.plan || "",ts:Date.now()
-          });
+          if(recovered.plan==="C" && Array.isArray(recovered.cards) && recovered.cards.length){
+            appendOfflineTurbineResults(recovered);
+            const persisted=[
+              resposta,
+              ...recovered.cards.slice(0,8).map((card,i)=>
+                "[T"+String(card.node||i+1).padStart(4,"0")+"] "+String(card.title||card.filename||"Documento")+
+                (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
+              )
+            ].join("\n\n");
+            history.push({
+              role:"assistant",content:persisted,sources:recovered.sources || [],fallback:false,
+              failover_plan:"C",offline_turbines:true,ts:Date.now()
+            });
+            if($("backendText")){
+              $("backendText").textContent="Plano C V3.1 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
+            }
+          }else{
+            appendMessage("assistant",resposta,recovered.sources || [],false);
+            history.push({
+              role:"assistant",content:resposta,sources:recovered.sources || [],fallback:false,
+              failover_plan:recovered.plan || "",ts:Date.now()
+            });
+            if($("backendText")) $("backendText").textContent="Contingência Plano "+String(recovered.plan||"?")+" ativa";
+          }
           saveHistory();
-          if($("backendText")) $("backendText").textContent="Contingência Plano "+String(recovered.plan||"?")+" ativa";
           setAvatar("closed");
           return;
         }
@@ -1304,7 +1447,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "V3.0 • Plano A ativo • 500 nós analíticos • 1000 turbinas exatas"
+        ? "V3.1 • Plano A ativo • 500 nós analíticos • 1000 turbinas exatas/offline"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
