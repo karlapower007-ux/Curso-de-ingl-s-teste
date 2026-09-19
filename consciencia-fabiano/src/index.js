@@ -1,4 +1,4 @@
-const VERSION = "1.19.0-encyclopedic-cohesion";
+const VERSION = "1.19.1-dense-dictionary-mode";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -974,11 +974,17 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
 }
 
 function citationCoverageTarget(sources) {
-  const rows=Array.isArray(sources)?sources:[];
-  if(rows.length>=20) return 6;
-  if(rows.length>=8) return 4;
-  if(rows.length>=3) return 2;
-  return rows.length ? 1 : 0;
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!rows.length) return 0;
+  const independentDocs=new Set(
+    rows.map(s=>String(s?.document_id || s?.titulo || s?.arquivo || "").trim()).filter(Boolean)
+  ).size;
+  if(independentDocs>=2) return Math.min(rows.length,Math.max(independentDocs,Math.min(24,Math.ceil(rows.length*0.35))));
+  if(rows.length>=30) return 12;
+  if(rows.length>=15) return 8;
+  if(rows.length>=8) return 5;
+  if(rows.length>=3) return 3;
+  return 1;
 }
 
 async function repairSparseCitationCoverage(env,question,answer,sources) {
@@ -993,23 +999,26 @@ async function repairSparseCitationCoverage(env,question,answer,sources) {
     {
       role:"system",
       content:
-        "Reescreva o rascunho como uma síntese enciclopédica coesa e substancial, usando EXCLUSIVAMENTE as evidências fornecidas. " +
-        "Não faça uma lista de fontes e não despeje trechos. Organize um argumento contínuo: definição/núcleo, desenvolvimento, convergências, nuances ou diferenças sustentadas e conclusão integradora. " +
-        "Use [F#] imediatamente após cada afirmação ou conjunto de afirmações sustentadas. Integre o maior número possível de documentos independentes DIRETAMENTE RELEVANTES, mas jamais cite uma fonte só para aumentar quantidade. " +
+        "Reescreva o rascunho no MODO DICIONÁRIO DENSO: um verbete enciclopédico profundo, coeso e articulado, usando EXCLUSIVAMENTE as evidências fornecidas. " +
+        "É proibido produzir frases soltas, notas telegráficas, enumeração de livros sem explicação, colagem de citações ou parágrafos de uma única frase. " +
+        "Organize prosa contínua em parágrafos sólidos: definição/núcleo, desenvolvimento histórico ou conceitual, convergências entre autores, complementos, nuances ou diferenças sustentadas e uma conclusão integradora. " +
+        "Cada parágrafo deve conectar ideias de mais de uma evidência sempre que isso for documentalmente possível. " +
+        "Use [F#] imediatamente após cada afirmação ou conjunto de afirmações sustentadas. Integre o maior número possível de documentos independentes DIRETAMENTE RELEVANTES e atinja a meta mínima de cobertura indicada pelo usuário, sem jamais citar fonte irrelevante só para aumentar quantidade. " +
         "Elimine afirmações que não possam ser sustentadas por pelo menos uma evidência [F#]. Não invente fatos, autores, páginas, capítulos ou citações. Não escreva a seção de referências."
     },
     {
       role:"user",
       content:
         "PERGUNTA:\n"+trimToTokenBudget(question,700)+
+        "\n\nMETA MÍNIMA DE COBERTURA: "+target+" referências documentais distintas, ou todas as fontes diretamente relevantes se forem menos que isso."+
         "\n\nRASCUNHO:\n"+trimToTokenBudget(stripModelReferenceSection(answer),1800)+
-        "\n\nEVIDÊNCIAS DISPONÍVEIS:\n"+trimToTokenBudget(evidence,5200)
+        "\n\nEVIDÊNCIAS DISPONÍVEIS:\n"+trimToTokenBudget(evidence,5600)
     }
   ];
   try{
     const res=await groqCompletion(env,messages,false,{
-      input_budget:8200,
-      max_completion_tokens:2400,
+      input_budget:9000,
+      max_completion_tokens:3200,
       temperature:0.0
     });
     const data=await res.json().catch(()=>({}));
@@ -1017,6 +1026,66 @@ async function repairSparseCitationCoverage(env,question,answer,sources) {
     if(repaired && !isEmptyGroundedFailure(repaired)){
       const repairedCoverage=selectCitedSources(repaired,rows).length;
       if(repairedCoverage>=Math.max(1,current.length)) return stripModelReferenceSection(repaired);
+    }
+  }catch{}
+  return answer;
+}
+
+function synthesisBody(answer) {
+  return stripModelReferenceSection(answer)
+    .replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"")
+    .trim();
+}
+
+function needsDenseEncyclopedicRewrite(answer,sources) {
+  const rows=Array.isArray(sources)?sources:[];
+  if(rows.length<5) return false;
+  const body=synthesisBody(answer);
+  const words=body.split(/\s+/).filter(Boolean).length;
+  const paragraphs=body.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+  const bulletLines=body.split("\n").filter(line=>/^\s*[-*•]\s+/.test(line)).length;
+  const minWords=rows.length>=20 ? 650 : rows.length>=10 ? 480 : 320;
+  const minParagraphs=rows.length>=20 ? 6 : rows.length>=10 ? 5 : 4;
+  return words<minWords || paragraphs.length<minParagraphs || bulletLines>0;
+}
+
+async function enforceDenseEncyclopedicMode(env,question,answer,sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!needsDenseEncyclopedicRewrite(answer,rows)) return answer;
+  const evidence=compactCitationEvidence(rows);
+  const target=citationCoverageTarget(rows);
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Transforme o rascunho em um VERBETE ENCICLOPÉDICO DENSO e documentalmente rigoroso. " +
+        "Use somente as evidências fornecidas. É proibido escrever frases soltas, listas de ideias, nomes de livros em sequência, citações isoladas sem contexto ou texto fragmentado. " +
+        "Produza parágrafos substanciais, coesos e articulados que expliquem o tema em profundidade e cruzem autores e livros dentro do mesmo raciocínio. " +
+        "Estruture naturalmente: definição e tese central; desenvolvimento; relações entre conceitos; convergências; complementos; diferenças ou tensões quando existirem; síntese integradora. " +
+        "Use identificadores [F#] junto das afirmações sustentadas. Preserve zero alucinação: não acrescente nenhum fato que não esteja nas evidências. " +
+        "A meta é amplitude máxima do acervo com qualidade argumentativa, não uma coleção de citações."
+    },
+    {
+      role:"user",
+      content:
+        "PERGUNTA:\n"+trimToTokenBudget(question,700)+
+        "\n\nMETA DE FONTES DISTINTAS: "+target+
+        "\n\nRASCUNHO ATUAL:\n"+trimToTokenBudget(synthesisBody(answer),2200)+
+        "\n\nEVIDÊNCIAS DOCUMENTAIS:\n"+trimToTokenBudget(evidence,5900)
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:9300,
+      max_completion_tokens:3600,
+      temperature:0.0
+    });
+    const data=await res.json().catch(()=>({}));
+    const rewritten=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(rewritten && !isEmptyGroundedFailure(rewritten)){
+      const currentCoverage=selectCitedSources(answer,rows).length;
+      const newCoverage=selectCitedSources(rewritten,rows).length;
+      if(newCoverage>=Math.max(1,currentCoverage)) return stripModelReferenceSection(rewritten);
     }
   }catch{}
   return answer;
@@ -1285,6 +1354,7 @@ async function groqStreamResponse(env, messages, meta) {
         }
 
         answer=await repairSparseCitationCoverage(env,meta.question,answer,meta.sources);
+        answer=await enforceDenseEncyclopedicMode(env,meta.question,answer,meta.sources);
         const finalAnswer=finalizeGroundedAnswer(answer,meta.sources);
         const usedSources=selectCitedSources(finalAnswer,meta.sources);
         controller.enqueue(encoder.encode(sseFrame("delta",{text:finalAnswer})));
@@ -1703,8 +1773,10 @@ async function chat(request, env) {
         "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
         "Se houver evidência documental válida, sintetiza somente o que ela realmente sustenta. Os trechos recuperados são CANDIDATOS de busca, não uma obrigação de citar tudo. " +
         "Escreve apenas a seção 1. SÍNTESE PRINCIPAL; o servidor anexará depois apenas as referências [F#] efetivamente citadas, usando metadados originais e determinísticos. " +
-        "MODO DICIONÁRIO/ENCICLOPÉDICO DE ALTA DENSIDADE: responde como um verbete profundo, com definição central clara, desenvolvimento conceitual, relações entre ideias, convergências, complementos, nuances e diferenças somente quando sustentadas pelos trechos. " +
-        "Quando houver material suficiente, produz de 6 a 10 parágrafos substanciais e articulados. Cada parágrafo deve construir argumento e significado; não escrevas uma sequência de notas, nomes de livros, fragmentos, citações soltas ou frases telegráficas. " +
+        "MODO DICIONÁRIO DENSO: responde como um verbete enciclopédico profundo, com definição central clara, desenvolvimento conceitual, relações entre ideias, contexto, convergências, complementos, nuances e diferenças somente quando sustentadas pelos trechos. " +
+        "Quando houver material suficiente, produz de 6 a 10 parágrafos substanciais e articulados. Cada parágrafo deve desenvolver uma ideia completa, conectá-la ao argumento geral e integrar múltiplas evidências quando possível. " +
+        "É proibido entregar frases soltas, texto vazio, notas telegráficas, sequência de nomes de livros, colagem de citações ou referências isoladas sem explicação. " +
+        "A resposta deve ter densidade de verbete: explicar o que o tema é, como as fontes o desenvolvem, onde convergem, como se complementam e quais distinções documentais aparecem. " +
         "Cruza várias fontes dentro do mesmo raciocínio sempre que elas sustentarem o mesmo ponto. Evita a fórmula repetitiva 'a fonte X diz'; integra a evidência em prosa contínua e acadêmica. " +
         "Depois de cada afirmação factual ou conjunto de afirmações, cita inline os identificadores [F#] que realmente a sustentam, por exemplo [F3][F8]. " +
         "Maximiza a pluralidade de livros, autores e documentos independentes quando forem diretamente relevantes, sem criar cota artificial e sem citar fonte irrelevante apenas para aumentar quantidade. " +
