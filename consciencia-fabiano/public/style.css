@@ -500,3 +500,46 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
   font-style:italic;
   letter-spacing:.01em;
 }
+
+
+/* V4.0 OMNI LIBRARY SYMMETRY */
+.omni-sync-btn{
+  margin-left:auto;
+}
+.omni-sync-progress{
+  margin:12px 0 18px;
+  display:grid;
+  gap:7px;
+}
+.omni-sync-progress.hidden{
+  display:none;
+}
+.omni-sync-progress-bar{
+  width:100%;
+  height:8px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(148,163,184,.16);
+  border:1px solid rgba(148,163,184,.18);
+}
+.omni-sync-progress-bar span{
+  display:block;
+  height:100%;
+  width:0%;
+  background:currentColor;
+  transition:width .18s ease;
+}
+.omni-sync-progress small{
+  color:#94a3b8;
+  line-height:1.45;
+}
+.offline-turbine-card{
+  margin-bottom:2.5rem;
+}
+.offline-turbine-source-subtitle{
+  margin:-2px 0 12px;
+  color:#94a3b8;
+  font-size:.78rem;
+  line-height:1.4;
+  overflow-wrap:anywhere;
+}
