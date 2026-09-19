@@ -1,4 +1,4 @@
-const VERSION = "1.15.0-offline-library-sync";
+const VERSION = "1.16.0-instant-auth-whisper-fallback-map-reduce";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -18,7 +18,7 @@ const MIN_PAGE_LETTERS = 50;
 const MIN_CHUNK_LETTERS = 35;
 const searchConfig = Object.freeze({
   semantic_min_score: 0.38,
-  top_k: 15,
+  top_k: 100,
   require_lexical_match: false,
 });
 const TOP_K = searchConfig.top_k;
@@ -35,7 +35,10 @@ const GROQ_HISTORY_MESSAGES = 6;
 const GROQ_INPUT_BUDGET_TOKENS = 6800;
 const GROQ_HISTORY_BUDGET_TOKENS = 900;
 const GROQ_RAG_BUDGET_TOKENS = 4800;
-const GROQ_MAX_COMPLETION_TOKENS = 850;
+const GROQ_MAX_COMPLETION_TOKENS = 1400;
+const MAP_REDUCE_THRESHOLD = 20;
+const MAP_BATCH_SIZE = 20;
+const MAP_MAX_COMPLETION_TOKENS = 650;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
 const enc = new TextEncoder();
@@ -837,9 +840,13 @@ function ensureEngagementQuestion(answer, fallback = false) {
   return text+"\n\nGostaria de explorar outra referência sobre isto?";
 }
 
-async function groqCompletion(env, messages, stream = false) {
+async function groqCompletion(env, messages, stream = false, options = {}) {
   const apiKey = requireSecret(env, "GROQ_API_KEY");
-  let safeMessages=enforceGroqBudget(messages,GROQ_INPUT_BUDGET_TOKENS);
+  const inputBudget=Math.max(1200,Number(options.input_budget || GROQ_INPUT_BUDGET_TOKENS));
+  const model=String(options.model || CHAT_MODEL);
+  const maxCompletionTokens=Math.max(100,Number(options.max_completion_tokens || GROQ_MAX_COMPLETION_TOKENS));
+  const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.35;
+  let safeMessages=enforceGroqBudget(messages,inputBudget);
   const execute=async(payloadMessages)=>{
     return fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -848,10 +855,10 @@ async function groqCompletion(env, messages, stream = false) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: CHAT_MODEL,
+        model,
         messages: payloadMessages,
-        temperature: 0.35,
-        max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
+        temperature,
+        max_completion_tokens: maxCompletionTokens,
         stream,
       }),
     });
@@ -871,6 +878,51 @@ async function groqCompletion(env, messages, stream = false) {
     throw err;
   }
   return res;
+}
+
+async function mapExtractReferences(env, question, batch, batchIndex) {
+  const raw=buildRagContext(batch,question,2600);
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Você é a etapa MAP de um sistema RAG. Não escreva síntese. Extraia somente fontes diretamente úteis à pergunta. " +
+        "Para cada fonte útil, devolva uma linha no formato: - Livro/Documento | Capítulo ou Página | Autor | Citação ou descrição factual curta. " +
+        "Não invente informações ausentes. Preserve páginas e nomes quando existirem."
+    },
+    {
+      role:"user",
+      content:"PERGUNTA:\n"+trimToTokenBudget(question,500)+"\n\nLOTE "+(batchIndex+1)+":\n"+raw
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:3400,
+      max_completion_tokens:MAP_MAX_COMPLETION_TOKENS,
+      temperature:0.05
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    return text || raw;
+  }catch{
+    return raw;
+  }
+}
+
+async function mapReduceContext(env, question, context) {
+  const source=Array.from(context || []).slice(0,TOP_K);
+  if(source.length<=MAP_REDUCE_THRESHOLD){
+    return {text:buildRagContext(source,question),used:false,batches:1};
+  }
+  const batches=[];
+  for(let i=0;i<source.length;i+=MAP_BATCH_SIZE) batches.push(source.slice(i,i+MAP_BATCH_SIZE));
+  const mapped=await Promise.all(batches.map((batch,index)=>mapExtractReferences(env,question,batch,index)));
+  const combined=mapped.filter(Boolean).join("\n\n");
+  return {
+    text:"MAP-REDUCE: referências extraídas de "+source.length+" trechos em "+batches.length+" lotes.\n\n"+trimToTokenBudget(combined,4300),
+    used:true,
+    batches:batches.length
+  };
 }
 
 function sseFrame(event, payload) {
@@ -893,6 +945,8 @@ async function groqStreamResponse(env, messages, meta) {
           retrieval_level: meta.retrievalLevel || 0,
           embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
+          map_reduce: meta.mapReduceUsed === true,
+          map_batches: Number(meta.mapBatches || 0),
         })));
         const reader = upstream.body.getReader();
         while (true) {
@@ -932,6 +986,8 @@ async function groqStreamResponse(env, messages, meta) {
           retrieval_level: meta.retrievalLevel || 0,
           embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
+          map_reduce: meta.mapReduceUsed === true,
+          map_batches: Number(meta.mapBatches || 0),
         })));
         controller.close();
       } catch (error) {
@@ -1171,8 +1227,9 @@ async function chat(request, env) {
 
   const focusedCitation = isFocusedCitationRequest(question);
   const multipleSourcesRequested = wantsMultipleSources(question);
-  const promptContext = context;
-  const contextText = buildRagContext(promptContext, question);
+  const promptContext = context.slice(0,TOP_K);
+  const reduced = await mapReduceContext(env,question,promptContext);
+  const contextText = reduced.text;
 
   const messages = enforceGroqBudget([
     {
@@ -1203,7 +1260,7 @@ async function chat(request, env) {
     body?.stream === true;
 
   if (wantsStream) {
-    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel });
+    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel, mapReduceUsed:reduced.used, mapBatches:reduced.batches });
   }
 
   const result = await (await groqCompletion(env, messages, false)).json();
@@ -1221,6 +1278,8 @@ async function chat(request, env) {
     retrieval_level: retrievalLevel,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
+    map_reduce: reduced.used,
+    map_batches: reduced.batches,
   });
 }
 
@@ -1294,6 +1353,9 @@ async function status(env) {
     lexical_rag_fallback: true,
     semantic_min_score: SEMANTIC_MIN_SCORE,
     search_top_k: TOP_K,
+    rag_map_reduce: true,
+    map_reduce_threshold: MAP_REDUCE_THRESHOLD,
+    map_batch_size: MAP_BATCH_SIZE,
     require_lexical_match: REQUIRE_LEXICAL_MATCH,
     lexical_ranker: "bm25",
     bm25_k1: BM25_K1,
