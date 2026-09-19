@@ -127,15 +127,15 @@ jobs:
           grep -q 'processMicroRelayNode' src/index.js
           grep -q 'runMasterNode20' src/index.js
           grep -q 'precomputedRelayStreamResponse' src/index.js
-          grep -q 'micro_node_chain: true' src/index.js
-          grep -q 'streaming_relay: "sequential-accumulator"' src/index.js
+          grep -q 'micro_node_chain: false' src/index.js
+          grep -q 'streaming_relay: "async-worker-pool"' src/index.js
           grep -q 'master_node: \"final-fusion\"' src/index.js
-          grep -q 'master_fusion_mode: "dense-encyclopedic"' src/index.js
+          grep -q 'master_fusion_mode: "massive-dense-encyclopedic"' src/index.js
           grep -q 'post_master_llm_rewrite: false' src/index.js
           # deploy health exposes V2.0 500-node async pool
           grep -q 'micro_node_count: MASSIVE_NODE_COUNT' src/index.js
-          grep -q 'micro_node_batch_size: MICRO_NODE_BATCH_SIZE' src/index.js
-          grep -q 'Não existe uma 21ª chamada de LLM' src/index.js
+          grep -q 'micro_node_batch_size: MASSIVE_NODE_GROUP_SIZE' src/index.js
+          grep -q 'massiveMasterSynthesis' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
           grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
           grep -q 'groq_temperature: 0.0' src/index.js
