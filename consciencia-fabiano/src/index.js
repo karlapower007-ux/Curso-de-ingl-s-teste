@@ -1,4 +1,4 @@
-const VERSION = "1.17.2-cross-library-synthesis";
+const VERSION = "1.17.3-no-false-negative-synthesis";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -853,14 +853,86 @@ function stripModelReferenceSection(answer) {
     .trim();
 }
 
+function isEmptyGroundedFailure(answer) {
+  const clean=stripModelReferenceSection(answer)
+    .replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"")
+    .trim();
+  return !clean ||
+    clean===EMPTY_GROUNDED_ANSWER ||
+    /^não encontrei informações nos documentos indexados para responder a esta pergunta\.?$/i.test(clean) ||
+    /^sem resposta\.?$/i.test(clean);
+}
+
+function deterministicSynthesisFromSources(sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!rows.length) return EMPTY_GROUNDED_ANSWER;
+  const docs=new Map();
+  for(const s of rows){
+    const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
+    if(!docs.has(key)) docs.set(key,{
+      name:String(s?.titulo || s?.arquivo || "Documento").trim(),
+      author:String(s?.autor || "").trim(),
+      excerpts:[]
+    });
+    const text=String(s?.trecho || "").replace(/\s+/g," ").trim();
+    if(text && docs.get(key).excerpts.length<2) docs.get(key).excerpts.push(text.slice(0,360));
+  }
+  const parts=[];
+  for(const doc of [...docs.values()].slice(0,12)){
+    const label=doc.author ? doc.name+" de "+doc.author : doc.name;
+    const evidence=doc.excerpts.filter(Boolean).join(" ");
+    if(evidence) parts.push(label+" apresenta a seguinte evidência documental: "+evidence);
+  }
+  if(!parts.length) return "Há referências documentais válidas recuperadas para esta pergunta; consulte as fontes listadas abaixo.";
+  return "As fontes recuperadas apresentam evidências convergentes e complementares sobre o tema. "+parts.join(" ");
+}
+
+async function repairFalseNegativeSynthesis(env,question,sources) {
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  if(!rows.length) return EMPTY_GROUNDED_ANSWER;
+  const evidence=rows.map((s,i)=>{
+    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
+    const page=s?.pagina ? "página "+Number(s.pagina) : "página não informada";
+    const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,520);
+    return "[S"+(i+1)+"] "+name+(author?" — "+author:"")+", "+page+"\n"+text;
+  }).join("\n\n");
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
+        "Produza somente a seção 1. SÍNTESE PRINCIPAL usando exclusivamente as evidências fornecidas. " +
+        "Cruze todas as fontes independentes relevantes, preservando a pluralidade de livros e autores. " +
+        "Não invente fatos, autores, páginas, capítulos ou citações e não acrescente uma seção de referências."
+    },
+    {
+      role:"user",
+      content:"PERGUNTA:\n"+trimToTokenBudget(question,700)+"\n\nFONTES DOCUMENTAIS CONFIRMADAS:\n"+trimToTokenBudget(evidence,4300)
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:5600,
+      max_completion_tokens:900,
+      temperature:0.0
+    });
+    const data=await res.json().catch(()=>({}));
+    const repaired=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(repaired && !isEmptyGroundedFailure(repaired)) return stripModelReferenceSection(repaired);
+  }catch{}
+  return deterministicSynthesisFromSources(rows);
+}
+
 function finalizeGroundedAnswer(answer,sources) {
-  const base=stripModelReferenceSection(answer);
-  if(!Array.isArray(sources) || !sources.length) return EMPTY_GROUNDED_ANSWER;
-  const synthesis=base || "1. SÍNTESE PRINCIPAL:\n\nAs fontes recuperadas estão listadas abaixo.";
-  const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(synthesis)
-    ? synthesis
-    : "1. SÍNTESE PRINCIPAL:\n\n"+synthesis;
-  return normalized+"\n\n"+groundedReferencesMarkdown(sources);
+  const rows=Array.isArray(sources)?sources:[];
+  if(!rows.length) return EMPTY_GROUNDED_ANSWER;
+  let base=stripModelReferenceSection(answer);
+  if(isEmptyGroundedFailure(base)) base=deterministicSynthesisFromSources(rows);
+  const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
+    ? base
+    : "1. SÍNTESE PRINCIPAL:\n\n"+base;
+  return normalized+"\n\n"+groundedReferencesMarkdown(rows);
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
@@ -1032,21 +1104,20 @@ async function groqStreamResponse(env, messages, meta) {
             if (!raw || raw === "[DONE]") continue;
             const packet = JSON.parse(raw);
             const delta = packet?.choices?.[0]?.delta?.content;
-            if (typeof delta === "string" && delta) {
-              answer += delta;
-              controller.enqueue(encoder.encode(sseFrame("delta", { text: delta })));
-            }
+            if (typeof delta === "string" && delta) answer += delta;
           }
         }
-        if (!String(answer || "").trim() || /^sem resposta\.?$/i.test(String(answer || "").trim())) {
-          answer = gracefulEmptyAnswer();
+
+        if(Array.isArray(meta.sources) && meta.sources.length>0 && isEmptyGroundedFailure(answer)){
+          answer=await repairFalseNegativeSynthesis(env,meta.question,meta.sources);
+        }else if(!String(answer || "").trim() || /^sem resposta\.?$/i.test(String(answer || "").trim())){
+          answer=gracefulEmptyAnswer();
         }
+
         const finalAnswer=finalizeGroundedAnswer(answer,meta.sources);
-        const refs=groundedReferencesMarkdown(meta.sources);
-        if(refs){
-          controller.enqueue(encoder.encode(sseFrame("delta",{text:"\n\n"+refs})));
-        }
+        controller.enqueue(encoder.encode(sseFrame("delta",{text:finalAnswer})));
         answer=finalAnswer;
+
         const memoryPersisted = await persistChatTurn(
           env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
         );
@@ -1063,6 +1134,7 @@ async function groqStreamResponse(env, messages, meta) {
           map_reduce: meta.mapReduceUsed === true,
           map_batches: Number(meta.mapBatches || 0),
           independent_documents: Number(meta.independentDocuments || 0),
+          false_negative_guard: true,
         })));
         controller.close();
       } catch (error) {
@@ -1076,9 +1148,9 @@ async function groqStreamResponse(env, messages, meta) {
   });
   return new Response(stream, {
     headers: securityHeaders(new Headers({
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
+      "Content-Type":"text/event-stream; charset=utf-8",
+      "Cache-Control":"no-cache, no-transform",
+      "X-Accel-Buffering":"no",
     })),
   });
 }
@@ -1438,7 +1510,8 @@ async function chat(request, env) {
       content:
         "És um assistente de pesquisa documental de alta densidade. Usa exclusivamente os trechos fornecidos. " +
         "É expressamente proibido inventar autores, livros, capítulos, páginas, citações, fatos ou conteúdos que não estejam explícitos no contexto. " +
-        "Se o contexto for vazio ou insuficiente, a resposta deve ser EXATAMENTE: \""+EMPTY_GROUNDED_ANSWER+"\". " +
+        "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
+        "Se houver uma ou mais fontes válidas no contexto, é PROIBIDO declarar ausência de informação: deves sintetizar o conteúdo efetivamente presente nesses trechos. " +
         "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
         "Faz uma varredura transversal de TODAS as evidências selecionadas pelo Map-Reduce e cruza as informações entre fontes independentes. " +
         "Sempre que múltiplos livros, capítulos ou documentos da biblioteca abordarem o tema da pergunta, é obrigatório cruzar as informações e citar todas as fontes independentes encontradas, incluindo vários livros e autores diferentes quando existirem, enriquecendo a resposta com a pluralidade do acervo e nunca limitando a evidência a um único documento isolado. " +
@@ -1457,7 +1530,7 @@ async function chat(request, env) {
 
   const allSources = uniqueSources(mappedContext);
   const sources = allSources;
-  const fallback = mappedContext.length === 0;
+  const fallback = sources.length === 0;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
     body?.stream === true;
@@ -1489,7 +1562,11 @@ async function chat(request, env) {
 
   const result = await (await groqCompletion(env, messages, false)).json();
   let answer = String(result?.choices?.[0]?.message?.content || "").trim();
-  if (!answer || /^sem resposta\.?$/i.test(answer)) answer = gracefulEmptyAnswer();
+  if(sources.length>0 && isEmptyGroundedFailure(answer)){
+    answer=await repairFalseNegativeSynthesis(env,question,sources);
+  }else if(!answer || /^sem resposta\.?$/i.test(answer)){
+    answer=gracefulEmptyAnswer();
+  }
   answer = finalizeGroundedAnswer(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
@@ -1585,6 +1662,8 @@ async function status(env) {
     deterministic_reference_rendering: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
+    false_negative_synthesis_guard: true,
+    failure_message_requires_zero_sources: true,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
