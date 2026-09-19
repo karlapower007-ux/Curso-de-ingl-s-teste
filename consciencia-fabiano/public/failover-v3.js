@@ -101,7 +101,7 @@ async function planCLocalAnalytic(payload){
           ok:true,plan:"C",provider:"indexeddb-local-worker-swarm",
           strict_empty:true,terminal:true,zero_noise:true,
           strict_mode:"hard-threshold",
-          answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+          answer:"Nenhuma correspondência exata encontrada na biblioteca total.",
           sources:[],cards:[],matches:[],
           hard_threshold:3.25,min_coverage:0.50,
           logical_capacity:1000,logical_tasks:0,physical_workers:0,
@@ -111,7 +111,7 @@ async function planCLocalAnalytic(payload){
       return {ok:false,plan:"C",code:"LOCAL_INDEX_EMPTY"};
     }
 
-    const turbines=await import("/local-turbine-pool.js?v=3.3.0");
+    const turbines=await import("/local-turbine-pool.js?v=4.0.0");
     const extraction=await turbines.runLocalTurbines({
       question:String(payload.question||""),
       matches,
@@ -123,7 +123,7 @@ async function planCLocalAnalytic(payload){
         ok:true,
         plan:"C",
         provider:"indexeddb-local-worker-swarm",
-        answer:"Modo Offline V3.3: "+cards.length+" correspondências de alta confiança foram extraídas localmente.",
+        answer:"Modo Offline V4.0: "+cards.length+" correspondências de alta confiança foram extraídas localmente.",
         sources:cards.slice(0,24).map(card=>({
           arquivo:card.filename || card.title,
           titulo:card.title,
@@ -161,7 +161,7 @@ async function planCLocalAnalytic(payload){
         zero_noise:true,
         strict_mode:String(extraction.strict_mode||"hard-threshold"),
         exact_target:String(extraction.exact_target||""),
-        answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+        answer:"Nenhuma correspondência exata encontrada na biblioteca total.",
         sources:[],cards:[],matches:[],
         hard_threshold:Number(extraction.hard_threshold||3.25),
         min_coverage:Number(extraction.min_coverage||0.50),
@@ -341,7 +341,7 @@ export async function recoverStrictPrecision(payload){
     zero_noise:true,
     strict_mode:"boolean-exact",
     strict_unavailable:true,
-    answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+    answer:"Nenhuma correspondência exata encontrada na biblioteca total.",
     sources:[],
     cards:[],
     matches:[],
@@ -350,11 +350,13 @@ export async function recoverStrictPrecision(payload){
   };
 }
 export async function recoverAnalytic(payload){
-  const b=await planB("analytic",payload);if(b.ok)return b;
-  const c=await planCLocalAnalytic(payload);if(c.ok)return c;
-  const d=await planDAnalytic(payload);if(d.ok)return d;
-  const e=await planE("analytic",payload);if(e.ok)return e;
-  return planF("analytic");
+  const c=await planCLocalAnalytic(payload);
+  if(c.ok)return c;
+  return {
+    ok:false,plan:"C",code:"STRICT_LOCAL_INDEX_UNAVAILABLE",
+    zero_noise:true,fuzzy_disabled:true,or_disabled:true,
+    message:"Índice local indisponível para verificação exata."
+  };
 }
 export async function recoverDirect(payload){
   const b=await planB("direct",payload);if(b.ok)return b;
