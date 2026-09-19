@@ -10,7 +10,7 @@ const CHUNK_CONCURRENCY = 50;
 const EMBED_CONCURRENCY = 50;
 const COHERE_API_BATCH = 95;
 const COHERE_THROTTLE_MS = 2200;
-const INDEX_PAGE_SLICE = 72;
+const INDEX_PAGE_SLICE = 180;
 const INDEX_ALARM_DELAY_MS = 900;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
@@ -318,6 +318,9 @@ async function cohereEmbedTexts(env, texts, inputType = "search_document") {
   if (!res.ok) {
     const err = new Error(body?.message || body?.error?.message || ("Cohere embeddings HTTP " + res.status));
     err.status = res.status;
+    if (res.status === 429 && /trial key|1000 api calls|month|monthly/i.test(String(err.message || ""))) {
+      err.code = "COHERE_MONTHLY_QUOTA_EXHAUSTED";
+    }
     const retryAfter = Number(res.headers.get("retry-after") || 0);
     if (retryAfter > 0) err.retryAfterMs = Math.min(120000, retryAfter * 1000);
     throw err;
@@ -370,6 +373,11 @@ function isRateLimitError(error) {
     /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
 }
 
+function isMonthlyQuotaError(error) {
+  return error?.code === "COHERE_MONTHLY_QUOTA_EXHAUSTED" ||
+    (Number(error?.status || 0) === 429 && /trial key|1000 api calls|month|monthly/i.test(String(error?.message || "")));
+}
+
 function isPayloadSizeError(error) {
   const status = Number(error?.status || 0);
   const message = String(error?.message || error || "");
@@ -385,6 +393,7 @@ async function embedOneWithRetry(env, text, maxAttempts = 6) {
       return vectors[0];
     } catch (error) {
       lastError = error;
+      if (isMonthlyQuotaError(error)) throw error;
       const retryable = isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(String(error?.message || error || ""));
       if (!retryable || attempt === maxAttempts) throw error;
       const serverDelay = Number(error?.retryAfterMs || 0);
@@ -410,6 +419,7 @@ async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 6) {
     } catch (error) {
       lastError = error;
       const message = String(error?.message || error || "");
+      if (isMonthlyQuotaError(error)) throw error;
       const retryable = isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(message);
 
       // Critical bulletproof rule: never split a rate-limited batch into dozens of smaller API calls.
@@ -1302,6 +1312,15 @@ export class LibraryDO {
       }
     } catch(error) {
       const message=String(error?.message || error).slice(0,1500);
+      if(isMonthlyQuotaError(error)){
+        this.sql.exec(
+          "UPDATE index_jobs SET status='paused_quota',error=?,updated_at=? WHERE id=?",
+          "Cohere Trial Key atingiu a quota mensal. Progresso preservado; retome o mesmo job quando houver quota disponível.",
+          new Date().toISOString(),jobId
+        );
+        if(documentId) this.sql.exec("UPDATE documents SET status='indexing' WHERE id=?",documentId);
+        return;
+      }
       const nextAttempt=Number(job.attempts || 0)+1;
       const retryable=isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(message);
       if(retryable && nextAttempt<12){
@@ -1336,7 +1355,7 @@ export class LibraryDO {
         const d = [...this.sql.exec("SELECT COUNT(*) AS n FROM documents")][0]?.n || 0;
         const c = [...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0;
         const m = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages")][0]?.n || 0;
-        const j = [...this.sql.exec("SELECT COUNT(*) AS n FROM index_jobs WHERE status IN ('queued','processing')")][0]?.n || 0;
+        const j = [...this.sql.exec("SELECT COUNT(*) AS n FROM index_jobs WHERE status IN ('queued','processing','paused_quota')")][0]?.n || 0;
         return json({ ok: true, documents: Number(d), chunks: Number(c), memory_messages: Number(m), index_jobs: Number(j) });
       }
 

@@ -49,12 +49,16 @@ cohere_code=$(curl -sS -o /tmp/cohere-preflight.json -w '%{http_code}' "https://
   -H "Authorization: Bearer $COHERE_API_KEY_CLEAN" \
   -H 'Content-Type: application/json' \
   --data '{"model":"embed-multilingual-v3.0","texts":["ping"],"input_type":"search_document","embedding_types":["float"],"truncate":"END"}')
-if [ "$cohere_code" != "200" ]; then
+if [ "$cohere_code" = "429" ]; then
+  cat /tmp/cohere-preflight.json || true
+  log "COHERE_PREFLIGHT_RATE_LIMITED=warning"
+elif [ "$cohere_code" != "200" ]; then
   cat /tmp/cohere-preflight.json || true
   die "COHERE_PREFLIGHT_HTTP_$cohere_code"
+else
+  jq -e '((.embeddings.float // .embeddings.float_ // .embeddings) | type == "array" and length > 0)' /tmp/cohere-preflight.json >/dev/null || { cat /tmp/cohere-preflight.json; die "COHERE_PREFLIGHT_BAD_RESPONSE"; }
+  log "COHERE_PREFLIGHT_PASS=yes"
 fi
-jq -e '((.embeddings.float // .embeddings.float_ // .embeddings) | type == "array" and length > 0)' /tmp/cohere-preflight.json >/dev/null || { cat /tmp/cohere-preflight.json; die "COHERE_PREFLIGHT_BAD_RESPONSE"; }
-log "COHERE_PREFLIGHT_PASS=yes"
 
 log "3/7 Deploy Worker"
 npx wrangler deploy | tee /tmp/deploy.log

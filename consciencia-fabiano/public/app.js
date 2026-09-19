@@ -626,6 +626,9 @@
       $("adminStatus").textContent = "Indexando " + filename + "… " + progress + "% • " + status + detail;
       if (status === "ready") return data;
       if (status === "duplicate") return { ...data, duplicate: true };
+      if (status === "paused_quota") {
+        throw new Error((data.error || "Quota mensal da Cohere atingida.") + " Job preservado: " + jobId);
+      }
       if (status === "failed") throw new Error(data.error || "Falha durante a indexação.");
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
