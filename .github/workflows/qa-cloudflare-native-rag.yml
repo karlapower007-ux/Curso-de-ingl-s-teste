@@ -123,7 +123,7 @@ jobs:
           grep -q 'get-document-chunks' public/rag-search-worker.js
           grep -q 'IndexedDB local' public/app.js
           grep -q 'token.length < 4' src/index.js
-          grep -q 'Digite a senha de acesso da biblioteca' public/app.js
+          grep -q 'Senha da biblioteca:' public/app.js
           grep -q 'localBookCatalog' public/app.js
           grep -q 'lista foi carregada do IndexedDB local' public/app.js
           grep -q 'listDocuments' public/rag-cascade.js
@@ -133,9 +133,9 @@ jobs:
           test -f public/whisper-worker.js
           grep -q 'Xenova/whisper-tiny' public/whisper-worker.js
           grep -q '@xenova/transformers@2.17.2' public/whisper-worker.js
-          grep -q 'noiseSuppression: true' public/whisper-local.js
-          grep -q 'echoCancellation: true' public/whisper-local.js
-          grep -q 'autoGainControl: true' public/whisper-local.js
+          grep -q 'noiseSuppression:true' public/whisper-local.js
+          grep -q 'echoCancellation:true' public/whisper-local.js
+          grep -q 'autoGainControl:true' public/whisper-local.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js
