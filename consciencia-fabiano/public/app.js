@@ -2,13 +2,13 @@
   const $ = id => document.getElementById(id);
   const HISTORY_KEY = "consciencia_fabiano_history_v1";
   const MEMORY_KEY = "consciencia_fabiano_memory_secret_v1";
-  const OWNER_TOKEN_KEY = "consciencia_fabiano_owner_token_session_v1";
+  const OWNER_TOKEN_KEY = "consciencia_fabiano_owner_token_session_v2";
   const MAX_HISTORY = 60;
   const INLINE_TEXT_LIMIT = 320000;
   const PAGE_BATCH_LIMIT = 300000;
   const LOCAL_EMBED_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
   const LOCAL_EMBED_DB = "fns_local_embeddings_v1";
-  const LOCAL_EMBED_DB_VERSION = 1;
+  const LOCAL_EMBED_DB_VERSION = 3;
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
 
   let history = [];
@@ -50,6 +50,20 @@
         if(!db.objectStoreNames.contains("checkpoints")){
           const store=db.createObjectStore("checkpoints",{keyPath:"key"});
           store.createIndex("document_id","document_id",{unique:false});
+        }
+        if(!db.objectStoreNames.contains("library_catalog")){
+          const store=db.createObjectStore("library_catalog",{keyPath:"document_id"});
+          store.createIndex("filename","arquivo",{unique:false});
+          store.createIndex("updated_at","updated_at",{unique:false});
+        }
+        if(!db.objectStoreNames.contains("sync_queue")){
+          const store=db.createObjectStore("sync_queue",{keyPath:"id"});
+          store.createIndex("status","status",{unique:false});
+          store.createIndex("next_attempt_at","next_attempt_at",{unique:false});
+        }
+        if(!db.objectStoreNames.contains("offline_vector_jobs")){
+          const store=db.createObjectStore("offline_vector_jobs",{keyPath:"document_id"});
+          store.createIndex("state","state",{unique:false});
         }
       };
       req.onsuccess=()=>resolve(req.result);
@@ -1045,6 +1059,370 @@
     if(!res.ok)throw new Error("Falha no upload direto ao R2: HTTP "+res.status);
     return {stored:true,r2_key:presign.r2_key,etag:res.headers.get("etag") || ""};
   }
+  function bookIdentity(item){
+    const name=String(item?.arquivo || item?.filename || item?.titulo || item?.title || "").trim().toLowerCase();
+    return name ? "name:"+name : "id:"+String(item?.document_id || item?.id || "");
+  }
+
+  async function saveLocalCatalogEntry(entry){
+    const documentId=String(entry?.document_id || "").trim();
+    if(!documentId) return;
+    await idbPut("library_catalog",{
+      document_id:documentId,
+      cloud_document_id:String(entry?.cloud_document_id || ""),
+      arquivo:String(entry?.arquivo || entry?.filename || "Documento local"),
+      titulo:String(entry?.titulo || entry?.title || entry?.arquivo || entry?.filename || "Documento local"),
+      autor:String(entry?.autor || entry?.author || ""),
+      paginas:Number(entry?.paginas || entry?.pages || 0),
+      chunks:Number(entry?.chunks || 0),
+      idioma:String(entry?.idioma || entry?.language || "pt"),
+      status:String(entry?.status || "local-ready"),
+      source:"indexeddb-catalog",
+      updated_at:Number(entry?.updated_at || Date.now())
+    });
+  }
+
+  async function localBookCatalog(){
+    const map=new Map();
+
+    try{
+      for(const item of await idbGetAll("library_catalog")){
+        const key=bookIdentity(item);
+        if(key) map.set(key,{...item,source:"indexeddb-catalog"});
+      }
+    }catch{}
+
+    try{
+      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      const docs=await window.FNSRagCascade?.listDocuments?.();
+      for(const item of (Array.isArray(docs)?docs:[])){
+        const normalized={
+          document_id:String(item.document_id || ""),
+          arquivo:String(item.filename || item.arquivo || "Documento local"),
+          titulo:String(item.title || item.titulo || item.filename || "Documento local"),
+          autor:String(item.author || item.autor || ""),
+          paginas:Number(item.pages || item.paginas || 0),
+          chunks:Number(item.chunks || 0),
+          idioma:String(item.language || item.idioma || "pt"),
+          status:String(item.status || "local-ready"),
+          source:"local-rag",
+          updated_at:Date.now()
+        };
+        const key=bookIdentity(normalized);
+        if(key) map.set(key,{...(map.get(key)||{}),...normalized});
+      }
+    }catch{}
+
+    try{
+      for(const job of await idbGetAll("jobs")){
+        const normalized={
+          document_id:String(job.document_id || ""),
+          arquivo:String(job.filename || "Documento local"),
+          titulo:String(job.title || job.filename || "Documento local"),
+          autor:String(job.author || ""),
+          paginas:Number(job.last_page || 0),
+          chunks:Number(job.total_chunks || 0),
+          idioma:"pt",
+          status:String(job.state || "local-checkpoint"),
+          source:"local-checkpoint",
+          updated_at:Number(job.updated_at || job.created_at || Date.now())
+        };
+        const key=bookIdentity(normalized);
+        if(key) map.set(key,{...(map.get(key)||{}),...normalized});
+      }
+    }catch{}
+
+    const list=[...map.values()];
+    for(const item of list) if(item.document_id) saveLocalCatalogEntry(item).catch(()=>{});
+    return list;
+  }
+
+  function mergeBookLists(localList,cloudList){
+    const map=new Map();
+    for(const item of (localList||[])){
+      const key=bookIdentity(item);
+      if(key) map.set(key,{...item,source:item.source || "local"});
+    }
+    for(const item of (cloudList||[])){
+      const normalized={
+        ...item,
+        document_id:String(item.document_id || item.id || ""),
+        arquivo:String(item.arquivo || item.filename || item.titulo || "Documento"),
+        titulo:String(item.titulo || item.title || item.arquivo || "Documento"),
+        autor:String(item.autor || item.author || ""),
+        paginas:Number(item.paginas || item.pages || 0),
+        chunks:Number(item.chunks || 0),
+        idioma:String(item.idioma || item.language || "pt")
+      };
+      const key=bookIdentity(normalized);
+      if(!key) continue;
+      const existing=map.get(key) || {};
+      map.set(key,{
+        ...existing,
+        ...normalized,
+        document_id:String(existing.document_id || normalized.document_id || ""),
+        cloud_document_id:String(normalized.document_id || existing.cloud_document_id || ""),
+        source:existing.document_id ? "local+cloud" : "cloud"
+      });
+    }
+    return [...map.values()];
+  }
+
+  function renderBooks(list,cloudAvailable=true){
+    $("booksList").innerHTML="";
+    if(!list.length){
+      $("booksList").innerHTML='<div class="book"><div><strong>Nenhum PDF encontrado neste navegador.</strong><small>Seus livros da nuvem não foram apagados; a lista remota volta automaticamente quando a Cloudflare liberar a leitura.</small></div></div>';
+      return;
+    }
+    list.forEach(item=>{
+      const row=document.createElement("div");
+      row.className="book";
+      const info=document.createElement("div");
+      const strong=document.createElement("strong");
+      strong.textContent=item.arquivo || item.filename || item.titulo || "Documento";
+      const small=document.createElement("small");
+      const bits=[];
+      if(item.titulo && item.titulo!==item.arquivo) bits.push(item.titulo);
+      if(item.autor) bits.push(item.autor);
+      if(Number(item.paginas||0)) bits.push(Number(item.paginas)+" páginas");
+      if(Number(item.chunks||0)) bits.push(Number(item.chunks)+" trechos");
+      bits.push((item.source||"").includes("local") || (item.source||"").includes("indexeddb") ? "IndexedDB local" : "nuvem");
+      bits.push(item.status || (cloudAvailable?"pronto":"local"));
+      small.textContent=bits.join(" • ");
+      info.append(strong,small);
+
+      const del=document.createElement("button");
+      del.className="ghost danger";
+      del.textContent="Excluir";
+      del.onclick=async()=>{
+        if(!confirm("Excluir "+strong.textContent+" da biblioteca?")) return;
+        const localId=String(item.document_id || "");
+        const cloudId=String(item.cloud_document_id || item.id || "");
+        try{
+          if(localId){
+            await idbDelete("library_catalog",localId).catch(()=>{});
+            await idbDelete("jobs",localId).catch(()=>{});
+            await idbDelete("offline_vector_jobs",localId).catch(()=>{});
+            await idbDelete("sync_queue",localId).catch(()=>{});
+            await window.FNSRagCascade?.deleteDocument?.(localId).catch(()=>{});
+          }
+          if(cloudAvailable && (cloudId || localId)){
+            await api("/api/admin/delete-pdf",{
+              method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({document_id:cloudId || localId,arquivo:item.arquivo || ""})
+            }).catch(()=>{});
+          }
+          await loadBooks();
+        }catch(e){$("adminStatus").textContent="Não foi possível excluir agora: "+e.message;}
+      };
+      row.append(info,del);
+      $("booksList").appendChild(row);
+    });
+  }
+
+  function splitLocalPageText(text,page,documentId){
+    const clean=String(text || "").replace(/\s+/g," ").trim();
+    if(!clean) return [];
+    const out=[];
+    const max=900,overlap=120;
+    let start=0,index=0;
+    while(start<clean.length){
+      let end=Math.min(clean.length,start+max);
+      if(end<clean.length){
+        const cut=clean.lastIndexOf(" ",end);
+        if(cut>start+420) end=cut;
+      }
+      const chunk=clean.slice(start,end).trim();
+      if(chunk.length>=35){
+        out.push({
+          id:documentId+":"+page+":"+index,
+          document_id:documentId,
+          page:Number(page||0),
+          chunk_index:index,
+          text:chunk
+        });
+        index++;
+      }
+      if(end>=clean.length) break;
+      start=Math.max(start+1,end-overlap);
+    }
+    return out;
+  }
+
+  const activeOfflineVectorJobs=new Set();
+
+  async function runOfflineVectorJob(job){
+    const documentId=String(job?.document_id || "");
+    if(!documentId || activeOfflineVectorJobs.has(documentId)) return;
+    if(!window.FNSRagCascade?.getDocumentChunks) return;
+    activeOfflineVectorJobs.add(documentId);
+    try{
+      let offset=Number(job.offset || 0);
+      let vectorCount=Number(job.vector_count || 0);
+      await idbPut("offline_vector_jobs",{...job,state:"vectorizing",offset,updated_at:Date.now()});
+
+      while(true){
+        const rows=await window.FNSRagCascade.getDocumentChunks(documentId,offset,8);
+        if(!rows.length) break;
+        const chunksToEmbed=[];
+        for(const row of rows) chunksToEmbed.push(...splitLocalPageText(row.text,row.page,documentId));
+
+        for(let i=0;i<chunksToEmbed.length;i+=LOCAL_EMBED_BATCH){
+          const batch=chunksToEmbed.slice(i,i+LOCAL_EMBED_BATCH);
+          const result=await workerRequest("embed-batch",{texts:batch.map(x=>x.text)},"normal");
+          const vectors=Array.isArray(result.vectors)?result.vectors:[];
+          if(vectors.length!==batch.length) throw new Error("Lote local de embeddings incompleto.");
+          await window.FNSRagCascade.persistVectors({
+            document_id:documentId,
+            filename:job.filename || "",
+            title:job.title || job.filename || "",
+            author:job.author || "",
+            chunks:batch,
+            vectors
+          });
+          vectorCount+=batch.length;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+
+        offset+=rows.length;
+        await idbPut("offline_vector_jobs",{...job,state:"vectorizing",offset,vector_count:vectorCount,updated_at:Date.now()});
+        if($("adminStatus")) $("adminStatus").textContent="Vetorização offline: "+vectorCount+" trechos salvos no IndexedDB.";
+      }
+
+      await idbPut("offline_vector_jobs",{...job,state:"done",offset,vector_count:vectorCount,updated_at:Date.now()});
+      await saveLocalCatalogEntry({
+        document_id:documentId,
+        arquivo:job.filename,
+        titulo:job.title || job.filename,
+        autor:job.author || "",
+        paginas:job.page_count || 0,
+        chunks:vectorCount,
+        status:"local-vector-ready"
+      });
+      if($("adminStatus")) $("adminStatus").textContent="PDF pronto localmente: "+vectorCount+" embeddings armazenados no navegador.";
+      await loadBooks();
+    }catch(error){
+      await idbPut("offline_vector_jobs",{...job,state:"paused",error:String(error?.message||error),updated_at:Date.now()}).catch(()=>{});
+    }finally{
+      activeOfflineVectorJobs.delete(documentId);
+    }
+  }
+
+  async function queueOfflineVectorization(extracted){
+    const documentId=String(extracted.content_sha256 || extracted.filename);
+    const job={
+      document_id:documentId,
+      filename:extracted.filename,
+      title:extracted.title || extracted.filename,
+      author:extracted.author || "",
+      page_count:Number(extracted.page_count || extracted.pages?.length || 0),
+      offset:0,vector_count:0,state:"queued",created_at:Date.now(),updated_at:Date.now()
+    };
+    await idbPut("offline_vector_jobs",job);
+    runOfflineVectorJob(job);
+  }
+
+  async function resumeOfflineVectorJobs(){
+    const jobs=await idbGetAll("offline_vector_jobs").catch(()=>[]);
+    for(const job of jobs.filter(j=>j.state!=="done")) runOfflineVectorJob(job);
+  }
+
+  async function enqueueCloudSync(extracted){
+    const documentId=String(extracted.content_sha256 || extracted.filename);
+    const item={
+      id:documentId,
+      document_id:documentId,
+      filename:extracted.filename,
+      title:extracted.title || extracted.filename,
+      author:extracted.author || "",
+      page_count:Number(extracted.page_count || extracted.pages?.length || 0),
+      size_bytes:Number(extracted.size_bytes || 0),
+      content_sha256:String(extracted.content_sha256 || ""),
+      status:"pending",
+      attempts:0,
+      next_attempt_at:Date.now(),
+      created_at:Date.now(),
+      updated_at:Date.now()
+    };
+    await idbPut("sync_queue",item);
+    return item;
+  }
+
+  let syncQueueRunning=false;
+  async function processSyncQueue(){
+    if(syncQueueRunning || !navigator.onLine || !ownerToken()) return;
+    if(!window.FNSRagCascade?.getDocumentChunks) return;
+    syncQueueRunning=true;
+    try{
+      const now=Date.now();
+      const items=(await idbGetAll("sync_queue").catch(()=>[]))
+        .filter(x=>x.status!=="synced" && Number(x.next_attempt_at||0)<=now)
+        .sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+
+      for(const item of items.slice(0,2)){
+        try{
+          const start=await api("/api/admin/local-ingest-start",{
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              filename:item.filename,
+              size_bytes:item.size_bytes,
+              page_count:item.page_count,
+              title:item.title,
+              author:item.author,
+              content_sha256:item.content_sha256,
+              original_r2_key:""
+            })
+          },false);
+
+          if(start.duplicate){
+            await saveLocalCatalogEntry({...item,cloud_document_id:String(start.document_id||""),arquivo:item.filename,titulo:item.title,paginas:item.page_count,status:"local+cloud"});
+            await idbDelete("sync_queue",item.id);
+            continue;
+          }
+
+          let offset=0;
+          while(true){
+            const rows=await window.FNSRagCascade.getDocumentChunks(item.document_id,offset,20);
+            if(!rows.length) break;
+            await api("/api/admin/local-ingest-append",{
+              method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({
+                job_id:start.job_id,
+                pages:rows.map(r=>({page:Number(r.page||0),text:String(r.text||"")}))
+              })
+            },false);
+            offset+=rows.length;
+          }
+
+          const committed=await api("/api/admin/local-ingest-commit",{
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({job_id:start.job_id})
+          },false);
+
+          await saveLocalCatalogEntry({
+            ...item,
+            cloud_document_id:String(committed.document_id || start.document_id || ""),
+            arquivo:item.filename,
+            titulo:item.title,
+            paginas:item.page_count,
+            chunks:Number(committed.chunks || 0),
+            status:"local+cloud"
+          });
+          await idbDelete("sync_queue",item.id);
+        }catch(error){
+          const msg=String(error?.message || error || "");
+          const quota=error?.status===429 || /Exceeded allowed rows read|free tier|rows read|quota/i.test(msg);
+          const attempts=Number(item.attempts||0)+1;
+          const delay=quota ? 60*60*1000 : Math.min(60*60*1000,Math.max(5*60*1000,attempts*10*60*1000));
+          await idbPut("sync_queue",{...item,status:"pending",attempts,next_attempt_at:Date.now()+delay,last_error:msg,updated_at:Date.now()});
+          if(quota) break;
+        }
+      }
+    }finally{
+      syncQueueRunning=false;
+    }
+  }
+
   async function submitExtractedTextLocal(extracted,originalR2Key=""){
     const common={filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,title:extracted.title,author:extracted.author,content_sha256:extracted.content_sha256,original_r2_key:originalR2Key};
     const started=await api("/api/admin/local-ingest-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(common)});
@@ -1066,41 +1444,34 @@
     const startedAt=performance.now();
     try{
       const extracted=await extractPdfLocally(file);
-      $("adminStatus").textContent="Texto extraído. Salvando a biblioteca local resiliente…";
+      const localId=String(extracted.content_sha256 || extracted.filename);
+
+      $("adminStatus").textContent="Texto extraído. Salvando livro no IndexedDB/OPFS local…";
       if(window.__ragCascadeReady) await window.__ragCascadeReady;
       await window.FNSRagCascade?.persistExtracted?.(extracted);
+
+      await saveLocalCatalogEntry({
+        document_id:localId,
+        arquivo:extracted.filename,
+        titulo:extracted.title || extracted.filename,
+        autor:extracted.author || "",
+        paginas:Number(extracted.page_count || extracted.pages?.length || 0),
+        chunks:Number(extracted.pages?.length || 0),
+        idioma:"pt",
+        status:"local-lexical-ready",
+        updated_at:Date.now()
+      });
+
+      await enqueueCloudSync(extracted);
+      await queueOfflineVectorization(extracted);
       $("pdfInput").value="";
       await loadBooks();
 
-      let cloudReady=null;
-      try{
-        const presign=await requestR2Presign(file);
-        const vaultPromise=presign.available?uploadOriginalDirectToR2(file,presign):Promise.resolve({stored:false,reason:presign.reason});
-        cloudReady=await submitExtractedTextLocal(extracted,presign.available?presign.r2_key:"");
-        await vaultPromise.catch(()=>({stored:false}));
-      }catch(cloudError){
-        const seconds=((performance.now()-startedAt)/1000).toFixed(1);
-        $("adminStatus").textContent="PDF salvo localmente e já pesquisável. A nuvem está temporariamente limitada; nada foi perdido • "+seconds+"s";
-        await loadBooks();
-        return;
-      }
-
-      if(cloudReady && !cloudReady.duplicate){
-        const job={
-          document_id:cloudReady.document_id,
-          filename:extracted.filename,
-          title:extracted.title||"",
-          author:extracted.author||"",
-          content_sha256:extracted.content_sha256,
-          total_chunks:Number(cloudReady.chunks||0),
-          state:"queued",batch_no:0,created_at:Date.now()
-        };
-        await idbPut("jobs",job);
-        runLocalVectorization(job);
-      }
       const seconds=((performance.now()-startedAt)/1000).toFixed(1);
-      $("adminStatus").textContent="PDF salvo localmente e sincronizado quando possível • "+seconds+"s";
-      await loadBooks();
+      $("adminStatus").textContent="PDF salvo localmente e já pesquisável • embeddings em segundo plano • sincronização em nuvem na fila • "+seconds+"s";
+
+      // Tenta sincronizar agora; se a Cloudflare estiver em 429, a fila fica preservada para o próximo ciclo.
+      processSyncQueue().catch(()=>{});
     }catch(error){
       $("adminStatus").textContent="Falha ao processar o PDF localmente: "+String(error?.message || error);
     }finally{
@@ -1111,22 +1482,30 @@
   async function loadBooks() {
     const local=await localBookCatalog();
     renderBooks(local,false);
+
     if(local.length){
-      $("adminStatus").textContent="Biblioteca local ativa: "+local.length+" PDF(s) disponível(is) neste navegador.";
+      $("adminStatus").textContent="Biblioteca local ativa: "+local.length+" PDF(s) carregado(s) do IndexedDB.";
+    }else{
+      $("adminStatus").textContent="Consultando biblioteca local e nuvem…";
     }
+
     try{
       const data=await api("/api/admin/livros");
       const cloud=Array.isArray(data?.livros)?data.livros:[];
       const merged=mergeBookLists(local,cloud);
+      for(const item of merged){
+        if(item.document_id) saveLocalCatalogEntry(item).catch(()=>{});
+      }
       renderBooks(merged,true);
       $("adminStatus").textContent="Biblioteca sincronizada: "+merged.length+" PDF(s) disponível(is).";
+      processSyncQueue().catch(()=>{});
     }catch(error){
       const msg=String(error?.message || error || "");
-      const quota=/Exceeded allowed rows read|free tier|rows read/i.test(msg);
+      const quota=error?.status===429 || /Exceeded allowed rows read|free tier|rows read|quota/i.test(msg);
       renderBooks(local,false);
       $("adminStatus").textContent=quota
-        ? "Cloudflare atingiu a cota diária de leitura. Seus livros NÃO foram apagados; a cópia local continua disponível e a nuvem volta automaticamente após o reset."
-        : "Modo local ativo. A nuvem está temporariamente indisponível; seus livros locais continuam acessíveis.";
+        ? "Cloudflare em limite diário. A lista foi carregada do IndexedDB local; seus livros continuam disponíveis."
+        : "Nuvem temporariamente indisponível. A lista local do IndexedDB continua ativa.";
     }
   }
 
@@ -1179,6 +1558,13 @@
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
   setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),1200);
+  setTimeout(()=>resumeOfflineVectorJobs().catch(()=>{}),1500);
   setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
+  setTimeout(()=>processSyncQueue().catch(()=>{}),5000);
+  setInterval(()=>processSyncQueue().catch(()=>{}),15*60*1000);
+  window.addEventListener("online",()=>processSyncQueue().catch(()=>{}));
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible") processSyncQueue().catch(()=>{});
+  });
   setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
 })();

@@ -99,8 +99,17 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.14.1-library-recovery-gadu' src/index.js
+          grep -q '1.15.0-offline-library-sync' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
+          grep -q 'LOCAL_EMBED_DB_VERSION = 3' public/app.js
+          grep -q 'library_catalog' public/app.js
+          grep -q 'sync_queue' public/app.js
+          grep -q 'offline_vector_jobs' public/app.js
+          grep -q 'processSyncQueue' public/app.js
+          grep -q 'queueOfflineVectorization' public/app.js
+          grep -q 'getDocumentChunks' public/rag-cascade.js
+          grep -q 'get-document-chunks' public/rag-search-worker.js
+          grep -q 'IndexedDB local' public/app.js
           grep -q 'token.length < 4' src/index.js
           grep -q 'Digite a senha de acesso da biblioteca' public/app.js
           grep -q 'localBookCatalog' public/app.js

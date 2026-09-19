@@ -1,4 +1,4 @@
-const VERSION = "1.14.1-library-recovery-gadu";
+const VERSION = "1.15.0-offline-library-sync";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";

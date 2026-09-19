@@ -99,6 +99,17 @@ self.onmessage=async e=>{
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||15),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="search-bm25"){const matches=await bm25(d.question||"",Number(d.top_k||15));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="list-documents"){const documents=await listDocuments();self.postMessage({id,ok:true,documents});return;}
+    if(d.type==="get-document-chunks"){
+      const documentId=String(d.document_id||"");
+      const offset=Math.max(0,Number(d.offset||0));
+      const limit=Math.max(1,Math.min(100,Number(d.limit||20)));
+      const rows=(await all("chunks"))
+        .filter(r=>String(r.document_id||r.doc_key||"")===documentId)
+        .sort((a,b)=>Number(a.page||0)-Number(b.page||0))
+        .slice(offset,offset+limit);
+      self.postMessage({id,ok:true,chunks:rows});
+      return;
+    }
     if(d.type==="delete-document"){const documentId=String(d.document_id||"");const a=await deleteByDocument("chunks",documentId);const b=await deleteByDocument("vectors",documentId);self.postMessage({id,ok:true,deleted:a+b});return;}
     self.postMessage({id,ok:false,error:"unknown operation"});
   }catch(error){self.postMessage({id,ok:false,error:String(error?.message||error)});}
