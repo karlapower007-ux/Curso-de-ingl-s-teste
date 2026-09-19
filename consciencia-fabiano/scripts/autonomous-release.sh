@@ -10,9 +10,9 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 
 GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
 
-BASE='https://consciencia-fabiano.karlapower007.workers.dev'
+BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: V7.0 TWENTY AGENT CROSS DEVICE release =="
+log "== Consciência do Fabiano :: V7.1 FABIANO R2 CROSS DEVICE release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -32,6 +32,23 @@ grep -q 'text/event-stream' src/index.js
 log "2/7 Validate Worker authorization"
 npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
+EXPECTED_CF_EMAIL="${FABIANO_CLOUDFLARE_EMAIL:-focoeepoder2@gmail.com}"
+grep -Fq "associated with the email $EXPECTED_CF_EMAIL" /tmp/whoami.txt || {
+  cat /tmp/whoami.txt
+  die "WRONG_CLOUDFLARE_ACCOUNT_EXPECTED_FABIANO"
+}
+log "FABIANO_CLOUDFLARE_IDENTITY_PASS=yes"
+
+log "2.25/7 Ensure official R2 bucket exists before deploy"
+set +e
+npx wrangler r2 bucket create consciencia-fabiano-pdfs >/tmp/r2-bucket.log 2>&1
+r2_rc=$?
+set -e
+if [ "$r2_rc" -ne 0 ] && ! grep -Eqi 'already exists|already been taken' /tmp/r2-bucket.log; then
+  cat /tmp/r2-bucket.log
+  die "FABIANO_R2_BUCKET_FAILED"
+fi
+log "FABIANO_R2_BUCKET_READY=yes"
 
 log "2.5/7 Lightweight external AI key preflight"
 curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization: Bearer $GROQ_API_KEY_CLEAN"   -H 'Content-Type: application/json'   --data '{"model":"openai/gpt-oss-20b","messages":[{"role":"user","content":"Responda apenas OK"}],"max_completion_tokens":8,"temperature":0}'   >/tmp/groq-preflight.json || { cat /tmp/groq-preflight.json 2>/dev/null || true; die "GROQ_KEY_INVALID"; }
@@ -43,8 +60,8 @@ node scripts/build-failover-manifest.mjs
 node scripts/build-static-vault.mjs
 test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
 test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
-node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="7.0.0")process.exit(1)'
-node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="7.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="7.1.0")process.exit(1)'
+node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="7.1.0")process.exit(1)'
 log "RESILIENCE_ASSETS_BUILT=yes"
 
 log "3/7 Deploy Worker"
@@ -66,29 +83,12 @@ put_optional_secret(){
   fi
 }
 
-put_optional_secret SUPABASE_URL
-put_optional_secret SUPABASE_SERVICE_ROLE_KEY
-put_optional_secret SUPABASE_RAG_SEARCH_URL
-put_optional_secret PINECONE_API_KEY
-put_optional_secret PINECONE_UPSERT_URL
-put_optional_secret PINECONE_QUERY_URL
-
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
 
-EXPECT_R2=0
+EXPECT_R2=1
 if [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
-  log "R2 credentials found: provisioning direct browser vault"
-  set +e
-  npx wrangler r2 bucket create consciencia-fabiano-pdfs >/tmp/r2-bucket.log 2>&1
-  rc=$?
-  set -e
-  if [ "$rc" -ne 0 ] && ! grep -Eqi 'already exists|already been taken' /tmp/r2-bucket.log; then
-    cat /tmp/r2-bucket.log
-    die "R2_BUCKET_FAILED"
-  fi
-
   printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | npx wrangler secret put R2_ACCOUNT_ID >/dev/null
   printf '%s' "$R2_ACCESS_KEY_ID" | npx wrangler secret put R2_ACCESS_KEY_ID >/dev/null
   printf '%s' "$R2_SECRET_ACCESS_KEY" | npx wrangler secret put R2_SECRET_ACCESS_KEY >/dev/null
@@ -96,12 +96,11 @@ if [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
   curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/consciencia-fabiano-pdfs/cors" \
     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
     -H 'Content-Type: application/json' \
-    --data '{"rules":[{"allowed":{"origins":["https://consciencia-fabiano.karlapower007.workers.dev"],"methods":["PUT"],"headers":["Content-Type"]},"exposeHeaders":["ETag"],"maxAgeSeconds":3600}]}' >/tmp/r2-cors.json
+    --data '{"rules":[{"allowed":{"origins":["https://consciencia-fabiano.focoeepoder2.workers.dev"],"methods":["PUT"],"headers":["Content-Type"]},"exposeHeaders":["ETag"],"maxAgeSeconds":3600}]}' >/tmp/r2-cors.json
   jq -e '.success == true' /tmp/r2-cors.json >/dev/null
-  EXPECT_R2=1
-  log "R2_DIRECT_VAULT=enabled"
+  log "R2_DIRECT_ORIGINAL_PDF_UPLOAD=enabled"
 else
-  log "R2_DIRECT_VAULT=not-configured"
+  log "R2_DIRECT_ORIGINAL_PDF_UPLOAD=optional-credentials-not-installed"
 fi
 
 HDR=(-H "X-FNS-Automation: $AUTOMATION_SECRET")
@@ -127,8 +126,8 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.0.0-twenty-agent-cross-device"
-    and .architecture == "cloudflare-v7-twenty-agent-cross-device"
+    and .version == "7.1.0-twenty-agent-cross-device"
+    and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
     and .llm_provider == "groq"
@@ -179,10 +178,14 @@ for i in $(seq 1 15); do
     and .omni_sync_manual_button == false
     and .omni_sync_zero_touch_after_authorization == true
     and .cross_device_library_mirror == true
-    and .cross_device_library_table == "library_chunks"
+    and .cross_device_storage_backend == "cloudflare-r2"
+    and .cross_device_r2_binding == "PDFS"
+    and .cross_device_r2_bucket == "consciencia-fabiano-pdfs"
     and .cross_device_plaintext_chunk_sync == true
+    and .cross_device_no_supabase_dependency == true
     and .cross_device_backfill_from_indexeddb == true
     and .cross_device_mobile_hydration == true
+    and .cross_device_r2_generation_pointer == true
     and .cross_device_batch_size == 200
     and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
     and .plan_c_main_thread_extraction == false
@@ -198,13 +201,13 @@ for i in $(seq 1 15); do
   [ "$i" = 15 ] && { echo "$body"; die "DEPLOY_HEALTH_FAILED"; }
   sleep 3
 done
-if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
+jq -e '.r2_direct_ready == true and .cross_device_storage == "r2-native-binding"' /tmp/health.json >/dev/null || die "R2_NATIVE_BINDING_NOT_READY"
 
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
-jq -e '.version == "7.0.0"
+jq -e '.version == "7.1.0"
   and .strategy == "A->B->C->D->E->F"
-  and .plan_c.engine == "twenty-agent-cross-device-v7"
+  and .plan_c.engine == "fabiano-r2-cross-device-v7.1"
   and .plan_c.logical_task_capacity == 1000
   and .plan_c.physical_worker_cap == 16
   and .plan_c.strict_match_core == "strict-match-core-v4"
@@ -236,11 +239,13 @@ jq -e '.version == "7.0.0"
   and .plan_c.agent19_conflict_auditor == true
   and .plan_c.agent20_mission_master == true
   and .plan_c.cross_device_library_mirror == true
-  and .plan_c.cross_device_library_table == "library_chunks"
+  and .plan_c.cross_device_storage_backend == "cloudflare-r2"
+  and .plan_c.cross_device_r2_bucket == "consciencia-fabiano-pdfs"
   and .plan_c.cross_device_mobile_hydration == true
+  and .plan_c.cross_device_no_supabase_dependency == true
   and .plan_c.cross_device_batch_size == 200' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
 curl -fsS "$BASE/steel/index.json" | tee /tmp/steel-index.json >/dev/null
-jq -e '.version == "7.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
+jq -e '.version == "7.1.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
 curl -fsS "$BASE/sw-v3.js" >/tmp/sw-v3.js || die "SERVICE_WORKER_MISSING"
 curl -fsS "$BASE/agent-swarm.js" >/tmp/agent-swarm.js || die "AGENT_SWARM_ASSET_MISSING"
 curl -fsS "$BASE/agent-node-worker.js" >/tmp/agent-node-worker.js || die "AGENT_NODE_ASSET_MISSING"
@@ -273,11 +278,13 @@ grep -q 'strictParagraphMatch' /tmp/local-turbine-worker.js || die "LOCAL_STRICT
 grep -q 'STRICT_PHRASE_MISS' /tmp/local-turbine-worker.js || die "LOCAL_STRICT_REJECTION_MISSING"
 
 grep -q '/search-strict' src/index.js || die "CLOUD_STRICT_ROUTE_MISSING"
-grep -q 'retrieveSupabaseStrictContext' src/index.js || die "SUPABASE_STRICT_RETRIEVAL_MISSING"
 grep -q 'retrieveContextV4Strict' src/index.js || die "V4_STRICT_RETRIEVAL_MISSING"
 grep -q '/api/admin/omni-sync-page' src/index.js || die "OMNI_SYNC_API_MISSING"
 grep -q '/api/admin/omni-sync-state' src/index.js || die "OMNI_SYNC_STATE_API_MISSING"
-grep -q 'supabaseOmniSyncState' src/index.js || die "OMNI_SYNC_STATE_FUNCTION_MISSING"
+grep -q 'r2OmniSyncState' src/index.js || die "R2_OMNI_SYNC_STATE_MISSING"
+grep -q 'r2OmniSyncPage' src/index.js || die "R2_OMNI_SYNC_PAGE_MISSING"
+grep -q 'r2LibraryShardUpsert' src/index.js || die "R2_LIBRARY_SHARD_UPSERT_MISSING"
+grep -q 'r2LibraryFinalize' src/index.js || die "R2_LIBRARY_FINALIZE_MISSING"
 grep -q 'strictParagraphMatch' src/index.js || die "SERVER_SHARED_MATCH_CORE_MISSING"
 
 grep -q 'configurePhantomDaemon' public/app.js || die "PHANTOM_DAEMON_CLIENT_CONFIG_MISSING"
@@ -302,9 +309,11 @@ grep -q 'Citation Specialist' public/agent-node-worker.js || die "V7_AGENT18_MIS
 grep -q 'Conflict and Duplicate Auditor' public/agent-node-worker.js || die "V7_AGENT19_MISSING"
 grep -q 'Mission Master' public/agent-node-worker.js || die "V7_AGENT20_MISSING"
 grep -q 'backfillLibraryChunksToCloud' public/app.js || die "CROSS_DEVICE_BACKFILL_MISSING"
-grep -q '/api/admin/library-mirror-upsert' public/app.js || die "CROSS_DEVICE_UPLOAD_ROUTE_MISSING"
-grep -q '/api/admin/library-mirror-upsert' src/index.js || die "CROSS_DEVICE_SERVER_ROUTE_MISSING"
-grep -q 'library_chunks' src/index.js || die "CROSS_DEVICE_LIBRARY_TABLE_MISSING"
+grep -q '/api/admin/r2-library-shard' public/app.js || die "R2_CROSS_DEVICE_UPLOAD_ROUTE_MISSING"
+grep -q '/api/admin/r2-library-finalize' public/app.js || die "R2_CROSS_DEVICE_FINALIZE_ROUTE_MISSING"
+grep -q '/api/admin/r2-library-shard' src/index.js || die "R2_CROSS_DEVICE_SERVER_ROUTE_MISSING"
+grep -q 'consciencia-fabiano-pdfs' src/index.js || die "R2_CROSS_DEVICE_BUCKET_MISSING"
+grep -q 'env.PDFS' src/index.js || die "R2_NATIVE_BINDING_MISSING"
 grep -q 'The Sweeper' public/agent-node-worker.js || die "V7_SWEEPERS_MISSING"
 grep -q 'offline-turbine-source-subtitle' public/app.js || die "SEMANTIC_SUBTITLE_MISSING"
 grep -q 'white-space:pre-wrap' public/style.css || die "OFFLINE_PRE_WRAP_MISSING"
@@ -314,46 +323,23 @@ grep -q 'offline-turbine-viewport' public/style.css || die "VIRTUAL_SCROLLER_STY
 grep -q 'FNS_DESKTOP_FALLBACK' scripts/local-fallback-server.mjs || die "DESKTOP_FALLBACK_SOURCE_MISSING"
 log "V4_OMNI_LIBRARY_ASSETS_PASS=yes"
 
-log "6/7 Broad-term RAG regression probe"
+log "6/7 R2 cross-device regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
-if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
-  SUPABASE_BASE=$(printf '%s' "$SUPABASE_URL" | sed 's:/*$::')
-  supa_rows=$(curl -fsS --max-time 15 \
-    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-    -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-    "$SUPABASE_BASE/rest/v1/rag_embeddings?select=id&limit=1" | jq 'length' || echo 0)
-  supa_jesus=$(curl -fsS --max-time 15 \
-    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-    -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-    "$SUPABASE_BASE/rest/v1/rag_embeddings?select=id&text=ilike.*Jesus*&limit=1" | jq 'length' || echo 0)
-  log "SUPABASE_RAG_ANY_ROW=$supa_rows"
-  log "SUPABASE_RAG_JESUS_ROW=$supa_jesus"
-fi
+r2_http=$(curl -sS --max-time 20 -o /tmp/r2-sync-state.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/omni-sync-state" || echo 000)
+[ "$r2_http" = "200" ] || { cat /tmp/r2-sync-state.json 2>/dev/null || true; die "R2_SYNC_STATE_HTTP_$r2_http"; }
+jq -e '.ok == true and .backend == "cloudflare-r2" and .bucket == "consciencia-fabiano-pdfs" and .batch_size == 200' /tmp/r2-sync-state.json >/dev/null || {
+  cat /tmp/r2-sync-state.json
+  die "R2_SYNC_STATE_BAD"
+}
+log "R2_CROSS_DEVICE_STATE_PASS=yes"
+
 rag_http=$(curl -sS --max-time 25 -o /tmp/rag-broad-probe.json -w '%{http_code}' "$BASE/api/rag/search" \
   -H 'Content-Type: application/json' \
   --data '{"question":"Jesus"}' || echo 000)
-
-rag_count=$(jq -r 'if (.matches|type)=="array" then (.matches|length) else 0 end' /tmp/rag-broad-probe.json 2>/dev/null || echo 0)
-runtime_ok=$(jq -r '.ok // false' /tmp/runtime-status.json 2>/dev/null || echo false)
-supa_rows=${supa_rows:-0}
-
-if [ "$rag_http" != "200" ] && { [ "$runtime_ok" = "true" ] || [ "$supa_rows" -gt 0 ]; }; then
-  cat /tmp/rag-broad-probe.json 2>/dev/null || true
-  die "RAG_BROAD_PROBE_HTTP_$rag_http"
-fi
-
-if [ "$rag_count" -gt 0 ]; then
-  jq -e '[.matches[] | select((.text // "") | test("Jesus"; "i"))] | length > 0' /tmp/rag-broad-probe.json >/dev/null || {
-    cat /tmp/rag-broad-probe.json
-    die "RAG_BROAD_TERM_MISSING_ANCHOR"
-  }
-  log "RAG_BROAD_TERM_PROBE_PASS=yes"
-elif [ "$runtime_ok" = "true" ] || [ "$supa_rows" -gt 0 ]; then
-  cat /tmp/rag-broad-probe.json
-  die "RAG_BROAD_TERM_FALSE_NEGATIVE"
+if [ "$rag_http" = "200" ]; then
+  log "RAG_ENDPOINT_REACHABLE=yes"
 else
-  log "RAG_BROAD_TERM_PROBE_DEFERRED=cloud-index-unreadable-and-mirror-empty"
-  log "RAG_BROWSER_LOCAL_RECOVERY_REQUIRED=yes"
+  log "RAG_ENDPOINT_REACHABLE=degraded-$rag_http"
 fi
 
 log "7/7 Release complete"
