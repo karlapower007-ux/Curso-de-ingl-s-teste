@@ -911,7 +911,8 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
 }
 
 async function mapExtractReferences(env, question, batch, batchIndex) {
-  const raw=buildRagContext(batch,question,2600);
+  const localRaw=buildRagContext(batch,question,2600);
+  const raw=localRaw.replace(/\[F(\d+)\]/g,(_,n)=>"[F"+(batchIndex*MAP_BATCH_SIZE+Number(n))+"]");
   const messages=[
     {
       role:"system",
@@ -942,16 +943,26 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
 async function mapReduceContext(env, question, context) {
   const source=Array.from(context || []).slice(0,TOP_K);
   if(source.length<=MAP_REDUCE_THRESHOLD){
-    return {text:buildRagContext(source,question),used:false,batches:1};
+    return {
+      text:buildRagContext(source,question),
+      used:false,batches:1,
+      selectedIndexes:source.map((_,i)=>i)
+    };
   }
   const batches=[];
   for(let i=0;i<source.length;i+=MAP_BATCH_SIZE) batches.push(source.slice(i,i+MAP_BATCH_SIZE));
   const mapped=await Promise.all(batches.map((batch,index)=>mapExtractReferences(env,question,batch,index)));
   const combined=mapped.filter(Boolean).join("\n\n");
+  const selected=new Set();
+  for(const match of combined.matchAll(/\[F(\d+)\]/g)){
+    const oneBased=Number(match[1]);
+    if(Number.isInteger(oneBased) && oneBased>=1 && oneBased<=source.length) selected.add(oneBased-1);
+  }
   return {
-    text:"MAP-REDUCE: referências extraídas de "+source.length+" trechos em "+batches.length+" lotes.\n\n"+trimToTokenBudget(combined,4300),
+    text:"MAP-REDUCE: referências factuais selecionadas de "+source.length+" trechos em "+batches.length+" lotes.\n\n"+trimToTokenBudget(combined,4300),
     used:true,
-    batches:batches.length
+    batches:batches.length,
+    selectedIndexes:[...selected].sort((a,b)=>a-b)
   };
 }
 
@@ -1386,6 +1397,9 @@ async function chat(request, env) {
   const multipleSourcesRequested = wantsMultipleSources(question);
   const promptContext = context.slice(0,TOP_K);
   const reduced = await mapReduceContext(env,question,promptContext);
+  const mappedContext = reduced.used
+    ? reduced.selectedIndexes.map(i=>promptContext[i]).filter(Boolean)
+    : promptContext;
   const contextText = reduced.text;
 
   const messages = enforceGroqBudget([
@@ -1405,9 +1419,9 @@ async function chat(request, env) {
     },
   ]);
 
-  const allSources = uniqueSources(promptContext);
+  const allSources = uniqueSources(mappedContext);
   const sources = allSources;
-  const fallback = promptContext.length === 0;
+  const fallback = mappedContext.length === 0;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
     body?.stream === true;
