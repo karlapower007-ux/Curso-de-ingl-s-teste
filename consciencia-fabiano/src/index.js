@@ -365,10 +365,6 @@ async function parallelMapLimit(items, limit, mapper) {
 }
 
 function isRateLimitError(error) {
-  return /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
-}
-
-function isRateLimitError(error) {
   return Number(error?.status || 0) === 429 ||
     /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
 }
