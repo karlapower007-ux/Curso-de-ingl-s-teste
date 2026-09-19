@@ -8,7 +8,7 @@
   const PAGE_BATCH_LIMIT = 300000;
   const LOCAL_EMBED_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
   const LOCAL_EMBED_DB = "fns_local_embeddings_v1";
-  const LOCAL_EMBED_DB_VERSION = 3;
+  const LOCAL_EMBED_DB_VERSION = 4;
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
 
   let history = [];
@@ -64,6 +64,11 @@
         if(!db.objectStoreNames.contains("offline_vector_jobs")){
           const store=db.createObjectStore("offline_vector_jobs",{keyPath:"document_id"});
           store.createIndex("state","state",{unique:false});
+        }
+        if(!db.objectStoreNames.contains("mirror_queue")){
+          const store=db.createObjectStore("mirror_queue",{keyPath:"id"});
+          store.createIndex("next_attempt_at","next_attempt_at",{unique:false});
+          store.createIndex("created_at","created_at",{unique:false});
         }
       };
       req.onsuccess=()=>resolve(req.result);
@@ -311,19 +316,85 @@
     return body;
   }
 
-  window.FNSRagMirrorBatch = async function(records){
-    const list=Array.isArray(records)?records.slice(0,100):[];
-    if(!list.length || ownerToken()!==LOCAL_ADMIN_PASSWORD) return {ok:true,skipped:true};
-    try{
-      return await api("/api/admin/mirror-upsert",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({records:list})
-      },false);
-    }catch{
-      return {ok:false,queued_for_later:true};
+  let mirrorQueueRunning=false;
+
+  async function enqueueMirrorRecords(records){
+    const list=Array.isArray(records)?records.filter(r=>Array.isArray(r?.vector)&&r.vector.length>=64):[];
+    if(!list.length) return {ok:true,queued:0};
+    let queued=0;
+    for(let i=0;i<list.length;i+=50){
+      const batch=list.slice(i,i+50);
+      const id="mirror-"+Date.now()+"-"+Math.random().toString(36).slice(2,9)+"-"+i;
+      await idbPut("mirror_queue",{
+        id,
+        records:batch,
+        attempts:0,
+        next_attempt_at:Date.now(),
+        created_at:Date.now(),
+        updated_at:Date.now()
+      });
+      queued+=batch.length;
     }
-  };
+    processMirrorQueue().catch(()=>{});
+    return {ok:true,queued};
+  }
+
+  async function processMirrorQueue(){
+    if(mirrorQueueRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    mirrorQueueRunning=true;
+    try{
+      const now=Date.now();
+      const items=(await idbGetAll("mirror_queue").catch(()=>[]))
+        .filter(x=>Number(x.next_attempt_at||0)<=now)
+        .sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+
+      for(const item of items.slice(0,2)){
+        try{
+          const list=Array.isArray(item.records)?item.records.slice(0,50):[];
+          if(!list.length){await idbDelete("mirror_queue",item.id);continue;}
+          const result=await api("/api/admin/mirror-upsert",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({records:list})
+          },false);
+
+          if(result?.any_configured===false){
+            const attempts=Number(item.attempts||0)+1;
+            await idbPut("mirror_queue",{
+              ...item,
+              attempts,
+              next_attempt_at:Date.now()+6*60*60*1000,
+              last_error:"Nenhum co-master configurado no servidor.",
+              updated_at:Date.now()
+            });
+            break;
+          }
+
+          await idbDelete("mirror_queue",item.id);
+          await new Promise(resolve=>setTimeout(resolve,900));
+        }catch(error){
+          const msg=String(error?.message || error || "");
+          const attempts=Number(item.attempts||0)+1;
+          const quota=error?.status===429 || /quota|rate limit|too many/i.test(msg);
+          const delay=quota
+            ? Math.min(6*60*60*1000,Math.max(15*60*1000,attempts*30*60*1000))
+            : Math.min(60*60*1000,Math.max(5*60*1000,attempts*10*60*1000));
+          await idbPut("mirror_queue",{
+            ...item,
+            attempts,
+            next_attempt_at:Date.now()+delay,
+            last_error:msg,
+            updated_at:Date.now()
+          });
+          if(quota) break;
+        }
+      }
+    }finally{
+      mirrorQueueRunning=false;
+    }
+  }
+
+  window.FNSRagMirrorBatch = enqueueMirrorRecords;
 
   function setAvatar(mode) {
     const img = $("avatarImg");
@@ -1596,10 +1667,18 @@
   setTimeout(()=>resumeOfflineVectorJobs().catch(()=>{}),1500);
   setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),1800);
   setTimeout(()=>processSyncQueue().catch(()=>{}),5000);
+  setTimeout(()=>processMirrorQueue().catch(()=>{}),7000);
   setInterval(()=>processSyncQueue().catch(()=>{}),15*60*1000);
-  window.addEventListener("online",()=>processSyncQueue().catch(()=>{}));
+  setInterval(()=>processMirrorQueue().catch(()=>{}),10*60*1000);
+  window.addEventListener("online",()=>{
+    processSyncQueue().catch(()=>{});
+    processMirrorQueue().catch(()=>{});
+  });
   document.addEventListener("visibilitychange",()=>{
-    if(document.visibilityState==="visible") processSyncQueue().catch(()=>{});
+    if(document.visibilityState==="visible"){
+      processSyncQueue().catch(()=>{});
+      processMirrorQueue().catch(()=>{});
+    }
   });
   setTimeout(()=>{try{ensureEmbeddingWorker();}catch{}},2500);
 })();
