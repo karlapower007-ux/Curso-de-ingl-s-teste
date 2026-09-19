@@ -461,22 +461,48 @@
   const MIRROR_BACKFILL_STATE_KEY="fns_rag_mirror_backfill_v2";
   let mirrorBackfillRunning=false;
 
-  const LIBRARY_CHUNK_BACKFILL_STATE_KEY="fns_library_chunk_backfill_v7";
+  const LIBRARY_CHUNK_BACKFILL_STATE_KEY="fns_library_chunk_backfill_v7_1_r2";
   let libraryChunkBackfillRunning=false;
+
+  function librarySnapshotSignature(list){
+    const raw=(Array.isArray(list)?list:[]).map(doc=>[
+      String(doc?.document_id||doc?.id||""),
+      String(doc?.filename||doc?.arquivo||doc?.title||""),
+      Number(doc?.chunks||0),
+      Number(doc?.pages||doc?.paginas||0)
+    ].join("|")).sort().join("||");
+    let h=2166136261;
+    for(let i=0;i<raw.length;i++){h^=raw.charCodeAt(i);h=Math.imul(h,16777619);}
+    return "s"+(h>>>0).toString(16)+"-"+raw.length;
+  }
 
   async function backfillLibraryChunksToCloud(){
     if(libraryChunkBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
     libraryChunkBackfillRunning=true;
     try{
-      await ensureRagCascade("cross-device-library-backfill");
+      await ensureRagCascade("cross-device-r2-backfill");
       const docs=await window.FNSRagCascade?.listDocuments?.();
       const list=Array.isArray(docs)?docs:[];
       if(!list.length)return;
 
-      let state={doc_index:0,chunk_offset:0,updated_at:0};
+      const sourceSignature=librarySnapshotSignature(list);
+      let state={doc_index:0,chunk_offset:0,updated_at:0,generation:"",source_signature:"",shards:0,total_chunks:0};
       try{state=JSON.parse(localStorage.getItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY)||"{}")||state;}catch{}
+      if(state.done===true && state.source_signature===sourceSignature)return;
+
+      if(!state.generation || state.source_signature!==sourceSignature){
+        state={
+          doc_index:0,chunk_offset:0,
+          generation:"pc-"+Date.now().toString(36)+"-"+sourceSignature.replace(/[^a-zA-Z0-9_-]/g,"").slice(0,40),
+          source_signature:sourceSignature,
+          shards:0,total_chunks:0,updated_at:Date.now(),done:false
+        };
+      }
+
       let docIndex=Math.max(0,Number(state.doc_index||0));
       let chunkOffset=Math.max(0,Number(state.chunk_offset||0));
+      let shards=Math.max(0,Number(state.shards||0));
+      let totalChunks=Math.max(0,Number(state.total_chunks||0));
       let batches=0;
 
       while(docIndex<list.length && batches<6){
@@ -487,7 +513,9 @@
         const rows=await window.FNSRagCascade.getDocumentChunks(documentId,chunkOffset,200);
         if(!rows.length){
           docIndex++;chunkOffset=0;
-          localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({doc_index:docIndex,chunk_offset:0,updated_at:Date.now()}));
+          localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({
+            ...state,doc_index:docIndex,chunk_offset:0,shards,total_chunks:totalChunks,updated_at:Date.now()
+          }));
           continue;
         }
 
@@ -504,24 +532,42 @@
         })).filter(x=>x.text);
 
         if(records.length){
-          await api("/api/admin/library-mirror-upsert",{
+          await api("/api/admin/r2-library-shard",{
             method:"POST",
             headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({records})
+            body:JSON.stringify({
+              generation:state.generation,
+              document_id:documentId,
+              offset:chunkOffset,
+              records
+            })
           },false);
+          shards++;
+          totalChunks+=records.length;
         }
 
         chunkOffset+=rows.length;
         batches++;
-        localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({
-          doc_index:docIndex,chunk_offset:chunkOffset,updated_at:Date.now()
-        }));
+        state={...state,doc_index:docIndex,chunk_offset:chunkOffset,shards,total_chunks:totalChunks,updated_at:Date.now()};
+        localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify(state));
         await new Promise(resolve=>setTimeout(resolve,550));
       }
 
       if(docIndex>=list.length){
+        await api("/api/admin/r2-library-finalize",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            generation:state.generation,
+            documents:list.length,
+            chunks:totalChunks,
+            shards
+          })
+        },false);
+
         localStorage.setItem(LIBRARY_CHUNK_BACKFILL_STATE_KEY,JSON.stringify({
-          doc_index:0,chunk_offset:0,done:true,completed_at:Date.now(),updated_at:Date.now()
+          ...state,doc_index:0,chunk_offset:0,shards,total_chunks:totalChunks,
+          done:true,completed_at:Date.now(),updated_at:Date.now()
         }));
         configurePhantomDaemon({force:true}).catch(()=>{});
       }else if(batches>0){
@@ -1039,7 +1085,7 @@
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
     status.textContent=agents
-      ? "V7.0 Twenty Agent Mesh • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+      ? "V7.1 Fabiano R2 Cross Device • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
         (data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal-first")+
         (mergedCount?" • "+mergedCount+" chunks costurados":"")
       : "Plano C V6.0 • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
@@ -1506,7 +1552,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.0 Twenty Agent Mesh: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
+              "V7.1 Fabiano R2 Cross Device: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
               ...renderedCards.slice(0,10).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1528,7 +1574,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.0 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
+              $("backendText").textContent="V7.1 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
