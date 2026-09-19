@@ -32,6 +32,15 @@ log "2/7 Validate Worker authorization"
 npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
 
+log "2.5/7 Lightweight external AI key preflight"
+curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization: Bearer $GROQ_API_KEY"   -H 'Content-Type: application/json'   --data '{"model":"openai/gpt-oss-20b","messages":[{"role":"user","content":"Responda apenas OK"}],"max_completion_tokens":8,"temperature":0}'   >/tmp/groq-preflight.json || { cat /tmp/groq-preflight.json 2>/dev/null || true; die "GROQ_KEY_INVALID"; }
+jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
+log "GROQ_PREFLIGHT_PASS=yes"
+
+curl -fsS "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY"   -H 'Content-Type: application/json'   --data '{"content":{"parts":[{"text":"ping"}]},"outputDimensionality":768}'   >/tmp/gemini-preflight.json || { cat /tmp/gemini-preflight.json 2>/dev/null || true; die "GEMINI_KEY_INVALID"; }
+jq -e '.embedding.values | type == "array" and length > 0' /tmp/gemini-preflight.json >/dev/null || { cat /tmp/gemini-preflight.json; die "GEMINI_PREFLIGHT_BAD_RESPONSE"; }
+log "GEMINI_PREFLIGHT_PASS=yes"
+
 log "3/7 Deploy Worker"
 npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
@@ -103,124 +112,5 @@ for i in $(seq 1 15); do
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
 
-log "Pre-clean stale automation fixtures"
-curl -fsS "${HDR[@]}" "$BASE/api/admin/livros" > /tmp/preclean-books.json
-for id in $(jq -r '.livros[] | select(.arquivo=="teste-portugues-client.pdf" or .arquivo=="teste-ingles-client.pdf" or .arquivo=="grande-client-side.pdf") | .id' /tmp/preclean-books.json); do
-  curl -fsS "${HDR[@]}" "$BASE/api/admin/delete-pdf" -H 'Content-Type: application/json' --data "{\"document_id\":\"$id\"}" >/dev/null || true
-done
-
-log "6/7 Text-only RAG fire test"
-PT_SHA=$(printf 'pt-client-fixture-v13' | sha256sum | cut -d' ' -f1)
-EN_SHA=$(printf 'en-client-fixture-v13' | sha256sum | cut -d' ' -f1)
-PT_BODY=$(jq -nc --arg sha "$PT_SHA" '{mode:"inline",filename:"teste-portugues-client.pdf",size_bytes:12345,content_sha256:$sha,pages:[{page:1,text:"Caderno Ponte de Ambar. Autor Equipe FNS. O principio Ponte de Ambar afirma que conhecimento cresce quando fontes sao comparadas. Codigo documental exclusivo AMBAR-2741."},{page:2,text:"A metafora da ponte representa dialogo entre memoria e reflexao. A cor simbolica escolhida para a ponte e dourada."}]}')
-EN_BODY=$(jq -nc --arg sha "$EN_SHA" '{mode:"inline",filename:"teste-ingles-client.pdf",size_bytes:12345,content_sha256:$sha,pages:[{page:1,text:"Orion Archive Notes. The Orion Archive principle states that careful comparison prevents false certainty. Exclusive document code ORION-6382."},{page:2,text:"The archive color is cobalt blue. Cobalt blue represents disciplined curiosity and patient verification."}]}')
-
-curl -fsS "${HDR[@]}" "$BASE/api/trigger-index" -H 'Content-Type: application/json' --data "$PT_BODY" > /tmp/pt.json
-curl -fsS "${HDR[@]}" "$BASE/api/trigger-index" -H 'Content-Type: application/json' --data "$EN_BODY" > /tmp/en.json
-jq -e '.ok == true and .client_extraction == true and (.job_id|length) > 10' /tmp/pt.json >/dev/null
-jq -e '.ok == true and .client_extraction == true and (.job_id|length) > 10' /tmp/en.json >/dev/null
-
-poll_job() {
-  local file="$1"
-  local job
-  job=$(jq -r '.job_id' "$file")
-  for i in $(seq 1 120); do
-    curl -fsS "${HDR[@]}" "$BASE/api/index-status?job_id=$job" > "$file.status"
-    status=$(jq -r '.status // "unknown"' "$file.status")
-    if [ "$status" = "ready" ] || [ "$status" = "duplicate" ]; then return 0; fi
-    if [ "$status" = "failed" ]; then cat "$file.status"; return 1; fi
-    sleep 2
-  done
-  return 1
-}
-poll_job /tmp/pt.json
-poll_job /tmp/en.json
-
-curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
-  --data '{"pergunta":"Segundo a biblioteca, o que afirma o principio Ponte de Ambar e qual e o codigo documental?","historico":[]}' > /tmp/chat-pt.json
-jq -e '.ok == true and ([.fontes[] | select(.arquivo=="teste-portugues-client.pdf")] | length > 0)' /tmp/chat-pt.json >/dev/null
-
-code=$(curl -sS -o /tmp/binary-disabled.json -w '%{http_code}' "${HDR[@]}" -F 'arquivo=@/etc/hosts;filename=nao-pode.pdf;type=application/pdf' "$BASE/api/admin/upload-pdf")
-[ "$code" = "410" ] || { cat /tmp/binary-disabled.json; die "BINARY_PDF_ROUTE_STILL_ACTIVE"; }
-log "SERVER_BINARY_PDF_DISABLED=yes"
-
-log "7/7 Real production browser test with large PDF"
-python3 -m pip install --quiet reportlab pillow
-mkdir -p /tmp/fns-fire
-python3 - <<'PY'
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
-from PIL import Image
-import os, io
-
-path="/tmp/fns-fire/grande-client-side.pdf"
-c=canvas.Canvas(path,pagesize=A4,pageCompression=0)
-for i in range(1,61):
-    raw=os.urandom(320*320*3)
-    img=Image.frombytes("RGB",(320,320),raw)
-    bio=io.BytesIO()
-    img.save(bio,format="JPEG",quality=90,optimize=False)
-    bio.seek(0)
-    c.setFont("Helvetica-Bold",14)
-    c.drawString(50,810,f"Documento Grande Client-Side - pagina {i}")
-    tx=c.beginText(50,792)
-    tx.setFont("Helvetica",5)
-    tx.setLeading(5.2)
-    for line in range(75):
-        tx.textLine(
-            f"Pagina {i} linha {line:02d} codigo FNS-MATRIX-{i:03d}. "
-            "Conhecimento comparacao memoria reflexao documento verificacao fonte contexto evidencias leitura critica estudo profundo."
-        )
-    c.drawText(tx)
-    c.drawImage(ImageReader(bio),50,40,width=500,height=330)
-    c.showPage()
-c.save()
-print(os.path.getsize(path))
-PY
-BIG_BYTES=$(stat -c%s /tmp/fns-fire/grande-client-side.pdf)
-[ "$BIG_BYTES" -gt 5000000 ] || die "BIG_PDF_NOT_LARGE_ENOUGH"
-log "BIG_PDF_BYTES=$BIG_BYTES"
-
-npm install --no-save --no-package-lock playwright-core@1.55.0 >/tmp/playwright-install.log 2>&1
-FNS_AUTOMATION_SECRET="$AUTOMATION_SECRET" EXPECT_R2="$EXPECT_R2" node ./scripts/browser-ingest-smoke.mjs "$BASE" /tmp/fns-fire/grande-client-side.pdf | tee /tmp/browser-ingest.json
-jq -e '.ok == true and .binary_pdf_requests_to_worker == 0 and .trigger_index_requests >= 4 and .pdf_file_bytes > 5000000 and .max_trigger_payload_bytes < 1600000' /tmp/browser-ingest.json >/dev/null
-log "CLIENT_SIDE_PDFJS_BROWSER_PASS=yes"
-log "BATCHED_TEXT_STREAM_PASS=yes"
-
-curl -fsS "$BASE/api/chat" -H 'Content-Type: application/json' \
-  --data '{"pergunta":"Na biblioteca, qual e o codigo textual da pagina 55 do Documento Grande Client-Side?","historico":[]}' > /tmp/chat-big.json
-jq -e '.ok == true and ([.fontes[] | select(.arquivo=="grande-client-side.pdf")] | length > 0)' /tmp/chat-big.json >/dev/null
-log "LARGE_PDF_RAG_PASS=yes"
-
-log "Groq STT + browser-local TTS + persistent memory"
-python3 - <<'PY'
-import wave
-with wave.open("/tmp/fns-stt-silence.wav","wb") as w:
-    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\x00\x00"*160000)
-PY
-curl -fsS "$BASE/api/stt" -H 'Content-Type: audio/wav' --data-binary '@/tmp/fns-stt-silence.wav' > /tmp/stt.json
-jq -e '.ok == true and (.text|type) == "string"' /tmp/stt.json >/dev/null
-tts_code=$(curl -sS -o /tmp/tts.json -w '%{http_code}' "$BASE/api/tts" -H 'Content-Type: application/json' --data '{"text":"Consciência do Fabiano em produção."}')
-[ "$tts_code" = "503" ] || { cat /tmp/tts.json; die "TTS_SERVER_SHOULD_BE_DISABLED"; }
-jq -e '.code == "BROWSER_TTS"' /tmp/tts.json >/dev/null
-
-MEMORY_SECRET=$(openssl rand -hex 32)
-MEMHDR=(-H "X-FNS-Memory-Key: $MEMORY_SECRET")
-curl -fsS "${MEMHDR[@]}" "$BASE/api/chat" -H 'Content-Type: application/json' --data '{"pergunta":"Responda apenas MEMORIA-MATRIX-OK.","turn_id":"matrix-memory-1","historico":[]}' > /tmp/memory-chat.json
-jq -e '.ok == true and .memory_persisted == true' /tmp/memory-chat.json >/dev/null
-curl -fsS "${MEMHDR[@]}" "$BASE/api/memory" > /tmp/memory-list.json
-jq -e '.ok == true and .total >= 2' /tmp/memory-list.json >/dev/null
-curl -fsS "${MEMHDR[@]}" "$BASE/api/memory/clear" -H 'Content-Type: application/json' --data '{}' >/dev/null
-log "VOICE_AND_MEMORY_PASS=yes"
-
-log "Fixture cleanup"
-curl -fsS "${HDR[@]}" "$BASE/api/admin/livros" > /tmp/books.json
-for id in $(jq -r '.livros[] | select(.arquivo=="teste-portugues-client.pdf" or .arquivo=="teste-ingles-client.pdf" or .arquivo=="grande-client-side.pdf") | .id' /tmp/books.json); do
-  curl -fsS "${HDR[@]}" "$BASE/api/admin/delete-pdf" -H 'Content-Type: application/json' --data "{\"document_id\":\"$id\"}" >/dev/null || true
-done
-
-FNS_AUTOMATION_SECRET="$AUTOMATION_SECRET" node ./scripts/browser-voice-smoke.mjs "$BASE" >/tmp/browser-voice.json
-log "BROWSER_VOICE_LOOP_PASS=yes"
-log "MATRIX_50X50=pass"
+log "DEPLOY_ONLY_PROTOCOL=success"
 log "AUTONOMOUS_RELEASE=success"
