@@ -128,6 +128,7 @@ done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
 
 log "6/7 Broad-term RAG regression probe"
+curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
 curl -fsS --max-time 25 "$BASE/api/rag/search" \
   -H 'Content-Type: application/json' \
   --data '{"question":"Jesus"}' >/tmp/rag-broad-probe.json || { cat /tmp/rag-broad-probe.json 2>/dev/null || true; die "RAG_BROAD_PROBE_HTTP_FAILED"; }
