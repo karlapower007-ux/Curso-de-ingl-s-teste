@@ -22,7 +22,7 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V3.0 ULTIMATE RESILIENCE + V2 analytical engine invariants
+          # V3.1 OFFLINE TURBINES + V2 analytical engine invariants
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
           grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
           grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
@@ -55,6 +55,32 @@ jobs:
           grep -q 'service_worker_static_vault: true' src/index.js
           grep -q 'desktop_fallback_port: 8788' src/index.js
           grep -q 'raw_vault_fallback: true' src/index.js
+          # V3.1 CPU-aware local worker swarm + intelligent extraction + virtual cards
+          grep -q 'plan_c_local_worker_pool: true' src/index.js
+          grep -q 'plan_c_logical_task_capacity: 1000' src/index.js
+          grep -q 'plan_c_physical_worker_cap: 16' src/index.js
+          grep -q 'plan_c_worker_count_source: "navigator.hardwareConcurrency"' src/index.js
+          grep -q 'plan_c_main_thread_extraction: false' src/index.js
+          grep -q 'plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity"' src/index.js
+          grep -q 'plan_c_virtualized_result_cards: true' src/index.js
+          grep -q 'plan_c_card_gap_px: 40' src/index.js
+          test -f public/local-turbine-pool.js
+          test -f public/local-turbine-worker.js
+          grep -q 'LOGICAL_NODE_CAPACITY=1000' public/local-turbine-pool.js
+          grep -q 'MAX_PHYSICAL_WORKERS=16' public/local-turbine-pool.js
+          grep -q 'navigator.hardwareConcurrency' public/local-turbine-pool.js
+          grep -q 'new Worker("/local-turbine-worker.js' public/local-turbine-pool.js
+          grep -q 'BM25_K1=1.35' public/local-turbine-worker.js
+          grep -q 'proximityBonus' public/local-turbine-worker.js
+          grep -q 'exactPhrase' public/local-turbine-worker.js
+          grep -q 'runLocalTurbines' public/failover-v3.js
+          grep -q 'indexeddb-local-worker-swarm' public/failover-v3.js
+          grep -q 'appendOfflineTurbineResults' public/app.js
+          grep -q 'offline-turbine-card' public/app.js
+          grep -q 'const GAP=40' public/app.js
+          grep -q 'offline-turbine-viewport' public/style.css
+          grep -q 'white-space:pre-wrap' public/style.css
+          grep -q 'padding-bottom=GAP' public/app.js
           grep -q 'ensureFailoverV3' public/app.js
           grep -q 'ensureRagCascade' public/app.js
           grep -q 'activateHeavyLocalSubsystems' public/app.js
@@ -66,7 +92,7 @@ jobs:
           grep -q 'planE' public/failover-v3.js
           grep -q 'planF' public/failover-v3.js
           grep -q 'DecompressionStream' public/failover-v3.js
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-1"' public/sw-v3.js
           grep -q 'A->B->C->D->E->F' public/failover-manifest.json
           test -f public/steel/index.json
           test -f scripts/build-static-vault.mjs
@@ -166,7 +192,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '3.0.0-ultimate-resilience' src/index.js
+          grep -q '3.1.0-offline-turbines' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
