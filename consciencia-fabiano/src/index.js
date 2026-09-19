@@ -47,6 +47,7 @@ const MAP_MAX_COMPLETION_TOKENS = 1000;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
 const EMPTY_GROUNDED_ANSWER = "Não encontrei informações nos documentos indexados para responder a esta pergunta.";
+const RETRIEVAL_UNAVAILABLE_ANSWER = "A biblioteca continua cadastrada, mas os índices de busca estão temporariamente indisponíveis. Não vou tratar isso como ausência de conteúdo. Tente novamente em instantes; se houver índice local neste navegador, ele será usado automaticamente.";
 const enc = new TextEncoder();
 
 function json(data, status = 200, extra = {}) {
@@ -785,6 +786,32 @@ async function retrieveSupabaseLexicalContext(env, question) {
   }
 }
 
+async function supabaseMirrorHasAnyRows(env) {
+  const base = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
+  const token = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
+  if (!base || !token) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+  try {
+    const endpoint = base + "/rest/v1/rag_embeddings?select=id&limit=1";
+    const res = await fetch(endpoint, {
+      headers: {
+        "Authorization": "Bearer " + token,
+        "apikey": token,
+        "Accept": "application/json"
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) ? rows.length > 0 : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function mergeRetrievedMatches(...groups) {
   const seen = new Set();
   const merged = [];
@@ -853,10 +880,13 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
   // V1.20 hotfix: semântica, BM25 do Durable Object e Supabase lexical deixam de se excluir.
   // Se o Durable Object atingir quota de leitura, o Supabase continua abrindo a malha documental.
   const merged = mergeRetrievedMatches(semantic, lexical, supabaseLexical);
-  if (!merged.length && !durableObjectReadable && supabaseLexicalConfigured(env) && !supabaseReadable) {
-    const err = new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
-    err.code = "RAG_RETRIEVAL_UNAVAILABLE";
-    throw err;
+  if (!merged.length && !durableObjectReadable) {
+    const mirrorHasRows = supabaseLexicalConfigured(env) ? await supabaseMirrorHasAnyRows(env) : null;
+    if (!supabaseReadable || mirrorHasRows !== true) {
+      const err = new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+      err.code = "RAG_RETRIEVAL_UNAVAILABLE";
+      throw err;
+    }
   }
   return merged;
 }
@@ -2051,6 +2081,7 @@ async function chat(request, env) {
   const clientContext = normalizeClientContext(body?.client_context);
   let context = clientContext;
   let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
+  let retrievalUnavailable = false;
 
   // V1.20 hotfix: um hit local jamais pode bloquear a leitura do acervo central.
   // Sempre consultamos o Durable Object/BM25 e fundimos com o contexto do navegador.
@@ -2065,6 +2096,7 @@ async function chat(request, env) {
       if(serverContext.length) retrievalLevel=Math.max(retrievalLevel,5);
     } catch (error) {
       if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
+      if (error?.code === "RAG_RETRIEVAL_UNAVAILABLE") retrievalUnavailable = true;
       context = clientContext;
     }
   }
@@ -2089,10 +2121,12 @@ async function chat(request, env) {
     body?.stream === true;
 
   if(fallback){
+    const emptyAnswer = retrievalUnavailable ? RETRIEVAL_UNAVAILABLE_ANSWER : EMPTY_GROUNDED_ANSWER;
+    const emptyProvider = retrievalUnavailable ? "retrieval-unavailable-guard" : "grounding-guard";
     if(wantsStream){
       const payload=sseFrame("done",{
-        ok:true,resposta:EMPTY_GROUNDED_ANSWER,fontes:[],fallback:true,
-        provider:"grounding-guard",retrieval_level:retrievalLevel,
+        ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
+        provider:emptyProvider,retrieval_level:retrievalLevel,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
         map_reduce:false,map_batches:0
       });
@@ -2102,8 +2136,8 @@ async function chat(request, env) {
       }))});
     }
     return json({
-      ok:true,resposta:EMPTY_GROUNDED_ANSWER,fontes:[],fallback:true,
-      provider:"grounding-guard",retrieval_level:retrievalLevel,
+      ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
+      provider:emptyProvider,retrieval_level:retrievalLevel,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
       map_reduce:false,map_batches:0
     });
@@ -2230,6 +2264,8 @@ async function status(env) {
     lexical_single_anchor_opens_pipeline: true,
     supabase_lexical_fallback: true,
     durable_object_quota_fails_open_to_supabase: true,
+    empty_mirror_is_not_empty_library: true,
+    retrieval_unavailable_is_distinct_from_no_match: true,
     failure_message_requires_zero_sources: true,
     total_source_release: true,
     map_stage_can_filter_sources: false,
