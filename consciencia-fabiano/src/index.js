@@ -1,4 +1,4 @@
-const VERSION = "1.9.0-focused-safe-markdown-ux";
+const VERSION = "1.10.0-rag-audio-resilience";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -18,6 +18,8 @@ const MIN_PAGE_LETTERS = 90;
 const MIN_CHUNK_LETTERS = 100;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 7000;
+const SEMANTIC_MIN_SCORE = 0.46;
+const LEXICAL_MIN_COVERAGE = 0.50;
 const LOCAL_EMBEDDING_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const MAX_SERVER_HISTORY = 40;
@@ -654,7 +656,9 @@ function foldSearchText(text) {
 function lexicalTerms(question) {
   const stop = new Set([
     "a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre",
-    "para","por","com","como","qual","quais","fala","falar","the","and","of","to","in","is","what","about"
+    "para","por","com","como","qual","quais","fala","falar","quero","desejo","mostre","mostrar",
+    "versiculo","versículo","passagem","citacao","citação","referencia","referência","trecho","escritura",
+    "the","and","of","to","in","is","what","about"
   ]);
   return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 10);
 }
@@ -679,10 +683,17 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
       const data = await libraryCall(env, "/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ embedding: suppliedEmbedding, top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
+        body: JSON.stringify({
+          embedding: suppliedEmbedding,
+          top_k: TOP_K,
+          scan_limit: VECTOR_SCAN_LIMIT,
+          min_score: SEMANTIC_MIN_SCORE
+        }),
       });
       const matches = Array.isArray(data.matches)
-        ? data.matches.map(item => ({ ...item, retrieval_mode: "local-semantic" }))
+        ? data.matches
+            .filter(item => Number(item?.score ?? -1) >= SEMANTIC_MIN_SCORE)
+            .map(item => ({ ...item, retrieval_mode: "local-semantic" }))
         : [];
       if (matches.length) return matches;
     } catch {}
@@ -736,6 +747,10 @@ async function persistChatTurn(env, ownerId, body, question, answer, sources, fa
   } catch {
     return false;
   }
+}
+
+function gracefulEmptyAnswer() {
+  return "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?";
 }
 
 async function groqCompletion(env, messages, stream = false) {
@@ -803,6 +818,10 @@ async function groqStreamResponse(env, messages, meta) {
               controller.enqueue(encoder.encode(sseFrame("delta", { text: delta })));
             }
           }
+        }
+        if (!String(answer || "").trim() || /^sem resposta\.?$/i.test(String(answer || "").trim())) {
+          answer = gracefulEmptyAnswer();
+          controller.enqueue(encoder.encode(sseFrame("delta", { text: answer })));
         }
         const memoryPersisted = await persistChatTurn(
           env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
@@ -955,16 +974,16 @@ async function chat(request, env) {
     {
       role: "system",
       content:
-        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, respeito e foco. " +
-        "REGRA DE FOCO: seja direto, conversacional e conciso. Responda somente ao que foi perguntado; não transforme uma pergunta simples em ensaio, panorama histórico, tabela ou catálogo de referências. " +
-        "REGRA DE CITAÇÃO: quando o usuário pedir uma escritura, versículo, passagem, citação, trecho ou referência sobre um tema, comporte-se como um especialista focado. Escolha APENAS UMA fonte principal, salvo se o usuário pedir explicitamente várias opções. " +
-        "Se o trecho completo solicitado estiver presente na BIBLIOTECA RECUPERADA, reproduza o trecho ou versículo COMPLETO, exatamente como aparece na fonte recuperada, sem resumir nem completar de memória. Depois indique claramente o nome do livro/documento e a página. Pare de falar assim que entregar a citação e a referência. " +
-        "Se a fonte recuperada não trouxer o trecho completo, não invente continuação: informe de forma breve que o trecho integral não está disponível no contexto recuperado. " +
-        "REGRA DE FORMATAÇÃO: NUNCA gere tabela Markdown (incluindo sintaxe com barras verticais como |---|) nem listas longas de referências, a menos que o usuário peça explicitamente várias opções ou uma tabela. Prefira 1 a 3 parágrafos curtos. " +
+        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, calor humano e foco. " +
+        "Seja direto, conversacional e conciso. Responda somente ao que foi perguntado e não transforme pedidos simples em ensaios, tabelas ou catálogos. " +
+        "REGRA ESTRITA PARA CITAÇÕES: quando o usuário pedir uma escritura, versículo, passagem, citação, trecho ou referência, e não pedir várias opções, escolha APENAS UMA fonte principal. A resposta deve seguir exatamente esta ordem: " +
+        "(1) uma introdução amigável de uma frase; (2) a citação completa disponível na fonte recuperada, sem resumir, identificando livro/documento e página; (3) uma pergunta curta de engajamento, por exemplo: 'Quer ouvir outro versículo?'. " +
+        "Se o contexto trouxer apenas parte da citação, reproduza somente o que está efetivamente disponível e diga brevemente que o trecho integral não está completo no contexto. Nunca complete de memória. " +
+        "COFRE VAZIO / BAIXA RELEVÂNCIA: se o contexto fornecido NÃO contiver a resposta exata, NUNCA diga 'Sem resposta', 'não sei' de forma seca, nem invente. Responda exatamente em tom cordial: 'Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?'. " +
+        "NUNCA gere tabela Markdown (incluindo sintaxe |---|) ou listas longas, salvo se o usuário pedir explicitamente várias opções ou uma tabela. " +
         "As fontes recuperadas aparecem como [F1], [F2] etc. Use somente marcadores realmente fornecidos. Nunca invente livro, autor, página, capítulo, versículo ou citação. " +
         "Quando usar fonte em outro idioma fora de uma citação textual solicitada, traduza ou parafraseie para português preservando o sentido. Diferencie documento, interpretação e hipótese. " +
-        "Se a biblioteca não tiver evidência suficiente, diga isso claramente. Conhecimento geral pode ser usado apenas quando necessário e deve ser identificado como não proveniente dos PDFs. " +
-        "Use o histórico persistente apenas como contexto de conversa; nunca como fonte documental."
+        "Conhecimento geral pode ser usado quando necessário, mas deve ser claramente identificado como não proveniente dos PDFs. Use o histórico apenas como contexto de conversa, nunca como fonte documental."
     },
     ...history,
     {
@@ -985,7 +1004,8 @@ async function chat(request, env) {
   }
 
   const result = await (await groqCompletion(env, messages, false)).json();
-  const answer = String(result?.choices?.[0]?.message?.content || "Não consegui formular uma resposta agora.").trim();
+  let answer = String(result?.choices?.[0]?.message?.content || "").trim();
+  if (!answer || /^sem resposta\.?$/i.test(answer)) answer = gracefulEmptyAnswer();
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
   return json({
@@ -1068,6 +1088,9 @@ async function status(env) {
     embedding_adapter: "browser-web-worker",
     smart_chunking: true,
     lexical_rag_fallback: true,
+    semantic_min_score: SEMANTIC_MIN_SCORE,
+    lexical_min_coverage: LEXICAL_MIN_COVERAGE,
+    graceful_empty_answer: true,
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
@@ -1799,6 +1822,8 @@ export class LibraryDO {
           }
           if (!matchedTerms) continue;
           const coverage = matchedTerms / terms.length;
+          const minMatched = terms.length <= 1 ? 1 : Math.min(2, Math.ceil(terms.length * LEXICAL_MIN_COVERAGE));
+          if (matchedTerms < minMatched && !(phrase && phrase.length >= 5 && folded.includes(phrase))) continue;
           const phraseBonus = phrase && phrase.length >= 5 && folded.includes(phrase) ? 2.5 : 0;
           const score = coverage * 4 + Math.min(3, hits * 0.35) + phraseBonus;
           matches.push({ ...row, score });
@@ -1811,6 +1836,7 @@ export class LibraryDO {
         const body = await request.json().catch(() => ({}));
         const query = Array.isArray(body.embedding) ? body.embedding : [];
         const topK = Math.max(1, Math.min(20, Number(body.top_k || 8)));
+        const minScore = Math.max(-1, Math.min(1, Number(body.min_score ?? SEMANTIC_MIN_SCORE)));
         const scanLimit = Math.max(50, Math.min(10000, Number(body.scan_limit || VECTOR_SCAN_LIMIT)));
         const rows = [...this.sql.exec(`
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
@@ -1823,10 +1849,10 @@ export class LibraryDO {
           let emb = [];
           try { emb = JSON.parse(row.embedding); } catch {}
           const score = cosine(query, emb);
-          if (score > -1) matches.push({ ...row, embedding: undefined, score });
+          if (score >= minScore) matches.push({ ...row, embedding: undefined, score });
         }
         matches.sort((a,b) => b.score - a.score);
-        return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length });
+        return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length, min_score: minScore });
       }
 
       return json({ ok: false, message: "Rota interna não encontrada." }, 404);

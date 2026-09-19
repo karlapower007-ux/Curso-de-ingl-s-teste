@@ -19,6 +19,11 @@
   let voiceStream = null;
   let voiceMonitor = 0;
   let voiceAudioContext = null;
+  let ttsAudioContext = null;
+  let audioOutputUnlocked = false;
+  let voiceReconnectTimer = 0;
+  let voiceKeepAliveTimer = 0;
+  let voiceReconnectAttempts = 0;
   let activeAudio = null;
   let activeAudioUrl = "";
   let activeAudioDone = null;
@@ -466,6 +471,112 @@
       .trim();
   }
 
+  async function unlockAudioOutput() {
+    try {
+      if(!ttsAudioContext){
+        const Ctx=window.AudioContext || window.webkitAudioContext;
+        if(Ctx) ttsAudioContext=new Ctx();
+      }
+      if(ttsAudioContext?.state === "suspended") await ttsAudioContext.resume();
+      if(window.speechSynthesis?.paused) window.speechSynthesis.resume();
+      audioOutputUnlocked=true;
+    } catch {}
+    return audioOutputUnlocked;
+  }
+
+  function clearVoiceReconnect() {
+    if(voiceReconnectTimer) clearTimeout(voiceReconnectTimer);
+    voiceReconnectTimer=0;
+  }
+
+  function stopVoiceKeepAlive() {
+    clearVoiceReconnect();
+    if(voiceKeepAliveTimer) clearInterval(voiceKeepAliveTimer);
+    voiceKeepAliveTimer=0;
+    voiceReconnectAttempts=0;
+  }
+
+  function scheduleVoiceReconnect(reason="conexão interrompida",delay=700) {
+    if(!voiceLoopEnabled) return;
+    clearVoiceReconnect();
+    const wait=Math.min(5000,Math.max(500,delay));
+    setMicStatus("Reconectando microfone em segundo plano…");
+    voiceReconnectTimer=setTimeout(async()=>{
+      voiceReconnectTimer=0;
+      if(!voiceLoopEnabled) return;
+      const live=voiceStream?.getAudioTracks?.().some(t=>t.readyState==="live");
+      if(live && recorder?.state==="recording") {
+        voiceReconnectAttempts=0;
+        setMicStatus("Microfone ativo. Pode falar.");
+        return;
+      }
+      try{
+        if(voiceStream){
+          voiceStream.getTracks().forEach(t=>{try{t.stop();}catch{}});
+          voiceStream=null;
+        }
+        await ensureVoiceStream();
+        voiceReconnectAttempts=0;
+        if(!recorder || recorder.state!=="recording") await startRecorderFallback();
+        setMicStatus("Microfone reconectado. Pode continuar.");
+      }catch(error){
+        voiceReconnectAttempts++;
+        const next=Math.min(5000,700*(2**Math.min(3,voiceReconnectAttempts)));
+        setMicStatus("Reconectando microfone… tentativa "+(voiceReconnectAttempts+1),true);
+        scheduleVoiceReconnect(reason,next);
+      }
+    },wait);
+  }
+
+  function bindVoiceStreamHealth(stream) {
+    for(const track of stream?.getAudioTracks?.() || []){
+      track.onended=()=>scheduleVoiceReconnect("faixa encerrada",500);
+      track.onmute=()=>setTimeout(()=>{
+        if(voiceLoopEnabled && track.readyState!=="live") scheduleVoiceReconnect("faixa suspensa",600);
+      },1200);
+    }
+    if(!voiceKeepAliveTimer){
+      voiceKeepAliveTimer=setInterval(()=>{
+        if(!voiceLoopEnabled) return;
+        const live=voiceStream?.getAudioTracks?.().some(t=>t.readyState==="live");
+        if(!live || (recorder && recorder.state==="inactive")){
+          scheduleVoiceReconnect("keep-alive",500);
+        }
+      },4000);
+    }
+  }
+
+  async function transcribeBlobWithRetry(blob,maxAttempts=2) {
+    let lastError=null;
+    for(let attempt=1;attempt<=maxAttempts;attempt++){
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),45000);
+      try{
+        const res=await fetch("/api/stt",{
+          method:"POST",
+          headers:authHeaders({"Content-Type":blob.type || "audio/webm"}),
+          body:blob,
+          signal:controller.signal
+        });
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok){
+          const error=new Error(data.message || "STT indisponível");
+          error.status=res.status;
+          throw error;
+        }
+        return data;
+      }catch(error){
+        lastError=error;
+        const retryable=error?.name==="AbortError" || !Number(error?.status) || Number(error?.status)>=500 || Number(error?.status)===429;
+        if(!retryable || attempt===maxAttempts) throw error;
+        await new Promise(resolve=>setTimeout(resolve,700*attempt));
+      }finally{
+        clearTimeout(timeout);
+      }
+    }
+    throw lastError || new Error("STT indisponível");
+  }
+
   function stopAudioPlayback() {
     audioStopSerial++;
     try { window.speechSynthesis?.cancel(); } catch {}
@@ -488,6 +599,7 @@
   }
 
   async function playAudio(path, textFallback) {
+    await unlockAudioOutput();
     const speechText = markdownToSpeech(textFallback);
     if (!speechText) return;
     const serial = audioStopSerial;
@@ -538,6 +650,7 @@
   }
 
   function browserSpeak(text, serial = audioStopSerial) {
+    unlockAudioOutput().catch(()=>{});
     return new Promise(resolve => {
       const speechText = markdownToSpeech(text);
       if (!("speechSynthesis" in window) || !speechText || serial !== audioStopSerial) {
@@ -590,7 +703,7 @@
         query_embedding_model: queryEmbedding ? LOCAL_EMBED_MODEL : "",
         historico: history.slice(-20).map(x => ({ role: x.role, content: x.content }))
       });
-      const resposta = String(data.resposta || "Sem resposta.");
+      const resposta = String(data.resposta || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?");
       appendMessage("assistant", resposta, data.fontes || [], data.fallback === true);
       history.push({ role: "assistant", content: resposta, sources: data.fontes || [], fallback: data.fallback === true, ts: Date.now() });
       saveHistory();
@@ -692,6 +805,7 @@
   function stopVoiceLoop() {
     voiceLoopEnabled = false;
     stopVoiceMonitor();
+    stopVoiceKeepAlive();
     if (recorder?.state === "recording") {
       try { recorder.stop(); } catch {}
     }
@@ -717,6 +831,7 @@
       });
       const track = voiceStream.getAudioTracks?.()[0];
       if (!track || track.readyState !== "live") throw new Error("O navegador não entregou uma faixa de áudio ativa.");
+      bindVoiceStreamHealth(voiceStream);
       setMicStatus("Microfone autorizado e ativo.");
       return voiceStream;
     } catch (error) {
@@ -739,6 +854,9 @@
     const startedAt = performance.now();
 
     recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
+    recorder.onerror = () => {
+      if(voiceLoopEnabled) scheduleVoiceReconnect("falha do gravador",700);
+    };
     recorder.onstop = async () => {
       stopVoiceMonitor();
       if (!voiceLoopEnabled) return;
@@ -749,13 +867,7 @@
           setTimeout(() => voiceLoopEnabled && startRecorderFallback().catch(stopVoiceLoop), 300);
           return;
         }
-        const res = await fetch("/api/stt", {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": blob.type || "audio/webm" }),
-          body: blob
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.message || "STT indisponível");
+        const data = await transcribeBlobWithRetry(blob,2);
         const text = String(data.text || "").trim();
         $("questionInput").value = text;
         if (text && $("autoSendVoice")?.checked) {
@@ -765,7 +877,7 @@
         }
       } catch (e) {
         appendMessage("assistant", "Não consegui transcrever sua voz: " + e.message);
-        if (voiceLoopEnabled) setTimeout(() => startRecorderFallback().catch(stopVoiceLoop), 600);
+        if (voiceLoopEnabled) scheduleVoiceReconnect("falha na transcrição",700);
       }
     };
 
@@ -790,13 +902,13 @@
       }
       const rms = Math.sqrt(sum / data.length);
       const now = performance.now();
-      if (rms > 0.025) {
+      if (rms > 0.020) {
         heardSpeech = true;
         lastVoiceAt = now;
       }
-      const silenceAfterSpeech = heardSpeech && now - lastVoiceAt > 950 && now - startedAt > 900;
-      const maxTurn = now - startedAt > 25000;
-      const noSpeechTimeout = !heardSpeech && now - startedAt > 9000;
+      const silenceAfterSpeech = heardSpeech && now - lastVoiceAt > 1900 && now - startedAt > 1200;
+      const maxTurn = now - startedAt > 45000;
+      const noSpeechTimeout = !heardSpeech && now - startedAt > 15000;
       if (silenceAfterSpeech || maxTurn || noSpeechTimeout) {
         try { thisRecorder.stop(); } catch {}
         return;
@@ -983,6 +1095,15 @@
     }catch(e){$("adminStatus").textContent=e.message;}
     finally{$("reindexBtn").disabled=false;}
   }
+
+  document.addEventListener("pointerdown",()=>{unlockAudioOutput().catch(()=>{});},{passive:true});
+  document.addEventListener("keydown",()=>{unlockAudioOutput().catch(()=>{});},{passive:true});
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible" && voiceLoopEnabled){
+      const live=voiceStream?.getAudioTracks?.().some(t=>t.readyState==="live");
+      if(!live) scheduleVoiceReconnect("retorno à aba",300);
+    }
+  });
 
   $("chatTab").onclick = () => switchPanel("chat");
   $("libraryTab").onclick = () => switchPanel("library");

@@ -52,6 +52,16 @@ jobs:
           grep -q 'isFocusedCitationRequest' src/index.js
           grep -q 'APENAS UMA fonte principal' src/index.js
           grep -q 'NUNCA gere tabela Markdown' src/index.js
+          grep -q 'SEMANTIC_MIN_SCORE = 0.46' src/index.js
+          grep -q 'LEXICAL_MIN_COVERAGE = 0.50' src/index.js
+          grep -q 'gracefulEmptyAnswer' src/index.js
+          grep -q 'Quer que eu faça uma busca mais ampla no documento' src/index.js
+          grep -q 'transcribeBlobWithRetry' public/app.js
+          grep -q 'scheduleVoiceReconnect' public/app.js
+          grep -q 'unlockAudioOutput' public/app.js
+          grep -q 'noiseSuppression: true' public/app.js
+          grep -q 'echoCancellation: true' public/app.js
+          grep -q 'autoGainControl: true' public/app.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js
