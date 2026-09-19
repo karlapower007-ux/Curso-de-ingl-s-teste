@@ -29,16 +29,13 @@ function exactIntent(question){
   const raw=String(question||"").trim();
   const scripture=raw.match(STRICT_SCRIPTURE_QUERY_RE);
   if(scripture)return {strict:true,target:scripture[0].replace(/\s+/g," ").trim(),type:"canonical-reference"};
-  const book=raw.match(STRICT_BOOK_QUERY_RE);
-  if(book){
-    const target=book[0].replace(/\s+/g," ").trim();
-    const normalized=normalizeExact(raw);
-    const normalizedTarget=normalizeExact(target);
-    const wrappers=normalized
-      .replace(normalizedTarget,"")
-      .replace(/\b(?:mostre|mostrar|busque|buscar|procure|procurar|encontre|encontrar|leia|ler|cite|citar|referencia|referência|texto|exato|exata|sobre|em|no|na|do|da|de|por|favor|me|o|a)\b/g," ")
-      .replace(/\s+/g," ").trim();
-    if(!wrappers)return {strict:true,target,type:"book-reference"};
+
+  const cleaned=raw
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+)?(?:mostre|mostrar|busque|buscar|procure|procurar|encontre|encontrar|leia|ler|cite|citar)\s+/iu,"")
+    .replace(/[?.!]+$/g,"").trim();
+  const book=cleaned.match(STRICT_BOOK_QUERY_RE);
+  if(book&&normalizeExact(book[0])===normalizeExact(cleaned)){
+    return {strict:true,target:book[0].replace(/\s+/g," ").trim(),type:"book-reference"};
   }
   return {strict:false,target:"",type:"general"};
 }
