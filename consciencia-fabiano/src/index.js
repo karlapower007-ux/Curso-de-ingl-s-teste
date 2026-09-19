@@ -929,6 +929,50 @@ async function retrieveSupabaseStrictContext(env,question){
   };
 }
 
+async function supabaseOmniSyncState(env){
+  const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
+  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
+  if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
+
+  const fetchEdge=async(order)=>{
+    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
+    endpoint.searchParams.set("select","id,document_id,chunk_index");
+    endpoint.searchParams.set("order","id."+order);
+    endpoint.searchParams.set("limit","1");
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),4500);
+    try{
+      const res=await fetch(endpoint.toString(),{
+        headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json","Prefer":"count=exact"},
+        signal:controller.signal
+      });
+      if(!res.ok)throw new Error("Supabase sync state HTTP "+res.status);
+      const rows=await res.json().catch(()=>[]);
+      const range=String(res.headers.get("content-range")||"");
+      const totalMatch=range.match(/\/(\d+)$/);
+      return {row:Array.isArray(rows)&&rows[0]?rows[0]:null,total:totalMatch?Number(totalMatch[1]):0};
+    }finally{clearTimeout(timer);}
+  };
+
+  const [first,last]=await Promise.all([fetchEdge("asc"),fetchEdge("desc")]);
+  const total=Math.max(Number(first.total||0),Number(last.total||0));
+  const signatureSeed=[
+    total,
+    first.row?.id||"",first.row?.document_id||"",first.row?.chunk_index||0,
+    last.row?.id||"",last.row?.document_id||"",last.row?.chunk_index||0
+  ].join("|");
+  const signature=await sha256Text(signatureSeed);
+  return json({
+    ok:true,
+    signature,
+    total,
+    first_id:String(first.row?.id||""),
+    last_id:String(last.row?.id||""),
+    fingerprint_mode:"count+edge-ids",
+    batch_size:200
+  });
+}
+
 async function supabaseOmniSyncPage(env,url){
   const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
   const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
@@ -3262,6 +3306,7 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
     if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
+    if (url.pathname === "/api/admin/omni-sync-state" && request.method === "GET") return supabaseOmniSyncState(env);
     if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return supabaseOmniSyncPage(env,url);
         if (url.pathname === "/api/rag/config" && request.method === "GET") {
       return json({
