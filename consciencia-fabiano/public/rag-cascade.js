@@ -1,4 +1,4 @@
-const TOP_K=15;
+const TOP_K=100;
 const SEMANTIC_MIN_SCORE=0.38;
 const RAM_LIMIT=1600;
 const LEVELS=[
@@ -15,6 +15,7 @@ const LEVELS=[
 ];
 
 const ramCorpus=[];
+let staticBackupHydrated=false;
 let seq=0;
 const pending=new Map();
 const searchWorker=new Worker("/rag-search-worker.js?v="+Date.now(),{type:"module"});
@@ -82,7 +83,34 @@ async function preloadRam(){
     for(const c of chunks.slice(0,RAM_LIMIT))ramCorpus.push(normalizeMatch(c,"ram-static"));
   }catch{}
 }
-const ready=preloadRam();
+
+async function hydrateStaticBackup(force=false){
+  if(staticBackupHydrated && !force) return {chunks:0,vectors:0};
+  try{
+    const res=await fetch("/biblioteca_backup.json?v=16",{cache:"no-store"});
+    if(!res.ok) return {chunks:0,vectors:0};
+    const data=await res.json();
+    const chunks=Array.isArray(data?.chunks)?data.chunks:[];
+    const vectors=Array.isArray(data?.vectors)?data.vectors:[];
+    for(let i=0;i<chunks.length;i+=200){
+      const batch=chunks.slice(i,i+200).map(c=>normalizeMatch(c,"static-backup"));
+      if(batch.length){
+        const stored=batch.map((c,j)=>({...c,key:String(c.id || c.document_id || "backup")+":"+String(c.page || (i+j))}));
+        await rpc(searchWorker,"persist-chunks",{chunks:stored},5000);
+        rpc(opfsWorker,"persist-chunks",{chunks:stored},5000).catch(()=>{});
+        const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
+        if(room)ramCorpus.push(...batch.slice(0,room));
+      }
+    }
+    for(let i=0;i<vectors.length;i+=200){
+      const records=vectors.slice(i,i+200).filter(v=>Array.isArray(v?.vector) && v.vector.length>=64);
+      if(records.length) await rpc(searchWorker,"persist-vectors",{records},8000);
+    }
+    staticBackupHydrated=true;
+    return {chunks:chunks.length,vectors:vectors.length};
+  }catch{return {chunks:0,vectors:0};}
+}
+const ready=Promise.all([preloadRam(),hydrateStaticBackup(false)]);
 
 async function persistExtracted(extracted){
   await ready;
@@ -170,7 +198,7 @@ async function cacheRecoveredMatches(matches){
 
 async function level5(question,queryEmbedding){
   const res=await withTimeout(fetch("/api/rag/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question,query_embedding:queryEmbedding})}),1800);
-  if(!res.ok)throw new Error("cloudflare "+res.status);
+  if(!res.ok){const error=new Error("cloudflare "+res.status);error.status=res.status;throw error;}
   const data=await res.json();
   const matches=(data.matches||[]).map(x=>normalizeMatch(x,"cloudflare-current"));
   cacheRecoveredMatches(matches).catch(()=>{});
@@ -198,8 +226,8 @@ async function search(question,queryEmbedding){
       const matches=await fn();
       attempts.push({level,name,ok:true,count:matches.length,ms:Math.round(performance.now()-started)});
       return matches;
-    }catch{
-      attempts.push({level,name,ok:false,count:0,ms:Math.round(performance.now()-started)});
+    }catch(error){
+      attempts.push({level,name,ok:false,count:0,status:Number(error?.status || 0),ms:Math.round(performance.now()-started)});
       return [];
     }
   };
@@ -213,6 +241,11 @@ async function search(question,queryEmbedding){
   if(matches.length)return {matches,level:4,name:LEVELS[3][1],attempts};
   matches=await run(5,LEVELS[4][1],()=>level5(question,queryEmbedding));
   if(matches.length)return {matches,level:5,name:LEVELS[4][1],attempts};
+
+  await hydrateStaticBackup(true);
+  matches=await run(2,"IndexedDB reidratado",()=>level2(question,queryEmbedding));
+  if(matches.length)return {matches,level:2,name:"IndexedDB reidratado",attempts};
+
   for(const [level,provider] of [[6,"supabase"],[7,"pinecone"],[8,"mongodb"],[9,"astra"]]){
     matches=await run(level,LEVELS[level-1][1],()=>cloudSlot(provider,question,queryEmbedding));
     if(matches.length)return {matches,level,name:LEVELS[level-1][1],attempts};
@@ -247,5 +280,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,levels:LEVELS};
-export {ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,LEVELS};
+window.FNSRagCascade={ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,persistExtracted,persistVectors,getDocumentChunks,listDocuments,deleteDocument,hydrateStaticBackup,LEVELS};
