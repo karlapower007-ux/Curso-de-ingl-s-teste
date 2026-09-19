@@ -22,7 +22,7 @@ node --check scripts/browser-ingest-smoke.mjs
 ! grep -q 'readPdfBuffer' src/index.js
 grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
 grep -q 'EMBED_CONCURRENCY = 50' src/index.js
-grep -q 'pdfjs-dist@4.10.38' public/index.html
+grep -q 'pdfjs-dist@4.10.38' public/app.js
 grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
 ! grep -q 'generativelanguage.googleapis.com' src/index.js
 grep -q 'text/event-stream' src/index.js
