@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "format": "fns-rag-static-backup-v1",
+  "expected_embeddings": 25199,
+  "hydrated_embeddings": 0,
+  "generated_at": "2026-09-19T00:00:00Z",
+  "status": "awaiting-source-export",
+  "note": "Loader V1.16 ativo. Os 25.199 vetores originais não estão presentes no repositório e não puderam ser exportados enquanto o Durable Objects estava sob limite de leitura. Quando o payload real for exportado, este arquivo aceita chunks e vectors sem alteração de código.",
+  "chunks": [],
+  "vectors": []
+}
