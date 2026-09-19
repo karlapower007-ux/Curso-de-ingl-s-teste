@@ -99,7 +99,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '1.16.0-instant-auth-whisper-fallback-map-reduce' src/index.js
+          grep -q '1.17.0-grounded-multicloud-rag' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 3' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
@@ -107,6 +107,17 @@ jobs:
           grep -q 'MAP_BATCH_SIZE = 20' src/index.js
           grep -q 'mapReduceContext' src/index.js
           grep -q 'rag_map_reduce: true' src/index.js
+          grep -q 'EMPTY_GROUNDED_ANSWER' src/index.js
+          grep -q 'groq_temperature: 0.05' src/index.js
+          grep -q 'deterministic_reference_rendering: true' src/index.js
+          grep -q 'mirrorSupabase' src/index.js
+          grep -q 'mirrorPinecone' src/index.js
+          grep -q '/api/admin/export-library' src/index.js
+          grep -q '/export-page' src/index.js
+          test -f supabase/migrations/001_rag_embeddings_rls.sql
+          grep -q 'force row level security' supabase/migrations/001_rag_embeddings_rls.sql
+          test -f scripts/export-multicloud.mjs
+          grep -q 'biblioteca_backup' scripts/export-multicloud.mjs
           grep -q 'TOP_K=100' public/rag-cascade.js
           grep -q 'hydrateStaticBackup' public/rag-cascade.js
           test -f public/biblioteca_backup.json
