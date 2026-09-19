@@ -72,7 +72,7 @@ await loadSteel();
 
 http.createServer(async(req,res)=>{
   if(req.method==="OPTIONS"){cors(res);res.statusCode=204;res.end();return;}
-  if(req.url==="/health"){json(res,{ok:true,service:"FNS Desktop Fallback",version:"3.0.0",chunks:chunks.length});return;}
+  if(req.url==="/health"){json(res,{ok:true,service:"FNS Desktop Fallback",version:"3.1.0",chunks:chunks.length});return;}
   if(req.method==="POST"&&req.url==="/search"){
     const body=await readBody(req);const matches=search(body.question||"",20);
     const answer=matches.map((r,i)=>"[F"+(i+1)+"] "+String(r.title||r.filename||"Documento")+"\n"+String(r.text||"")).join("\n\n");
