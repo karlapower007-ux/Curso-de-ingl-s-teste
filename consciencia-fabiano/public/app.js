@@ -311,6 +311,20 @@
     return body;
   }
 
+  window.FNSRagMirrorBatch = async function(records){
+    const list=Array.isArray(records)?records.slice(0,100):[];
+    if(!list.length || ownerToken()!==LOCAL_ADMIN_PASSWORD) return {ok:true,skipped:true};
+    try{
+      return await api("/api/admin/mirror-upsert",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({records:list})
+      },false);
+    }catch{
+      return {ok:false,queued_for_later:true};
+    }
+  };
+
   function setAvatar(mode) {
     const img = $("avatarImg");
     if (!img) return;
