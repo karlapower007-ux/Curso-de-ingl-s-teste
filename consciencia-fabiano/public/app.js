@@ -961,9 +961,14 @@
     status.className="offline-turbine-status";
     const physical=Math.max(0,Number(data?.physical_workers||0));
     const logical=Math.max(0,Number(data?.logical_tasks||0));
+    const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
-    status.textContent="Plano C V6.0 • "+cards.length+" blocos semânticos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
-      (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
+    status.textContent=agents
+      ? "V6.0 Omni Agent Swarm • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+        (data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal-first")+
+        (mergedCount?" • "+mergedCount+" chunks costurados":"")
+      : "Plano C V6.0 • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
+        (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
     wrap.appendChild(status);
 
     const viewport=document.createElement("div");
@@ -1409,6 +1414,64 @@
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
+
+      // V6: 1000 candidatos alimentam 10 agentes lógicos isolados em Web Workers.
+      // Agent 2 usa Transformers.js/MiniLM apenas quando o literal não encontra nada.
+      try{
+        const engine=await ensureRagCascade("v6-omni-agent-query");
+        if(engine?.omniAgentSearch){
+          const swarmResult=await engine.omniAgentSearch(q,{
+            onProgress:progress=>{
+              if($("backendText")){
+                $("backendText").textContent="V6.0 • agente "+Number(progress?.agent||0)+"/10 • "+String(progress?.name||"analisando");
+              }
+            }
+          });
+          if(swarmResult?.ok && Array.isArray(swarmResult.cards) && swarmResult.cards.length){
+            const rendered=appendOfflineTurbineResults(swarmResult);
+            const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
+            const persisted=[
+              "V6.0 Omni Agent Swarm: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 10.",
+              ...renderedCards.slice(0,10).map((card,i)=>
+                "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
+                (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
+              )
+            ].join("\n\n");
+            const sources=renderedCards.slice(0,24).map(card=>({
+              arquivo:card.filename||card.source_title||"Documento",
+              titulo:canonicalHeader(card),
+              autor:card.author||"",
+              pagina:card.page||null,
+              chunk_index:card.chunk_index,
+              document_id:card.document_id,
+              score:card.score
+            }));
+            history.push({
+              role:"assistant",content:persisted,sources,fallback:false,
+              omni_agent_swarm:true,logical_agents:10,
+              semantic_fallback:Boolean(swarmResult.semantic_fallback_used),ts:Date.now()
+            });
+            saveHistory();
+            if($("backendText")){
+              $("backendText").textContent="V6.0 • 10 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 10 aprovado";
+            }
+            setAvatar("closed");
+            return;
+          }
+          if(swarmResult?.strict_empty===true && swarmResult?.library_coverage_known===true){
+            const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
+            appendElegantSilence(silence);
+            history.push({
+              role:"assistant",content:silence,sources:[],fallback:false,
+              omni_agent_swarm:true,strict_empty:true,zero_noise:true,ts:Date.now()
+            });
+            saveHistory();
+            if($("backendText")) $("backendText").textContent="V6.0 • Agent 10 • zero evidências aprovadas";
+            setAvatar("closed");
+            return;
+          }
+        }
+      }catch{}
 
       // V3.3: referências diretas nunca passam por fuzzy/LLM antes do filtro booleano local.
       if(isStrictPrecisionReferenceIntent(q)){
