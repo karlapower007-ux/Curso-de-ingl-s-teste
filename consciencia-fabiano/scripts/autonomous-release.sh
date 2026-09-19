@@ -14,9 +14,12 @@ GEMINI_API_KEY_CLEAN=$(printf '%s' "$GEMINI_API_KEY" | tr -d '\r\n' | sed -e 's/
 case "$GEMINI_API_KEY_CLEAN" in
   AQ.*) log "GEMINI_KEY_FORMAT=auth" ;;
   AIza*) log "GEMINI_KEY_FORMAT=standard" ;;
-  *) log "GEMINI_KEY_FORMAT=unknown" ;;
+  *) log "GEMINI_KEY_FORMAT=unknown"; die "GEMINI_SECRET_NOT_API_KEY" ;;
 esac
 log "GEMINI_KEY_LENGTH=${#GEMINI_API_KEY_CLEAN}"
+if [ "${#GEMINI_API_KEY_CLEAN}" -lt 35 ]; then
+  die "GEMINI_SECRET_TRUNCATED_OR_WRONG_VALUE"
+fi
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
