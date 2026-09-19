@@ -875,7 +875,7 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
   const inputBudget=Math.max(1200,Number(options.input_budget || GROQ_INPUT_BUDGET_TOKENS));
   const model=String(options.model || CHAT_MODEL);
   const maxCompletionTokens=Math.max(100,Number(options.max_completion_tokens || GROQ_MAX_COMPLETION_TOKENS));
-  const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.05;
+  const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.0;
   let safeMessages=enforceGroqBudget(messages,inputBudget);
   const execute=async(payloadMessages)=>{
     return fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -930,7 +930,7 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
     const res=await groqCompletion(env,messages,false,{
       input_budget:3400,
       max_completion_tokens:MAP_MAX_COMPLETION_TOKENS,
-      temperature:0.05
+      temperature:0.0
     });
     const data=await res.json().catch(()=>({}));
     const text=String(data?.choices?.[0]?.message?.content || "").trim();
@@ -1345,7 +1345,7 @@ async function mirrorPinecone(env,records){
 
 async function mirrorUpsert(request,env){
   const body=await request.json().catch(()=>({}));
-  const records=normalizeMirrorRecords(body?.records);
+  const records=normalizeMirrorRecords(body?.records).slice(0,50);
   if(!records.length) return json({ok:true,records:0,providers:[]});
   const providers=await Promise.allSettled([
     mirrorSupabase(env,records),
@@ -1544,7 +1544,7 @@ async function status(env) {
     search_top_k: TOP_K,
     rag_map_reduce: true,
     anti_hallucination_mode: "strict-grounded",
-    groq_temperature: 0.05,
+    groq_temperature: 0.0,
     deterministic_reference_rendering: true,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
