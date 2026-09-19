@@ -139,7 +139,7 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.1.0-twenty-agent-cross-device"
+    and .version == "7.1.0-fabiano-r2-cross-device"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
