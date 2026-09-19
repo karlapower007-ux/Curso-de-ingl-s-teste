@@ -377,3 +377,106 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
   color:#f1f5f9;
   max-width:100%;
 }
+
+
+/* V3.1 OFFLINE TURBINES */
+.offline-turbine-results{
+  width:min(980px,98%);
+  max-width:98%!important;
+}
+.offline-turbine-status{
+  margin:0 0 14px;
+  padding:10px 12px;
+  border:1px solid rgba(56,189,248,.26);
+  border-radius:10px;
+  background:rgba(14,116,144,.09);
+  color:#bae6fd;
+  font-size:.8rem;
+  font-weight:700;
+  line-height:1.45;
+}
+.offline-turbine-viewport{
+  position:relative;
+  height:min(58vh,620px);
+  min-height:360px;
+  overflow:auto;
+  contain:strict;
+  overscroll-behavior:contain;
+  padding:0 2px;
+}
+.offline-turbine-spacer{
+  width:1px;
+  opacity:0;
+  pointer-events:none;
+}
+.offline-turbine-layer{
+  position:absolute;
+  inset:0 0 auto 0;
+}
+.offline-turbine-slot{
+  position:absolute;
+  left:0;
+  right:0;
+  box-sizing:border-box;
+}
+.offline-turbine-card{
+  display:block;
+  background:#141414;
+  border:1px solid #333;
+  border-left:4px solid #0ea5e9;
+  border-radius:10px;
+  padding:18px 18px 20px;
+  box-shadow:0 5px 14px rgba(0,0,0,.28);
+  overflow-wrap:anywhere;
+}
+.offline-turbine-card-head{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:8px;
+}
+.offline-turbine-card-head strong{
+  min-width:0;
+  color:#f8fafc;
+  font-size:.96rem;
+  line-height:1.35;
+}
+.offline-turbine-badge{
+  flex:0 0 auto;
+  font:700 .72rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color:#7dd3fc;
+  border:1px solid rgba(56,189,248,.28);
+  border-radius:999px;
+  padding:5px 8px;
+  background:rgba(14,116,144,.09);
+}
+.offline-turbine-meta{
+  margin:0 0 14px;
+  color:#94a3b8;
+  font-size:.74rem;
+  line-height:1.45;
+}
+.offline-turbine-text{
+  white-space:pre-wrap;
+  color:#f1f5f9;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:.98rem;
+  line-height:1.72;
+}
+.offline-turbine-text p{
+  white-space:pre-wrap;
+  margin:0 0 1.35rem;
+}
+.offline-turbine-text p:last-child{
+  margin-bottom:0;
+}
+/* O slot inclui 40px de padding inferior: duas linhas visuais de respiro entre cartões. */
+@media(max-width:560px){
+  .offline-turbine-viewport{
+    height:54vh;
+    min-height:330px;
+  }
+  .offline-turbine-card{
+    padding:16px 14px 18px;
+  }
+}
