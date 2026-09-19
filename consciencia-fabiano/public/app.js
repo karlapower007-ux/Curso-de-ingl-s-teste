@@ -1506,7 +1506,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.0 Twenty Agent Mesh: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 10.",
+              "V7.0 Twenty Agent Mesh: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
               ...renderedCards.slice(0,10).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1528,7 +1528,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.0 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 10 aprovado";
+              $("backendText").textContent="V7.0 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
