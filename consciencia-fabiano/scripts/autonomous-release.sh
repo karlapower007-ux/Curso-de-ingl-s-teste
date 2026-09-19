@@ -39,6 +39,19 @@ grep -Fq "associated with the email $EXPECTED_CF_EMAIL" /tmp/whoami.txt || {
 }
 log "FABIANO_CLOUDFLARE_IDENTITY_PASS=yes"
 
+log "2.1/7 Discover authoritative Fabiano account ID from the authenticated token"
+curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" >/tmp/fabiano-accounts.json || die "FABIANO_ACCOUNT_DISCOVERY_FAILED"
+jq -e '.success == true and (.result|type)=="array" and (.result|length)>=1' /tmp/fabiano-accounts.json >/dev/null || {
+  cat /tmp/fabiano-accounts.json
+  die "FABIANO_ACCOUNT_DISCOVERY_EMPTY"
+}
+DISCOVERED_ACCOUNT_ID=$(jq -r '.result[0].id // empty' /tmp/fabiano-accounts.json)
+[ -n "$DISCOVERED_ACCOUNT_ID" ] || die "FABIANO_ACCOUNT_ID_EMPTY"
+export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
+log "FABIANO_ACCOUNT_ID_DISCOVERED=yes"
+
 log "2.25/7 Ensure official R2 bucket exists before deploy"
 set +e
 npx wrangler r2 bucket create consciencia-fabiano-pdfs >/tmp/r2-bucket.log 2>&1
