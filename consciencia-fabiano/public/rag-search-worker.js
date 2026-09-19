@@ -181,7 +181,7 @@ function stitchDirect(rows){
   }
   return out;
 }
-function chapterSlice(text,n){
+function chapterSlice(text,n,allowOpenEnd=false){
   const raw=String(text||"");n=Number(n||0);if(!raw||!n)return null;
   const startRe=new RegExp("(?:^|\\n)\\s*(?:CAP[ÍI]TULO|CAPITULO|CHAPTER)\\s+"+n+"\\b","im");
   const m=startRe.exec(raw);if(!m)return null;
@@ -189,6 +189,7 @@ function chapterSlice(text,n){
   const tail=m.index+m[0].length;
   const endRe=new RegExp("(?:^|\\n)\\s*(?:CAP[ÍI]TULO|CAPITULO|CHAPTER)\\s+"+(n+1)+"\\b","im");
   const next=endRe.exec(raw.slice(tail));
+  if(!next&&!allowOpenEnd)return null;
   return raw.slice(start,next?tail+next.index:raw.length).replace(/\s+$/,"")||null;
 }
 function verseSlice(text,v){
@@ -221,20 +222,27 @@ async function directRetrieve(question){
   if(!anchor)return {ok:false,direct:true,code:"LOCAL_DIRECT_ANCHOR_NOT_FOUND"};
   const doc=String(anchor.document_id||anchor.doc_key||"");
   const allRows=sortDirect((await all("chunks")).filter(r=>String(r.document_id||r.doc_key||"")===doc));
-  const pos=Math.max(0,allRows.findIndex(r=>String(r.key||r.id||"")===String(anchor.key||anchor.id||"")));
+  let pos=allRows.findIndex(r=>String(r.key||r.id||"")===String(anchor.key||anchor.id||""));
+  if(pos<0){
+    const anchorChunk=Number(anchor.chunk_index);
+    pos=allRows.findIndex(r=>Number(r.chunk_index)===anchorChunk);
+  }
+  pos=Math.max(0,pos);
   const before=intent.mode==="full-chapter"?300:intent.mode==="exact-verse"?80:12;
   const max=intent.mode==="full-chapter"?1000:intent.mode==="exact-verse"?240:48;
   const start=Math.max(0,pos-before);
   const windowRows=allRows.slice(start,Math.min(allRows.length,start+max, start+EXACT_SWARM_NODE_COUNT));
+  const exhausted=(start+windowRows.length)>=allRows.length;
   const ordered=await pool(windowRows,EXACT_MAX_CONCURRENCY,async(row,index)=>({...row,__node:index+1}));
   const stitched=stitchDirect(ordered);
   let text="",scope="";
   if(intent.mode==="full-chapter"&&intent.chapter_number){
-    text=chapterSlice(stitched,intent.chapter_number)||"";
+    text=chapterSlice(stitched,intent.chapter_number,exhausted)||"";
     if(text)scope="full-chapter";
+    else return {ok:false,direct:true,bypass_llm:true,code:"LOCAL_CHAPTER_BOUNDARY_INCOMPLETE",provider:"indexeddb-local"};
   }
   if(!text&&intent.mode==="exact-verse"){
-    const base=(intent.chapter_number&&chapterSlice(stitched,intent.chapter_number))||stitched;
+    const base=(intent.chapter_number&&chapterSlice(stitched,intent.chapter_number,exhausted))||stitched;
     text=(intent.verse_number&&verseSlice(base,intent.verse_number))||String(anchor.text||"");
     scope=intent.verse_number&&text!==String(anchor.text||"")?"exact-verse":"exact-anchor-chunk";
   }
