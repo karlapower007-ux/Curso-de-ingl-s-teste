@@ -148,17 +148,41 @@ async function level4(question,queryEmbedding){
     return (data.matches||[]).map(x=>normalizeMatch(x,"localhost"));
   }finally{clearTimeout(timer);}
 }
+async function cacheRecoveredMatches(matches){
+  const rows=(matches||[]).map((m,i)=>({
+    key:String(m.id || m.document_id || "recovered")+":"+String(m.page || i),
+    doc_key:String(m.document_id || "recovered"),
+    document_id:String(m.document_id || "recovered"),
+    filename:String(m.filename || m.title || "Documento recuperado"),
+    title:String(m.title || m.filename || "Documento recuperado"),
+    author:String(m.author || ""),
+    language:String(m.language || "pt"),
+    page:Number(m.page || 0),
+    text:String(m.text || ""),
+    updated_at:Date.now()
+  })).filter(r=>r.text);
+  if(!rows.length)return;
+  const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
+  if(room)ramCorpus.push(...rows.slice(0,room));
+  try{await rpc(searchWorker,"persist-chunks",{chunks:rows},3500);}catch{}
+  rpc(opfsWorker,"persist-chunks",{chunks:rows},3500).catch(()=>{});
+}
+
 async function level5(question,queryEmbedding){
   const res=await withTimeout(fetch("/api/rag/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question,query_embedding:queryEmbedding})}),1800);
   if(!res.ok)throw new Error("cloudflare "+res.status);
   const data=await res.json();
-  return (data.matches||[]).map(x=>normalizeMatch(x,"cloudflare-current"));
+  const matches=(data.matches||[]).map(x=>normalizeMatch(x,"cloudflare-current"));
+  cacheRecoveredMatches(matches).catch(()=>{});
+  return matches;
 }
 async function cloudSlot(provider,question,queryEmbedding){
   const res=await withTimeout(fetch("/api/rag/provider-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider,question,query_embedding:queryEmbedding})}),1000);
   if(!res.ok)throw new Error(provider+" unavailable");
   const data=await res.json();
-  return (data.matches||[]).map(x=>normalizeMatch(x,provider));
+  const matches=(data.matches||[]).map(x=>normalizeMatch(x,provider));
+  cacheRecoveredMatches(matches).catch(()=>{});
+  return matches;
 }
 async function level10(question){
   const r=await rpc(searchWorker,"search-bm25",{question,top_k:TOP_K},2200);
