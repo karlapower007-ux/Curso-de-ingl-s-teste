@@ -1,4 +1,4 @@
-const VERSION = "3.1.0-offline-turbines";
+const VERSION = "3.2.0-semantic-expansion";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -2992,7 +2992,7 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-v3.1-offline-turbines",
+    architecture: "cloudflare-v3.2-semantic-expansion",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
@@ -3070,6 +3070,12 @@ async function status(env) {
     plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity",
     plan_c_virtualized_result_cards: true,
     plan_c_card_gap_px: 40,
+    plan_c_window_expansion: true,
+    plan_c_context_before: 2,
+    plan_c_context_after: 4,
+    plan_c_full_chunk_fallback: true,
+    plan_c_sequential_chunk_merge: true,
+    plan_c_canonical_reference_elevation: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     micro_node_chain: false,
@@ -3982,7 +3988,7 @@ export default {
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-v3.1-offline-turbines",
+        architecture: "cloudflare-v3.2-semantic-expansion",
         storage_backend: "durable-object-sqlite",
         workers_ai_used: false,
         llm_provider: "groq",
@@ -4034,6 +4040,12 @@ export default {
         plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity",
         plan_c_virtualized_result_cards: true,
         plan_c_card_gap_px: 40,
+    plan_c_window_expansion: true,
+    plan_c_context_before: 2,
+    plan_c_context_after: 4,
+    plan_c_full_chunk_fallback: true,
+    plan_c_sequential_chunk_merge: true,
+    plan_c_canonical_reference_elevation: true,
         sse_keepalive_ms: SSE_KEEPALIVE_MS,
         groq_round_robin_key_rotation: true,
         groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
