@@ -22,6 +22,14 @@ const pending=new Map();
 const searchWorker=new Worker("/rag-search-worker.js?v="+Date.now(),{type:"module"});
 const opfsWorker=new Worker("/opfs-sqlite-worker.js?v="+Date.now(),{type:"module"});
 
+let semanticWorker=null;
+function ensureSemanticWorker(){
+  if(semanticWorker)return semanticWorker;
+  semanticWorker=new Worker("/embedding-worker.js?v=6.0.0",{type:"module"});
+  semanticWorker.onmessage=onWorkerMessage;
+  return semanticWorker;
+}
+
 function onWorkerMessage(event){
   const data=event.data || {};
   const p=pending.get(data.id);
@@ -50,6 +58,7 @@ function normalizeMatch(x,mode){
     id:String(x.id || x.key || ""),
     document_id:String(x.document_id || x.doc_key || "local"),
     page:Number(x.page || 0) || null,
+    chunk_index:Number(x.chunk_index || 0),
     text:String(x.text || "").slice(0,6000),
     filename:String(x.filename || x.title || "Documento local"),
     title:String(x.title || x.filename || "Documento local"),
@@ -322,6 +331,76 @@ async function offlineSearch(question){
   }
 }
 
+async function omniAgentSearch(question,{onProgress}={}){
+  await ready;
+  const q=String(question||"").trim();
+  if(!q)return {ok:false,cards:[],strict_empty:true,zero_noise:true,logical_agents:10,physical_workers:0};
+
+  let localStrict={matches:[],scanned:0,exact_hits:0,documents_hit:0};
+  try{
+    localStrict=await rpc(searchWorker,"search-strict",{question:q,top_k:OFFLINE_TOP_K},30000);
+  }catch{}
+
+  let cloudRows=[],cloudReadable=false;
+  if(typeof navigator==="undefined" || navigator.onLine){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),4500);
+    try{
+      const res=await fetch("/api/rag/search",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({question:q}),
+        signal:controller.signal
+      });
+      const data=await res.json().catch(()=>({}));
+      if(res.ok&&data?.ok===true){
+        cloudReadable=true;
+        cloudRows=Array.isArray(data.matches)?data.matches:[];
+      }
+    }catch{}finally{clearTimeout(timer);}
+  }
+
+  const seen=new Set(),literalMatches=[];
+  for(const row of [...(localStrict.matches||[]),...cloudRows]){
+    const item=normalizeMatch(row,String(row?.retrieval_mode||"v6-literal"));
+    const key=item.id||[item.document_id,item.chunk_index,item.page,fold(item.text).slice(0,180)].join("|");
+    if(seen.has(key))continue;
+    seen.add(key);literalMatches.push(item);
+    if(literalMatches.length>=OFFLINE_TOP_K)break;
+  }
+
+  let semanticMatches=[];
+  if(!literalMatches.length){
+    try{
+      const ew=ensureSemanticWorker();
+      const embedded=await rpc(ew,"embed-query",{text:q,priority:"high"},30000);
+      if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
+        const semantic=await rpc(searchWorker,"search-semantic",{
+          query:embedded.vector,top_k:OFFLINE_TOP_K,min_score:0.62
+        },20000);
+        semanticMatches=(semantic.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v6-transformers-semantic"));
+      }
+    }catch{}
+  }
+
+  const swarm=await import("/agent-swarm.js?v=6.0.0");
+  const result=await swarm.runAgentSwarm({
+    question:q,literalMatches,semanticMatches,onProgress
+  });
+  return {
+    ...result,
+    provider:"omni-agent-swarm-v6",
+    literal_sources:"IndexedDB+Cloudflare+Supabase strict",
+    local_scanned:Number(localStrict.scanned||0),
+    local_exact_hits:Number(localStrict.exact_hits||0),
+    local_documents_hit:Number(localStrict.documents_hit||0),
+    cloud_readable:cloudReadable,
+    cloud_literal_hits:cloudRows.length,
+    library_coverage_known:Boolean(cloudReadable||Number(localStrict.scanned||0)>0),
+    logical_capacity:OFFLINE_TOP_K
+  };
+}
+
 async function getDocumentChunks(documentId,offset=0,limit=20){
   await ready;
   try{
@@ -368,5 +447,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,offlineSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,offlineSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,offlineSearch,omniAgentSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,offlineSearch,omniAgentSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
