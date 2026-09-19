@@ -1,4 +1,4 @@
-const TOP_K=100;
+const TOP_K=500;
 const SEMANTIC_MIN_SCORE=0.38;
 const RAM_LIMIT=1600;
 const LEVELS=[
@@ -268,8 +268,8 @@ async function search(question,queryEmbedding){
     }
   };
 
-  // Regra de tráfego V1.20: todas as fontes locais pesquisáveis participam antes
-  // de qualquer rejeição. Um hit em RAM, vetor, OPFS ou BM25 já abre os 20 núcleos.
+  // Regra de tráfego V2.0: todas as fontes locais pesquisáveis participam antes
+  // de qualquer rejeição. A malha pode liberar até 500 evidências para os nós assíncronos.
   const [ramHits,vectorHits,opfsHits,bm25Hits]=await Promise.all([
     run(1,LEVELS[0][1],()=>Promise.resolve(ramSearch(question))),
     run(2,LEVELS[1][1],()=>level2(question,queryEmbedding)),
