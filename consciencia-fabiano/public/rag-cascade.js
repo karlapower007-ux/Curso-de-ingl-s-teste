@@ -306,9 +306,17 @@ async function search(question,queryEmbedding){
 async function offlineSearch(question){
   await ready;
   try{
-    const r=await rpc(searchWorker,"search-bm25",{question:String(question||""),top_k:OFFLINE_TOP_K},15000);
-    const matches=(r.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"indexeddb-offline-bm25"));
-    return {matches,level:10,name:"IndexedDB offline BM25 1000",logical_capacity:OFFLINE_TOP_K};
+    const r=await rpc(searchWorker,"search-strict",{question:String(question||""),top_k:OFFLINE_TOP_K},30000);
+    const matches=(r.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"indexeddb-strict-phrase-v4"));
+    return {
+      matches,level:10,name:"IndexedDB strict phrase full-library",
+      logical_capacity:OFFLINE_TOP_K,
+      strict_phrase:String(r.target||""),
+      scanned:Number(r.scanned||0),
+      exact_hits:Number(r.exact_hits||0),
+      documents_hit:Number(r.documents_hit||0),
+      fuzzy_disabled:true,or_disabled:true
+    };
   }catch(error){
     return {matches:[],level:0,name:"offline-unavailable",logical_capacity:OFFLINE_TOP_K,error:String(error?.message||error)};
   }
