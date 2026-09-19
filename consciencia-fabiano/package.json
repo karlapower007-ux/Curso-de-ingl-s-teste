@@ -1,13 +1,17 @@
 {
   "name": "consciencia-do-fabiano",
   "private": true,
-  "version": "2.1.0",
+  "version": "3.0.0",
   "scripts": {
-    "check": "node --check public/app.js && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
+    "check": "node --check public/app.js && node --check public/failover-v3.js && node --check public/sw-v3.js && node --check scripts/build-static-vault.mjs && node --check scripts/build-failover-manifest.mjs && node --check scripts/local-fallback-server.mjs && node --check scripts/export-raw-vault.mjs && node --check standby/core.mjs && node --check standby/vercel/api/index.mjs && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "build": "npm run check",
     "deploy": "wrangler deploy",
     "cf:bootstrap": "npm run check",
-    "cf:deploy": "npm run check && wrangler deploy"
+    "cf:deploy": "npm run check && wrangler deploy",
+    "build:steel": "node scripts/build-static-vault.mjs",
+    "build:failover-manifest": "node scripts/build-failover-manifest.mjs",
+    "fallback:desktop": "node scripts/local-fallback-server.mjs",
+    "fallback:export": "node scripts/export-raw-vault.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
