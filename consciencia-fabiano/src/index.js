@@ -1,5 +1,5 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
-const VERSION = "7.0.0-twenty-agent-cross-device";
+const VERSION = "7.1.0-fabiano-r2-cross-device";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -135,6 +135,7 @@ function toBase64(buffer) {
 function assertBindings(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
+  if (!env.PDFS) missing.push("PDFS");
   if (missing.length) {
     const err = new Error("Bindings ausentes: " + missing.join(", "));
     err.code = "BINDINGS_MISSING";
@@ -929,85 +930,97 @@ async function retrieveSupabaseStrictContext(env,question){
   };
 }
 
-async function supabaseOmniSyncState(env){
-  const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
-  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
-  if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
-
-  const fetchEdge=async(order)=>{
-    const endpoint=new URL(base+"/rest/v1/library_chunks");
-    endpoint.searchParams.set("select","id,document_id,chunk_index");
-    endpoint.searchParams.set("order","id."+order);
-    endpoint.searchParams.set("limit","1");
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),4500);
-    try{
-      const res=await fetch(endpoint.toString(),{
-        headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json","Prefer":"count=exact"},
-        signal:controller.signal
-      });
-      if(!res.ok)throw new Error("Supabase sync state HTTP "+res.status);
-      const rows=await res.json().catch(()=>[]);
-      const range=String(res.headers.get("content-range")||"");
-      const totalMatch=range.match(/\/(\d+)$/);
-      return {row:Array.isArray(rows)&&rows[0]?rows[0]:null,total:totalMatch?Number(totalMatch[1]):0};
-    }finally{clearTimeout(timer);}
+const R2_LIBRARY_POINTER_KEY="library/current.json";
+function r2LibrarySegment(value){
+  return encodeURIComponent(String(value||"unknown").replace(/[^\p{L}\p{N}._-]+/gu,"-").slice(0,160) || "unknown");
+}
+async function r2JsonGet(bucket,key){
+  const obj=await bucket.get(key);
+  if(!obj)return null;
+  try{return JSON.parse(await obj.text());}catch{return null;}
+}
+async function r2LibraryShardUpsert(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  const documentId=String(body?.document_id||"").slice(0,180);
+  const offset=Math.max(0,Number(body?.offset||0));
+  const rows=normalizeLibraryChunkRecords(body?.records).slice(0,200);
+  if(!generation||!documentId)return json({ok:false,code:"R2_LIBRARY_BAD_REQUEST",message:"generation/document_id ausente."},400);
+  if(!rows.length)return json({ok:true,records:0,generation,document_id:documentId});
+  const key="library/generations/"+r2LibrarySegment(generation)+"/shards/"+r2LibrarySegment(documentId)+"/"+String(offset).padStart(10,"0")+".json";
+  const payload={
+    version:1,generation,document_id:documentId,offset,
+    count:rows.length,updated_at:new Date().toISOString(),rows
   };
-
-  const [first,last]=await Promise.all([fetchEdge("asc"),fetchEdge("desc")]);
-  const total=Math.max(Number(first.total||0),Number(last.total||0));
-  const signatureSeed=[
-    total,
-    first.row?.id||"",first.row?.document_id||"",first.row?.chunk_index||0,
-    last.row?.id||"",last.row?.document_id||"",last.row?.chunk_index||0
-  ].join("|");
-  const signature=await sha256Text(signatureSeed);
+  await env.PDFS.put(key,JSON.stringify(payload),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation,document_id:documentId,count:String(rows.length)}
+  });
+  return json({ok:true,records:rows.length,key,generation,document_id:documentId,offset,r2:true});
+}
+async function r2LibraryFinalize(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  if(!generation)return json({ok:false,code:"R2_LIBRARY_BAD_REQUEST",message:"generation ausente."},400);
+  const pointer={
+    version:1,
+    generation,
+    documents:Math.max(0,Number(body?.documents||0)),
+    chunks:Math.max(0,Number(body?.chunks||0)),
+    shards:Math.max(0,Number(body?.shards||0)),
+    updated_at:new Date().toISOString(),
+    bucket:"consciencia-fabiano-pdfs",
+    source:"indexeddb-pc-backfill"
+  };
+  await env.PDFS.put(R2_LIBRARY_POINTER_KEY,JSON.stringify(pointer),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation}
+  });
+  return json({ok:true,...pointer,r2:true});
+}
+async function r2OmniSyncState(env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING",message:"Binding R2 PDFS ausente."},503);
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(!pointer?.generation)return json({
+    ok:true,signature:"r2-empty",generation:"",total:0,documents:0,shards:0,batch_size:200,
+    backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
+  });
+  const signature=await sha256Text([
+    pointer.generation,pointer.documents||0,pointer.chunks||0,pointer.shards||0,pointer.updated_at||""
+  ].join("|"));
   return json({
-    ok:true,
-    signature,
-    total,
-    first_id:String(first.row?.id||""),
-    last_id:String(last.row?.id||""),
-    fingerprint_mode:"count+edge-ids",
-    batch_size:200
+    ok:true,signature,generation:String(pointer.generation),
+    total:Number(pointer.chunks||0),documents:Number(pointer.documents||0),shards:Number(pointer.shards||0),
+    updated_at:String(pointer.updated_at||""),batch_size:200,
+    backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
   });
 }
-
-async function supabaseOmniSyncPage(env,url){
-  const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
-  const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
-  if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
-  const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
-  const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
-  const endpoint=new URL(base+"/rest/v1/library_chunks");
-  endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text,content_hash,updated_at");
-  endpoint.searchParams.set("order","document_id.asc,chunk_index.asc");
-  endpoint.searchParams.set("limit",String(limit));
-  endpoint.searchParams.set("offset",String(offset));
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),6000);
-  try{
-    const res=await fetch(endpoint.toString(),{
-      headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json","Prefer":"count=exact"},
-      signal:controller.signal
-    });
-    if(!res.ok)return json({ok:false,code:"SUPABASE_SYNC_FAILED",message:"Supabase library sync HTTP "+res.status},res.status);
-    const rows=await res.json().catch(()=>[]);
-    const range=String(res.headers.get("content-range")||"");
-    const totalMatch=range.match(/\/(\d+)$/);
-    const total=totalMatch?Number(totalMatch[1]):null;
-    const count=Array.isArray(rows)?rows.length:0;
-    return json({
-      ok:true,
-      rows:Array.isArray(rows)?rows:[],
-      offset,limit,
-      next_offset:offset+count,
-      done:count<limit || (Number.isFinite(total)&&offset+count>=total),
-      total,
-      batch_size:limit,
-      memory_bounded:true
-    });
-  }finally{clearTimeout(timer);}
+async function r2OmniSyncPage(env,url){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  const generation=String(pointer?.generation||"");
+  if(!generation)return json({ok:true,rows:[],done:true,next_cursor:"",total:0,batch_size:200,backend:"cloudflare-r2"});
+  const cursor=String(url.searchParams.get("cursor")||"") || undefined;
+  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
+  const listed=await env.PDFS.list({prefix,limit:1,cursor});
+  const object=listed.objects?.[0]||null;
+  if(!object)return json({
+    ok:true,rows:[],done:true,next_cursor:"",total:Number(pointer?.chunks||0),generation,batch_size:200,backend:"cloudflare-r2"
+  });
+  const shard=await r2JsonGet(env.PDFS,object.key);
+  let rows=Array.isArray(shard?.rows)?shard.rows.slice(0,200):[];
+  const count=rows.length;
+  const nextCursor=listed.truncated?String(listed.cursor||""):"";
+  const response=json({
+    ok:true,rows,cursor:String(cursor||""),next_cursor:nextCursor,
+    done:!listed.truncated,total:Number(pointer?.chunks||0),generation,
+    batch_size:200,memory_bounded:true,backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs",
+    shard_key:object.key
+  });
+  rows.length=0; rows=null;
+  return response;
 }
 
 async function retrieveContextV4Strict(env,question){
@@ -3164,8 +3177,9 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-v7-twenty-agent-cross-device",
+    architecture: "cloudflare-v7.1-fabiano-r2-cross-device",
     storage_backend: "durable-object-sqlite",
+    cross_device_storage: "r2-native-binding",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
     client_pdf_extraction: "pdf.js",
@@ -3307,10 +3321,14 @@ async function status(env) {
     omni_sync_manual_button: false,
     omni_sync_zero_touch_after_authorization: true,
     cross_device_library_mirror: true,
-    cross_device_library_table: "library_chunks",
+    cross_device_storage_backend: "cloudflare-r2",
+    cross_device_r2_binding: "PDFS",
+    cross_device_r2_bucket: "consciencia-fabiano-pdfs",
     cross_device_plaintext_chunk_sync: true,
+    cross_device_no_supabase_dependency: true,
     cross_device_backfill_from_indexeddb: true,
     cross_device_mobile_hydration: true,
+    cross_device_r2_generation_pointer: true,
     cross_device_batch_size: 200,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
@@ -3348,8 +3366,8 @@ async function status(env) {
     rag_resilience_levels: 10,
     rag_local_levels: [1,2,3,10],
     rag_cloudflare_level: 5,
-    rag_external_slots: ["supabase","pinecone","mongodb","astra"],
-    supabase_mirror_configured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+    rag_external_slots: [],
+    supabase_mirror_configured: false,
     pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
     local_library_catalog: true,
     admin_access_password_version: "gadu-v1",
@@ -3357,7 +3375,7 @@ async function status(env) {
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     groq_aggressive_budget_tokens: GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS,
     groq_max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
-    r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
+    r2_direct_ready: Boolean(env.PDFS),
     vector_backend: "durable-object-cosine",
     llm_provider: "groq",
     embedding_provider: "browser-transformers",
@@ -3387,10 +3405,11 @@ async function handleApi(request, env, url, ctx) {
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
-    if (url.pathname === "/api/admin/library-mirror-upsert" && request.method === "POST") return mirrorLibraryChunks(request,env);
+    if (url.pathname === "/api/admin/r2-library-shard" && request.method === "POST") return r2LibraryShardUpsert(request,env);
+    if (url.pathname === "/api/admin/r2-library-finalize" && request.method === "POST") return r2LibraryFinalize(request,env);
     if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
-    if (url.pathname === "/api/admin/omni-sync-state" && request.method === "GET") return supabaseOmniSyncState(env);
-    if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return supabaseOmniSyncPage(env,url);
+    if (url.pathname === "/api/admin/omni-sync-state" && request.method === "GET") return r2OmniSyncState(env);
+    if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return r2OmniSyncPage(env,url);
         if (url.pathname === "/api/rag/config" && request.method === "GET") {
       return json({
         ok:true,
@@ -4262,8 +4281,9 @@ export default {
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-v7-twenty-agent-cross-device",
+        architecture: "cloudflare-v7.1-fabiano-r2-cross-device",
         storage_backend: "durable-object-sqlite",
+    cross_device_storage: "r2-native-binding",
         workers_ai_used: false,
         llm_provider: "groq",
         provider_auth_surface: "server-side-secrets-only",
@@ -4379,10 +4399,14 @@ export default {
     omni_sync_manual_button: false,
     omni_sync_zero_touch_after_authorization: true,
     cross_device_library_mirror: true,
-    cross_device_library_table: "library_chunks",
+    cross_device_storage_backend: "cloudflare-r2",
+    cross_device_r2_binding: "PDFS",
+    cross_device_r2_bucket: "consciencia-fabiano-pdfs",
     cross_device_plaintext_chunk_sync: true,
+    cross_device_no_supabase_dependency: true,
     cross_device_backfill_from_indexeddb: true,
     cross_device_mobile_hydration: true,
+    cross_device_r2_generation_pointer: true,
     cross_device_batch_size: 200,
         sse_keepalive_ms: SSE_KEEPALIVE_MS,
         groq_round_robin_key_rotation: true,
@@ -4391,7 +4415,7 @@ export default {
         static_backup_hydration: true,
         static_backup_expected_embeddings: 25199,
         static_backup_payload_status: "scheduled-export",
-        supabase_mirror_configured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+        supabase_mirror_configured: false,
         pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
         whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
