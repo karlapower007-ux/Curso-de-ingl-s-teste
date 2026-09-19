@@ -22,7 +22,7 @@ jobs:
       - name: Syntax and architecture checks
         run: |
           npm run check
-          # V3.1 OFFLINE TURBINES + V2 analytical engine invariants
+          # V3.2 SEMANTIC EXPANSION + V2 analytical engine invariants
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
           grep -q 'MASSIVE_WORKER_CONCURRENCY = 25' src/index.js
           grep -q 'MASSIVE_NODE_GROUP_SIZE = 25' src/index.js
@@ -64,6 +64,12 @@ jobs:
           grep -q 'plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity"' src/index.js
           grep -q 'plan_c_virtualized_result_cards: true' src/index.js
           grep -q 'plan_c_card_gap_px: 40' src/index.js
+          grep -q 'plan_c_window_expansion: true' src/index.js
+          grep -q 'plan_c_context_before: 2' src/index.js
+          grep -q 'plan_c_context_after: 4' src/index.js
+          grep -q 'plan_c_full_chunk_fallback: true' src/index.js
+          grep -q 'plan_c_sequential_chunk_merge: true' src/index.js
+          grep -q 'plan_c_canonical_reference_elevation: true' src/index.js
           test -f public/local-turbine-pool.js
           test -f public/local-turbine-worker.js
           grep -q 'LOGICAL_NODE_CAPACITY=1000' public/local-turbine-pool.js
@@ -79,6 +85,17 @@ jobs:
           grep -q 'IndexedDB offline BM25 1000' public/rag-cascade.js
           grep -q 'engine?.offlineSearch' public/failover-v3.js
           grep -q 'paragraphIdf' public/local-turbine-worker.js
+          grep -q 'CONTEXT_BEFORE=2' public/local-turbine-worker.js
+          grep -q 'CONTEXT_AFTER=4' public/local-turbine-worker.js
+          grep -q 'contextWindow' public/local-turbine-worker.js
+          grep -q 'full_chunk_fallback' public/local-turbine-worker.js
+          grep -q 'CANONICAL_REFERENCE_RE' public/local-turbine-worker.js
+          grep -q 'canonicalReference' public/local-turbine-worker.js
+          grep -q 'semantic_title' public/local-turbine-worker.js
+          grep -q 'mergeSequentialOfflineCards' public/app.js
+          grep -q 'appendTextWithoutDuplicate' public/app.js
+          grep -q 'canonicalHeader' public/app.js
+          grep -q 'resultados sequenciais costurados' public/app.js
           grep -q 'indexeddb-local-worker-swarm' public/failover-v3.js
           grep -q 'appendOfflineTurbineResults' public/app.js
           grep -q 'offline-turbine-card' public/app.js
@@ -97,7 +114,7 @@ jobs:
           grep -q 'planE' public/failover-v3.js
           grep -q 'planF' public/failover-v3.js
           grep -q 'DecompressionStream' public/failover-v3.js
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-1"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v3-2"' public/sw-v3.js
           grep -q 'A->B->C->D->E->F' public/failover-manifest.json
           test -f public/steel/index.json
           test -f scripts/build-static-vault.mjs
@@ -197,7 +214,7 @@ jobs:
           grep -q '/api/rag/provider-search' src/index.js
           grep -q 'normalizeClientContext' src/index.js
           grep -q 'rag_resilience_levels: 10' src/index.js
-          grep -q '3.1.0-offline-turbines' src/index.js
+          grep -q '3.2.0-semantic-expansion' src/index.js
           grep -q 'local_library_catalog: true' src/index.js
           grep -q 'LOCAL_EMBED_DB_VERSION = 4' public/app.js
           grep -q 'LOCAL_ADMIN_PASSWORD = "gadu"' public/app.js
