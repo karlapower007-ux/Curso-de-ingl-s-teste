@@ -1195,9 +1195,13 @@ function normalizeClientContext(items) {
 
 function ragProviderConfig(env, provider) {
   const p=String(provider || "").toLowerCase();
+  const supabaseToken=env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_RAG_KEY;
   const map={
-    supabase:{url:env.SUPABASE_RAG_SEARCH_URL,token:env.SUPABASE_RAG_KEY,header:"Authorization",prefix:"Bearer "},
-    pinecone:{url:env.PINECONE_RAG_SEARCH_URL,token:env.PINECONE_API_KEY,header:"Api-Key",prefix:""},
+    supabase:{
+      url:env.SUPABASE_RAG_SEARCH_URL || (env.SUPABASE_URL ? String(env.SUPABASE_URL).replace(/\/$/,"")+"/rest/v1/rpc/match_rag_embeddings" : ""),
+      token:supabaseToken,header:"Authorization",prefix:"Bearer "
+    },
+    pinecone:{url:env.PINECONE_RAG_SEARCH_URL || env.PINECONE_QUERY_URL,token:env.PINECONE_API_KEY,header:"Api-Key",prefix:""},
     mongodb:{url:env.MONGODB_RAG_SEARCH_URL,token:env.MONGODB_RAG_API_KEY,header:"Authorization",prefix:"Bearer "},
     astra:{url:env.ASTRA_RAG_SEARCH_URL,token:env.ASTRA_DB_APPLICATION_TOKEN,header:"Token",prefix:""},
   };
@@ -1230,6 +1234,85 @@ async function externalRagProviderSearch(request, env) {
   }catch(error){
     return json({ok:false,configured:true,provider,matches:[],message:String(error?.message || error)},504);
   }finally{clearTimeout(timer);}
+}
+
+function normalizeMirrorRecords(items){
+  if(!Array.isArray(items)) return [];
+  return items.slice(0,100).map((raw,index)=>({
+    id:String(raw?.id || raw?.key || ("mirror-"+index)).slice(0,180),
+    document_id:String(raw?.document_id || raw?.doc_key || "unknown").slice(0,180),
+    filename:String(raw?.filename || raw?.title || "Documento").slice(0,300),
+    title:String(raw?.title || raw?.filename || "Documento").slice(0,500),
+    author:String(raw?.author || "").slice(0,300),
+    language:String(raw?.language || "pt").slice(0,40),
+    page:Number(raw?.page || 0) || 0,
+    chunk_index:Number(raw?.chunk_index || 0) || 0,
+    text:String(raw?.text || "").slice(0,6000),
+    vector:Array.isArray(raw?.vector) ? raw.vector.map(Number).filter(Number.isFinite).slice(0,2048) : []
+  })).filter(r=>r.text && r.vector.length>=64);
+}
+
+async function mirrorSupabase(env,records){
+  const base=String(env.SUPABASE_URL || "").replace(/\/$/,"");
+  const token=String(env.SUPABASE_SERVICE_ROLE_KEY || "");
+  if(!base || !token) return {provider:"supabase",configured:false,upserted:0};
+  const payload=records.map(r=>({
+    id:r.id,document_id:r.document_id,filename:r.filename,title:r.title,author:r.author,
+    language:r.language,page:r.page,chunk_index:r.chunk_index,text:r.text,embedding:r.vector
+  }));
+  const res=await fetch(base+"/rest/v1/rag_embeddings?on_conflict=id",{
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+token,"apikey":token,"Content-Type":"application/json",
+      "Prefer":"resolution=merge-duplicates,return=minimal"
+    },
+    body:JSON.stringify(payload)
+  });
+  if(!res.ok) throw new Error("Supabase mirror HTTP "+res.status);
+  return {provider:"supabase",configured:true,upserted:payload.length};
+}
+
+async function mirrorPinecone(env,records){
+  const url=String(env.PINECONE_UPSERT_URL || "");
+  const key=String(env.PINECONE_API_KEY || "");
+  if(!url || !key) return {provider:"pinecone",configured:false,upserted:0};
+  const vectors=records.map(r=>({
+    id:r.id,
+    values:r.vector,
+    metadata:{
+      document_id:r.document_id,filename:r.filename,title:r.title,author:r.author,
+      language:r.language,page:r.page,chunk_index:r.chunk_index,text:r.text
+    }
+  }));
+  const res=await fetch(url,{
+    method:"POST",
+    headers:{"Api-Key":key,"Content-Type":"application/json"},
+    body:JSON.stringify({vectors,namespace:"fabiano"})
+  });
+  if(!res.ok) throw new Error("Pinecone mirror HTTP "+res.status);
+  return {provider:"pinecone",configured:true,upserted:vectors.length};
+}
+
+async function mirrorUpsert(request,env){
+  const body=await request.json().catch(()=>({}));
+  const records=normalizeMirrorRecords(body?.records);
+  if(!records.length) return json({ok:true,records:0,providers:[]});
+  const providers=await Promise.allSettled([
+    mirrorSupabase(env,records),
+    mirrorPinecone(env,records)
+  ]);
+  const result=providers.map(x=>x.status==="fulfilled"?x.value:{configured:true,error:String(x.reason?.message||x.reason),upserted:0});
+  return json({
+    ok:true,records:records.length,providers:result,
+    any_configured:result.some(x=>x.configured===true),
+    any_upserted:result.some(x=>Number(x.upserted||0)>0)
+  });
+}
+
+async function exportLibraryPage(env,url){
+  const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
+  const limit=Math.max(1,Math.min(250,Number(url.searchParams.get("limit")||250)));
+  return json(await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit));
 }
 
 async function chat(request, env) {
@@ -1431,6 +1514,8 @@ async function status(env) {
     rag_local_levels: [1,2,3,10],
     rag_cloudflare_level: 5,
     rag_external_slots: ["supabase","pinecone","mongodb","astra"],
+    supabase_mirror_configured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+    pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
     local_library_catalog: true,
     admin_access_password_version: "gadu-v1",
     groq_history_window: GROQ_HISTORY_MESSAGES,
@@ -1466,6 +1551,8 @@ async function handleApi(request, env, url, ctx) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
+    if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
+    if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
         if (url.pathname === "/api/rag/config" && request.method === "GET") {
       return json({
         ok:true,
@@ -2113,6 +2200,29 @@ export class LibraryDO {
         return json({ ok: true, updated: updates.length });
       }
 
+      if (url.pathname === "/export-page" && request.method === "GET") {
+        const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
+        const limit=Math.max(1,Math.min(250,Number(url.searchParams.get("limit")||250)));
+        const total=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
+        const rows=[...this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          ORDER BY c.created_at,c.chunk_index LIMIT ? OFFSET ?
+        `,limit,offset)].map(row=>{
+          let vector=[];
+          try{vector=JSON.parse(row.embedding || "[]");}catch{}
+          return {
+            id:row.id,document_id:row.document_id,page:Number(row.page||0),
+            chunk_index:Number(row.chunk_index||0),text:String(row.text||""),
+            filename:String(row.filename||""),title:String(row.title||""),
+            author:String(row.author||""),language:String(row.language||"pt"),
+            vector:Array.isArray(vector)?vector:[]
+          };
+        });
+        return json({ok:true,total,offset,limit,next_offset:offset+rows.length,done:(offset+rows.length)>=total,records:rows});
+      }
+
       if (url.pathname === "/memory/list" && request.method === "GET") {
         const ownerId = String(url.searchParams.get("owner_id") || "").trim();
         const limit = Math.max(1, Math.min(MAX_SERVER_HISTORY, Number(url.searchParams.get("limit") || MAX_SERVER_HISTORY)));
@@ -2277,7 +2387,9 @@ export default {
         map_batch_size: MAP_BATCH_SIZE,
         static_backup_hydration: true,
         static_backup_expected_embeddings: 25199,
-        static_backup_payload_status: "awaiting-source-export",
+        static_backup_payload_status: "scheduled-export",
+        supabase_mirror_configured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+        pinecone_mirror_configured: Boolean(env.PINECONE_UPSERT_URL && env.PINECONE_API_KEY),
         whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
         rag_resilience_levels: 10,
