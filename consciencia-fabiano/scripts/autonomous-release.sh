@@ -9,6 +9,15 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
 : "${GEMINI_API_KEY:?GEMINI_API_KEY is required}"
 
+GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY_CLEAN" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
+GEMINI_API_KEY_CLEAN=$(printf '%s' "$GEMINI_API_KEY_CLEAN" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
+case "$GEMINI_API_KEY_CLEAN" in
+  AQ.*) log "GEMINI_KEY_FORMAT=auth" ;;
+  AIza*) log "GEMINI_KEY_FORMAT=standard" ;;
+  *) log "GEMINI_KEY_FORMAT=unknown" ;;
+esac
+log "GEMINI_KEY_LENGTH=${#GEMINI_API_KEY_CLEAN}"
+
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
 log "== Consciência do Fabiano :: Groq + Gemini external AI bypass release =="
@@ -33,11 +42,11 @@ npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
 
 log "2.5/7 Lightweight external AI key preflight"
-curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization: Bearer $GROQ_API_KEY"   -H 'Content-Type: application/json'   --data '{"model":"openai/gpt-oss-20b","messages":[{"role":"user","content":"Responda apenas OK"}],"max_completion_tokens":8,"temperature":0}'   >/tmp/groq-preflight.json || { cat /tmp/groq-preflight.json 2>/dev/null || true; die "GROQ_KEY_INVALID"; }
+curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization: Bearer $GROQ_API_KEY_CLEAN"   -H 'Content-Type: application/json'   --data '{"model":"openai/gpt-oss-20b","messages":[{"role":"user","content":"Responda apenas OK"}],"max_completion_tokens":8,"temperature":0}'   >/tmp/groq-preflight.json || { cat /tmp/groq-preflight.json 2>/dev/null || true; die "GROQ_KEY_INVALID"; }
 jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
 log "GROQ_PREFLIGHT_PASS=yes"
 
-gemini_code=$(curl -sS -o /tmp/gemini-preflight.json -w '%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY"   -H 'Content-Type: application/json'   --data '{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"ping"}]}}')
+gemini_code=$(curl -sS -o /tmp/gemini-preflight.json -w '%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"   -H "x-goog-api-key: $GEMINI_API_KEY_CLEAN"   -H 'Content-Type: application/json'   --data '{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"ping"}]}}')
 if [ "$gemini_code" != "200" ]; then
   cat /tmp/gemini-preflight.json || true
   die "GEMINI_PREFLIGHT_HTTP_$gemini_code"
@@ -50,8 +59,8 @@ npx wrangler deploy | tee /tmp/deploy.log
 log "DEPLOY_COMMAND=success"
 
 log "4/7 Install runtime secrets"
-printf '%s' "$GROQ_API_KEY" | npx wrangler secret put GROQ_API_KEY >/dev/null
-printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY >/dev/null
+printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
+printf '%s' "$GEMINI_API_KEY_CLEAN" | npx wrangler secret put GEMINI_API_KEY >/dev/null
 log "EXTERNAL_AI_SECRETS_INSTALLED=yes"
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
