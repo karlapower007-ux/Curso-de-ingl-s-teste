@@ -273,11 +273,47 @@
     }
   }
 
+  function safeMarkdownHtml(content) {
+    const raw=String(content || "");
+    if(!window.marked?.parse || !window.DOMPurify?.sanitize) return null;
+    const rendered=window.marked.parse(raw,{gfm:true,breaks:true});
+    return window.DOMPurify.sanitize(rendered,{
+      ALLOWED_TAGS:["p","br","strong","em","del","blockquote","code","pre","ul","ol","li","a","h1","h2","h3","h4","h5","h6","hr","table","thead","tbody","tr","th","td"],
+      ALLOWED_ATTR:["href","title"],
+      FORBID_TAGS:["style","script","iframe","object","embed","form","input","button","textarea","select","option","svg","math"],
+      FORBID_ATTR:["style","src","srcset"]
+    });
+  }
+
+  function renderAssistantMarkdown(node,content) {
+    const clean=safeMarkdownHtml(content);
+    if(clean===null){
+      node.textContent=String(content || "");
+      return;
+    }
+    node.innerHTML=clean;
+    node.classList.add("markdown-body");
+    node.querySelectorAll("a").forEach(a=>{
+      a.rel="noopener noreferrer";
+      a.target="_blank";
+    });
+  }
+
+  function scheduleAssistantMarkdown(node,content) {
+    node.__pendingMarkdown=String(content || "");
+    if(node.__markdownFrame) return;
+    node.__markdownFrame=requestAnimationFrame(()=>{
+      node.__markdownFrame=0;
+      renderAssistantMarkdown(node,node.__pendingMarkdown || "");
+    });
+  }
+
   function appendMessage(role, content, sources = [], fallback = false) {
     const wrap = document.createElement("div");
     wrap.className = "msg " + role;
     const text = document.createElement("div");
-    text.textContent = content;
+    if(role === "assistant") renderAssistantMarkdown(text,content);
+    else text.textContent = content;
     wrap.appendChild(text);
 
     if (role === "assistant" && (sources?.length || fallback)) {
@@ -327,6 +363,7 @@
     const wrap = document.createElement("div");
     wrap.className = "msg assistant";
     const text = document.createElement("div");
+    text.className = "markdown-body";
     text.textContent = "";
     wrap.appendChild(text);
     $("messages").appendChild(wrap);
@@ -379,7 +416,7 @@
           if (event === "delta") {
             const delta = String(data.text || "");
             answer += delta;
-            live.text.textContent = answer;
+            scheduleAssistantMarkdown(live.text,answer);
             $("messages").scrollTop = $("messages").scrollHeight;
           } else if (event === "meta" || event === "done") {
             meta = { ...meta, ...data };

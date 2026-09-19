@@ -45,6 +45,13 @@ jobs:
           grep -q 'local-ingest-start' public/app.js
           grep -q 'indexedDB' public/app.js
           grep -q 'embedding-worker.js' public/app.js
+          grep -q 'marked@15.0.12' public/index.html
+          grep -q 'dompurify@3.2.6' public/index.html
+          grep -q 'DOMPurify' public/app.js
+          grep -q 'safeMarkdownHtml' public/app.js
+          grep -q 'isFocusedCitationRequest' src/index.js
+          grep -q 'APENAS UMA fonte principal' src/index.js
+          grep -q 'NUNCA gere tabela Markdown' src/index.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js

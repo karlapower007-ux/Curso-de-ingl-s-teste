@@ -218,3 +218,21 @@ textarea:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(
 }
 
 .client-extract-note{margin:8px 0 0;color:#bae6fd;font-size:.82rem;line-height:1.45;padding:10px 12px;border:1px solid rgba(56,189,248,.28);border-radius:8px;background:rgba(56,189,248,.06)}
+
+.msg.assistant .markdown-body{white-space:normal;min-width:0}
+.markdown-body>:first-child{margin-top:0}
+.markdown-body>:last-child{margin-bottom:0}
+.markdown-body p{margin:.35rem 0 .65rem}
+.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{margin:.7rem 0 .35rem;line-height:1.25}
+.markdown-body h1{font-size:1.18rem}.markdown-body h2{font-size:1.1rem}.markdown-body h3{font-size:1.02rem}
+.markdown-body strong{color:#f8fafc}
+.markdown-body blockquote{margin:.65rem 0;padding:.55rem .8rem;border-left:3px solid var(--accent);background:rgba(15,23,42,.28);color:#e2e8f0}
+.markdown-body ul,.markdown-body ol{margin:.4rem 0 .7rem;padding-left:1.35rem}
+.markdown-body li{margin:.18rem 0}
+.markdown-body code{background:#172236;border:1px solid rgba(148,163,184,.18);border-radius:4px;padding:.08rem .28rem;font-size:.9em}
+.markdown-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172236;border:1px solid var(--line);border-radius:8px;padding:.7rem;overflow:auto}
+.markdown-body pre code{border:0;padding:0;background:transparent}
+.markdown-body a{color:#7dd3fc;text-decoration:underline;text-underline-offset:2px}
+.markdown-body table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:.65rem 0}
+.markdown-body th,.markdown-body td{border:1px solid var(--line);padding:.45rem .55rem;text-align:left;white-space:normal}
+.markdown-body th{background:#26354a}

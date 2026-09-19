@@ -1,4 +1,4 @@
-const VERSION = "1.8.0-xeque-mate-local-embeddings";
+const VERSION = "1.9.0-focused-safe-markdown-ux";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -781,7 +781,6 @@ async function groqStreamResponse(env, messages, meta) {
           fallback: meta.fallback,
           provider: "groq+local-rag",
           embedding_model: LOCAL_EMBEDDING_MODEL,
-    legacy_embedding_model: LOCAL_EMBEDDING_MODEL,
           chat_model: CHAT_MODEL,
         })));
         const reader = upstream.body.getReader();
@@ -912,6 +911,15 @@ function enforceGroqBudget(messages, budget = GROQ_INPUT_BUDGET_TOKENS) {
   return list;
 }
 
+function wantsMultipleSources(question) {
+  return /\b(v[aá]rias?\s+(?:op[cç][oõ]es|fontes|refer[eê]ncias)|mais\s+de\s+uma|diversas?\s+fontes|liste\s+v[aá]rias|compare|comparar|todas?\s+as\s+refer[eê]ncias)\b/i.test(String(question || ""));
+}
+
+function isFocusedCitationRequest(question) {
+  const q=String(question || "");
+  return /\b(escritura|vers[ií]culo|passagem|cita[cç][aã]o|refer[eê]ncia|trecho|onde\s+(?:fala|diz)|o\s+que\s+.{0,80}(?:fala|diz)\s+sobre)\b/i.test(q);
+}
+
 async function chat(request, env) {
   assertBindings(env);
   requireSecret(env, "GROQ_API_KEY");
@@ -938,20 +946,25 @@ async function chat(request, env) {
     context = [];
   }
 
-  const contextText = buildRagContext(context);
+  const focusedCitation = isFocusedCitationRequest(question);
+  const multipleSourcesRequested = wantsMultipleSources(question);
+  const promptContext = focusedCitation && !multipleSourcesRequested ? context.slice(0, 1) : context;
+  const contextText = buildRagContext(promptContext);
 
   const messages = enforceGroqBudget([
     {
       role: "system",
       content:
-        "Você é a Consciência do Fabiano: uma consciência intelectual ampliada, enciclopédica, crítica e respeitosa. " +
-        "Responda SEMPRE em português brasileiro, mesmo quando a fonte estiver em inglês ou outro idioma. " +
-        "Quando usar uma fonte estrangeira, traduza ou parafraseie em português preservando o sentido. " +
-        "As fontes recuperadas aparecem como [F1], [F2] etc. Cite esses marcadores quando fundamentarem uma afirmação. " +
-        "Nunca invente livro, autor, página, capítulo ou citação. Se a biblioteca não tiver evidência suficiente, diga isso. " +
-        "Diferencie documento, interpretação e hipótese. Você pode conversar sobre religião, filosofia, maçonaria, história, arte, ciência, literatura e qualquer outro assunto. " +
-        "Se não houver fonte documental suficiente, ainda pode usar conhecimento geral, mas declare claramente que essa parte não veio dos PDFs. " +
-        "Use o histórico persistente apenas como contexto de conversa; não o trate como fonte documental."
+        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, respeito e foco. " +
+        "REGRA DE FOCO: seja direto, conversacional e conciso. Responda somente ao que foi perguntado; não transforme uma pergunta simples em ensaio, panorama histórico, tabela ou catálogo de referências. " +
+        "REGRA DE CITAÇÃO: quando o usuário pedir uma escritura, versículo, passagem, citação, trecho ou referência sobre um tema, comporte-se como um especialista focado. Escolha APENAS UMA fonte principal, salvo se o usuário pedir explicitamente várias opções. " +
+        "Se o trecho completo solicitado estiver presente na BIBLIOTECA RECUPERADA, reproduza o trecho ou versículo COMPLETO, exatamente como aparece na fonte recuperada, sem resumir nem completar de memória. Depois indique claramente o nome do livro/documento e a página. Pare de falar assim que entregar a citação e a referência. " +
+        "Se a fonte recuperada não trouxer o trecho completo, não invente continuação: informe de forma breve que o trecho integral não está disponível no contexto recuperado. " +
+        "REGRA DE FORMATAÇÃO: NUNCA gere tabela Markdown (incluindo sintaxe com barras verticais como |---|) nem listas longas de referências, a menos que o usuário peça explicitamente várias opções ou uma tabela. Prefira 1 a 3 parágrafos curtos. " +
+        "As fontes recuperadas aparecem como [F1], [F2] etc. Use somente marcadores realmente fornecidos. Nunca invente livro, autor, página, capítulo, versículo ou citação. " +
+        "Quando usar fonte em outro idioma fora de uma citação textual solicitada, traduza ou parafraseie para português preservando o sentido. Diferencie documento, interpretação e hipótese. " +
+        "Se a biblioteca não tiver evidência suficiente, diga isso claramente. Conhecimento geral pode ser usado apenas quando necessário e deve ser identificado como não proveniente dos PDFs. " +
+        "Use o histórico persistente apenas como contexto de conversa; nunca como fonte documental."
     },
     ...history,
     {
@@ -960,8 +973,9 @@ async function chat(request, env) {
     },
   ]);
 
-  const sources = uniqueSources(context);
-  const fallback = context.length === 0;
+  const allSources = uniqueSources(promptContext);
+  const sources = focusedCitation && !multipleSourcesRequested ? allSources.slice(0, 1) : allSources;
+  const fallback = promptContext.length === 0;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
     body?.stream === true;
