@@ -1039,7 +1039,7 @@
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
     status.textContent=agents
-      ? "V6.0 Omni Agent Swarm • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+      ? "V7.0 Twenty Agent Mesh • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
         (data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal-first")+
         (mergedCount?" • "+mergedCount+" chunks costurados":"")
       : "Plano C V6.0 • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
@@ -1490,7 +1490,7 @@
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
 
-      // V6: 1000 candidatos alimentam 10 agentes lógicos isolados em Web Workers.
+      // V6: 1000 candidatos alimentam 20 agentes lógicos isolados em Web Workers.
       // Agent 2 usa Transformers.js/MiniLM apenas quando o literal não encontra nada.
       try{
         const engine=await ensureRagCascade("v6-omni-agent-query");
@@ -1498,7 +1498,7 @@
           const swarmResult=await engine.omniAgentSearch(q,{
             onProgress:progress=>{
               if($("backendText")){
-                $("backendText").textContent="V6.0 • agente "+Number(progress?.agent||0)+"/10 • "+String(progress?.name||"analisando");
+                $("backendText").textContent="V6.0 • agente "+Number(progress?.agent||0)+"/20 • "+String(progress?.name||"analisando");
               }
             }
           });
@@ -1506,7 +1506,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V6.0 Omni Agent Swarm: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 10.",
+              "V7.0 Twenty Agent Mesh: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 10.",
               ...renderedCards.slice(0,10).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1523,12 +1523,12 @@
             }));
             history.push({
               role:"assistant",content:persisted,sources,fallback:false,
-              omni_agent_swarm:true,logical_agents:10,
+              omni_agent_swarm:true,logical_agents:20,
               semantic_fallback:Boolean(swarmResult.semantic_fallback_used),ts:Date.now()
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V6.0 • 10 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 10 aprovado";
+              $("backendText").textContent="V7.0 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 10 aprovado";
             }
             setAvatar("closed");
             return;
