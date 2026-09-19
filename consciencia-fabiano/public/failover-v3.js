@@ -329,6 +329,26 @@ function planF(kind){
   };
 }
 
+export async function recoverStrictPrecision(payload){
+  const c=await planCLocalAnalytic({...payload,strict_precision:true});
+  if(c?.ok)return c;
+  return {
+    ok:true,
+    plan:"C",
+    provider:"indexeddb-local-worker-swarm",
+    strict_empty:true,
+    terminal:true,
+    zero_noise:true,
+    strict_mode:"boolean-exact",
+    strict_unavailable:true,
+    answer:"Nenhuma correspondência exata encontrada na biblioteca.",
+    sources:[],
+    cards:[],
+    matches:[],
+    hard_threshold:3.25,
+    min_coverage:0.50
+  };
+}
 export async function recoverAnalytic(payload){
   const b=await planB("analytic",payload);if(b.ok)return b;
   const c=await planCLocalAnalytic(payload);if(c.ok)return c;
