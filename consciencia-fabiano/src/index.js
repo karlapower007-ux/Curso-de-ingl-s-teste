@@ -1,4 +1,4 @@
-const VERSION = "3.0.0-ultimate-resilience";
+const VERSION = "3.1.0-offline-turbines";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -2992,7 +2992,7 @@ async function status(env) {
     ok: ready,
     service: "Consciência do Fabiano",
     version: VERSION,
-    architecture: "cloudflare-v3-ultimate-resilience",
+    architecture: "cloudflare-v3.1-offline-turbines",
     storage_backend: "durable-object-sqlite",
     pdf_storage: (env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) ? "r2-direct-presigned" : "r2-direct-not-configured",
     ingest_backend: "client-pdfjs-lexical-first-local-transformers",
@@ -3062,6 +3062,14 @@ async function status(env) {
     plan_d_service_worker_static_vault: true,
     plan_e_desktop_node: true,
     plan_f_raw_vault: true,
+    plan_c_local_worker_pool: true,
+    plan_c_logical_task_capacity: 1000,
+    plan_c_physical_worker_cap: 16,
+    plan_c_worker_count_source: "navigator.hardwareConcurrency",
+    plan_c_main_thread_extraction: false,
+    plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity",
+    plan_c_virtualized_result_cards: true,
+    plan_c_card_gap_px: 40,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     micro_node_chain: false,
@@ -3974,7 +3982,7 @@ export default {
         ok: missing.length===0,
         service: "Consciência do Fabiano",
         version: VERSION,
-        architecture: "cloudflare-v3-ultimate-resilience",
+        architecture: "cloudflare-v3.1-offline-turbines",
         storage_backend: "durable-object-sqlite",
         workers_ai_used: false,
         llm_provider: "groq",
@@ -4018,6 +4026,14 @@ export default {
         service_worker_static_vault: true,
         desktop_fallback_port: 8788,
         raw_vault_fallback: true,
+        plan_c_local_worker_pool: true,
+        plan_c_logical_task_capacity: 1000,
+        plan_c_physical_worker_cap: 16,
+        plan_c_worker_count_source: "navigator.hardwareConcurrency",
+        plan_c_main_thread_extraction: false,
+        plan_c_offline_intelligence: "bm25-idf-coverage-phrase-proximity",
+        plan_c_virtualized_result_cards: true,
+        plan_c_card_gap_px: 40,
         sse_keepalive_ms: SSE_KEEPALIVE_MS,
         groq_round_robin_key_rotation: true,
         groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
