@@ -1,3 +1,4 @@
+import {strictParagraphMatch,pushStrictHit,roundRobinStrictHits,deriveStrictPhrase,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "/strict-match-core.js?v=4.0.0";
 const DB_NAME="fns_rag_resilience_v1";
 const DB_VERSION=1;
 function openDb(){
@@ -108,6 +109,45 @@ async function bm25(question,topK){
   }
   return out.sort((a,b)=>b.score-a.score).slice(0,topK);
 }
+async function strictSearchAll(question,topK=STRICT_LOGICAL_TASK_CAP){
+  const target=deriveStrictPhrase(question);
+  if(!target)return {matches:[],scanned:0,exact_hits:0,documents_hit:0,target:""};
+  const db=await openDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction("chunks","readonly");
+    const store=tx.objectStore("chunks");
+    const req=store.openCursor();
+    const perDocument=new Map();
+    let scanned=0,exactHits=0;
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(!cursor){
+        const matches=roundRobinStrictHits(perDocument,Math.max(1,Math.min(STRICT_LOGICAL_TASK_CAP,Number(topK||STRICT_LOGICAL_TASK_CAP))));
+        db.close();
+        resolve({matches,scanned,exact_hits:exactHits,documents_hit:perDocument.size,target});
+        return;
+      }
+      const row=cursor.value||{};
+      scanned++;
+      const match=strictParagraphMatch(row.text||"",question);
+      if(match.matched){
+        exactHits++;
+        pushStrictHit(perDocument,{
+          ...row,
+          score:100,
+          coverage:1,
+          strict_phrase:match.target,
+          strict_paragraph_index:match.paragraph_index,
+          retrieval_mode:"strict-phrase-indexeddb-v4"
+        },STRICT_PER_DOCUMENT_HIT_CAP);
+      }
+      cursor.continue();
+    };
+    req.onerror=()=>{const e=req.error;db.close();reject(e);};
+    tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
+  });
+}
+
 async function deleteByDocument(store,documentId){
   const rows=await all(store);
   const keys=rows.filter(r=>String(r.document_id||r.doc_key||"")===String(documentId)).map(r=>r.key);
@@ -271,6 +311,7 @@ self.onmessage=async e=>{
     if(d.type==="persist-chunks"){const count=await putMany("chunks",d.chunks||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||500),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="search-strict"){const result=await strictSearchAll(d.question||"",Number(d.top_k||STRICT_LOGICAL_TASK_CAP));self.postMessage({id,ok:true,...result,mode:"strict-phrase-v4"});return;}
     if(d.type==="search-bm25"){const topK=Number(d.top_k||500);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
     if(d.type==="local-stats"){
       const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);
