@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE='https://consciencia-fabiano.karlapower007.workers.dev'
 
-log "== Consciência do Fabiano :: V2.1 EXACT MATCH TURBINES release =="
+log "== Consciência do Fabiano :: V3.0 ULTIMATE RESILIENCE release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -37,6 +37,15 @@ log "2.5/7 Lightweight external AI key preflight"
 curl -fsS "https://api.groq.com/openai/v1/chat/completions"   -H "Authorization: Bearer $GROQ_API_KEY_CLEAN"   -H 'Content-Type: application/json'   --data '{"model":"openai/gpt-oss-20b","messages":[{"role":"user","content":"Responda apenas OK"}],"max_completion_tokens":8,"temperature":0}'   >/tmp/groq-preflight.json || { cat /tmp/groq-preflight.json 2>/dev/null || true; die "GROQ_KEY_INVALID"; }
 jq -e '.choices[0].message.content | type == "string"' /tmp/groq-preflight.json >/dev/null || { cat /tmp/groq-preflight.json; die "GROQ_PREFLIGHT_BAD_RESPONSE"; }
 log "GROQ_PREFLIGHT_PASS=yes"
+
+log "2.75/7 Build failover manifest and compressed static vault"
+node scripts/build-failover-manifest.mjs
+node scripts/build-static-vault.mjs
+test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
+test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="3.0.0")process.exit(1)'
+node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("public/steel/index.json","utf8"));if(s.version!=="3.0.0")process.exit(1)'
+log "RESILIENCE_ASSETS_BUILT=yes"
 
 log "3/7 Deploy Worker"
 npx wrangler deploy | tee /tmp/deploy.log
@@ -117,7 +126,7 @@ sleep 3
 log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
-  if echo "$body" | jq -e '.ok == true and .version == "2.1.0-exact-match-turbines" and .architecture == "cloudflare-v2.1-exact-match-turbines" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .provider_auth_surface == "server-side-secrets-only" and .client_provider_keys_exposed == false and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .search_top_k == 500 and .micro_node_chain == false and .async_worker_pool == true and .micro_node_count == 500 and .micro_node_batch_size == 25 and .active_worker_limit == 25 and .sse_keepalive_ms == 15000 and .groq_round_robin_key_rotation == true and .groq_429_retry_limit == 3 and .exact_match_llm_bypass == true and .exact_swarm_logical_nodes == 1000 and .exact_max_concurrent_requests == 50 and .exact_degraded_concurrency == 25 and .exact_circuit_failure_threshold == 3 and .exact_circuit_slow_ms == 5000 and .exact_ordered_buffer == true and .exact_local_indexeddb_takeover == true and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
+  if echo "$body" | jq -e '.ok == true and .version == "3.0.0-ultimate-resilience" and .architecture == "cloudflare-v3-ultimate-resilience" and .storage_backend == "durable-object-sqlite" and .workers_ai_used == false and .llm_provider == "groq" and .provider_auth_surface == "server-side-secrets-only" and .client_provider_keys_exposed == false and .embedding_provider == "browser-transformers" and .server_pdf_parsing == false and .search_top_k == 500 and .micro_node_chain == false and .async_worker_pool == true and .micro_node_count == 500 and .micro_node_batch_size == 25 and .active_worker_limit == 25 and .sse_keepalive_ms == 15000 and .groq_round_robin_key_rotation == true and .groq_429_retry_limit == 3 and .exact_match_llm_bypass == true and .exact_swarm_logical_nodes == 1000 and .exact_max_concurrent_requests == 50 and .exact_degraded_concurrency == 25 and .exact_circuit_failure_threshold == 3 and .exact_circuit_slow_ms == 5000 and .exact_ordered_buffer == true and .exact_local_indexeddb_takeover == true and .strict_lazy_local_engines == true and .failover_tiers == 6 and .service_worker_static_vault == true and .desktop_fallback_port == 8788 and .raw_vault_fallback == true and .chunk_concurrency_limit == 50 and .embedding_concurrency_limit == 50' >/dev/null 2>&1; then
     echo "$body" | tee /tmp/health.json
     log "DEPLOY_HEALTH_PASS=yes"
     break
@@ -126,6 +135,15 @@ for i in $(seq 1 15); do
   sleep 3
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
+
+log "5.5/7 Resilience asset probes"
+curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
+jq -e '.version == "3.0.0" and .strategy == "A->B->C->D->E->F"' /tmp/failover-manifest.json >/dev/null || die "FAILOVER_MANIFEST_BAD"
+curl -fsS "$BASE/steel/index.json" | tee /tmp/steel-index.json >/dev/null
+jq -e '.version == "3.0.0" and (.shards|type) == "array"' /tmp/steel-index.json >/dev/null || die "STEEL_INDEX_BAD"
+curl -fsS "$BASE/sw-v3.js" >/tmp/sw-v3.js || die "SERVICE_WORKER_MISSING"
+grep -q 'FNS_DESKTOP_FALLBACK' scripts/local-fallback-server.mjs || die "DESKTOP_FALLBACK_SOURCE_MISSING"
+log "FAILOVER_UMBRELLA_ASSETS_PASS=yes"
 
 log "6/7 Broad-term RAG regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
