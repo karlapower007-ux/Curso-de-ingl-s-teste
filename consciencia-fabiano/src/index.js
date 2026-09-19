@@ -3384,6 +3384,9 @@ async function status(env) {
     local_embedding_dimensions: LOCAL_EMBEDDING_DIMENSIONS,
     workers_ai_used: false,
     render_dependency: false,
+    r2_direct_ready: Boolean(env.PDFS),
+    r2_bucket: "consciencia-fabiano-pdfs",
+    official_workers_host: "consciencia-fabiano.focoeepoder2.workers.dev",
     bindings_missing: missing,
     documents, chunks, memory_messages: memoryMessages, index_jobs: indexJobs,
     embedding_model: LOCAL_EMBEDDING_MODEL,
@@ -4421,7 +4424,10 @@ export default {
         local_whisper_stt: true,
         rag_resilience_levels: 10,
         local_library_catalog: true,
-        bindings_missing: missing,
+        r2_direct_ready: Boolean(env.PDFS),
+    r2_bucket: "consciencia-fabiano-pdfs",
+    official_workers_host: "consciencia-fabiano.focoeepoder2.workers.dev",
+    bindings_missing: missing,
         probe: "deploy-only-no-storage-read"
       });
     }
