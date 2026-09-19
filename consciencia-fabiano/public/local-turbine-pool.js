@@ -1,4 +1,4 @@
-// V3.1 OFFLINE TURBINES — 1000 tarefas lógicas em pool físico governado pela CPU.
+// V3.2 SEMANTIC EXPANSION — 1000 tarefas lógicas, pool físico CPU-aware.
 const LOGICAL_NODE_CAPACITY=1000;
 const MAX_PHYSICAL_WORKERS=16;
 const MIN_RESULT_SCORE=1.1;
@@ -8,13 +8,11 @@ function fold(text){
     .replace(/[^\p{L}\p{N}\s:]/gu," ").replace(/\s+/g," ").trim();
 }
 function candidateTasks(matches,question){
-  const tasks=[];
-  let logical=1;
+  const tasks=[];let logical=1;
   for(const row of Array.from(matches||[]).slice(0,LOGICAL_NODE_CAPACITY)){
     tasks.push({
       id:String(row?.id||row?.key||((row?.document_id||row?.doc_key||"doc")+":"+(row?.chunk_index||logical))),
-      logical_node:logical++,
-      question,
+      logical_node:logical++,question,
       text:String(row?.text||row?.trecho||""),
       source:{
         document_id:String(row?.document_id||row?.doc_key||""),
@@ -31,15 +29,14 @@ function candidateTasks(matches,question){
 }
 function physicalWorkerCount(){
   const hc=Math.max(1,Number(navigator.hardwareConcurrency||4));
-  // Deixa pelo menos um núcleo lógico para UI/áudio quando possível.
   return Math.max(1,Math.min(MAX_PHYSICAL_WORKERS,hc>2?hc-1:1));
 }
 function dedupeCards(results){
   const seen=new Set(),cards=[];
   for(const r of results.sort((a,b)=>Number(b.score||0)-Number(a.score||0))){
     if(!r?.ok||Number(r.score||0)<MIN_RESULT_SCORE)continue;
-    const fingerprint=fold(r.text).slice(0,420);
-    if(!fingerprint||seen.has(fingerprint))continue;
+    const fingerprint=[String(r.source?.document_id||""),String(r.source?.chunk_index||0),fold(r.text).slice(0,320)].join("|");
+    if(!r.text||seen.has(fingerprint))continue;
     seen.add(fingerprint);
     cards.push({
       id:String(r.id||("card-"+cards.length)),
@@ -47,78 +44,72 @@ function dedupeCards(results){
       score:Number(r.score||0),
       coverage:Number(r.coverage||0),
       text:String(r.text||"").trim(),
-      title:String(r.source?.title||r.source?.filename||"Documento"),
+      title:String(r.semantic_title||r.source?.title||r.source?.filename||"Documento"),
+      semantic_title:String(r.semantic_title||""),
+      canonical_reference:String(r.canonical_reference||""),
       filename:String(r.source?.filename||""),
+      source_title:String(r.source?.title||r.source?.filename||"Documento"),
       author:String(r.source?.author||""),
       page:r.source?.page||null,
       chunk_index:Number(r.source?.chunk_index||0),
-      document_id:String(r.source?.document_id||"")
+      document_id:String(r.source?.document_id||""),
+      context_window_start:Number(r.context_window_start||0),
+      context_window_end:Number(r.context_window_end||0),
+      context_before:Number(r.context_before||2),
+      context_after:Number(r.context_after||4),
+      full_chunk_fallback:Boolean(r.full_chunk_fallback)
     });
-    if(cards.length>=120)break;
+    if(cards.length>=160)break;
   }
   return cards;
 }
 export async function runLocalTurbines({question,matches,onProgress}){
   const tasks=candidateTasks(matches,question);
   if(!tasks.length)return {ok:false,cards:[],logical_capacity:LOGICAL_NODE_CAPACITY,logical_tasks:0,physical_workers:0};
-  const workerCount=Math.min(physicalWorkerCount(),tasks.length);
-  const workers=[];
-  const pending=new Map();
+  const workerCount=Math.min(physicalWorkerCount(),tasks.length),workers=[],pending=new Map(),results=new Array(tasks.length);
   let requestSeq=0,cursor=0,completed=0;
-  const results=new Array(tasks.length);
-
   const makeWorker=()=>{
-    const worker=new Worker("/local-turbine-worker.js?v=3.1.0");
+    const worker=new Worker("/local-turbine-worker.js?v=3.2.0");
     worker.onmessage=event=>{
-      const data=event.data||{};
-      if(data.type!=="result")return;
-      const slot=pending.get(data.request_id);
-      if(!slot)return;
-      pending.delete(data.request_id);
-      slot.resolve(data.result);
+      const data=event.data||{};if(data.type!=="result")return;
+      const slot=pending.get(data.request_id);if(!slot)return;
+      pending.delete(data.request_id);slot.resolve(data.result);
     };
     worker.onerror=error=>{
       for(const [id,slot] of pending){
         if(slot.worker!==worker)continue;
-        pending.delete(id);
-        slot.resolve({ok:false,error:String(error?.message||"worker error")});
+        pending.delete(id);slot.resolve({ok:false,error:String(error?.message||"worker error")});
       }
     };
     return worker;
   };
   for(let i=0;i<workerCount;i++)workers.push(makeWorker());
-
   const dispatch=(worker,task)=>new Promise(resolve=>{
     const request_id=++requestSeq;
     pending.set(request_id,{resolve,worker});
     worker.postMessage({type:"extract",request_id,task});
   });
-
   try{
     await Promise.all(workers.map(async worker=>{
       while(true){
-        const index=cursor++;
-        if(index>=tasks.length)return;
-        results[index]=await dispatch(worker,tasks[index]);
-        completed++;
+        const index=cursor++;if(index>=tasks.length)return;
+        results[index]=await dispatch(worker,tasks[index]);completed++;
         if(typeof onProgress==="function"&&(completed===tasks.length||completed%10===0)){
           try{onProgress({completed,total:tasks.length,logical_capacity:LOGICAL_NODE_CAPACITY,physical_workers:workerCount});}catch{}
         }
       }
     }));
-  }finally{
-    for(const worker of workers)try{worker.terminate();}catch{}
-  }
-
+  }finally{for(const worker of workers)try{worker.terminate();}catch{}}
   const cards=dedupeCards(results.filter(Boolean));
   return {
-    ok:cards.length>0,
-    cards,
+    ok:cards.length>0,cards,
     logical_capacity:LOGICAL_NODE_CAPACITY,
     logical_tasks:tasks.length,
     physical_workers:workerCount,
     hardware_concurrency:Number(navigator.hardwareConcurrency||0)||null,
     scoring:"worker-side-bm25+idf+coverage+phrase+proximity",
+    context_window:{before:2,after:4},
+    canonical_reference_parser:true,
     main_thread_extraction:false
   };
 }
