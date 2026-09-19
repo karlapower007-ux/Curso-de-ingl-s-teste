@@ -674,6 +674,16 @@
     };
   }
 
+  function isStrictPrecisionReferenceIntent(question) {
+    const raw=String(question||"").trim();
+    const scripture=/\b(?:(?:[1-4]\s*)?(?:N[eé]fi|Nephi|Alma|M[oó]rmon|Mormon|Mor[oô]ni|Moroni|Mosias|Mosiah|Jac[oó]|Jacob|Enos|Jarom|Omni)|Palavras\s+de\s+M[oó]rmon|Words\s+of\s+Mormon|[EÉ]ter|Ether|G[eê]nesis|Genesis|[EÊ]xodo|Exodus|Lev[ií]tico|Leviticus|N[uú]meros|Numbers|Deuteron[oô]mio|Deuteronomy|Josu[eé]|Joshua|Ju[ií]zes|Judges|Rute|Ruth|Samuel|Reis|Kings|Cr[oô]nicas|Chronicles|Esdras|Ezra|Neemias|Nehemiah|Ester|Esther|J[oó]|Job|Salmos?|Psalms?|Prov[eé]rbios|Proverbs|Eclesiastes|Ecclesiastes|Cantares|Isa[ií]as|Isaiah|Jeremias|Jeremiah|Lamenta[cç][oõ]es|Ezequiel|Ezekiel|Daniel|Oseias|Hosea|Joel|Am[oó]s|Amos|Obadias|Obadiah|Jonas|Jonah|Miqueias|Micah|Naum|Nahum|Habacuque|Habakkuk|Sofonias|Zephaniah|Ageu|Haggai|Zacarias|Zechariah|Malaquias|Malachi|Mateus|Matthew|Marcos|Mark|Lucas|Luke|Jo[aã]o|John|Atos|Acts|Romanos|Romans|Cor[ií]ntios|Corinthians|G[aá]latas|Galatians|Ef[eé]sios|Ephesians|Filipenses|Philippians|Colossenses|Colossians|Tessalonicenses|Thessalonians|Tim[oó]teo|Timothy|Tito|Titus|Filemom|Philemon|Hebreus|Hebrews|Tiago|James|Pedro|Peter|Judas|Jude|Apocalipse|Revelation|Doutrina\s+e\s+Conv[eê]nios|Doctrine\s+and\s+Covenants|D\s*&\s*C|Mois[eé]s|Moses|Abra[aã]o|Abraham|Joseph\s+Smith(?:—|-|\s)+Hist[oó]ria|Joseph\s+Smith(?:—|-|\s)+History|Regras\s+de\s+F[eé]|Articles\s+of\s+Faith)\s+\d{1,4}(?::\d{1,4}(?:\s*[-–]\s*\d{1,4})?)?\b/iu;
+    if(scripture.test(raw))return true;
+    const cleaned=raw
+      .replace(/^(?:por\s+favor\s+)?(?:me\s+)?(?:mostre|mostrar|busque|buscar|procure|procurar|encontre|encontrar|leia|ler|cite|citar)\s+/iu,"")
+      .replace(/[?.!]+$/g,"").trim();
+    return /^[\p{L}][\p{L}\p{M}.'’ -]{1,48}\s+(?:Livro|Book)\s+(?:[IVXLCDM]+|\d{1,3})$/iu.test(cleaned);
+  }
+
   function isDirectRetrievalIntent(question) {
     const raw=String(question || "");
     const q=raw.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ");
@@ -1392,6 +1402,43 @@
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
+
+      // V3.3: referências diretas nunca passam por fuzzy/LLM antes do filtro booleano local.
+      if(isStrictPrecisionReferenceIntent(q)){
+        const failover=await ensureFailoverV3();
+        const recovered=await failover.recoverStrictPrecision({
+          question:q,
+          history:recentHistory
+        });
+        const resposta=String(recovered?.answer||"");
+        if(recovered?.plan==="C" && Array.isArray(recovered?.cards) && recovered.cards.length){
+          const rendered=appendOfflineTurbineResults(recovered);
+          const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
+          const persisted=[
+            resposta,
+            ...renderedCards.slice(0,8).map((card,i)=>
+              "[T"+String(card.node||i+1).padStart(4,"0")+"] "+canonicalHeader(card)+
+              (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
+            )
+          ].join("\n\n");
+          history.push({
+            role:"assistant",content:persisted,sources:recovered.sources||[],fallback:false,
+            failover_plan:"C",strict_precision:true,offline_turbines:true,ts:Date.now()
+          });
+          if($("backendText")) $("backendText").textContent="Plano C V3.3 • BOOLEAN EXACT • sem fuzzy matching";
+        }else{
+          const silence="Nenhuma correspondência exata encontrada na biblioteca.";
+          appendElegantSilence(silence);
+          history.push({
+            role:"assistant",content:silence,sources:[],fallback:false,
+            failover_plan:"C",strict_precision:true,strict_empty:true,zero_noise:true,ts:Date.now()
+          });
+          if($("backendText")) $("backendText").textContent="Plano C V3.3 • BOOLEAN EXACT • zero resultados";
+        }
+        saveHistory();
+        setAvatar("closed");
+        return;
+      }
 
       // Leitura literal: Plano A primeiro. Só após falha o módulo B-F é carregado.
       if(isDirectRetrievalIntent(q)){
