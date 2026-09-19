@@ -63,7 +63,7 @@ async function chat(env,question){
 export async function handleRequest(request,env={}){
   const url=new URL(request.url);
   if(request.method==="OPTIONS")return new Response("",{status:204,headers:JSON_HEADERS});
-  if(url.pathname==="/health")return json({ok:true,service:"FNS Multi-Cloud Standby",version:"3.0.0"});
+  if(url.pathname==="/health")return json({ok:true,service:"FNS Multi-Cloud Standby",version:"3.1.0"});
   if(request.method==="POST"&&url.pathname==="/api/rag/direct"){const body=await request.json().catch(()=>({}));const d=await direct(env,body.question||body.pergunta||"").catch(()=>null);return d?json(d):json({ok:false,code:"DIRECT_NOT_FOUND"},404);}
   if(request.method==="POST"&&url.pathname==="/api/chat"){const body=await request.json().catch(()=>({}));try{return json(await chat(env,String(body.pergunta||body.question||"")));}catch(error){return json({ok:false,message:String(error?.message||error)},503);}}
   return json({ok:false,code:"NOT_FOUND"},404);
