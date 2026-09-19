@@ -3972,6 +3972,41 @@ export class LibraryDO {
         return json({ ok: true, cleared: Number(before) });
       }
 
+      if (url.pathname === "/search-strict" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const question=String(body?.query||body?.question||"").trim();
+        const topK=Math.max(1,Math.min(STRICT_LOGICAL_TASK_CAP,Number(body?.top_k||STRICT_LOGICAL_TASK_CAP)));
+        const target=deriveStrictPhrase(question);
+        if(!target)return json({ok:true,matches:[],scanned:0,exact_hits:0,documents_hit:0,target:"",mode:"strict-phrase-v4"});
+        const perDocument=new Map();
+        let scanned=0,exactHits=0;
+        const cursor=this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+          ORDER BY d.id ASC,c.chunk_index ASC
+        `);
+        for(const row of cursor){
+          scanned++;
+          const match=strictParagraphMatch(row?.text||"",question);
+          if(!match.matched)continue;
+          exactHits++;
+          pushStrictHit(perDocument,{
+            ...row,score:100,coverage:1,
+            strict_phrase:match.target,
+            strict_paragraph_index:match.paragraph_index,
+            retrieval_mode:"strict-phrase-durable-v4"
+          },STRICT_PER_DOCUMENT_HIT_CAP);
+        }
+        return json({
+          ok:true,
+          matches:roundRobinStrictHits(perDocument,topK),
+          scanned,exact_hits:exactHits,documents_hit:perDocument.size,target,
+          mode:"strict-phrase-v4",or_disabled:true,fuzzy_disabled:true
+        });
+      }
+
       if (url.pathname === "/search-lexical" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const query = foldSearchText(body.query || "");
