@@ -142,8 +142,8 @@ self.onmessage=async e=>{
   try{
     if(d.type==="persist-chunks"){const count=await putMany("chunks",d.chunks||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
-    if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||100),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
-    if(d.type==="search-bm25"){const topK=Number(d.top_k||100);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
+    if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||500),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
+    if(d.type==="search-bm25"){const topK=Number(d.top_k||500);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
     if(d.type==="local-stats"){
       const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);
       self.postMessage({id,ok:true,chunks,vectors});
