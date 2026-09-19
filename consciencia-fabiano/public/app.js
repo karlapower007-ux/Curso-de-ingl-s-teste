@@ -1609,6 +1609,7 @@
     if (lib) {
       activateHeavyLocalSubsystems("library-admin");
       loadBooks();
+      maybeAutoOmniSync();
     }
   }
 
@@ -2291,6 +2292,100 @@
     }
   }
 
+  const OMNI_SYNC_STAMP_KEY="fns_omni_sync_last_v4";
+  let omniSyncRunning=false;
+  let omniSyncWorker=null;
+
+  function setOmniSyncProgress(text,percent=null){
+    const box=$("omniSyncProgress"),fill=$("omniSyncProgressFill"),label=$("omniSyncProgressText");
+    if(box)box.classList.remove("hidden");
+    if(label)label.textContent=String(text||"");
+    if(fill){
+      const p=Number.isFinite(Number(percent))?Math.max(0,Math.min(100,Number(percent))):0;
+      fill.style.width=p+"%";
+    }
+  }
+
+  async function startOmniLibrarySync({manual=false}={}){
+    if(omniSyncRunning || !navigator.onLine) return;
+    if(ownerToken()!==LOCAL_ADMIN_PASSWORD){
+      if(manual && !ensureLocalAdminAccess()) return;
+      if(ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    }
+    omniSyncRunning=true;
+    if($("omniSyncBtn")) $("omniSyncBtn").disabled=true;
+    setOmniSyncProgress("Preparando sincronização em micro-lotes de 200…",0);
+    await ensureRagCascade("omni-library-sync").catch(()=>{});
+
+    try{
+      omniSyncWorker=new Worker("/omni-sync-worker.js?v=4.0.0");
+      await new Promise((resolve,reject)=>{
+        omniSyncWorker.onmessage=async event=>{
+          const data=event.data||{};
+          if(data.type==="progress"){
+            const total=Number(data.cloud_total||0);
+            const written=Number(data.total_written||0);
+            const pct=total>0?Math.round((written/total)*100):Math.min(95,Number(data.page||0)*3);
+            setOmniSyncProgress(
+              "Sincronizando biblioteca total • "+written+(total?"/"+total:"")+" chunks • lote "+Number(data.page||0),
+              pct
+            );
+            return;
+          }
+          if(data.type==="done"){
+            const catalog=Array.isArray(data.catalog)?data.catalog:[];
+            for(const item of catalog){
+              await saveLocalCatalogEntry({
+                document_id:item.document_id,
+                arquivo:item.arquivo,
+                titulo:item.titulo,
+                autor:item.autor,
+                paginas:item.paginas,
+                chunks:item.chunks,
+                idioma:item.idioma,
+                status:"omni-local-ready",
+                source:"supabase-omni-sync",
+                updated_at:Date.now()
+              }).catch(()=>{});
+            }
+            localStorage.setItem(OMNI_SYNC_STAMP_KEY,String(Date.now()));
+            setOmniSyncProgress(
+              Number(data.total_written||0)
+                ? "Sincronização concluída • "+Number(data.documents||0)+" PDF(s) • "+Number(data.total_written||0)+" chunks locais."
+                : "Sincronização concluída • o espelho Supabase está acessível, mas não contém chunks.",
+              100
+            );
+            resolve(data);
+            return;
+          }
+          if(data.type==="error") reject(new Error(data.message||"Falha na sincronização Omni."));
+        };
+        omniSyncWorker.onerror=e=>reject(new Error(e.message||"Web Worker de sincronização falhou."));
+        omniSyncWorker.postMessage({
+          type:"start",
+          endpoint:"/api/admin/omni-sync-page",
+          token:ownerToken()
+        });
+      });
+      await loadBooks();
+    }catch(error){
+      setOmniSyncProgress("Sincronização não concluída: "+String(error?.message||error),0);
+      if(manual && $("adminStatus")) $("adminStatus").textContent="Falha na sincronização completa: "+String(error?.message||error);
+    }finally{
+      try{omniSyncWorker?.terminate();}catch{}
+      omniSyncWorker=null;
+      omniSyncRunning=false;
+      if($("omniSyncBtn")) $("omniSyncBtn").disabled=false;
+    }
+  }
+
+  function maybeAutoOmniSync(){
+    if(!navigator.onLine || omniSyncRunning || ownerToken()!==LOCAL_ADMIN_PASSWORD)return;
+    const last=Number(localStorage.getItem(OMNI_SYNC_STAMP_KEY)||0);
+    if(Date.now()-last<6*60*60*1000)return;
+    setTimeout(()=>startOmniLibrarySync({manual:false}).catch(()=>{}),900);
+  }
+
   async function loadBooks() {
     const local=await localBookCatalog();
     renderBooks(local,false);
@@ -2349,6 +2444,7 @@
   $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
+  if($("omniSyncBtn")) $("omniSyncBtn").onclick = () => startOmniLibrarySync({manual:true});
   $("clearChatBtn").onclick = async () => {
     if (!confirm("Limpar todo o histórico desta conversa?")) return;
     history = [];
