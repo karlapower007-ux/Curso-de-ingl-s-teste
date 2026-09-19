@@ -273,7 +273,21 @@
   }
 
   function saveHistory() {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
+    try{
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
+    }catch{
+      const compact=history.slice(-MAX_HISTORY).map(item=>{
+        if(item?.raw_document===true && String(item?.content || "").length>24000){
+          return {
+            ...item,
+            content:"[Texto documental integral exibido nesta sessão; conteúdo extenso não persistido no localStorage.]",
+            raw_document:false
+          };
+        }
+        return item;
+      });
+      try{localStorage.setItem(HISTORY_KEY,JSON.stringify(compact));}catch{}
+    }
   }
 
   const LOCAL_ADMIN_PASSWORD = "gadu";
@@ -518,7 +532,7 @@
   function createNodeProgressVirtualizer(host) {
     const header=document.createElement("div");
     header.className="node-progress-header";
-    header.textContent="RAG V2.0 • preparando 500 nós assíncronos";
+    header.textContent="RAG V2.1 • preparando 500 nós assíncronos";
     const viewport=document.createElement("div");
     viewport.className="node-progress-viewport";
     viewport.setAttribute("aria-label","Progresso dos nós RAG");
@@ -593,7 +607,7 @@
         }else{
           items[existing]=record;
         }
-        header.textContent="RAG V2.0 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
+        header.textContent="RAG V2.1 • "+Math.min(record.completed,NODE_VIRTUAL_MAX)+"/"+NODE_VIRTUAL_MAX+" nós concluídos"+
           (reduceTotal ? " • síntese "+reduceDone+"/"+reduceTotal : "");
         const nearBottom=(viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight)<90;
         schedule();
@@ -602,17 +616,107 @@
       reduce(data){
         reduceTotal=Math.max(reduceTotal,Number(data?.total_groups || 0));
         reduceDone=Math.min(reduceTotal || Number.MAX_SAFE_INTEGER,reduceDone+1);
-        header.textContent="RAG V2.0 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
+        header.textContent="RAG V2.1 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
       },
       keepalive(){
         header.dataset.live=String(Date.now());
       },
       complete(){
-        header.textContent="RAG V2.0 • fusão enciclopédica concluída";
+        header.textContent="RAG V2.1 • fusão enciclopédica concluída";
       },
       destroy(){
         if(raf) cancelAnimationFrame(raf);
       }
+    };
+  }
+
+  function isDirectRetrievalIntent(question) {
+    const raw=String(question || "");
+    const q=raw.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ");
+    const fullChapter=/\b(?:capitulo|chapter)\b.*\b(?:completo|inteiro|integral|na integra|full|whole|entire)\b/i.test(q) ||
+      /\b(?:completo|inteiro|integral|na integra|full|whole|entire)\b.*\b(?:capitulo|chapter)\b/i.test(q);
+    const exactVerse=/\b(?:versiculo|verse)\b.*\b(?:exato|literal|integral|exact|verbatim)\b/i.test(q) ||
+      (/\b(?:exato|literal|exact|verbatim)\b/i.test(q) && /\b\d{1,4}\s*:\s*\d{1,4}\b/.test(raw));
+    const rawText=/\b(?:texto exato|texto literal|texto integral|na integra|sem resumir|sem resumo|raw text|verbatim|transcreva|transcricao integral|copie exatamente|mostre exatamente)\b/i.test(q);
+    return fullChapter || exactVerse || rawText;
+  }
+
+  function appendRawDocumentMessage(content,meta={}) {
+    const wrap=document.createElement("div");
+    wrap.className="msg assistant raw-document-msg";
+
+    const bar=document.createElement("div");
+    bar.className="raw-document-status";
+    const offline=meta?.offline_takeover===true;
+    bar.textContent=offline
+      ? "Modo Offline Ativado - Leitura Contínua Local"
+      : "Leitura documental direta • LLM bypass • ordem verificada";
+    wrap.appendChild(bar);
+
+    const source=document.createElement("div");
+    source.className="raw-document-source";
+    const bits=[
+      meta?.title || meta?.filename || "Documento",
+      meta?.author ? "autor: "+meta.author : "",
+      meta?.page ? "página "+meta.page : "",
+      meta?.scope ? "modo: "+meta.scope : ""
+    ].filter(Boolean);
+    source.textContent=bits.join(" • ");
+    wrap.appendChild(source);
+
+    const raw=document.createElement("div");
+    raw.className="raw-document-text";
+    raw.textContent=String(content || "");
+    wrap.appendChild(raw);
+
+    $("messages").appendChild(wrap);
+    $("messages").scrollTop=$("messages").scrollHeight;
+  }
+
+  async function directRetrievalWithFailover(question,queryEmbedding){
+    let remoteFailure="";
+    if(navigator.onLine){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),10000);
+      try{
+        const res=await fetch("/api/rag/direct",{
+          method:"POST",
+          headers:authHeaders({"Content-Type":"application/json"}),
+          body:JSON.stringify({
+            question:String(question || ""),
+            query_embedding:Array.isArray(queryEmbedding)?queryEmbedding:[]
+          }),
+          signal:controller.signal
+        });
+        const data=await res.json().catch(()=>({}));
+        if(res.ok && data?.ok===true && typeof data?.text==="string" && data.text.length){
+          return {...data,offline_takeover:false};
+        }
+        remoteFailure=String(data?.code || data?.message || ("HTTP "+res.status));
+      }catch(error){
+        remoteFailure=String(error?.message || error);
+      }finally{
+        clearTimeout(timer);
+      }
+    }else{
+      remoteFailure="offline";
+    }
+
+    try{
+      if(window.__ragCascadeReady) await window.__ragCascadeReady;
+      const local=await window.FNSRagCascade?.directRetrieve?.(question);
+      if(local?.ok===true && typeof local?.text==="string" && local.text.length){
+        try{navigator.vibrate?.(35);}catch{}
+        if($("avatarState")) $("avatarState").textContent="Modo Offline Ativado - Leitura Contínua Local";
+        return {...local,offline_takeover:true,remote_failure:remoteFailure};
+      }
+    }catch{}
+
+    return {
+      ok:false,direct:true,bypass_llm:true,
+      code:"DIRECT_RETRIEVAL_UNAVAILABLE",
+      remote_failure:remoteFailure,
+      text:""
     };
   }
 
@@ -761,7 +865,10 @@
 
   function renderHistory() {
     $("messages").innerHTML = "";
-    history.forEach(x => appendMessage(x.role, x.content, x.sources || [], x.fallback));
+    history.forEach(x => {
+      if(x.role==="assistant" && x.raw_document===true) appendRawDocumentMessage(x.content,x.direct_meta || {});
+      else appendMessage(x.role, x.content, x.sources || [], x.fallback);
+    });
     if (!history.length) {
       appendMessage("assistant",
         "Estou pronto. Alimente minha biblioteca com PDFs e converse comigo sobre qualquer assunto. Vou responder sempre em português e mostrar as fontes quando a biblioteca as fornecer.");
@@ -1025,6 +1132,39 @@
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const queryEmbedding=await localQueryEmbedding(q);
+
+      if(isDirectRetrievalIntent(q)){
+        const direct=await directRetrievalWithFailover(q,queryEmbedding);
+        if(direct?.ok===true && typeof direct?.text==="string" && direct.text.length){
+          appendRawDocumentMessage(direct.text,direct);
+          history.push({
+            role:"assistant",
+            content:direct.text,
+            raw_document:true,
+            direct_meta:{
+              offline_takeover:direct.offline_takeover===true,
+              title:direct.title || direct.filename || "Documento",
+              filename:direct.filename || "",
+              author:direct.author || "",
+              page:direct.page || null,
+              scope:direct.scope || ""
+            },
+            fallback:false,
+            ts:Date.now()
+          });
+          saveHistory();
+          setAvatar("closed");
+          return;
+        }
+
+        const failure="Não foi possível recuperar o texto documental exato agora. O modo V2.1 manteve o bypass do LLM e não gerou nem completou o texto por inteligência artificial.";
+        appendMessage("assistant",failure,[],true);
+        history.push({role:"assistant",content:failure,fallback:true,ts:Date.now()});
+        saveHistory();
+        setAvatar("closed");
+        return;
+      }
+
       let resilient={matches:[],level:0,name:"none"};
       try{
         if(window.__ragCascadeReady) await window.__ragCascadeReady;
@@ -1069,7 +1209,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "RAG V2.0 • 500 nós • 25 workers • Groq + Local"
+        ? "RAG V2.1 • 500 nós • 25 workers • Groq + Local"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
