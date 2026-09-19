@@ -1,4 +1,4 @@
-const VERSION = "1.6.0-massive-pdf-throttled-rag";
+const VERSION = "1.7.0-bulletproof-rag";
 // External AI bypass activation: Groq chat/STT + Cohere multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -8,15 +8,21 @@ const MAX_TEXT_CHARS = 30_000_000;
 const MAX_TEXT_BATCH_CHARS = 1_250_000;
 const CHUNK_CONCURRENCY = 50;
 const EMBED_CONCURRENCY = 50;
-const COHERE_API_BATCH = 24;
-const COHERE_THROTTLE_MS = 900;
-const INDEX_PAGE_SLICE = 12;
-const INDEX_ALARM_DELAY_MS = 850;
+const COHERE_API_BATCH = 95;
+const COHERE_THROTTLE_MS = 2200;
+const INDEX_PAGE_SLICE = 72;
+const INDEX_ALARM_DELAY_MS = 900;
 const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 250;
+const MIN_PAGE_LETTERS = 90;
+const MIN_CHUNK_LETTERS = 100;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 1800;
 const MAX_SERVER_HISTORY = 40;
+const GROQ_HISTORY_MESSAGES = 10;
+const GROQ_INPUT_BUDGET_TOKENS = 9000;
+const GROQ_HISTORY_BUDGET_TOKENS = 2400;
+const GROQ_RAG_BUDGET_TOKENS = 4200;
 const OWNER_TOKEN_HASH = "8205541ffbdb2d6ee4d000427b0d8a0bc70f657087ba43d95712eeef0a9609ed";
 const enc = new TextEncoder();
 
@@ -180,16 +186,55 @@ function splitPages(markdown) {
   return pages.length ? pages : [{ page: 1, text: text.trim() }];
 }
 
-function chunkText(text, maxChars = CHUNK_CHARS, overlap = CHUNK_OVERLAP) {
-  const clean = String(text || "")
+function cleanDocumentText(text) {
+  return String(text || "")
     .replace(/\u0000/g, "")
+    .replace(/^\s*(?:\d+|[ivxlcdm]+)\s*$/gim, " ")
+    .replace(/^\s*[-–—_=]{3,}\s*$/gm, " ")
+    .replace(/^.{0,140}\.{5,}\s*\d{1,5}\s*$/gm, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  if (!clean) return [];
-  if (clean.length <= maxChars) return [clean];
+}
+
+function textQuality(text) {
+  const clean = cleanDocumentText(text);
+  const letters = (clean.match(/\p{L}/gu) || []).length;
+  const digits = (clean.match(/\d/g) || []).length;
+  const words = clean.match(/[\p{L}][\p{L}\p{M}'’-]{1,}/gu) || [];
+  const unique = new Set(words.map(w => w.toLowerCase())).size;
+  const lines = clean.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const numericLines = lines.filter(line => /^[\d\s.,;:()[\]{}+\-–—/\\]+$/.test(line)).length;
+  const numberHeavy = digits > Math.max(80, letters * 0.9);
+  const numericLineRatio = lines.length ? numericLines / lines.length : 1;
+  return { clean, letters, digits, words: words.length, unique, numberHeavy, numericLineRatio };
+}
+
+function isUsefulPageText(text) {
+  const q = textQuality(text);
+  return q.letters >= MIN_PAGE_LETTERS &&
+    q.words >= 16 &&
+    q.unique >= 8 &&
+    !q.numberHeavy &&
+    q.numericLineRatio < 0.65;
+}
+
+function isUsefulChunkText(text) {
+  const q = textQuality(text);
+  return q.letters >= MIN_CHUNK_LETTERS &&
+    q.words >= 18 &&
+    q.unique >= 9 &&
+    !q.numberHeavy &&
+    q.numericLineRatio < 0.60;
+}
+
+function chunkText(text, maxChars = CHUNK_CHARS, overlap = CHUNK_OVERLAP) {
+  const clean = cleanDocumentText(text);
+  if (!clean || !isUsefulPageText(clean)) return [];
+  if (clean.length <= maxChars) return isUsefulChunkText(clean) ? [clean] : [];
 
   const out = [];
+  const seen = new Set();
   let start = 0;
   while (start < clean.length) {
     let end = Math.min(clean.length, start + maxChars);
@@ -200,7 +245,13 @@ function chunkText(text, maxChars = CHUNK_CHARS, overlap = CHUNK_OVERLAP) {
       if (cut > 0) end = windowStart + cut + 1;
     }
     const piece = clean.slice(start, end).trim();
-    if (piece.length >= 80) out.push(piece);
+    if (isUsefulChunkText(piece)) {
+      const fingerprint = piece.toLowerCase().replace(/\s+/g, " ").slice(0, 700);
+      if (!seen.has(fingerprint)) {
+        seen.add(fingerprint);
+        out.push(piece);
+      }
+    }
     if (end >= clean.length) break;
     start = Math.max(start + 1, end - overlap);
   }
@@ -240,10 +291,13 @@ function detectLanguage(text) {
   return bestScore >= 4 ? best : "unknown";
 }
 
-async function embedTexts(env, texts, inputType = "search_document") {
+async function cohereEmbedTexts(env, texts, inputType = "search_document") {
   const apiKey = requireSecret(env, "COHERE_API_KEY");
   const list = Array.from(texts || []).map(text => String(text || ""));
   if (!list.length) return [];
+  if (list.length > COHERE_API_BATCH) {
+    throw new Error("Lote Cohere acima do limite interno de " + COHERE_API_BATCH + " textos.");
+  }
   const safeInputType = inputType === "search_query" ? "search_query" : "search_document";
   const res = await fetch("https://api.cohere.com/v2/embed", {
     method: "POST",
@@ -264,6 +318,8 @@ async function embedTexts(env, texts, inputType = "search_document") {
   if (!res.ok) {
     const err = new Error(body?.message || body?.error?.message || ("Cohere embeddings HTTP " + res.status));
     err.status = res.status;
+    const retryAfter = Number(res.headers.get("retry-after") || 0);
+    if (retryAfter > 0) err.retryAfterMs = Math.min(120000, retryAfter * 1000);
     throw err;
   }
   const vectors =
@@ -274,6 +330,18 @@ async function embedTexts(env, texts, inputType = "search_document") {
     throw new Error("Cohere não retornou todos os embeddings esperados.");
   }
   return vectors;
+}
+
+const embeddingAdapter = {
+  name: "cohere-api",
+  model: EMBEDDING_MODEL,
+  async embed(env, texts, inputType) {
+    return cohereEmbedTexts(env, texts, inputType);
+  },
+};
+
+async function generateEmbeddings(env, texts, inputType = "search_document") {
+  return embeddingAdapter.embed(env, texts, inputType);
 }
 
 async function parallelMapLimit(items, limit, mapper) {
@@ -297,31 +365,44 @@ function isRateLimitError(error) {
   return /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
 }
 
-async function embedOneWithRetry(env, text, maxAttempts = 5) {
+function isRateLimitError(error) {
+  return Number(error?.status || 0) === 429 ||
+    /429|rate.?limit|too many requests|quota|overload|temporar/i.test(String(error?.message || error || ""));
+}
+
+function isPayloadSizeError(error) {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || error || "");
+  return status === 413 || /payload|request too large|too many texts|input too large|length limit/i.test(message);
+}
+
+async function embedOneWithRetry(env, text, maxAttempts = 6) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const vectors = await embedTexts(env, [text]);
+      const vectors = await generateEmbeddings(env, [text], "search_document");
       if (!vectors?.[0]?.length) throw new Error("Embedding vazio.");
       return vectors[0];
     } catch (error) {
       lastError = error;
-      if (!isRateLimitError(error) || attempt === maxAttempts) throw error;
-      const delay = Math.min(8000, 300 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 350);
+      const retryable = isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(String(error?.message || error || ""));
+      if (!retryable || attempt === maxAttempts) throw error;
+      const serverDelay = Number(error?.retryAfterMs || 0);
+      const delay = serverDelay || Math.min(45000, 1200 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 700);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   throw lastError || new Error("Falha ao gerar embedding.");
 }
 
-async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 5) {
+async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 6) {
   const list = Array.from(chunks || []);
   if (!list.length) return [];
 
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const vectors = await embedTexts(env, list.map(item => String(item?.text || "")));
+      const vectors = await generateEmbeddings(env, list.map(item => String(item?.text || "")), "search_document");
       if (!Array.isArray(vectors) || vectors.length !== list.length || vectors.some(v => !Array.isArray(v) || !v.length)) {
         throw new Error("Lote de embeddings retornou quantidade inválida.");
       }
@@ -329,25 +410,33 @@ async function embedWaveBatchedWithRetry(env, chunks, maxAttempts = 5) {
     } catch (error) {
       lastError = error;
       const message = String(error?.message || error || "");
-      const retryable = isRateLimitError(error) || /timeout|temporar|overload|unavailable/i.test(message);
-      if (!retryable || attempt === maxAttempts) break;
-      const delay = Math.min(12000, 500 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 350);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      const retryable = isRateLimitError(error) || /timeout|temporar|overload|unavailable|network|fetch|5\d\d/i.test(message);
+
+      // Critical bulletproof rule: never split a rate-limited batch into dozens of smaller API calls.
+      if (retryable) {
+        if (attempt === maxAttempts) throw error;
+        const serverDelay = Number(error?.retryAfterMs || 0);
+        const delay = serverDelay || Math.min(60000, 1800 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 900);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      // Split only when the provider explicitly rejects the payload size.
+      if (isPayloadSizeError(error) && list.length > 1) {
+        const mid = Math.ceil(list.length / 2);
+        const left = await embedWaveBatchedWithRetry(env, list.slice(0, mid), maxAttempts);
+        await new Promise(resolve => setTimeout(resolve, COHERE_THROTTLE_MS));
+        const right = await embedWaveBatchedWithRetry(env, list.slice(mid), maxAttempts);
+        return [...left, ...right];
+      }
+      throw error;
     }
   }
-
-  if (list.length > 1) {
-    const mid = Math.ceil(list.length / 2);
-    const left = await embedWaveBatchedWithRetry(env, list.slice(0, mid), maxAttempts);
-    const right = await embedWaveBatchedWithRetry(env, list.slice(mid), maxAttempts);
-    return [...left, ...right];
-  }
-
-  return [await embedOneWithRetry(env, String(list[0]?.text || ""), maxAttempts)];
+  throw lastError || new Error("Falha no lote de embeddings.");
 }
 
 async function embedChunksBatched(env, chunks) {
-  const list = Array.from(chunks || []);
+  const list = Array.from(chunks || []).filter(item => isUsefulChunkText(item?.text || ""));
   for (let offset = 0; offset < list.length; offset += COHERE_API_BATCH) {
     const batch = list.slice(offset, offset + COHERE_API_BATCH);
     const vectors = await embedWaveBatchedWithRetry(env, batch);
@@ -536,7 +625,7 @@ async function reindexLibrary(request, env) {
 
 async function retrieveContext(env, question) {
   assertBindings(env);
-  const qEmbedding = await embedTexts(env, [question], "search_query");
+  const qEmbedding = await generateEmbeddings(env, [question], "search_query");
   const data = await libraryCall(env, "/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -690,6 +779,81 @@ async function groqStreamResponse(env, messages, meta) {
   });
 }
 
+function estimateTokens(text) {
+  const value = String(text || "");
+  if (!value) return 0;
+  const words = value.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(value.length / 3.2), Math.ceil(words * 1.35));
+}
+
+function trimToTokenBudget(text, budget) {
+  const value = String(text || "");
+  if (estimateTokens(value) <= budget) return value;
+  const maxChars = Math.max(100, Math.floor(budget * 3.0));
+  return value.slice(0, maxChars).replace(/\s+\S*$/, "").trim() + "…";
+}
+
+function slidingHistory(history, maxMessages = GROQ_HISTORY_MESSAGES, tokenBudget = GROQ_HISTORY_BUDGET_TOKENS) {
+  const source = Array.from(history || []).slice(-Math.max(maxMessages * 2, maxMessages));
+  const selected = [];
+  let used = 0;
+  for (let i = source.length - 1; i >= 0 && selected.length < maxMessages; i--) {
+    const role = source[i]?.role === "assistant" ? "assistant" : "user";
+    const content = trimToTokenBudget(String(source[i]?.content || ""), 600);
+    const cost = estimateTokens(content) + 8;
+    if (!content) continue;
+    if (selected.length && used + cost > tokenBudget) break;
+    if (!selected.length && cost > tokenBudget) {
+      selected.push({ role, content: trimToTokenBudget(content, Math.max(200, tokenBudget - 8)) });
+      break;
+    }
+    selected.push({ role, content });
+    used += cost;
+  }
+  return selected.reverse();
+}
+
+function buildRagContext(context, tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
+  if (!Array.isArray(context) || !context.length) {
+    return "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
+  }
+  const parts = [];
+  let used = 0;
+  for (let i = 0; i < context.length; i++) {
+    const c = context[i];
+    const header = "[F" + (i + 1) + "] " + (c.title || c.filename || "Fonte") +
+      (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
+    const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
+    if (remaining <= 180 && parts.length) break;
+    const excerpt = trimToTokenBudget(String(c.text || ""), Math.min(900, remaining));
+    const part = header + "\n" + excerpt;
+    const cost = estimateTokens(part);
+    if (parts.length && used + cost > tokenBudget) break;
+    parts.push(part);
+    used += cost;
+  }
+  return parts.join("\n\n");
+}
+
+function enforceGroqBudget(messages, budget = GROQ_INPUT_BUDGET_TOKENS) {
+  const list = Array.from(messages || []).map(m => ({ role: m.role, content: String(m.content || "") }));
+  let total = list.reduce((n, m) => n + estimateTokens(m.content) + 8, 0);
+  if (total <= budget) return list;
+
+  // Keep system + newest user message, remove oldest conversational turns first.
+  while (list.length > 2 && total > budget) {
+    const removed = list.splice(1, 1)[0];
+    total -= estimateTokens(removed.content) + 8;
+  }
+  if (total > budget && list.length) {
+    const last = list[list.length - 1];
+    const overflow = total - budget;
+    const current = estimateTokens(last.content);
+    last.content = trimToTokenBudget(last.content, Math.max(500, current - overflow - 100));
+  }
+  return list;
+}
+
 async function chat(request, env) {
   assertBindings(env);
   requireSecret(env, "GROQ_API_KEY");
@@ -699,14 +863,15 @@ async function chat(request, env) {
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
 
   const ownerId = await memoryOwner(request, body);
-  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-20) : [];
+  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-GROQ_HISTORY_MESSAGES * 2) : [];
   let storedHistory = [];
   try {
-    storedHistory = await readPersistentHistory(env, ownerId, 20);
+    storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, GROQ_HISTORY_MESSAGES * 2));
   } catch {}
-  const history = storedHistory.length
-    ? storedHistory.slice(-20).map(x => ({ role: x.role, content: x.content }))
+  const historySource = storedHistory.length
+    ? storedHistory.map(x => ({ role: x.role, content: x.content }))
     : clientHistory;
+  const history = slidingHistory(historySource);
 
   let context = [];
   try {
@@ -716,13 +881,9 @@ async function chat(request, env) {
     context = [];
   }
 
-  const contextText = context.length
-    ? context.map((c, i) =>
-        `[F${i + 1}] ${c.title || c.filename}${c.author ? " — " + c.author : ""}, página ${c.page || "não informada"}\n${c.text}`
-      ).join("\n\n")
-    : "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
+  const contextText = buildRagContext(context);
 
-  const messages = [
+  const messages = enforceGroqBudget([
     {
       role: "system",
       content:
@@ -735,15 +896,12 @@ async function chat(request, env) {
         "Se não houver fonte documental suficiente, ainda pode usar conhecimento geral, mas declare claramente que essa parte não veio dos PDFs. " +
         "Use o histórico persistente apenas como contexto de conversa; não o trate como fonte documental."
     },
-    ...history.map(x => ({
-      role: x.role === "assistant" ? "assistant" : "user",
-      content: String(x.content || "").slice(0, 2200),
-    })),
+    ...history,
     {
       role: "user",
-      content: `BIBLIOTECA RECUPERADA:\n${contextText}\n\nPERGUNTA:\n${question}`,
+      content: "BIBLIOTECA RECUPERADA:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
     },
-  ];
+  ]);
 
   const sources = uniqueSources(context);
   const fallback = context.length === 0;
@@ -835,6 +993,12 @@ async function status(env) {
     server_pdf_parsing: false,
     chunk_concurrency_limit: CHUNK_CONCURRENCY,
     embedding_concurrency_limit: EMBED_CONCURRENCY,
+    embedding_request_batch_limit: COHERE_API_BATCH,
+    embedding_throttle_ms: COHERE_THROTTLE_MS,
+    embedding_adapter: embeddingAdapter.name,
+    smart_chunking: true,
+    groq_history_window: GROQ_HISTORY_MESSAGES,
+    groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
     llm_provider: "groq",
@@ -1089,9 +1253,15 @@ export class LibraryDO {
       )][0]?.n || 0);
       const groups=await matrixChunkPages(pageRows);
       const wave=[];
+      const waveSeen=new Set();
       for(const group of groups) {
         for(const piece of group) {
-          wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:piece.text});
+          const cleanPiece=cleanDocumentText(piece.text);
+          if(!isUsefulChunkText(cleanPiece)) continue;
+          const fingerprint=cleanPiece.toLowerCase().replace(/\s+/g," ").slice(0,700);
+          if(waveSeen.has(fingerprint)) continue;
+          waveSeen.add(fingerprint);
+          wave.push({id:uuidCompact(),page:piece.page,chunk_index:chunkIndex++,text:cleanPiece});
         }
       }
 
