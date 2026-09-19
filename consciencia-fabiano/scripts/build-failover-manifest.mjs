@@ -20,12 +20,12 @@ for(const [name,raw] of candidates){
   mirrors.push({name,base_url,enabled:true,timeout_ms:5000});
 }
 const manifest={
-  version:"7.0.0",
+  version:"7.1.0",
   generated_at:new Date().toISOString(),
   strategy:"A->B->C->D->E->F",
   mirrors,
   plan_c:{
-    engine:"twenty-agent-cross-device-v7",
+    engine:"fabiano-r2-cross-device-v7.1",
     logical_task_capacity:1000,
     physical_worker_cap:16,
     scoring:"strict-same-paragraph-phrase-v4",
@@ -67,10 +67,10 @@ const manifest={
     agent19_conflict_auditor:true,
     agent20_mission_master:true,
     cross_device_library_mirror:true,
-    cross_device_library_table:"library_chunks",
+    cross_device_storage_backend:"cloudflare-r2",\n    cross_device_r2_binding:"PDFS",\n    cross_device_r2_bucket:"consciencia-fabiano-pdfs",
     cross_device_plaintext_chunk_sync:true,
     cross_device_backfill_from_indexeddb:true,
-    cross_device_mobile_hydration:true,
+    cross_device_mobile_hydration:true,\n    cross_device_no_supabase_dependency:true,\n    cross_device_r2_generation_pointer:true,
     cross_device_batch_size:200
   },
   plans:{
