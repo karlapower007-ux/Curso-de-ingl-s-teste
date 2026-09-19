@@ -339,6 +339,7 @@
   function unlockUI() {
     sessionStorage.setItem(OWNER_TOKEN_KEY,LOCAL_ADMIN_PASSWORD);
     setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),250);
+    setTimeout(()=>configurePhantomDaemon({force:true}).catch(()=>{}),350);
     return true;
   }
   function ensureLocalAdminAccess() {
@@ -961,7 +962,7 @@
     const physical=Math.max(0,Number(data?.physical_workers||0));
     const logical=Math.max(0,Number(data?.logical_tasks||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
-    status.textContent="Plano C V4.0 • "+cards.length+" blocos semânticos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
+    status.textContent="Plano C V6.0 • "+cards.length+" blocos semânticos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
       (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
     wrap.appendChild(status);
 
@@ -1431,7 +1432,7 @@
             role:"assistant",content:persisted,sources:recovered.sources||[],fallback:false,
             failover_plan:"C",strict_precision:true,offline_turbines:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V4.0 • BOOLEAN EXACT • sem fuzzy matching";
+          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • sem fuzzy matching";
         }else{
           const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
           appendElegantSilence(silence);
@@ -1439,7 +1440,7 @@
             role:"assistant",content:silence,sources:[],fallback:false,
             failover_plan:"C",strict_precision:true,strict_empty:true,zero_noise:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V4.0 • BOOLEAN EXACT • zero resultados";
+          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • zero resultados";
         }
         saveHistory();
         setAvatar("closed");
@@ -1520,7 +1521,7 @@
               role:"assistant",content:silence,sources:[],fallback:false,
               failover_plan:"C",strict_empty:true,zero_noise:true,ts:Date.now()
             });
-            if($("backendText")) $("backendText").textContent="Plano C V4.0 • zero-noise • nenhuma correspondência válida";
+            if($("backendText")) $("backendText").textContent="Plano C V6.0 • zero-noise • nenhuma correspondência válida";
           }else if(recovered.plan==="C" && Array.isArray(recovered.cards) && recovered.cards.length){
             const rendered=appendOfflineTurbineResults(recovered);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
@@ -1536,7 +1537,7 @@
               failover_plan:"C",offline_turbines:true,ts:Date.now()
             });
             if($("backendText")){
-              $("backendText").textContent="Plano C V4.0 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
+              $("backendText").textContent="Plano C V6.0 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
             }
           }else{
             appendMessage("assistant",resposta,recovered.sources || [],false);
@@ -1556,7 +1557,7 @@
           appendElegantSilence(silence);
           history.push({role:"assistant",content:silence,sources:[],fallback:false,strict_empty:true,zero_noise:true,ts:Date.now()});
           saveHistory();
-          if($("backendText")) $("backendText").textContent="V4.0 • biblioteca total • 0 correspondências exatas";
+          if($("backendText")) $("backendText").textContent="V6.0 • biblioteca total • 0 correspondências válidas";
           setAvatar("closed");
           return;
         }
@@ -1600,7 +1601,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "V4.0 • Omni Library • frase exata online/offline"
+        ? "V6.0 • Omni Agent Swarm • Phantom Daemon"
         : "Modo local resiliente ativo";
     } catch {
       $("backendDot").className="dot ok";
@@ -2301,98 +2302,61 @@
     }
   }
 
-  const OMNI_SYNC_STAMP_KEY="fns_omni_sync_last_v4";
-  let omniSyncRunning=false;
-  let omniSyncWorker=null;
+  const OMNI_SYNC_STAMP_KEY="fns_omni_sync_last_v6";
+  const PHANTOM_DAEMON_INTERVAL_MS=3*60*1000;
+  let phantomDaemonConfigured=false;
 
-  function setOmniSyncProgress(text,percent=null){
-    const box=$("omniSyncProgress"),fill=$("omniSyncProgressFill"),label=$("omniSyncProgressText");
-    if(box)box.classList.remove("hidden");
-    if(label)label.textContent=String(text||"");
-    if(fill){
-      const p=Number.isFinite(Number(percent))?Math.max(0,Math.min(100,Number(percent))):0;
-      fill.style.width=p+"%";
+  async function configurePhantomDaemon({force=false}={}){
+    if(!("serviceWorker" in navigator))return false;
+    const token=ownerToken();
+    if(!token)return false;
+    const reg=await navigator.serviceWorker.ready;
+    const target=reg.active||reg.waiting||reg.installing;
+    target?.postMessage({type:"configure-omni-daemon",token,force:Boolean(force)});
+    phantomDaemonConfigured=true;
+
+    // Browser-controlled Periodic Background Sync is best-effort and may be clamped.
+    if(reg.periodicSync?.register){
+      try{
+        await reg.periodicSync.register("fns-omni-daemon-v6",{minInterval:PHANTOM_DAEMON_INTERVAL_MS});
+      }catch{}
+    }else if(reg.sync?.register){
+      try{await reg.sync.register("fns-omni-daemon-v6");}catch{}
     }
+    return true;
   }
 
-  async function startOmniLibrarySync({manual=false}={}){
-    if(omniSyncRunning || !navigator.onLine) return;
-    if(ownerToken()!==LOCAL_ADMIN_PASSWORD){
-      if(manual && !ensureLocalAdminAccess()) return;
-      if(ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
-    }
-    omniSyncRunning=true;
-    if($("omniSyncBtn")) $("omniSyncBtn").disabled=true;
-    setOmniSyncProgress("Preparando sincronização em micro-lotes de 200…",0);
-    await ensureRagCascade("omni-library-sync").catch(()=>{});
-
-    try{
-      omniSyncWorker=new Worker("/omni-sync-worker.js?v=4.0.0");
-      await new Promise((resolve,reject)=>{
-        omniSyncWorker.onmessage=async event=>{
-          const data=event.data||{};
-          if(data.type==="progress"){
-            const total=Number(data.cloud_total||0);
-            const written=Number(data.total_written||0);
-            const pct=total>0?Math.round((written/total)*100):Math.min(95,Number(data.page||0)*3);
-            setOmniSyncProgress(
-              "Sincronizando biblioteca total • "+written+(total?"/"+total:"")+" chunks • lote "+Number(data.page||0),
-              pct
-            );
-            return;
-          }
-          if(data.type==="done"){
-            const catalog=Array.isArray(data.catalog)?data.catalog:[];
-            for(const item of catalog){
-              await saveLocalCatalogEntry({
-                document_id:item.document_id,
-                arquivo:item.arquivo,
-                titulo:item.titulo,
-                autor:item.autor,
-                paginas:item.paginas,
-                chunks:item.chunks,
-                idioma:item.idioma,
-                status:"omni-local-ready",
-                source:"supabase-omni-sync",
-                updated_at:Date.now()
-              }).catch(()=>{});
-            }
-            localStorage.setItem(OMNI_SYNC_STAMP_KEY,String(Date.now()));
-            setOmniSyncProgress(
-              Number(data.total_written||0)
-                ? "Sincronização concluída • "+Number(data.documents||0)+" PDF(s) • "+Number(data.total_written||0)+" chunks locais."
-                : "Sincronização concluída • o espelho Supabase está acessível, mas não contém chunks.",
-              100
-            );
-            resolve(data);
-            return;
-          }
-          if(data.type==="error") reject(new Error(data.message||"Falha na sincronização Omni."));
-        };
-        omniSyncWorker.onerror=e=>reject(new Error(e.message||"Web Worker de sincronização falhou."));
-        omniSyncWorker.postMessage({
-          type:"start",
-          endpoint:"/api/admin/omni-sync-page",
-          token:ownerToken()
-        });
-      });
-      await loadBooks();
-    }catch(error){
-      setOmniSyncProgress("Sincronização não concluída: "+String(error?.message||error),0);
-      if(manual && $("adminStatus")) $("adminStatus").textContent="Falha na sincronização completa: "+String(error?.message||error);
-    }finally{
-      try{omniSyncWorker?.terminate();}catch{}
-      omniSyncWorker=null;
-      omniSyncRunning=false;
-      if($("omniSyncBtn")) $("omniSyncBtn").disabled=false;
-    }
+  function tickPhantomDaemon(){
+    if(!("serviceWorker" in navigator))return;
+    navigator.serviceWorker.ready.then(reg=>{
+      const target=reg.active||reg.waiting||reg.installing;
+      target?.postMessage({type:"omni-daemon-tick"});
+    }).catch(()=>{});
   }
 
   function maybeAutoOmniSync(){
-    if(!navigator.onLine || omniSyncRunning || ownerToken()!==LOCAL_ADMIN_PASSWORD)return;
-    const last=Number(localStorage.getItem(OMNI_SYNC_STAMP_KEY)||0);
-    if(Date.now()-last<6*60*60*1000)return;
-    setTimeout(()=>startOmniLibrarySync({manual:false}).catch(()=>{}),900);
+    if(!navigator.onLine)return;
+    configurePhantomDaemon({force:false}).catch(()=>{});
+  }
+
+  function bindPhantomDaemonMessages(){
+    if(!("serviceWorker" in navigator))return;
+    navigator.serviceWorker.addEventListener("message",event=>{
+      const data=event.data||{};
+      if(data.type==="omni-daemon-synced"){
+        localStorage.setItem(OMNI_SYNC_STAMP_KEY,String(Date.now()));
+        if($("backendText")) $("backendText").textContent="V6.0 • Phantom Daemon sincronizou "+Number(data.written||0)+" chunks";
+        if(!$("libraryPanel")?.classList.contains("hidden")) loadBooks().catch(()=>{});
+        return;
+      }
+      if(data.type==="omni-daemon-idle"){
+        if($("backendText")) $("backendText").textContent="V6.0 • biblioteca sincronizada • daemon ativo";
+        return;
+      }
+      if(data.type==="omni-daemon-error"){
+        if($("backendText")) $("backendText").textContent="V6.0 • daemon aguardando nuvem";
+      }
+    });
   }
 
   async function loadBooks() {
@@ -2453,7 +2417,6 @@
   $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = uploadPdf;
   $("reindexBtn").onclick = reindex;
-  if($("omniSyncBtn")) $("omniSyncBtn").onclick = () => startOmniLibrarySync({manual:true});
   $("clearChatBtn").onclick = async () => {
     if (!confirm("Limpar todo o histórico desta conversa?")) return;
     history = [];
@@ -2475,10 +2438,17 @@
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
 
-  // Apenas o Service Worker leve é preparado no arranque. O módulo B-F continua sem ser importado.
+  // V6 Phantom Daemon: zero-touch. Nenhum botão de sincronização é necessário.
   if("serviceWorker" in navigator){
-    navigator.serviceWorker.register("/sw-v3.js",{scope:"/"}).catch(()=>{});
+    navigator.serviceWorker.register("/sw-v3.js",{scope:"/"}).then(async()=>{
+      bindPhantomDaemonMessages();
+      await configurePhantomDaemon({force:false}).catch(()=>{});
+      tickPhantomDaemon();
+    }).catch(()=>{});
   }
+
+  // Heartbeat exato enquanto a página está ativa; o Service Worker também usa Periodic Background Sync quando o navegador permite.
+  setInterval(()=>tickPhantomDaemon(),PHANTOM_DAEMON_INTERVAL_MS);
 
   setInterval(()=>{
     if(!heavyLocalSubsystemsActivated) return;
