@@ -391,7 +391,7 @@
       if (fallback) {
         const note = document.createElement("div");
         note.className = "source";
-        note.textContent = "Resposta de contingência: os PDFs não foram consultados.";
+        note.textContent = "Não encontrei uma passagem documental direta nesta busca; tente ampliar os termos.";
         src.appendChild(note);
       }
       (sources || []).forEach(item => {
