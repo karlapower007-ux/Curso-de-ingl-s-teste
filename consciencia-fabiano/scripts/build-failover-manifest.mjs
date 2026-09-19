@@ -20,12 +20,12 @@ for(const [name,raw] of candidates){
   mirrors.push({name,base_url,enabled:true,timeout_ms:5000});
 }
 const manifest={
-  version:"4.0.0",
+  version:"6.0.0",
   generated_at:new Date().toISOString(),
   strategy:"A->B->C->D->E->F",
   mirrors,
   plan_c:{
-    engine:"omni-library-strict-v4",
+    engine:"omni-agent-swarm-v6",
     logical_task_capacity:1000,
     physical_worker_cap:16,
     scoring:"strict-same-paragraph-phrase-v4",
@@ -42,7 +42,20 @@ const manifest={
     omni_sync_memory_flush:true,
     omni_search_all_documents:true,
     zero_noise:true,
-    elegant_silence:true
+    elegant_silence:true,
+    logical_agent_count:10,
+    agent_physical_worker_cap:10,
+    agent2_transformers_semantic:true,
+    agent2_model:"Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+    agent10_bouncer:true,
+    semantic_fallback_after_literal_miss:true,
+    phantom_daemon:true,
+    phantom_daemon_target_interval_ms:180000,
+    periodic_background_sync_best_effort:true,
+    omni_sync_cloud_fingerprint:true,
+    omni_sync_generation_gc:true,
+    manual_sync_button:false,
+    zero_touch_after_authorization:true
   },
   plans:{
     A:"Cloudflare Edge + Groq + Supabase",
