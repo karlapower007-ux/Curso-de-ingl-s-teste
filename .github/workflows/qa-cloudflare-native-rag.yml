@@ -27,8 +27,8 @@ jobs:
           bash -n scripts/autonomous-release.sh
 
           # Core V4.0 identity
-          grep -q '7.0.0-twenty-agent-cross-device' src/index.js
-          grep -q 'cloudflare-v7-twenty-agent-cross-device' src/index.js
+          grep -q '7.1.0-fabiano-r2-cross-device' src/index.js
+          grep -q 'cloudflare-v7.1-fabiano-r2-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
           grep -q 'online_offline_search_symmetry: true' src/index.js
           grep -q 'same_paragraph_phrase_required: true' src/index.js
@@ -59,7 +59,11 @@ jobs:
           grep -q 'agent19_conflict_auditor: true' src/index.js
           grep -q 'agent20_mission_master: true' src/index.js
           grep -q 'cross_device_library_mirror: true' src/index.js
-          grep -q 'cross_device_library_table: "library_chunks"' src/index.js
+          grep -q 'cross_device_storage_backend: "cloudflare-r2"' src/index.js
+          grep -q 'cross_device_r2_binding: "PDFS"' src/index.js
+          grep -q 'cross_device_r2_bucket: "consciencia-fabiano-pdfs"' src/index.js
+          grep -q 'cross_device_no_supabase_dependency: true' src/index.js
+          grep -q 'cross_device_r2_generation_pointer: true' src/index.js
           grep -q 'cross_device_mobile_hydration: true' src/index.js
           grep -q 'semantic_fallback_after_literal_miss: true' src/index.js
           grep -q 'phantom_daemon: true' src/index.js
@@ -81,14 +85,11 @@ jobs:
           grep -q 'from "../public/strict-match-core.js"' src/index.js
           grep -q 'strictParagraphMatch' src/index.js
 
-          # Cloudflare + Supabase strict full-library path
+          # Cloudflare Durable Objects strict full-library path
           grep -q 'retrieveDurableStrictContext' src/index.js
-          grep -q 'retrieveSupabaseStrictContext' src/index.js
           grep -q 'retrieveContextV4Strict' src/index.js
           grep -q '"/search-strict"' src/index.js
           grep -q 'strict-phrase-durable-v4' src/index.js
-          grep -q 'strict-phrase-supabase-v4' src/index.js
-          grep -q 'text","ilike.\*"' src/index.js
           grep -q 'pushStrictHit' src/index.js
           grep -q 'roundRobinStrictHits' src/index.js
           grep -q 'void suppliedEmbedding' src/index.js
@@ -139,8 +140,8 @@ jobs:
           grep -q 'Conflict and Duplicate Auditor' public/agent-node-worker.js
           grep -q 'Mission Master' public/agent-node-worker.js
           grep -q 'backfillLibraryChunksToCloud' public/app.js
-          grep -q '/api/admin/library-mirror-upsert' public/app.js
-          grep -q '/api/admin/library-mirror-upsert' src/index.js
+          grep -q '/api/admin/r2-library-shard' public/app.js
+          grep -q '/api/admin/r2-library-shard' src/index.js
           grep -q 'STRICT_PHRASE_MISS' public/local-turbine-worker.js
           grep -q 'CONTEXT_BEFORE=2' public/local-turbine-worker.js
           grep -q 'CONTEXT_AFTER=4' public/local-turbine-worker.js
@@ -163,7 +164,14 @@ jobs:
           grep -q 'payload=null' public/omni-sync-worker.js
           grep -q '/api/admin/omni-sync-page' src/index.js
           grep -q '/api/admin/omni-sync-state' src/index.js
-          grep -q 'supabaseOmniSyncState' src/index.js
+          grep -q 'r2OmniSyncState' src/index.js
+          grep -q 'r2OmniSyncPage' src/index.js
+          grep -q 'r2LibraryShardUpsert' src/index.js
+          grep -q 'r2LibraryFinalize' src/index.js
+          grep -q '/api/admin/r2-library-finalize' src/index.js
+          grep -q 'env.PDFS' src/index.js
+          grep -q '"binding": "PDFS"' wrangler.jsonc
+          grep -q '"bucket_name": "consciencia-fabiano-pdfs"' wrangler.jsonc
           grep -q 'Math.min(200' src/index.js
           grep -q 'memory_bounded:true' src/index.js
           grep -q 'configurePhantomDaemon' public/app.js
@@ -185,17 +193,21 @@ jobs:
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
           # Service-worker cache and V7 manifest
-          grep -q 'CACHE_NAME="fns-ultimate-resilience-v7"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-ultimate-resilience-v7-1"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
-          grep -q '"version": "7.0.0"' public/failover-manifest.json
-          grep -q '"engine": "twenty-agent-cross-device-v7"' public/failover-manifest.json
+          grep -q '"version": "7.1.0"' public/failover-manifest.json
+          grep -q '"engine": "fabiano-r2-cross-device-v7.1"' public/failover-manifest.json
           grep -q '"logical_agent_count": 20' public/failover-manifest.json
           grep -q '"agent2_transformers_semantic": true' public/failover-manifest.json
           grep -q '"agent10_bouncer": true' public/failover-manifest.json
           grep -q '"phantom_daemon": true' public/failover-manifest.json
           grep -q '"same_paragraph_phrase_required": true' public/failover-manifest.json
           grep -q '"omni_sync_batch_size": 200' public/failover-manifest.json
+          grep -q '"cross_device_storage_backend": "cloudflare-r2"' public/failover-manifest.json
+          grep -q '"cross_device_r2_binding": "PDFS"' public/failover-manifest.json
+          grep -q '"cross_device_r2_bucket": "consciencia-fabiano-pdfs"' public/failover-manifest.json
+          grep -q '"cross_device_no_supabase_dependency": true' public/failover-manifest.json
 
           # Existing production invariants kept intact
           grep -q 'MASSIVE_NODE_COUNT = 500' src/index.js
@@ -210,6 +222,11 @@ jobs:
           grep -q 'class LibraryDO' src/index.js
           grep -q 'durable_objects' wrangler.jsonc
           grep -q 'new_sqlite_classes' wrangler.jsonc
+          grep -q 'FABIANO_CLOUDFLARE_API_TOKEN' ../.github/workflows/autonomous-cloudflare-native-release.yml
+          grep -q 'FABIANO_CLOUDFLARE_ACCOUNT_ID' ../.github/workflows/autonomous-cloudflare-native-release.yml
+          grep -q 'focoeepoder2@gmail.com' ../.github/workflows/autonomous-cloudflare-native-release.yml
+          grep -q 'consciencia-fabiano.focoeepoder2.workers.dev' scripts/autonomous-release.sh
+          ! grep -q 'consciencia-fabiano.karlapower007.workers.dev' scripts/autonomous-release.sh
           grep -q 'pdfjs-dist@4.10.38' public/app.js
           grep -q 'whisper-large-v3-turbo' src/index.js
           ! grep -q 'env.AI' src/index.js
