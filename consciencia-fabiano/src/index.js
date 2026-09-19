@@ -728,6 +728,63 @@ async function retrieveLexicalContext(env, question) {
     : [];
 }
 
+function supabaseLexicalConfigured(env) {
+  return Boolean(
+    String(env?.SUPABASE_URL || "").trim() &&
+    String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim()
+  );
+}
+
+async function retrieveSupabaseLexicalContext(env, question) {
+  const base = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
+  const token = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
+  const terms = lexicalTerms(question).slice(0, 6);
+  if (!base || !token || !terms.length) return [];
+
+  const safeTerms = terms
+    .map(term => foldSearchText(term).replace(/[,*()]/g, "").trim())
+    .filter(Boolean);
+  if (!safeTerms.length) return [];
+
+  const endpoint = new URL(base + "/rest/v1/rag_embeddings");
+  endpoint.searchParams.set("select", "id,document_id,filename,title,author,language,page,chunk_index,text");
+  endpoint.searchParams.set("or", "(" + safeTerms.map(term => "text.ilike.*" + term + "*").join(",") + ")");
+  endpoint.searchParams.set("limit", String(TOP_K));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3500);
+  try {
+    const res = await fetch(endpoint.toString(), {
+      method: "GET",
+      headers: {
+        "Authorization": "Bearer " + token,
+        "apikey": token,
+        "Accept": "application/json"
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = new Error("Supabase lexical HTTP " + res.status);
+      err.code = "SUPABASE_LEXICAL_FAILED";
+      throw err;
+    }
+    const rows = await res.json().catch(() => []);
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => {
+      const text = String(row?.text || "");
+      const folded = foldSearchText(text);
+      const matched = safeTerms.filter(term => folded.includes(term)).length;
+      return {
+        ...row,
+        score: Math.max(0.01, matched / Math.max(1, safeTerms.length)),
+        retrieval_mode: "supabase-lexical-fallback"
+      };
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function mergeRetrievedMatches(...groups) {
   const seen = new Set();
   const merged = [];
@@ -778,13 +835,30 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
   }
 
   let lexical = [];
+  let durableObjectReadable = false;
   try {
     lexical = await retrieveLexicalContext(env, question);
+    durableObjectReadable = true;
   } catch {}
 
-  // V1.20 hotfix: busca semântica e BM25 deixam de se excluir.
-  // Qualquer uma das duas pode abrir a malha; o servidor funde os candidatos antes dos 20 núcleos.
-  return mergeRetrievedMatches(semantic, lexical);
+  let supabaseLexical = [];
+  let supabaseReadable = false;
+  if (supabaseLexicalConfigured(env)) {
+    try {
+      supabaseLexical = await retrieveSupabaseLexicalContext(env, question);
+      supabaseReadable = true;
+    } catch {}
+  }
+
+  // V1.20 hotfix: semântica, BM25 do Durable Object e Supabase lexical deixam de se excluir.
+  // Se o Durable Object atingir quota de leitura, o Supabase continua abrindo a malha documental.
+  const merged = mergeRetrievedMatches(semantic, lexical, supabaseLexical);
+  if (!merged.length && !durableObjectReadable && supabaseLexicalConfigured(env) && !supabaseReadable) {
+    const err = new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+    err.code = "RAG_RETRIEVAL_UNAVAILABLE";
+    throw err;
+  }
+  return merged;
 }
 
 function humanDocumentName(filename, title = "") {
@@ -2154,6 +2228,8 @@ async function status(env) {
     client_and_server_context_merge: true,
     lexical_full_scan_limit: 30000,
     lexical_single_anchor_opens_pipeline: true,
+    supabase_lexical_fallback: true,
+    durable_object_quota_fails_open_to_supabase: true,
     failure_message_requires_zero_sources: true,
     total_source_release: true,
     map_stage_can_filter_sources: false,
