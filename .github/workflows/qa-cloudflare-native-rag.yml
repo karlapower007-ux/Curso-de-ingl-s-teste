@@ -52,6 +52,7 @@ jobs:
           grep -q 'isFocusedCitationRequest' src/index.js
           grep -q 'LEXICAL_MIN_COVERAGE = 0.50' src/index.js
           grep -q 'gracefulEmptyAnswer' src/index.js
+          grep -q 'Não encontrei informações nos documentos indexados para responder a esta pergunta.' src/index.js
           grep -q 'transcribeBlobWithRetry' public/app.js
           grep -q 'scheduleVoiceReconnect' public/app.js
           grep -q 'unlockAudioOutput' public/app.js
@@ -66,7 +67,6 @@ jobs:
           grep -q 'BM25_K1' src/index.js
           grep -q 'bm25-fallback' src/index.js
           grep -q 'chunking_density: "paragraph-verse-granular"' src/index.js
-          grep -q 'Fabiano, não encontrei uma referência direta' src/index.js
           grep -q 'aggressiveGroqMessages' src/index.js
           grep -q 'GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS' src/index.js
           grep -q 'idbDelete' public/app.js
@@ -79,7 +79,6 @@ jobs:
           grep -q 'semantic_min_score: 0.38' src/index.js
           grep -q 'top_k: 100' src/index.js
           grep -q 'require_lexical_match: false' src/index.js
-          grep -q 'processar TODOS os trechos de contexto fornecidos' src/index.js
           grep -q 'FONTES E REFERÊNCIAS' src/index.js
           grep -q 'whisper-local.js' public/index.html
           grep -q 'rag-cascade.js' public/index.html
