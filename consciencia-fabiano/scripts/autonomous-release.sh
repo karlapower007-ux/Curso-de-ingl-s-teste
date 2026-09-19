@@ -45,6 +45,25 @@ log "DEPLOY_COMMAND=success"
 log "4/7 Install runtime secrets"
 printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
 log "GROQ_SECRET_INSTALLED=yes"
+
+put_optional_secret(){
+  local name="$1"
+  local value="${!name:-}"
+  if [ -n "$value" ]; then
+    printf '%s' "$value" | npx wrangler secret put "$name" >/dev/null
+    log "${name}_INSTALLED=yes"
+  else
+    log "${name}_INSTALLED=no"
+  fi
+}
+
+put_optional_secret SUPABASE_URL
+put_optional_secret SUPABASE_SERVICE_ROLE_KEY
+put_optional_secret SUPABASE_RAG_SEARCH_URL
+put_optional_secret PINECONE_API_KEY
+put_optional_secret PINECONE_UPSERT_URL
+put_optional_secret PINECONE_QUERY_URL
+
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
