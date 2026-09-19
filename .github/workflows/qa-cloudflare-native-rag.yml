@@ -131,7 +131,7 @@ jobs:
           grep -q 'repairFalseNegativeSynthesis' src/index.js
           grep -q 'deterministicSynthesisFromSources' src/index.js
           grep -q 'fallback = sources.length === 0' src/index.js
-          grep -q 'é PROIBIDO declarar ausência de informação' src/index.js
+          grep -q 'só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas' src/index.js
           grep -q 'Examine TODOS os trechos do lote individualmente' src/index.js
           grep -q 'Não selecione apenas a fonte mais óbvia' src/index.js
           grep -q 'Maximiza a pluralidade de livros, autores e documentos independentes' src/index.js
