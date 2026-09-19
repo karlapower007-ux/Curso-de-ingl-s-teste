@@ -1,4 +1,4 @@
-const VERSION = "1.17.1-supabase-comaster-active";
+const VERSION = "1.17.2-cross-library-synthesis";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -918,7 +918,10 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
       role:"system",
       content:
         "Você é a etapa MAP de um sistema RAG documental. Não escreva síntese e não invente metadados. " +
-        "Use somente fatos literalmente presentes nos trechos recebidos. Para cada trecho útil, preserve o identificador [F#] e devolva uma linha curta com esse identificador e a ideia factual extraída. " +
+        "Examine TODOS os trechos do lote individualmente; não selecione apenas a fonte mais óbvia ou o documento com maior score. " +
+        "Use somente fatos literalmente presentes nos trechos recebidos. Para CADA trecho realmente útil à pergunta, preserve o identificador [F#] e devolva uma linha curta com esse identificador e a ideia factual extraída. " +
+        "Quando livros, documentos ou autores independentes diferentes abordarem o mesmo tema, é OBRIGATÓRIO preservar pelo menos uma referência [F#] de CADA fonte independente relevante. " +
+        "Não descarte uma fonte válida apenas porque outra é mais direta. Se fontes diferentes trouxerem perspectivas complementares, convergentes ou contrastantes, mantenha todas. " +
         "É proibido criar autor, livro, capítulo, página ou citação ausente do contexto."
     },
     {
@@ -938,6 +941,30 @@ async function mapExtractReferences(env, question, batch, batchIndex) {
   }catch{
     return raw;
   }
+}
+
+function documentIdentity(item) {
+  return String(item?.document_id || item?.title || item?.filename || "").trim();
+}
+
+function crossLibraryStats(context) {
+  const docs=new Map();
+  for(const item of (context || [])){
+    const id=documentIdentity(item);
+    if(!id) continue;
+    const current=docs.get(id) || {
+      id,
+      name:humanDocumentName(item?.filename,item?.title),
+      author:String(item?.author || ""),
+      hits:0
+    };
+    current.hits++;
+    docs.set(id,current);
+  }
+  return {
+    independent_documents:docs.size,
+    documents:[...docs.values()].slice(0,TOP_K)
+  };
 }
 
 async function mapReduceContext(env, question, context) {
@@ -988,6 +1015,7 @@ async function groqStreamResponse(env, messages, meta) {
           chat_model: CHAT_MODEL,
           map_reduce: meta.mapReduceUsed === true,
           map_batches: Number(meta.mapBatches || 0),
+          independent_documents: Number(meta.independentDocuments || 0),
         })));
         const reader = upstream.body.getReader();
         while (true) {
@@ -1034,6 +1062,7 @@ async function groqStreamResponse(env, messages, meta) {
           chat_model: CHAT_MODEL,
           map_reduce: meta.mapReduceUsed === true,
           map_batches: Number(meta.mapBatches || 0),
+          independent_documents: Number(meta.independentDocuments || 0),
         })));
         controller.close();
       } catch (error) {
@@ -1401,6 +1430,7 @@ async function chat(request, env) {
     ? reduced.selectedIndexes.map(i=>promptContext[i]).filter(Boolean)
     : promptContext;
   const contextText = reduced.text;
+  const crossLibrary = crossLibraryStats(mappedContext);
 
   const messages = enforceGroqBudget([
     {
@@ -1410,12 +1440,18 @@ async function chat(request, env) {
         "É expressamente proibido inventar autores, livros, capítulos, páginas, citações, fatos ou conteúdos que não estejam explícitos no contexto. " +
         "Se o contexto for vazio ou insuficiente, a resposta deve ser EXATAMENTE: \""+EMPTY_GROUNDED_ANSWER+"\". " +
         "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
+        "Faz uma varredura transversal de TODAS as evidências selecionadas pelo Map-Reduce e cruza as informações entre fontes independentes. " +
+        "Sempre que múltiplos livros, capítulos ou documentos da biblioteca abordarem o tema da pergunta, é obrigatório cruzar as informações e citar todas as fontes independentes encontradas, incluindo vários livros e autores diferentes quando existirem, enriquecendo a resposta com a pluralidade do acervo e nunca limitando a evidência a um único documento isolado. " +
+        "Não privilegies uma única fonte apenas por ter score maior quando outras fontes recuperadas também sustentarem a resposta. Expõe convergências, complementos e diferenças somente quando estiverem explicitamente sustentados pelos trechos. " +
         "Não uses conhecimento externo para preencher lacunas e não transformes inferências em fatos."
     },
     ...history,
     {
       role: "user",
-      content: "BIBLIOTECA RECUPERADA:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
+      content:
+        "ABRANGÊNCIA DOCUMENTAL: "+crossLibrary.independent_documents+" documento(s) independente(s) relevante(s) selecionado(s).\n" +
+        "A síntese deve representar transversalmente todas essas fontes independentes quando houver mais de uma.\n\n" +
+        "BIBLIOTECA RECUPERADA:\n" + contextText + "\n\nPERGUNTA:\n" + trimToTokenBudget(question, 900),
     },
   ]);
 
@@ -1448,7 +1484,7 @@ async function chat(request, env) {
   }
 
   if (wantsStream) {
-    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel, mapReduceUsed:reduced.used, mapBatches:reduced.batches });
+    return groqStreamResponse(env, messages, { ownerId, body, question, sources, fallback, retrievalLevel, mapReduceUsed:reduced.used, mapBatches:reduced.batches, independentDocuments:crossLibrary.independent_documents });
   }
 
   const result = await (await groqCompletion(env, messages, false)).json();
@@ -1469,6 +1505,7 @@ async function chat(request, env) {
     chat_model: CHAT_MODEL,
     map_reduce: reduced.used,
     map_batches: reduced.batches,
+    independent_documents: crossLibrary.independent_documents,
   });
 }
 
@@ -1546,6 +1583,8 @@ async function status(env) {
     anti_hallucination_mode: "strict-grounded",
     groq_temperature: 0.0,
     deterministic_reference_rendering: true,
+    cross_document_citation_mode: "mandatory",
+    anti_bibliographic_isolation: true,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
