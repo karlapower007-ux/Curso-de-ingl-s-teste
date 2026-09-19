@@ -74,13 +74,32 @@
       req.onerror=()=>{const e=req.error;db.close();reject(e);};
     });
   }
+  async function idbDelete(storeName,key){
+    const db=await openEmbeddingDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(storeName,"readwrite");
+      tx.objectStore(storeName).delete(key);
+      tx.oncomplete=()=>{db.close();resolve(true);};
+      tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
+    });
+  }
+  async function pruneIndexedDbPointers(maxDoneJobs=20){
+    const jobs=await idbGetAll("jobs").catch(()=>[]);
+    const done=jobs.filter(j=>j.state==="done").sort((a,b)=>(b.updated_at||0)-(a.updated_at||0));
+    for(const old of done.slice(maxDoneJobs)) await idbDelete("jobs",old.document_id).catch(()=>{});
+    const checkpoints=await idbGetAll("checkpoints").catch(()=>[]);
+    for(const stale of checkpoints.filter(x=>x.synced===true || !Array.isArray(x.updates) || !x.updates.length)){
+      await idbDelete("checkpoints",stale.key).catch(()=>{});
+    }
+  }
+
   async function idbCheckpointsFor(documentId,onlyUnsynced=false){
     const all=await idbGetAll("checkpoints");
     return all.filter(x=>x.document_id===documentId && (!onlyUnsynced || x.synced!==true)).sort((a,b)=>(a.created_at||0)-(b.created_at||0));
   }
   function ensureEmbeddingWorker(){
     if(embeddingWorker) return embeddingWorker;
-    embeddingWorker=new Worker("/embedding-worker.js?v=1",{type:"module"});
+    embeddingWorker=new Worker("/embedding-worker.js?v="+Date.now(),{type:"module"});
     embeddingWorker.onmessage=e=>{
       const data=e.data || {};
       if(data.type==="status"){
@@ -129,7 +148,7 @@
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({document_id:record.document_id,embedding_model:LOCAL_EMBED_MODEL,updates:record.updates})
     });
-    record.synced=true; record.synced_at=Date.now(); await idbPut("checkpoints",record);
+    await idbDelete("checkpoints",record.key);
   }
   async function flushPendingVectorCheckpoints(documentId){
     const pending=await idbCheckpointsFor(documentId,true);
@@ -147,7 +166,8 @@
         const data=await api("/api/admin/local-vector-chunks?document_id="+encodeURIComponent(documentId)+"&limit="+LOCAL_EMBED_BATCH,{method:"GET"});
         const list=Array.isArray(data?.chunks)?data.chunks:[];
         if(!list.length){
-          await idbPut("jobs",{...job,state:"done",batch_no:batchNo,remaining:0,updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+          await idbPut("jobs",{document_id:documentId,filename:job.filename,state:"done",batch_no:batchNo,remaining:0,last_page:job.last_page||0,updated_at:Date.now(),model:LOCAL_EMBED_MODEL});
+          await pruneIndexedDbPointers();
           if($("adminStatus")) $("adminStatus").textContent="Vetorização local concluída para "+(job.filename || "o PDF")+".";
           await loadBooks(); await checkBackend(); return;
         }
@@ -914,9 +934,9 @@
         heardSpeech = true;
         lastVoiceAt = now;
       }
-      const silenceAfterSpeech = heardSpeech && now - lastVoiceAt > 1900 && now - startedAt > 1200;
-      const maxTurn = now - startedAt > 45000;
-      const noSpeechTimeout = !heardSpeech && now - startedAt > 15000;
+      const silenceAfterSpeech = heardSpeech && now - lastVoiceAt > 2600 && now - startedAt > 1500;
+      const maxTurn = now - startedAt > 60000;
+      const noSpeechTimeout = !heardSpeech && now - startedAt > 20000;
       if (silenceAfterSpeech || maxTurn || noSpeechTimeout) {
         try { thisRecorder.stop(); } catch {}
         return;

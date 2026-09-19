@@ -1,4 +1,4 @@
-const VERSION = "1.11.0-tts-clean-synthesis";
+const VERSION = "1.12.0-definitive-stability-pack";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -12,21 +12,25 @@ const COHERE_API_BATCH = 95;
 const COHERE_THROTTLE_MS = 2200;
 const INDEX_PAGE_SLICE = 180;
 const INDEX_ALARM_DELAY_MS = 900;
-const CHUNK_CHARS = 1800;
-const CHUNK_OVERLAP = 250;
-const MIN_PAGE_LETTERS = 90;
-const MIN_CHUNK_LETTERS = 100;
+const CHUNK_CHARS = 900;
+const CHUNK_OVERLAP = 120;
+const MIN_PAGE_LETTERS = 50;
+const MIN_CHUNK_LETTERS = 35;
 const TOP_K = 8;
 const VECTOR_SCAN_LIMIT = 7000;
-const SEMANTIC_MIN_SCORE = 0.46;
+const SEMANTIC_MIN_SCORE = 0.52;
 const LEXICAL_MIN_COVERAGE = 0.50;
+const BM25_K1 = 1.35;
+const BM25_B = 0.75;
 const LOCAL_EMBEDDING_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const MAX_SERVER_HISTORY = 40;
 const GROQ_HISTORY_MESSAGES = 10;
-const GROQ_INPUT_BUDGET_TOKENS = 9000;
-const GROQ_HISTORY_BUDGET_TOKENS = 2400;
-const GROQ_RAG_BUDGET_TOKENS = 4200;
+const GROQ_INPUT_BUDGET_TOKENS = 5600;
+const GROQ_HISTORY_BUDGET_TOKENS = 1500;
+const GROQ_RAG_BUDGET_TOKENS = 3000;
+const GROQ_MAX_COMPLETION_TOKENS = 850;
+const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "8205541ffbdb2d6ee4d000427b0d8a0bc70f657087ba43d95712eeef0a9609ed";
 const enc = new TextEncoder();
 
@@ -46,7 +50,9 @@ function securityHeaders(headers = new Headers()) {
   headers.set("Referrer-Policy", "no-referrer");
   headers.set("X-Frame-Options", "DENY");
   headers.set("Permissions-Policy", "camera=(), geolocation=()");
-  headers.set("Cache-Control", "no-store");
+  headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
   return headers;
 }
 
@@ -226,38 +232,57 @@ function isUsefulPageText(text) {
 function isUsefulChunkText(text) {
   const q = textQuality(text);
   return q.letters >= MIN_CHUNK_LETTERS &&
-    q.words >= 18 &&
-    q.unique >= 9 &&
+    q.words >= 7 &&
+    q.unique >= 5 &&
     !q.numberHeavy &&
     q.numericLineRatio < 0.60;
+}
+
+function narrativeUnits(text) {
+  const clean=cleanDocumentText(text)
+    .replace(/\s+(?=\d{1,3}\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/g,"\n")
+    .replace(/\n{3,}/g,"\n\n");
+  const blocks=clean.split(/\n{2,}/).flatMap(block=>{
+    const trimmed=block.trim();
+    if(!trimmed) return [];
+    if(trimmed.length<=CHUNK_CHARS) return [trimmed];
+    return trimmed.split(/(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/).map(x=>x.trim()).filter(Boolean);
+  });
+  return blocks.filter(isUsefulChunkText);
 }
 
 function chunkText(text, maxChars = CHUNK_CHARS, overlap = CHUNK_OVERLAP) {
   const clean = cleanDocumentText(text);
   if (!clean || !isUsefulPageText(clean)) return [];
-  if (clean.length <= maxChars) return isUsefulChunkText(clean) ? [clean] : [];
-
-  const out = [];
-  const seen = new Set();
-  let start = 0;
-  while (start < clean.length) {
-    let end = Math.min(clean.length, start + maxChars);
-    if (end < clean.length) {
-      const windowStart = Math.max(start + Math.floor(maxChars * 0.55), end - 350);
-      const tail = clean.slice(windowStart, end);
-      const cut = Math.max(tail.lastIndexOf("\n\n"), tail.lastIndexOf(". "), tail.lastIndexOf("? "), tail.lastIndexOf("! "));
-      if (cut > 0) end = windowStart + cut + 1;
+  const units=narrativeUnits(clean);
+  if(!units.length) return [];
+  const out=[];
+  const seen=new Set();
+  let current="";
+  for(const unit of units){
+    const candidate=current ? current+" "+unit : unit;
+    if(candidate.length<=maxChars){
+      current=candidate;
+      continue;
     }
-    const piece = clean.slice(start, end).trim();
-    if (isUsefulChunkText(piece)) {
-      const fingerprint = piece.toLowerCase().replace(/\s+/g, " ").slice(0, 700);
-      if (!seen.has(fingerprint)) {
-        seen.add(fingerprint);
-        out.push(piece);
+    if(current && isUsefulChunkText(current)){
+      const fp=current.toLowerCase().replace(/\s+/g," ").slice(0,650);
+      if(!seen.has(fp)){seen.add(fp);out.push(current);}
+    }
+    const tail=current ? current.slice(Math.max(0,current.length-overlap)).replace(/^\S*\s*/,"") : "";
+    current=(tail ? tail+" " : "")+unit;
+    if(current.length>maxChars*1.35){
+      const split=current.slice(0,maxChars).replace(/\s+\S*$/,"").trim();
+      if(isUsefulChunkText(split)){
+        const fp=split.toLowerCase().replace(/\s+/g," ").slice(0,650);
+        if(!seen.has(fp)){seen.add(fp);out.push(split);}
       }
+      current=current.slice(Math.max(0,split.length-overlap)).trim();
     }
-    if (end >= clean.length) break;
-    start = Math.max(start + 1, end - overlap);
+  }
+  if(current && isUsefulChunkText(current)){
+    const fp=current.toLowerCase().replace(/\s+/g," ").slice(0,650);
+    if(!seen.has(fp)) out.push(current);
   }
   return out;
 }
@@ -653,6 +678,18 @@ function foldSearchText(text) {
     .trim();
 }
 
+function lexicalTokens(text) {
+  return foldSearchText(text).split(" ").filter(token=>token.length>=2);
+}
+
+function semanticAnchorCoverage(text, question) {
+  const terms=lexicalTerms(question);
+  if(!terms.length) return 1;
+  const folded=foldSearchText(text);
+  const matched=terms.filter(term=>folded.includes(term)).length;
+  return matched/terms.length;
+}
+
 function lexicalTerms(question) {
   const stop = new Set([
     "a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre",
@@ -690,11 +727,14 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
           min_score: SEMANTIC_MIN_SCORE
         }),
       });
-      const matches = Array.isArray(data.matches)
+      let matches = Array.isArray(data.matches)
         ? data.matches
             .filter(item => Number(item?.score ?? -1) >= SEMANTIC_MIN_SCORE)
             .map(item => ({ ...item, retrieval_mode: "local-semantic" }))
         : [];
+      if (isFocusedCitationRequest(question)) {
+        matches = matches.filter(item => semanticAnchorCoverage(item.text,question) >= LEXICAL_MIN_COVERAGE);
+      }
       if (matches.length) return matches;
     } catch {}
   }
@@ -781,29 +821,47 @@ async function persistChatTurn(env, ownerId, body, question, answer, sources, fa
 }
 
 function gracefulEmptyAnswer() {
-  return "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?";
+  return "Fabiano, não encontrei uma referência direta a este tema neste trecho. Quer que eu busque em outras partes do documento?";
+}
+
+function ensureEngagementQuestion(answer, fallback = false) {
+  const text=String(answer || "").trim();
+  if(!text) return gracefulEmptyAnswer();
+  if(fallback || /\?\s*$/.test(text)) return text;
+  return text+"\n\nGostaria de explorar outra referência sobre isto?";
 }
 
 async function groqCompletion(env, messages, stream = false) {
   const apiKey = requireSecret(env, "GROQ_API_KEY");
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: CHAT_MODEL,
-      messages,
-      temperature: 0.35,
-      max_completion_tokens: 1100,
-      stream,
-    }),
-  });
+  let safeMessages=enforceGroqBudget(messages,GROQ_INPUT_BUDGET_TOKENS);
+  const execute=async(payloadMessages)=>{
+    return fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CHAT_MODEL,
+        messages: payloadMessages,
+        temperature: 0.35,
+        max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
+        stream,
+      }),
+    });
+  };
+  let res=await execute(safeMessages);
+  if(res.status===429){
+    const retryAfter=Math.max(0,Math.min(4,Number(res.headers.get("retry-after") || 0)));
+    if(retryAfter) await new Promise(resolve=>setTimeout(resolve,retryAfter*1000));
+    safeMessages=aggressiveGroqMessages(safeMessages);
+    res=await execute(safeMessages);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const err = new Error(body?.error?.message || ("Groq chat HTTP " + res.status));
     err.status = res.status;
+    err.input_tokens_estimated=groqInputTokenEstimate(safeMessages);
     throw err;
   }
   return res;
@@ -853,6 +911,12 @@ async function groqStreamResponse(env, messages, meta) {
         if (!String(answer || "").trim() || /^sem resposta\.?$/i.test(String(answer || "").trim())) {
           answer = gracefulEmptyAnswer();
           controller.enqueue(encoder.encode(sseFrame("delta", { text: answer })));
+        }
+        const finalized=ensureEngagementQuestion(answer,meta.fallback);
+        if(finalized!==answer){
+          const extra=finalized.slice(answer.length);
+          answer=finalized;
+          controller.enqueue(encoder.encode(sseFrame("delta", { text: extra })));
         }
         const memoryPersisted = await persistChatTurn(
           env, meta.ownerId, meta.body, meta.question, answer, meta.sources, meta.fallback
@@ -920,7 +984,38 @@ function slidingHistory(history, maxMessages = GROQ_HISTORY_MESSAGES, tokenBudge
   return selected.reverse();
 }
 
-function buildRagContext(context, tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
+function focusExcerptForQuestion(text, question, maxChars = 950) {
+  const clean=cleanNarrativeText(text);
+  if(!clean) return "";
+  const terms=lexicalTerms(question);
+  if(!terms.length || clean.length<=maxChars) return clean.slice(0,maxChars);
+  const units=clean
+    .replace(/\s+(?=\d{1,3}\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/g,"\n")
+    .split(/\n+|(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/)
+    .map(x=>x.trim()).filter(Boolean);
+  if(!units.length) return clean.slice(0,maxChars);
+  const scored=units.map((unit,index)=>{
+    const folded=foldSearchText(unit);
+    let score=0;
+    for(const term of terms){
+      if(folded.includes(term)) score+=2;
+      const escaped=term.replace(/[.*+?^$()|[\]\\{}]/g,"\\$&");
+      const re=new RegExp("\\b"+escaped+"\\b","g");
+      score+=Math.min(3,(folded.match(re)||[]).length)*0.5;
+    }
+    return {unit,index,score};
+  }).sort((a,b)=>b.score-a.score);
+  const best=scored[0];
+  if(!best || best.score<=0) return clean.slice(0,maxChars);
+  let excerpt=best.unit;
+  const prev=units[best.index-1] || "";
+  const next=units[best.index+1] || "";
+  if(prev && (prev.length+1+excerpt.length)<=maxChars) excerpt=prev+" "+excerpt;
+  if(next && (excerpt.length+1+next.length)<=maxChars) excerpt=excerpt+" "+next;
+  return excerpt.slice(0,maxChars).trim();
+}
+
+function buildRagContext(context, question = "", tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
   if (!Array.isArray(context) || !context.length) {
     return "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
   }
@@ -933,7 +1028,9 @@ function buildRagContext(context, tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
       (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
     const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
     if (remaining <= 180 && parts.length) break;
-    const excerpt = trimToTokenBudget(cleanNarrativeText(c.text || ""), Math.min(900, remaining));
+    const focused=focusExcerptForQuestion(c.text || "",question,1000);
+    const excerpt = trimToTokenBudget(focused, Math.min(850, remaining));
+    if(!excerpt) continue;
     const part = header + "\n" + excerpt;
     const cost = estimateTokens(part);
     if (parts.length && used + cost > tokenBudget) break;
@@ -947,8 +1044,6 @@ function enforceGroqBudget(messages, budget = GROQ_INPUT_BUDGET_TOKENS) {
   const list = Array.from(messages || []).map(m => ({ role: m.role, content: String(m.content || "") }));
   let total = list.reduce((n, m) => n + estimateTokens(m.content) + 8, 0);
   if (total <= budget) return list;
-
-  // Keep system + newest user message, remove oldest conversational turns first.
   while (list.length > 2 && total > budget) {
     const removed = list.splice(1, 1)[0];
     total -= estimateTokens(removed.content) + 8;
@@ -957,9 +1052,20 @@ function enforceGroqBudget(messages, budget = GROQ_INPUT_BUDGET_TOKENS) {
     const last = list[list.length - 1];
     const overflow = total - budget;
     const current = estimateTokens(last.content);
-    last.content = trimToTokenBudget(last.content, Math.max(500, current - overflow - 100));
+    last.content = trimToTokenBudget(last.content, Math.max(500, current - overflow - 120));
   }
   return list;
+}
+
+function aggressiveGroqMessages(messages) {
+  const list=Array.from(messages || []);
+  const system=list.find(m=>m.role==="system") || list[0];
+  const newest=[...list].reverse().find(m=>m.role==="user") || list[list.length-1];
+  return enforceGroqBudget([system,newest].filter(Boolean),GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS);
+}
+
+function groqInputTokenEstimate(messages) {
+  return Array.from(messages || []).reduce((sum,m)=>sum+estimateTokens(m.content)+8,0);
 }
 
 function wantsMultipleSources(question) {
@@ -999,24 +1105,20 @@ async function chat(request, env) {
 
   const focusedCitation = isFocusedCitationRequest(question);
   const multipleSourcesRequested = wantsMultipleSources(question);
-  const promptContext = focusedCitation && !multipleSourcesRequested ? context.slice(0, 1) : context;
-  const contextText = buildRagContext(promptContext);
+  const promptContext = context;
+  const contextText = buildRagContext(promptContext, question);
 
   const messages = enforceGroqBudget([
     {
       role: "system",
       content:
-        "Você é o motor de síntese da Consciência do Fabiano, um sistema RAG focado em voz e texto limpo. Sua missão é transformar somente o contexto recuperado em uma resposta fluida e totalmente adequada a TTS. " +
-        "BLINDAGEM CONTRA LIXO DE PDF: o contexto pode conter índices remissivos, rodapés e referências cruzadas como 'D&C 52:15; 97:8' ou '21 a Gên. 4:3-7'. Você está estritamente proibido de repetir esse lixo. Extraia apenas o texto narrativo central que responde à pergunta. " +
-        "OTIMIZAÇÃO PARA ÁUDIO: na citação entregue ao usuário, remova números de versículos soltos no início ou no meio das frases quando forem apenas marcadores editoriais. Nunca leia abreviações de livros; use nomes completos, por exemplo 'Gênesis' em vez de 'Gên.'. Remova colchetes, notas entre parênteses, asteriscos e caracteres de formatação que prejudiquem a fala. " +
-        "NOME DO DOCUMENTO: nunca exponha nomes técnicos de arquivos PDF. Se a origem for um arquivo de Obras Padrão, diga 'Obras Padrão'. Para outros arquivos, use o título humano fornecido no contexto. " +
-        "PEDIDOS DE CITAÇÃO OU ESCRITURA: quando o usuário pedir um versículo, escritura, passagem, citação ou trecho e não pedir várias opções, escolha APENAS UMA fonte principal. A resposta deve conter EXATAMENTE QUATRO PARÁGRAFOS CURTOS nesta ordem: " +
-        "A) Introdução amigável com no máximo 15 palavras. " +
-        "B) Citação limpa: somente o texto narrativo contínuo disponível no contexto, sem números de versículos editoriais, sem índices, sem referências cruzadas e sem comentários adicionais. Não resuma. Não complete de memória. " +
-        "C) Identificação natural: diga onde encontrou usando o nome humano do documento e a página, por exemplo 'Esta passagem se encontra na página 15 das Obras Padrão.'. " +
-        "D) Engajamento: uma pergunta simples e direta para continuar a conversa. " +
-        "Se o contexto não contiver a resposta exata, não invente e nunca diga 'Sem resposta'. Diga: 'Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?'. " +
-        "Não gere tabelas Markdown, listas longas, cabeçalhos, marcadores técnicos [F1] na resposta final ou blocos de referência, a menos que o usuário peça explicitamente várias opções. Responda sempre em português brasileiro."
+        "Você é a Consciência do Fabiano. Responda sempre em português brasileiro, com precisão, naturalidade e foco. " +
+        "RAG É LEI: use somente os trechos recuperados como evidência documental. Ignore índices remissivos, rodapés, cadeias de referências cruzadas e fragmentos sem relação direta com a pergunta. Nunca invente livro, capítulo, página, versículo ou citação. " +
+        "COFRE VAZIO: se os documentos fornecidos NÃO contiverem a informação pedida, você é ESTRITAMENTE PROIBIDO de dizer 'Sem resposta'. Responda: 'Fabiano, não encontrei uma referência direta a este tema neste trecho. Quer que eu busque em outras partes do documento?'. " +
+        "CITAÇÕES E ESCRITURAS: quando o usuário pedir referências, escrituras, versículos, passagens ou citações, liste TODAS as passagens relevantes presentes no contexto recuperado, sem duplicar a mesma página. Use EXCLUSIVAMENTE tópicos com hífen. Em cada tópico escreva em negrito o nome humano do livro ou documento, o capítulo somente se estiver explicitamente identificável no contexto, e a página. Em seguida coloque o texto literal recuperado entre aspas. Não resuma o texto citado e não complete lacunas de memória. " +
+        "É TOTALMENTE PROIBIDO GERAR TABELAS MARKDOWN ou sintaxe de tabela como |---|. Não exponha nomes técnicos de arquivos PDF nem marcadores internos como [F1]. " +
+        "Para respostas que não são pedidos de citação, seja conversacional e conciso. Toda resposta informativa deve terminar com UMA pergunta curta de engajamento, por exemplo: 'Gostaria de explorar outro versículo sobre isto?'. " +
+        "Para TTS, evite abreviações obscuras e caracteres desnecessários. Preserve o texto literal das citações, removendo apenas ruído editorial que não faça parte do conteúdo narrativo."
     },
     ...history,
     {
@@ -1026,7 +1128,7 @@ async function chat(request, env) {
   ]);
 
   const allSources = uniqueSources(promptContext);
-  const sources = focusedCitation && !multipleSourcesRequested ? allSources.slice(0, 1) : allSources;
+  const sources = allSources;
   const fallback = promptContext.length === 0;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
@@ -1039,6 +1141,7 @@ async function chat(request, env) {
   const result = await (await groqCompletion(env, messages, false)).json();
   let answer = String(result?.choices?.[0]?.message?.content || "").trim();
   if (!answer || /^sem resposta\.?$/i.test(answer)) answer = gracefulEmptyAnswer();
+  answer=ensureEngagementQuestion(answer,fallback);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, sources, fallback);
 
   return json({
@@ -1122,13 +1225,21 @@ async function status(env) {
     smart_chunking: true,
     lexical_rag_fallback: true,
     semantic_min_score: SEMANTIC_MIN_SCORE,
+    lexical_ranker: "bm25",
+    bm25_k1: BM25_K1,
+    bm25_b: BM25_B,
+    chunking_density: "paragraph-verse-granular",
     lexical_min_coverage: LEXICAL_MIN_COVERAGE,
     graceful_empty_answer: true,
     tts_clean_synthesis: true,
     citation_four_paragraph_mode: true,
     pdf_noise_filter: true,
+    indexeddb_gc: true,
+    cache_busting: "dynamic",
     groq_history_window: GROQ_HISTORY_MESSAGES,
     groq_input_budget_tokens: GROQ_INPUT_BUDGET_TOKENS,
+    groq_aggressive_budget_tokens: GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS,
+    groq_max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
     r2_direct_ready: Boolean(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
     vector_backend: "durable-object-cosine",
     llm_provider: "groq",
@@ -1828,7 +1939,7 @@ export class LibraryDO {
           : lexicalTerms(query);
         const topK = Math.max(1, Math.min(20, Number(body.top_k || TOP_K)));
         const scanLimit = Math.max(200, Math.min(10000, Number(body.scan_limit || 7000)));
-        if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "lexical-fallback" });
+        if (!terms.length) return json({ ok: true, matches: [], scanned: 0, mode: "bm25-fallback" });
 
         const rows = [...this.sql.exec(`
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
@@ -1838,34 +1949,47 @@ export class LibraryDO {
           ORDER BY c.created_at DESC LIMIT ?
         `, scanLimit)];
 
-        const phrase = foldSearchText(query);
-        const matches = [];
-        for (const row of rows) {
-          const folded = foldSearchText(row.text);
-          let hits = 0;
-          let matchedTerms = 0;
-          for (const term of terms) {
-            if (!term) continue;
-            let cursor = 0, termHits = 0;
-            while ((cursor = folded.indexOf(term, cursor)) >= 0 && termHits < 8) {
-              termHits++;
-              cursor += term.length;
-            }
-            if (termHits) {
-              matchedTerms++;
-              hits += termHits;
-            }
-          }
-          if (!matchedTerms) continue;
-          const coverage = matchedTerms / terms.length;
-          const minMatched = terms.length <= 1 ? 1 : Math.min(2, Math.ceil(terms.length * LEXICAL_MIN_COVERAGE));
-          if (matchedTerms < minMatched && !(phrase && phrase.length >= 5 && folded.includes(phrase))) continue;
-          const phraseBonus = phrase && phrase.length >= 5 && folded.includes(phrase) ? 2.5 : 0;
-          const score = coverage * 4 + Math.min(3, hits * 0.35) + phraseBonus;
-          matches.push({ ...row, score });
+        const docs=rows.map(row=>{
+          const tokens=lexicalTokens(row.text);
+          const tf=new Map();
+          for(const token of tokens) tf.set(token,(tf.get(token)||0)+1);
+          return {row,tokens,tf,dl:Math.max(1,tokens.length)};
+        });
+        const N=Math.max(1,docs.length);
+        const avgdl=docs.reduce((sum,d)=>sum+d.dl,0)/N || 1;
+        const df=new Map();
+        for(const term of terms){
+          let count=0;
+          for(const d of docs) if(d.tf.has(term)) count++;
+          df.set(term,count);
         }
-        matches.sort((a,b) => b.score - a.score);
-        return json({ ok: true, matches: matches.slice(0, topK), scanned: rows.length, mode: "lexical-fallback" });
+
+        const phrase=foldSearchText(query);
+        const matches=[];
+        for(const d of docs){
+          let score=0,matchedTerms=0,hits=0;
+          for(const term of terms){
+            const freq=d.tf.get(term)||0;
+            if(!freq) continue;
+            matchedTerms++;
+            hits+=freq;
+            const termDf=df.get(term)||0;
+            const idf=Math.log(1+((N-termDf+0.5)/(termDf+0.5)));
+            const denom=freq+BM25_K1*(1-BM25_B+BM25_B*(d.dl/avgdl));
+            score+=idf*((freq*(BM25_K1+1))/Math.max(0.0001,denom));
+          }
+          if(!matchedTerms) continue;
+          const coverage=matchedTerms/terms.length;
+          const minMatched=terms.length<=1?1:Math.min(2,Math.ceil(terms.length*LEXICAL_MIN_COVERAGE));
+          const folded=foldSearchText(d.row.text);
+          const exactPhrase=phrase.length>=5 && folded.includes(phrase);
+          if(matchedTerms<minMatched && !exactPhrase) continue;
+          if(exactPhrase) score+=3.5;
+          score+=coverage*2.0+Math.min(1.5,hits*0.12);
+          matches.push({...d.row,score,coverage});
+        }
+        matches.sort((a,b)=>b.score-a.score);
+        return json({ok:true,matches:matches.slice(0,topK),scanned:rows.length,mode:"bm25-fallback",avgdl});
       }
 
       if (url.pathname === "/search" && request.method === "POST") {
@@ -1917,6 +2041,8 @@ export default {
       return new Response(response.body, { status: response.status, headers });
     }
 
-    return env.ASSETS.fetch(request);
+    const assetResponse=await env.ASSETS.fetch(request);
+    const assetHeaders=securityHeaders(new Headers(assetResponse.headers));
+    return new Response(assetResponse.body,{status:assetResponse.status,headers:assetHeaders});
   }
 };

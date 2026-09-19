@@ -69,6 +69,18 @@ jobs:
           grep -q 'EXATAMENTE QUATRO PARÁGRAFOS CURTOS' src/index.js
           grep -q 'Obras Padrão' src/index.js
           grep -q 'standard.*works' public/app.js
+          grep -q 'SEMANTIC_MIN_SCORE = 0.52' src/index.js
+          grep -q 'BM25_K1' src/index.js
+          grep -q 'bm25-fallback' src/index.js
+          grep -q 'chunking_density: "paragraph-verse-granular"' src/index.js
+          grep -q 'Fabiano, não encontrei uma referência direta' src/index.js
+          grep -q 'É TOTALMENTE PROIBIDO GERAR TABELAS MARKDOWN' src/index.js
+          grep -q 'aggressiveGroqMessages' src/index.js
+          grep -q 'GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS' src/index.js
+          grep -q 'idbDelete' public/app.js
+          grep -q 'pruneIndexedDbPointers' public/app.js
+          grep -q 'Date.now()' public/index.html
+          grep -q 'no-cache, no-store, must-revalidate' src/index.js
           test -f public/embedding-worker.js
           grep -q '@huggingface/transformers@3.8.1' public/embedding-worker.js
           grep -q 'search-lexical' src/index.js

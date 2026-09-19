@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <title>Consciência do Fabiano - V1.11</title>
+  <title>Consciência do Fabiano - V1.12</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
-  <link rel="stylesheet" href="/style.css?v=6">
+  <link id="mainStylesheet" rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">SISTEMA NATIVO V1.11</span>
+      <span class="header-kicker">SISTEMA NATIVO V1.12</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -97,6 +97,16 @@
   </script>
   <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-  <script src="/app.js?v=11" defer></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const buildStamp = Date.now();
+      const css = document.getElementById("mainStylesheet");
+      if (css) css.href = "/style.css?v=" + buildStamp;
+      const app = document.createElement("script");
+      app.src = "/app.js?v=" + buildStamp;
+      app.async = false;
+      document.body.appendChild(app);
+    });
+  </script>
 </body>
 </html>
