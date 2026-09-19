@@ -1,4 +1,4 @@
-const VERSION = "1.17.3-no-false-negative-synthesis";
+const VERSION = "1.17.4-total-source-release";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -983,18 +983,17 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
 }
 
 async function mapExtractReferences(env, question, batch, batchIndex) {
-  const localRaw=buildRagContext(batch,question,2600);
-  const raw=localRaw.replace(/\[F(\d+)\]/g,(_,n)=>"[F"+(batchIndex*MAP_BATCH_SIZE+Number(n))+"]");
+  const raw=buildMapBatchContext(batch,question,batchIndex);
   const messages=[
     {
       role:"system",
       content:
         "Você é a etapa MAP de um sistema RAG documental. Não escreva síntese e não invente metadados. " +
-        "Examine TODOS os trechos do lote individualmente; não selecione apenas a fonte mais óbvia ou o documento com maior score. " +
-        "Use somente fatos literalmente presentes nos trechos recebidos. Para CADA trecho realmente útil à pergunta, preserve o identificador [F#] e devolva uma linha curta com esse identificador e a ideia factual extraída. " +
-        "Quando livros, documentos ou autores independentes diferentes abordarem o mesmo tema, é OBRIGATÓRIO preservar pelo menos uma referência [F#] de CADA fonte independente relevante. " +
-        "Não descarte uma fonte válida apenas porque outra é mais direta. Se fontes diferentes trouxerem perspectivas complementares, convergentes ou contrastantes, mantenha todas. " +
-        "É proibido criar autor, livro, capítulo, página ou citação ausente do contexto."
+        "Examine TODOS os trechos do lote individualmente; nenhum [F#] recebido pode ser ignorado silenciosamente. " +
+        "Para CADA [F#], devolva exatamente uma linha curta no formato '[F#] — resumo factual em no máximo 25 palavras', usando somente o que está explícito no trecho. " +
+        "Não selecione apenas a fonte mais óbvia e não descarte livros, autores ou documentos por terem score menor. " +
+        "Quando várias fontes abordarem o tema, preserve TODAS no resultado MAP para que a etapa REDUCE possa cruzá-las. " +
+        "É proibido criar autor, livro, capítulo, página, citação ou conteúdo ausente do contexto."
     },
     {
       role:"user",
@@ -1044,24 +1043,25 @@ async function mapReduceContext(env, question, context) {
   if(source.length<=MAP_REDUCE_THRESHOLD){
     return {
       text:buildRagContext(source,question),
-      used:false,batches:1,
-      selectedIndexes:source.map((_,i)=>i)
+      used:false,
+      batches:1,
+      releasedIndexes:source.map((_,i)=>i)
     };
   }
+
   const batches=[];
   for(let i=0;i<source.length;i+=MAP_BATCH_SIZE) batches.push(source.slice(i,i+MAP_BATCH_SIZE));
   const mapped=await Promise.all(batches.map((batch,index)=>mapExtractReferences(env,question,batch,index)));
-  const combined=mapped.filter(Boolean).join("\n\n");
-  const selected=new Set();
-  for(const match of combined.matchAll(/\[F(\d+)\]/g)){
-    const oneBased=Number(match[1]);
-    if(Number.isInteger(oneBased) && oneBased>=1 && oneBased<=source.length) selected.add(oneBased-1);
-  }
+  const combined=mapped.filter(Boolean).join("\n");
+
   return {
-    text:"MAP-REDUCE: referências factuais selecionadas de "+source.length+" trechos em "+batches.length+" lotes.\n\n"+trimToTokenBudget(combined,4300),
+    text:
+      "MAP-REDUCE: "+source.length+" trechos recuperados e LIBERADOS integralmente para síntese transversal em "+
+      batches.length+" lotes. Nenhuma fonte recuperada pode ser descartada apenas por ranking.\n\n"+
+      trimToTokenBudget(combined,4700),
     used:true,
     batches:batches.length,
-    selectedIndexes:[...selected].sort((a,b)=>a-b)
+    releasedIndexes:source.map((_,i)=>i)
   };
 }
 
@@ -1218,6 +1218,24 @@ function focusExcerptForQuestion(text, question, maxChars = 950) {
   if(prev && (prev.length+1+excerpt.length)<=maxChars) excerpt=prev+" "+excerpt;
   if(next && (excerpt.length+1+next.length)<=maxChars) excerpt=excerpt+" "+next;
   return excerpt.slice(0,maxChars).trim();
+}
+
+function buildMapBatchContext(batch,question="",batchIndex=0) {
+  const rows=Array.from(batch || []).slice(0,MAP_BATCH_SIZE);
+  const parts=[];
+  for(let i=0;i<rows.length;i++){
+    const c=rows[i];
+    const globalIndex=batchIndex*MAP_BATCH_SIZE+i+1;
+    const sourceName=humanDocumentName(c.filename,c.title);
+    const header="[F"+globalIndex+"] "+sourceName+
+      (c.author ? " — "+c.author : "")+
+      ", página "+(c.page || "não informada");
+    const focused=focusExcerptForQuestion(c.text || "",question,420);
+    const excerpt=trimToTokenBudget(focused,105);
+    if(!excerpt) continue;
+    parts.push(header+"\n"+excerpt);
+  }
+  return parts.join("\n\n");
 }
 
 function buildRagContext(context, question = "", tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
@@ -1498,9 +1516,9 @@ async function chat(request, env) {
   const multipleSourcesRequested = wantsMultipleSources(question);
   const promptContext = context.slice(0,TOP_K);
   const reduced = await mapReduceContext(env,question,promptContext);
-  const mappedContext = reduced.used
-    ? reduced.selectedIndexes.map(i=>promptContext[i]).filter(Boolean)
-    : promptContext;
+  // Liberação total: a etapa MAP organiza o conteúdo, mas NÃO decide quais fontes sobrevivem.
+  // Todas as fontes efetivamente recuperadas (até TOP_K) permanecem elegíveis para síntese e referências.
+  const mappedContext = promptContext;
   const contextText = reduced.text;
   const crossLibrary = crossLibraryStats(mappedContext);
 
@@ -1513,8 +1531,9 @@ async function chat(request, env) {
         "A frase \""+EMPTY_GROUNDED_ANSWER+"\" só pode ser usada quando ZERO fontes documentais válidas tiverem sido recuperadas. " +
         "Se houver uma ou mais fontes válidas no contexto, é PROIBIDO declarar ausência de informação: deves sintetizar o conteúdo efetivamente presente nesses trechos. " +
         "Escreve apenas a seção 1. SÍNTESE PRINCIPAL, de forma factual e direta. NÃO escrevas a seção de fontes: o servidor anexará deterministicamente todas as fontes recuperadas, até 100, a partir dos metadados originais. " +
-        "Faz uma varredura transversal de TODAS as evidências selecionadas pelo Map-Reduce e cruza as informações entre fontes independentes. " +
+        "Faz uma varredura transversal de TODAS as evidências recuperadas pelo RAG e organizadas pelo Map-Reduce; a etapa MAP não tem permissão para afunilar a biblioteca. " +
         "Sempre que múltiplos livros, capítulos ou documentos da biblioteca abordarem o tema da pergunta, é obrigatório cruzar as informações e citar todas as fontes independentes encontradas, incluindo vários livros e autores diferentes quando existirem, enriquecendo a resposta com a pluralidade do acervo e nunca limitando a evidência a um único documento isolado. " +
+        "Se a busca retornar 5, 10, 15 ou mais fontes válidas, a síntese deve representar coletivamente essas fontes, sem reduzir a resposta a um único livro. " +
         "Não privilegies uma única fonte apenas por ter score maior quando outras fontes recuperadas também sustentarem a resposta. Expõe convergências, complementos e diferenças somente quando estiverem explicitamente sustentados pelos trechos. " +
         "Não uses conhecimento externo para preencher lacunas e não transformes inferências em fatos."
     },
@@ -1664,6 +1683,9 @@ async function status(env) {
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
     failure_message_requires_zero_sources: true,
+    total_source_release: true,
+    map_stage_can_filter_sources: false,
+    deterministic_sources_use_all_retrieved: true,
     multicloud_mirror: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
