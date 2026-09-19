@@ -1,4 +1,4 @@
-const VERSION = "1.20.0-twenty-node-relay";
+const VERSION = "2.0.0-massive-scale";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -18,11 +18,11 @@ const MIN_PAGE_LETTERS = 50;
 const MIN_CHUNK_LETTERS = 35;
 const searchConfig = Object.freeze({
   semantic_min_score: 0.38,
-  top_k: 100,
+  top_k: 500,
   require_lexical_match: false,
 });
 const TOP_K = searchConfig.top_k;
-const VECTOR_SCAN_LIMIT = 30000;
+const VECTOR_SCAN_LIMIT = 50000;
 const SEMANTIC_MIN_SCORE = searchConfig.semantic_min_score;
 const REQUIRE_LEXICAL_MATCH = searchConfig.require_lexical_match;
 const LEXICAL_MIN_COVERAGE = 0.50;
@@ -40,6 +40,15 @@ const MAP_REDUCE_THRESHOLD = 20;
 const MAP_BATCH_SIZE = 5;
 const MICRO_NODE_COUNT = 20;
 const MICRO_NODE_BATCH_SIZE = 5;
+
+// V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
+// Os nós de evidência são determinísticos e baratos; somente reducers + master usam Groq.
+const MASSIVE_NODE_COUNT = 500;
+const MASSIVE_WORKER_CONCURRENCY = 25;
+const MASSIVE_NODE_GROUP_SIZE = 25;
+const MASSIVE_GROQ_MAX_RETRIES = 3;
+const MASSIVE_NODE_EVIDENCE_CHARS = 520;
+const SSE_KEEPALIVE_MS = 15000;
 const MICRO_NODE_RELAY_BUDGET_TOKENS = 5600;
 const MICRO_NODE_MAX_COMPLETION_TOKENS = 520;
 const MASTER_NODE_MAX_COMPLETION_TOKENS = 3600;
@@ -1257,14 +1266,41 @@ function ensureEngagementQuestion(answer, fallback = false) {
   return text+"\n\nGostaria de explorar outra referência sobre isto?";
 }
 
+let groqRoundRobinCursor = 0;
+
+function groqApiKeys(env) {
+  const keys = [];
+  const push = value => {
+    const key = String(value || "").trim();
+    if (key && !keys.includes(key)) keys.push(key);
+  };
+  push(env?.GROQ_API_KEY);
+  for (let i = 1; i <= 32; i++) push(env?.["GROQ_API_KEY_" + i]);
+  push(env?.GROQ_API_KEY_N);
+  return keys;
+}
+
+function requireGroqKeys(env) {
+  const keys = groqApiKeys(env);
+  if (!keys.length) {
+    const err = new Error("Nenhuma chave Groq foi configurada no servidor.");
+    err.code = "EXTERNAL_AI_NOT_CONFIGURED";
+    throw err;
+  }
+  return keys;
+}
+
 async function groqCompletion(env, messages, stream = false, options = {}) {
-  const apiKey = requireSecret(env, "GROQ_API_KEY");
+  const keys = requireGroqKeys(env);
   const inputBudget=Math.max(1200,Number(options.input_budget || GROQ_INPUT_BUDGET_TOKENS));
   const model=String(options.model || CHAT_MODEL);
   const maxCompletionTokens=Math.max(100,Number(options.max_completion_tokens || GROQ_MAX_COMPLETION_TOKENS));
   const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.0;
+  const maxRetries=Math.max(0,Math.min(MASSIVE_GROQ_MAX_RETRIES,Number(options.max_retries ?? MASSIVE_GROQ_MAX_RETRIES)));
   let safeMessages=enforceGroqBudget(messages,inputBudget);
-  const execute=async(payloadMessages)=>{
+  const startIndex=(groqRoundRobinCursor++) % keys.length;
+
+  const execute=async(payloadMessages,apiKey)=>{
     return fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -1280,18 +1316,25 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
       }),
     });
   };
-  let res=await execute(safeMessages);
-  if(res.status===429){
-    const retryAfter=Math.max(0,Math.min(4,Number(res.headers.get("retry-after") || 0)));
-    if(retryAfter) await new Promise(resolve=>setTimeout(resolve,retryAfter*1000));
+
+  let res=null;
+  for(let attempt=0; attempt<=maxRetries; attempt++){
+    const apiKey=keys[(startIndex+attempt)%keys.length];
+    res=await execute(safeMessages,apiKey);
+    if(res.status!==429) break;
+    if(attempt>=maxRetries) break;
     safeMessages=aggressiveGroqMessages(safeMessages);
-    res=await execute(safeMessages);
+    const retryAfter=Math.max(0,Math.min(4,Number(res.headers.get("retry-after") || 0)));
+    const backoffMs=retryAfter ? retryAfter*1000 : Math.min(4000,250*(2**attempt));
+    await new Promise(resolve=>setTimeout(resolve,backoffMs));
   }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const err = new Error(body?.error?.message || ("Groq chat HTTP " + res.status));
-    err.status = res.status;
+
+  if (!res?.ok) {
+    const body = await res?.json().catch(() => ({})) || {};
+    const err = new Error(body?.error?.message || ("Groq chat HTTP " + (res?.status || 503)));
+    err.status = res?.status || 503;
     err.input_tokens_estimated=groqInputTokenEstimate(safeMessages);
+    err.key_pool_size=keys.length;
     throw err;
   }
   return res;
@@ -1519,6 +1562,298 @@ async function runMasterNode20(env,question,lastBatch,baton,history,source) {
   return {ok:false,text:deterministicSynthesisFromSources(uniqueSources(source)),error:"empty-master-output"};
 }
 
+function massiveNodeEvidence(source, question, nodeIndex) {
+  const node=nodeIndex+1;
+  if(!source){
+    return {
+      node,
+      status:"pass-through",
+      ref_id:"",
+      source:"",
+      page:null,
+      evidence:"",
+      metadata:{deterministic:true,temperature:0}
+    };
+  }
+  const ref=sourceRefId(source,nodeIndex);
+  const sourceName=String(source?.titulo || source?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+  const author=String(source?.autor || "").replace(/[\r\n]+/g," ").trim();
+  const page=Number(source?.pagina || 0) || null;
+  const raw=String(source?.trecho || source?.text || "");
+  const excerpt=focusExcerptForQuestion(raw,question,MASSIVE_NODE_EVIDENCE_CHARS) ||
+    cleanNarrativeText(raw).slice(0,MASSIVE_NODE_EVIDENCE_CHARS);
+  const evidence="["+ref+"] "+sourceName+(author?" — "+author:"")+(page?" — página "+page:"")+
+    " — "+String(excerpt || "").replace(/\s+/g," ").trim();
+  return {
+    node,
+    status:excerpt ? "complete" : "no-evidence",
+    ref_id:ref,
+    source:sourceName,
+    page,
+    evidence,
+    metadata:{
+      deterministic:true,
+      temperature:0,
+      document_id:String(source?.document_id || ""),
+      retrieval_score:Number(source?.score || 0)
+    }
+  };
+}
+
+async function runAsyncWorkerPool(tasks,limit,worker,onSettled=null) {
+  const list=Array.from(tasks || []);
+  const results=new Array(list.length);
+  let cursor=0;
+  const workerCount=Math.max(1,Math.min(Number(limit)||1,list.length||1));
+  const runners=Array.from({length:workerCount},async()=>{
+    while(true){
+      const index=cursor++;
+      if(index>=list.length) return;
+      let result;
+      try{
+        result=await worker(list[index],index);
+      }catch(error){
+        result={
+          node:index+1,
+          status:"failed",
+          error:String(error?.message || error),
+          evidence:"",
+          metadata:{deterministic:true}
+        };
+      }
+      results[index]=result;
+      if(onSettled) await onSettled(result,index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+async function massiveReduceGroup(env,question,group,groupIndex) {
+  const evidence=Array.from(group || []).filter(x=>x?.evidence).map(x=>x.evidence).join("\n");
+  if(!evidence) return {ok:true,text:"",group:groupIndex+1};
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Você é um REDUCER documental determinístico de um RAG massivo. Trabalhe somente com as evidências [F#] recebidas. " +
+        "Produza um resumo denso, factual e articulado; preserve os identificadores [F#] imediatamente após cada afirmação sustentada. " +
+        "Não invente fatos, metadados, autores, páginas ou citações. Não escreva seção de referências. Temperatura lógica: 0."
+    },
+    {
+      role:"user",
+      content:"PERGUNTA:\n"+trimToTokenBudget(question,600)+"\n\nEVIDÊNCIAS DO GRUPO "+(groupIndex+1)+":\n"+
+        trimToTokenBudget(evidence,5200)
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:6500,
+      max_completion_tokens:720,
+      temperature:0.0,
+      max_retries:MASSIVE_GROQ_MAX_RETRIES
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(text) return {ok:true,text,group:groupIndex+1};
+  }catch(error){
+    return {ok:false,text:trimToTokenBudget(evidence,1600),group:groupIndex+1,error:String(error?.message||error)};
+  }
+  return {ok:false,text:trimToTokenBudget(evidence,1600),group:groupIndex+1,error:"empty-reducer-output"};
+}
+
+async function massiveMasterSynthesis(env,question,reducers,history,sources) {
+  const reducerText=Array.from(reducers || [])
+    .filter(x=>String(x?.text || "").trim())
+    .map(x=>"GRUPO "+x.group+":\n"+String(x.text || "").trim())
+    .join("\n\n");
+  const historyText=slidingHistory(history,4,650)
+    .map(x=>x.role.toUpperCase()+": "+x.content).join("\n");
+  const ledger=crossLibraryLedger(sources);
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Você é o MASTER FINAL do RAG V2.0 MASSIVE SCALE. Escreva somente a seção '1. SÍNTESE PRINCIPAL:' em português. " +
+        "Produza um verbete enciclopédico denso, profundo, coeso e articulado, cruzando todas as evidências diretamente relevantes. " +
+        "Cada afirmação factual deve conservar os identificadores [F#] que realmente a sustentam. " +
+        "Não despeje trechos soltos, não invente fatos, autores, páginas, capítulos ou citações e não escreva a seção de referências. " +
+        "Se houver tensões entre fontes, descreva-as sem resolver por invenção. Temperatura obrigatória: 0."
+    },
+    {
+      role:"user",
+      content:
+        "PERGUNTA:\n"+trimToTokenBudget(question,700)+
+        (historyText?"\n\nCONTEXTO RECENTE:\n"+trimToTokenBudget(historyText,650):"")+
+        "\n\nMAPA DE DOCUMENTOS:\n"+trimToTokenBudget(ledger,1300)+
+        "\n\nREDUÇÕES DOS NÓS:\n"+trimToTokenBudget(reducerText,7200)+
+        "\n\nREDAJA A SÍNTESE ENCICLOPÉDICA FINAL."
+    }
+  ];
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:9200,
+      max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
+      temperature:0.0,
+      max_retries:MASSIVE_GROQ_MAX_RETRIES
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text};
+  }catch(error){
+    return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error)};
+  }
+  return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output"};
+}
+
+async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null) {
+  const rows=Array.from(sources || []).slice(0,MASSIVE_NODE_COUNT);
+  const tasks=Array.from({length:MASSIVE_NODE_COUNT},(_,index)=>({node:index+1,source:rows[index] || null}));
+  let completed=0;
+  let failed=0;
+
+  const nodeResults=await runAsyncWorkerPool(
+    tasks,
+    MASSIVE_WORKER_CONCURRENCY,
+    async task=>massiveNodeEvidence(task.source,question,task.node-1),
+    async result=>{
+      completed++;
+      if(result?.status==="failed") failed++;
+      if(onEvent){
+        await onEvent("node",{
+          node:Number(result?.node || completed),
+          status:String(result?.status || "complete"),
+          ref_id:String(result?.ref_id || ""),
+          source:String(result?.source || ""),
+          page:result?.page || null,
+          summary:String(result?.evidence || "").slice(0,240),
+          completed,
+          total:MASSIVE_NODE_COUNT
+        });
+      }
+    }
+  );
+
+  const evidence=nodeResults.filter(x=>x?.evidence);
+  const groups=[];
+  for(let i=0;i<evidence.length;i+=MASSIVE_NODE_GROUP_SIZE){
+    groups.push(evidence.slice(i,i+MASSIVE_NODE_GROUP_SIZE));
+  }
+
+  const reducerTasks=groups.map((group,index)=>({group,index}));
+  const reducerResults=await runAsyncWorkerPool(
+    reducerTasks,
+    MASSIVE_WORKER_CONCURRENCY,
+    async task=>massiveReduceGroup(env,question,task.group,task.index),
+    async result=>{
+      if(onEvent){
+        await onEvent("reduce",{
+          group:Number(result?.group || 0),
+          status:result?.ok ? "complete" : "fallback",
+          total_groups:groups.length
+        });
+      }
+    }
+  );
+
+  const master=await massiveMasterSynthesis(env,question,reducerResults,history,rows);
+  return {
+    text:reducerResults.map(x=>x?.text || "").filter(Boolean).join("\n\n"),
+    masterSynthesis:master.text,
+    used:true,
+    batches:groups.length,
+    micro_nodes_total:MASSIVE_NODE_COUNT,
+    micro_nodes_executed:completed,
+    micro_nodes_failed:failed,
+    relay_mode:"async-worker-pool",
+    active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
+    master_node:"final-fusion",
+    node_results:nodeResults
+  };
+}
+
+async function massivePipelineStreamResponse(env,meta) {
+  const encoder=new TextEncoder();
+  const stream=new ReadableStream({
+    async start(controller){
+      let closed=false;
+      const emit=(event,payload)=>{
+        if(closed) return;
+        controller.enqueue(encoder.encode(sseFrame(event,payload)));
+      };
+      const keepalive=setInterval(()=>{
+        emit("keepalive",{ts:Date.now(),pipeline:"v2.0-massive-scale"});
+      },SSE_KEEPALIVE_MS);
+      try{
+        emit("meta",{
+          fontes:meta.sources,
+          fallback:false,
+          provider:"groq+500-node-async-rag",
+          retrieval_level:meta.retrievalLevel || 0,
+          embedding_model:LOCAL_EMBEDDING_MODEL,
+          chat_model:CHAT_MODEL,
+          micro_nodes_total:MASSIVE_NODE_COUNT,
+          active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
+          queue_strategy:"fifo-exponential-backoff",
+          ui_virtualization:true,
+          temperature:0.0
+        });
+
+        const reduced=await massivePipelineSynthesis(
+          env,
+          meta.question,
+          meta.sources,
+          meta.history || [],
+          async(event,payload)=>emit(event,payload)
+        );
+
+        let answer=String(reduced.masterSynthesis || "").trim();
+        if(meta.sources.length && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(meta.sources);
+        answer=finalizeGroundedAnswer(answer,meta.sources);
+        const usedSources=selectCitedSources(answer,meta.sources);
+        const memoryPersisted=await persistChatTurn(
+          env,meta.ownerId,meta.body,meta.question,answer,usedSources,false
+        );
+        emit("delta",{text:answer});
+        emit("done",{
+          ok:true,
+          resposta:answer,
+          fontes:usedSources,
+          fallback:false,
+          memory_persisted:memoryPersisted,
+          provider:"groq+500-node-async-rag",
+          retrieval_level:meta.retrievalLevel || 0,
+          embedding_model:LOCAL_EMBEDDING_MODEL,
+          chat_model:CHAT_MODEL,
+          map_reduce:true,
+          map_batches:reduced.batches,
+          independent_documents:Number(meta.independentDocuments || 0),
+          micro_nodes_total:MASSIVE_NODE_COUNT,
+          micro_nodes_executed:reduced.micro_nodes_executed,
+          micro_nodes_failed:reduced.micro_nodes_failed,
+          active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
+          relay_mode:"async-worker-pool",
+          master_node:"final-fusion",
+          false_negative_guard:true,
+          ui_virtualization:true
+        });
+      }catch(error){
+        emit("error",{message:String(error?.message||error),code:error?.code||"MASSIVE_PIPELINE_ERROR"});
+      }finally{
+        clearInterval(keepalive);
+        closed=true;
+        controller.close();
+      }
+    }
+  });
+  return new Response(stream,{headers:securityHeaders(new Headers({
+    "Content-Type":"text/event-stream; charset=utf-8",
+    "Cache-Control":"no-cache, no-transform",
+    "X-Accel-Buffering":"no",
+    "Connection":"keep-alive"
+  }))});
+}
+
 async function mapReduceContext(env, question, context, history=[]) {
   const source=Array.from(context || []).slice(0,TOP_K);
   if(!source.length){
@@ -1530,7 +1865,7 @@ async function mapReduceContext(env, question, context, history=[]) {
       micro_nodes_total:MICRO_NODE_COUNT,
       micro_nodes_executed:0,
       micro_nodes_failed:0,
-      relay_mode:"sequential-accumulator",
+      relay_mode:"legacy-sequential-rollback",
       releasedIndexes:[]
     };
   }
@@ -1576,7 +1911,7 @@ async function mapReduceContext(env, question, context, history=[]) {
     micro_nodes_total:MICRO_NODE_COUNT,
     micro_nodes_executed:executed,
     micro_nodes_failed:failed,
-    relay_mode:"sequential-accumulator",
+    relay_mode:"legacy-sequential-rollback",
     master_node:20,
     trace,
     releasedIndexes:source.map((_,i)=>i)
@@ -1612,7 +1947,7 @@ async function precomputedRelayStreamResponse(env,answer,meta) {
       micro_nodes_total:MICRO_NODE_COUNT,
       micro_nodes_executed:Number(meta.microNodesExecuted || 0),
       micro_nodes_failed:Number(meta.microNodesFailed || 0),
-      relay_mode:"sequential-accumulator",
+      relay_mode:"legacy-sequential-rollback",
       master_node:20
     })+
     sseFrame("delta",{text:finalAnswer})+
@@ -1632,7 +1967,7 @@ async function precomputedRelayStreamResponse(env,answer,meta) {
       micro_nodes_total:MICRO_NODE_COUNT,
       micro_nodes_executed:Number(meta.microNodesExecuted || 0),
       micro_nodes_failed:Number(meta.microNodesFailed || 0),
-      relay_mode:"sequential-accumulator",
+      relay_mode:"legacy-sequential-rollback",
       master_node:20,
       false_negative_guard:true
     });
@@ -2062,7 +2397,7 @@ async function exportLibraryPage(env,url){
 }
 
 async function chat(request, env) {
-  requireSecret(env, "GROQ_API_KEY");
+  requireGroqKeys(env);
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
@@ -2083,8 +2418,7 @@ async function chat(request, env) {
   let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
   let retrievalUnavailable = false;
 
-  // V1.20 hotfix: um hit local jamais pode bloquear a leitura do acervo central.
-  // Sempre consultamos o Durable Object/BM25 e fundimos com o contexto do navegador.
+  // V2.0: contexto local e remoto sempre são fundidos; falha remota não apaga o índice local.
   if(env.LIBRARY){
     try {
       const serverContext = await retrieveContext(
@@ -2101,20 +2435,9 @@ async function chat(request, env) {
     }
   }
 
-  const focusedCitation = isFocusedCitationRequest(question);
-  const multipleSourcesRequested = wantsMultipleSources(question);
-  const promptContext = diversifyContextAcrossDocuments(context,TOP_K);
-  const reduced = await mapReduceContext(env,question,promptContext,history);
-  // Liberação total: a etapa MAP organiza o conteúdo, mas NÃO decide quais fontes sobrevivem.
-  // Todas as fontes efetivamente recuperadas (até TOP_K) permanecem elegíveis para síntese e referências.
-  const mappedContext = promptContext;
-  const contextText = reduced.text;
+  const mappedContext = diversifyContextAcrossDocuments(context,TOP_K);
   const crossLibrary = crossLibraryStats(mappedContext);
-
-  // A síntese final já foi produzida pelo Núcleo Mestre 20.
-  // Não existe uma 21ª chamada de LLM: o rodapé é determinístico.
-  const allSources = uniqueSources(mappedContext);
-  const sources = allSources;
+  const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
   const fallback = sources.length === 0;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
@@ -2128,7 +2451,9 @@ async function chat(request, env) {
         ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
         provider:emptyProvider,retrieval_level:retrievalLevel,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
-        map_reduce:false,map_batches:0
+        map_reduce:false,map_batches:0,
+        micro_nodes_total:MASSIVE_NODE_COUNT,
+        active_worker_limit:MASSIVE_WORKER_CONCURRENCY
       });
       return new Response(payload,{headers:securityHeaders(new Headers({
         "Content-Type":"text/event-stream; charset=utf-8",
@@ -2139,45 +2464,46 @@ async function chat(request, env) {
       ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
       provider:emptyProvider,retrieval_level:retrievalLevel,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
-      map_reduce:false,map_batches:0
+      map_reduce:false,map_batches:0,
+      micro_nodes_total:MASSIVE_NODE_COUNT,
+      active_worker_limit:MASSIVE_WORKER_CONCURRENCY
     });
   }
 
   if (wantsStream) {
-    return precomputedRelayStreamResponse(env,reduced.masterSynthesis,{
-      ownerId,body,question,sources,fallback,retrievalLevel,
-      mapBatches:reduced.batches,
-      independentDocuments:crossLibrary.independent_documents,
-      microNodesExecuted:reduced.micro_nodes_executed,
-      microNodesFailed:reduced.micro_nodes_failed
+    return massivePipelineStreamResponse(env,{
+      ownerId,body,question,sources,history,retrievalLevel,
+      independentDocuments:crossLibrary.independent_documents
     });
   }
 
+  const reduced=await massivePipelineSynthesis(env,question,sources,history);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
-  if(!sources.length) answer=gracefulEmptyAnswer();
   answer = finalizeGroundedAnswer(answer,sources);
   const usedSources=selectCitedSources(answer,sources);
-  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, fallback);
+  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
 
   return json({
     ok: true,
     resposta: answer,
     fontes: usedSources,
-    fallback,
+    fallback: false,
     memory_persisted: memoryPersisted,
-    provider: "groq+resilient-rag",
+    provider: "groq+500-node-async-rag",
     retrieval_level: retrievalLevel,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
-    map_reduce: reduced.used,
+    map_reduce: true,
     map_batches: reduced.batches,
     independent_documents: crossLibrary.independent_documents,
-    micro_nodes_total: MICRO_NODE_COUNT,
+    micro_nodes_total: MASSIVE_NODE_COUNT,
     micro_nodes_executed: reduced.micro_nodes_executed,
     micro_nodes_failed: reduced.micro_nodes_failed,
-    relay_mode: reduced.relay_mode,
-    master_node: 20,
+    active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
+    relay_mode: "async-worker-pool",
+    master_node: "final-fusion",
+    ui_virtualization: true
   });
 }
 
@@ -2282,12 +2608,17 @@ async function status(env) {
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     micro_node_chain: true,
-    micro_node_count: MICRO_NODE_COUNT,
+    micro_node_count: MASSIVE_NODE_COUNT,
     micro_node_batch_size: MICRO_NODE_BATCH_SIZE,
-    streaming_relay: "sequential-accumulator",
-    master_node: 20,
-    master_fusion_mode: "dense-encyclopedic",
+    streaming_relay: "async-worker-pool",
+    master_node: "final-fusion",
+    master_fusion_mode: "massive-dense-encyclopedic",
     micro_node_temperature: 0.0,
+        active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
+        max_bubbles_per_query: MASSIVE_NODE_COUNT,
+        sse_keepalive_ms: SSE_KEEPALIVE_MS,
+        groq_round_robin_key_rotation: true,
+        groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
     post_master_llm_rewrite: false,
     require_lexical_match: REQUIRE_LEXICAL_MATCH,
     lexical_ranker: "bm25",
@@ -3179,12 +3510,17 @@ export default {
         rag_map_reduce: true,
         map_batch_size: MAP_BATCH_SIZE,
         micro_node_chain: true,
-        micro_node_count: MICRO_NODE_COUNT,
+        micro_node_count: MASSIVE_NODE_COUNT,
         micro_node_batch_size: MICRO_NODE_BATCH_SIZE,
-        streaming_relay: "sequential-accumulator",
-        master_node: 20,
-        master_fusion_mode: "dense-encyclopedic",
+        streaming_relay: "async-worker-pool",
+        master_node: "final-fusion",
+        master_fusion_mode: "massive-dense-encyclopedic",
         micro_node_temperature: 0.0,
+        active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
+        max_bubbles_per_query: MASSIVE_NODE_COUNT,
+        sse_keepalive_ms: SSE_KEEPALIVE_MS,
+        groq_round_robin_key_rotation: true,
+        groq_429_retry_limit: MASSIVE_GROQ_MAX_RETRIES,
         post_master_llm_rewrite: false,
         static_backup_hydration: true,
         static_backup_expected_embeddings: 25199,
