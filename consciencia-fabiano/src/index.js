@@ -888,8 +888,8 @@ async function retrieveSupabaseStrictContext(env,question){
   let offset=0,scanned=0;
   const pageSize=200;
   while(true){
-    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
-    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+    const endpoint=new URL(base+"/rest/v1/library_chunks");
+    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text,content_hash,updated_at");
     endpoint.searchParams.set("text","ilike.*"+anchor.replace(/[,*()]/g,"")+"*");
     endpoint.searchParams.set("order","document_id.asc,chunk_index.asc");
     endpoint.searchParams.set("limit",String(pageSize));
@@ -935,7 +935,7 @@ async function supabaseOmniSyncState(env){
   if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
 
   const fetchEdge=async(order)=>{
-    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
+    const endpoint=new URL(base+"/rest/v1/library_chunks");
     endpoint.searchParams.set("select","id,document_id,chunk_index");
     endpoint.searchParams.set("order","id."+order);
     endpoint.searchParams.set("limit","1");
@@ -979,8 +979,8 @@ async function supabaseOmniSyncPage(env,url){
   if(!base||!token)return json({ok:false,code:"SUPABASE_SYNC_UNAVAILABLE",message:"Espelho Supabase não configurado."},503);
   const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
   const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
-  const endpoint=new URL(base+"/rest/v1/rag_embeddings");
-  endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+  const endpoint=new URL(base+"/rest/v1/library_chunks");
+  endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text,content_hash,updated_at");
   endpoint.searchParams.set("order","document_id.asc,chunk_index.asc");
   endpoint.searchParams.set("limit",String(limit));
   endpoint.searchParams.set("offset",String(offset));
@@ -991,7 +991,7 @@ async function supabaseOmniSyncPage(env,url){
       headers:{"Authorization":"Bearer "+token,"apikey":token,"Accept":"application/json","Prefer":"count=exact"},
       signal:controller.signal
     });
-    if(!res.ok)return json({ok:false,code:"SUPABASE_SYNC_FAILED",message:"Supabase sync HTTP "+res.status},res.status);
+    if(!res.ok)return json({ok:false,code:"SUPABASE_SYNC_FAILED",message:"Supabase library sync HTTP "+res.status},res.status);
     const rows=await res.json().catch(()=>[]);
     const range=String(res.headers.get("content-range")||"");
     const totalMatch=range.match(/\/(\d+)$/);
@@ -2477,6 +2477,47 @@ function normalizeMirrorRecords(items){
     vector:Array.isArray(raw?.vector) ? raw.vector.map(Number).filter(Number.isFinite).slice(0,2048) : []
   })).filter(r=>r.text && r.vector.length>=64);
 }
+function normalizeLibraryChunkRecords(items){
+  if(!Array.isArray(items)) return [];
+  return items.slice(0,200).map((raw,index)=>({
+    id:String(raw?.id || raw?.key || ("library-"+index)).slice(0,180),
+    document_id:String(raw?.document_id || raw?.doc_key || "unknown").slice(0,180),
+    filename:String(raw?.filename || raw?.title || "Documento").slice(0,300),
+    title:String(raw?.title || raw?.filename || "Documento").slice(0,500),
+    author:String(raw?.author || "").slice(0,300),
+    language:String(raw?.language || "pt").slice(0,40),
+    page:Number(raw?.page || 0) || 0,
+    chunk_index:Number(raw?.chunk_index || 0) || 0,
+    text:String(raw?.text || "").slice(0,12000),
+    content_hash:String(raw?.content_hash || "").slice(0,180)
+  })).filter(r=>r.document_id && r.text);
+}
+
+async function mirrorLibraryChunks(request,env){
+  const base=String(env.SUPABASE_URL || "").replace(/\/$/,"");
+  const token=String(env.SUPABASE_SERVICE_ROLE_KEY || "");
+  if(!base || !token) return json({ok:false,code:"SUPABASE_LIBRARY_MIRROR_UNAVAILABLE"},503);
+  const body=await request.json().catch(()=>({}));
+  const rows=normalizeLibraryChunkRecords(body?.records);
+  if(!rows.length) return json({ok:true,records:0});
+  const payload=rows.map(r=>({...r,updated_at:new Date().toISOString()}));
+  const res=await fetch(base+"/rest/v1/library_chunks?on_conflict=id",{
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+token,
+      "apikey":token,
+      "Content-Type":"application/json",
+      "Prefer":"resolution=merge-duplicates,return=minimal"
+    },
+    body:JSON.stringify(payload)
+  });
+  if(!res.ok){
+    const txt=await res.text().catch(()=>"");
+    return json({ok:false,code:"SUPABASE_LIBRARY_MIRROR_FAILED",message:"Supabase library mirror HTTP "+res.status+" "+txt.slice(0,240)},res.status);
+  }
+  return json({ok:true,records:payload.length});
+}
+
 
 async function mirrorSupabase(env,records){
   const base=String(env.SUPABASE_URL || "").replace(/\/$/,"");
@@ -2767,8 +2808,8 @@ async function supabaseExactDocumentChunks(env,documentId,startChunk,limit) {
   const tasks=Array.from({length:pages},(_,i)=>i);
   const concurrency=exactSupabaseCircuit.degraded ? EXACT_DEGRADED_CONCURRENCY : EXACT_MAX_CONCURRENT_REQUESTS;
   const results=await runAsyncWorkerPool(tasks,concurrency,async pageIndex=>{
-    const endpoint=new URL(base+"/rest/v1/rag_embeddings");
-    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text");
+    const endpoint=new URL(base+"/rest/v1/library_chunks");
+    endpoint.searchParams.set("select","id,document_id,filename,title,author,language,page,chunk_index,text,content_hash,updated_at");
     endpoint.searchParams.set("document_id","eq."+String(documentId));
     endpoint.searchParams.set("chunk_index","gte."+Math.max(0,Number(startChunk||0)));
     endpoint.searchParams.set("order","chunk_index.asc");
@@ -3330,6 +3371,7 @@ async function handleApi(request, env, url, ctx) {
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
+    if (url.pathname === "/api/admin/library-mirror-upsert" && request.method === "POST") return mirrorLibraryChunks(request,env);
     if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
     if (url.pathname === "/api/admin/omni-sync-state" && request.method === "GET") return supabaseOmniSyncState(env);
     if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return supabaseOmniSyncPage(env,url);
