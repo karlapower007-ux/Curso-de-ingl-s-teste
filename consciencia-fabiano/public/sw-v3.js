@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-ultimate-resilience-v7";
+const CACHE_NAME="fns-ultimate-resilience-v7-1";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const BATCH_SIZE=200;
 const DAEMON_DB="fns_omni_daemon_v6";
@@ -180,10 +180,11 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
       return {ok:true,changed:false,total:Number(state?.total||0)};
     }
 
-    const generation="g-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,9);
-    let offset=0,totalWritten=0,done=false,batches=0;
+    const generation="r2-"+String(state?.generation||Date.now().toString(36));
+    let cursor="",totalWritten=0,done=false,batches=0;
     while(!done){
-      let payload=await fetchJson("/api/admin/omni-sync-page?offset="+offset+"&limit="+BATCH_SIZE,token);
+      const query=cursor ? "?cursor="+encodeURIComponent(cursor) : "";
+      let payload=await fetchJson("/api/admin/omni-sync-page"+query,token);
       let rows=Array.isArray(payload?.rows)?payload.rows:[];
       const count=rows.length;
       if(count){
@@ -191,13 +192,15 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
         totalWritten+=count;
       }
       batches++;
-      done=payload?.done===true||count<BATCH_SIZE;
-      offset=Number(payload?.next_offset??(offset+count));
+      done=payload?.done===true;
+      cursor=String(payload?.next_cursor||"");
+      if(!done && !cursor)done=true;
       await notifyClients({
         type:"omni-daemon-progress",written:totalWritten,total:Number(payload?.total||state?.total||0),
-        batch:batches,batch_size:BATCH_SIZE,reason
+        batch:batches,batch_size:BATCH_SIZE,reason,
+        backend:String(payload?.backend||"cloudflare-r2")
       });
-      // bounded-memory flush before requesting the next micro-batch
+      // bounded-memory flush before requesting the next R2 shard
       rows.length=0;
       rows=null;
       payload=null;
@@ -209,7 +212,7 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
     await metaPut("last_generation",generation);
     await notifyClients({
       type:"omni-daemon-synced",written:totalWritten,deleted,total:Number(state?.total||totalWritten),
-      batches,signature,reason,memory_bounded:true
+      batches,signature,reason,memory_bounded:true,backend:"cloudflare-r2"
     });
     return {ok:true,changed:true,written:totalWritten,deleted,batches};
   }catch(error){
@@ -271,12 +274,12 @@ self.addEventListener("message",event=>{
 });
 
 self.addEventListener("periodicsync",event=>{
-  if(event.tag==="fns-omni-daemon-v6"){
+  if(event.tag==="fns-omni-daemon-v7-r2"){
     event.waitUntil(runPhantomDaemon({reason:"periodic-background-sync"}).catch(()=>{}));
   }
 });
 self.addEventListener("sync",event=>{
-  if(event.tag==="fns-omni-daemon-v6"){
+  if(event.tag==="fns-omni-daemon-v7-r2"){
     event.waitUntil(runPhantomDaemon({force:true,reason:"background-sync"}).catch(()=>{}));
   }
 });
