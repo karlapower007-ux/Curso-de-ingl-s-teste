@@ -127,5 +127,20 @@ for i in $(seq 1 15); do
 done
 if [ "$EXPECT_R2" = "1" ]; then jq -e '.r2_direct_ready == true' /tmp/health.json >/dev/null; fi
 
+log "6/7 Broad-term RAG regression probe"
+curl -fsS --max-time 25 "$BASE/api/rag/search" \
+  -H 'Content-Type: application/json' \
+  --data '{"question":"Jesus"}' >/tmp/rag-broad-probe.json || { cat /tmp/rag-broad-probe.json 2>/dev/null || true; die "RAG_BROAD_PROBE_HTTP_FAILED"; }
+jq -e '.ok == true and (.matches | type == "array") and ((.matches | length) > 0)' /tmp/rag-broad-probe.json >/dev/null || {
+  cat /tmp/rag-broad-probe.json
+  die "RAG_BROAD_TERM_FALSE_NEGATIVE"
+}
+jq -e '[.matches[] | select((.text // "") | test("Jesus"; "i"))] | length > 0' /tmp/rag-broad-probe.json >/dev/null || {
+  cat /tmp/rag-broad-probe.json
+  die "RAG_BROAD_TERM_MISSING_ANCHOR"
+}
+log "RAG_BROAD_TERM_PROBE_PASS=yes"
+
+log "7/7 Release complete"
 log "DEPLOY_ONLY_PROTOCOL=success"
 log "AUTONOMOUS_RELEASE=success"
