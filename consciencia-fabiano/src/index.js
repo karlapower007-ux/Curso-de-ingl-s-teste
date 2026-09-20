@@ -3020,8 +3020,20 @@ async function mirrorUpsert(request,env){
 
 async function exportLibraryPage(env,url){
   const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
-  const limit=Math.max(1,Math.min(250,Number(url.searchParams.get("limit")||250)));
-  return json(await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit));
+  const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
+  const mode=String(url.searchParams.get("mode")||"offset")==="cursor"?"cursor":"offset";
+  const includeTotal=url.searchParams.get("include_total")==="1";
+  const afterCreatedAt=String(url.searchParams.get("after_created_at")||"").slice(0,80);
+  const afterId=String(url.searchParams.get("after_id")||"").slice(0,180);
+  const query=new URLSearchParams({mode,limit:String(limit)});
+  if(mode==="cursor"){
+    if(afterCreatedAt)query.set("after_created_at",afterCreatedAt);
+    if(afterId)query.set("after_id",afterId);
+    if(includeTotal)query.set("include_total","1");
+  }else{
+    query.set("offset",String(offset));
+  }
+  return json(await libraryCall(env,"/export-page?"+query.toString()));
 }
 
 
@@ -4403,7 +4415,7 @@ export class LibraryDO {
         );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
-        CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
+        CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);\n        CREATE INDEX IF NOT EXISTS idx_chunks_created_id ON chunks(created_at, id);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
@@ -5050,16 +5062,56 @@ export class LibraryDO {
       }
 
       if (url.pathname === "/export-page" && request.method === "GET") {
+        const mode=String(url.searchParams.get("mode")||"offset")==="cursor"?"cursor":"offset";
         const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
-        const limit=Math.max(1,Math.min(250,Number(url.searchParams.get("limit")||250)));
-        const total=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
-        const rows=[...this.sql.exec(`
-          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
-                 d.filename,d.title,d.author,d.language,d.sha256 AS content_hash,
-                 d.r2_key AS original_r2_key,d.embedding_model,d.embedding_dimensions
-          FROM chunks c JOIN documents d ON d.id=c.document_id
-          ORDER BY c.created_at,c.chunk_index LIMIT ? OFFSET ?
-        `,limit,offset)].map(row=>{
+        const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
+        const includeTotal=url.searchParams.get("include_total")==="1";
+        const afterCreatedAt=String(url.searchParams.get("after_created_at")||"").slice(0,80);
+        const afterId=String(url.searchParams.get("after_id")||"").slice(0,180);
+
+        let total=null,totalBooks=null;
+        if(mode!=="cursor" || includeTotal){
+          const stats=[...this.sql.exec(
+            "SELECT COUNT(*) AS books, COALESCE(SUM(chunk_count),0) AS chunks FROM documents"
+          )][0] || {books:0,chunks:0};
+          total=Number(stats.chunks||0);
+          totalBooks=Number(stats.books||0);
+        }
+
+        const fetchLimit=limit+1;
+        let rawRows=[];
+        if(mode==="cursor"){
+          if(afterCreatedAt && afterId){
+            rawRows=[...this.sql.exec(`
+              SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,c.created_at AS cursor_created_at,
+                     d.filename,d.title,d.author,d.language,d.sha256 AS content_hash,
+                     d.r2_key AS original_r2_key,d.embedding_model,d.embedding_dimensions
+              FROM chunks c JOIN documents d ON d.id=c.document_id
+              WHERE c.created_at > ? OR (c.created_at = ? AND c.id > ?)
+              ORDER BY c.created_at,c.id LIMIT ?
+            `,afterCreatedAt,afterCreatedAt,afterId,fetchLimit)];
+          }else{
+            rawRows=[...this.sql.exec(`
+              SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,c.created_at AS cursor_created_at,
+                     d.filename,d.title,d.author,d.language,d.sha256 AS content_hash,
+                     d.r2_key AS original_r2_key,d.embedding_model,d.embedding_dimensions
+              FROM chunks c JOIN documents d ON d.id=c.document_id
+              ORDER BY c.created_at,c.id LIMIT ?
+            `,fetchLimit)];
+          }
+        }else{
+          rawRows=[...this.sql.exec(`
+            SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,c.created_at AS cursor_created_at,
+                   d.filename,d.title,d.author,d.language,d.sha256 AS content_hash,
+                   d.r2_key AS original_r2_key,d.embedding_model,d.embedding_dimensions
+            FROM chunks c JOIN documents d ON d.id=c.document_id
+            ORDER BY c.created_at,c.id LIMIT ? OFFSET ?
+          `,fetchLimit,offset)];
+        }
+
+        const hasMore=rawRows.length>limit;
+        const pageRows=rawRows.slice(0,limit);
+        const records=pageRows.map(row=>{
           let vector=[];
           try{vector=JSON.parse(row.embedding || "[]");}catch{}
           return {
@@ -5074,7 +5126,17 @@ export class LibraryDO {
             vector:Array.isArray(vector)?vector:[]
           };
         });
-        return json({ok:true,total,offset,limit,next_offset:offset+rows.length,done:(offset+rows.length)>=total,records:rows});
+        const last=pageRows.length?pageRows[pageRows.length-1]:null;
+        const nextCursor=last ? {
+          created_at:String(last.cursor_created_at||""),
+          id:String(last.id||"")
+        } : null;
+        return json({
+          ok:true,mode,total,total_books:totalBooks,offset:mode==="offset"?offset:null,limit,
+          next_offset:mode==="offset"?offset+records.length:null,
+          next_cursor:mode==="cursor"?nextCursor:null,
+          has_more:hasMore,done:!hasMore,records
+        });
       }
 
       if (url.pathname === "/memory/list" && request.method === "GET") {
