@@ -31,8 +31,8 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          git fetch origin consciencia-v74-export-cursor-hotfix-20260920
-          git worktree add /tmp/v74-hotfix origin/consciencia-v74-export-cursor-hotfix-20260920
+          git fetch origin consciencia-v74-export-id-cursor-hotfix2-20260920
+          git worktree add /tmp/v74-hotfix origin/consciencia-v74-export-id-cursor-hotfix2-20260920
           cd /tmp/v74-hotfix/consciencia-fabiano
           npm install --ignore-scripts
           npm run check
@@ -44,7 +44,7 @@ jobs:
           mkdir -p .ci-results
           {
             echo "V74_EXPORT_CURSOR_GATE=${{ steps.gate.outputs.gate || 'failed' }}"
-            echo "HOTFIX_HEAD=6eaa3c92e3f6790ffbdcd996031a3f307c94bb71"
+            echo "HOTFIX_HEAD=082841502459ae656aaedf01b3e0f18acd6150f9"
             echo "WORKFLOW_RUN=${GITHUB_RUN_ID}"
           } > .ci-results/v74-export-cursor-hotfix.txt
           git config user.name "github-actions[bot]"
