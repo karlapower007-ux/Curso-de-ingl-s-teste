@@ -1,15 +1,17 @@
 {
   "name": "consciencia-do-fabiano",
   "private": true,
-  "version": "7.3.0",
+  "version": "7.4.0",
   "scripts": {
-    "check": "node --check public/app.js && node --check public/failover-v3.js && node --check public/sw-v3.js && node --check public/local-turbine-pool.js && node --check public/local-turbine-worker.js && node --check public/strict-match-core.js && node --check public/omni-sync-worker.js && node --check public/agent-swarm.js && node --check public/agent-node-worker.js && node --check scripts/build-static-vault.mjs && node --check scripts/build-failover-manifest.mjs && node --check scripts/local-fallback-server.mjs && node --check scripts/export-raw-vault.mjs && node --check standby/core.mjs && node --check standby/vercel/api/index.mjs && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
+    "check": "node --check src/cognitive-turbines-v74.js && node --check scripts/build-cognitive-v74-manifest.mjs && node --check scripts/cognitive-v74-acceptance.mjs && node --check public/app.js && node --check public/failover-v3.js && node --check public/sw-v3.js && node --check public/local-turbine-pool.js && node --check public/local-turbine-worker.js && node --check public/strict-match-core.js && node --check public/omni-sync-worker.js && node --check public/agent-swarm.js && node --check public/agent-node-worker.js && node --check scripts/build-static-vault.mjs && node --check scripts/build-failover-manifest.mjs && node --check scripts/local-fallback-server.mjs && node --check scripts/export-raw-vault.mjs && node --check standby/core.mjs && node --check standby/vercel/api/index.mjs && npx wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "build": "npm run check",
     "deploy": "wrangler deploy",
     "cf:bootstrap": "npm run check",
     "cf:deploy": "npm run check && wrangler deploy",
     "build:steel": "node scripts/build-static-vault.mjs",
     "build:failover-manifest": "node scripts/build-failover-manifest.mjs",
+    "build:cognitive-v74": "node scripts/build-cognitive-v74-manifest.mjs",
+    "test:cognitive-v74": "node scripts/cognitive-v74-acceptance.mjs",
     "fallback:desktop": "node scripts/local-fallback-server.mjs",
     "fallback:export": "node scripts/export-raw-vault.mjs"
   },
