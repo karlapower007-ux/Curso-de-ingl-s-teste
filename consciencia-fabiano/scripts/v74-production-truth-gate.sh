@@ -138,11 +138,21 @@ assert_jq "TEST_D_GROUNDED_SUMMARY" "$REPORT_DIR/test_D.json" '.ok==true and .fa
 chat "test_E" "Faça um fichamento completo somente do material que contém: $phrase1. Inclua tema, tese, argumentos, conceitos, evidências e referências." "" || true
 assert_jq "TEST_E_FICHAMENTO" "$REPORT_DIR/test_E.json" '.ok==true and .fallback==false and (.fontes|length)>0 and .llm_calls<=1'
 
-if [ "$sample_count" -ge 2 ]; then
-  chat "test_F" "Compare as fontes "$title1" e "$title2" usando os trechos recuperáveis relacionados a: $phrase1 ; $phrase2. Mostre convergências e divergências sem atribuir opinião não documentada." "" || true
-  assert_jq "TEST_F_COMPARISON" "$REPORT_DIR/test_F.json" '.ok==true and .fallback==false and (.fontes|map(.document_id)|unique|length)>=2 and .llm_calls<=1'
+# Comparison is isolated with two synthetic client-context documents so the
+# personal library is not modified merely to satisfy the acceptance test.
+jq -nc '{
+  pergunta:"Compare o Autor A com o Autor B. Mostre convergências e divergências, sem atribuir opinião não documentada.",
+  historico:[],stream:false,
+  client_context:[
+    {id:"accept-a",document_id:"accept-author-a",title:"Acceptance Autor A",author:"Autor A",page:1,score:10,retrieval_mode:"client-resilience",text:"Autor A afirma que a interpretação deve considerar o contexto documental e a sequência argumentativa. O argumento exige evidência textual verificável."},
+    {id:"accept-b",document_id:"accept-author-b",title:"Acceptance Autor B",author:"Autor B",page:1,score:10,retrieval_mode:"client-resilience",text:"Autor B afirma que a interpretação deve considerar evidência textual verificável, mas dá prioridade à definição explícita dos conceitos em vez da sequência argumentativa."}
+  ]
+}' >"$REPORT_DIR/test_F.payload.json"
+f_code=$(curl -sS --max-time 90 -o "$REPORT_DIR/test_F.json" -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @"$REPORT_DIR/test_F.payload.json" || echo 000)
+if [ "$f_code" = "200" ]; then
+  assert_jq "TEST_F_COMPARISON" "$REPORT_DIR/test_F.json" '.ok==true and .fallback==false and (.fontes|map(.document_id)|unique|length)>=2 and .cognitive_mode=="comparison" and .llm_calls<=1'
 else
-  record "TEST_F_COMPARISON" FAIL "requires_two_distinct_documents"
+  record "TEST_F_COMPARISON" FAIL "http_$f_code"
 fi
 
 chat "test_G" "O que você pensa sobre isso? Faça REFLEXÃO claramente separada dos fatos documentais, usando: $phrase1" "" || true
