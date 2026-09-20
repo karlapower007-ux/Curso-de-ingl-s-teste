@@ -4413,7 +4413,7 @@ export class LibraryDO {
         );
         CREATE INDEX IF NOT EXISTS idx_documents_sha ON documents(sha256);
         CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
-        CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);\n        CREATE INDEX IF NOT EXISTS idx_chunks_created_id ON chunks(created_at, id);
+        CREATE INDEX IF NOT EXISTS idx_chunks_document_page ON chunks(document_id, page);
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
