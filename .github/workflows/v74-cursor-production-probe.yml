@@ -43,7 +43,7 @@ jobs:
           test "$BOOKS" -gt 0
           test "$RECORDS" -eq 1
           test -n "$C_ID"
-          BODY2="$(curl -fsS -G --max-time 25             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             --data-urlencode 'mode=cursor'             --data-urlencode 'limit=1'             --data-urlencode "after_created_at=$C_CREATED"             --data-urlencode "after_id=$C_ID"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library')"
+          BODY2="$(curl -fsS -G --max-time 25             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             --data-urlencode 'mode=cursor'             --data-urlencode 'limit=1'              --data-urlencode "after_id=$C_ID"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library')"
           NEXT_ID="$(printf '%s' "$BODY2" | jq -r '.next_cursor.id // ""')"
           RECORDS2="$(printf '%s' "$BODY2" | jq -r '.records | length')"
           test "$RECORDS2" -eq 1
