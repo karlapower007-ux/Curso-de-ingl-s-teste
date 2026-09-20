@@ -1,6 +1,7 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
-const VERSION = "7.4.0-cognitive-1000-microturbines";
+import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured} from "./stateful-rag-v75.js";
+const VERSION = "7.5.0-stateful-resilience";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -804,8 +805,7 @@ async function retrieveSemanticContext(env, question, suppliedEmbedding = null) 
 }
 
 function supabaseLexicalConfigured(env) {
-  void env;
-  return false;
+  return secondarySupabaseConfigured(env);
 }
 
 async function retrieveSupabaseLexicalContext(env, question) {
@@ -1328,12 +1328,11 @@ async function retrieveContextV4Strict(env,question){
   }
   const matches=roundRobinStrictHits(perDocument,STRICT_LOGICAL_TASK_CAP);
   if(!matches.length&&!durable.readable){
-    const mirrorHasRows=supabaseLexicalConfigured(env)?await supabaseMirrorHasAnyRows(env):null;
-    if(!supabase.readable || mirrorHasRows!==true){
-      const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
-      err.code="RAG_RETRIEVAL_UNAVAILABLE";
-      throw err;
-    }
+    // O espelho secundário é deliberadamente não-autoritativo.
+    // Sem evidência positiva, uma falha da fonte primária nunca vira "biblioteca vazia".
+    const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+    err.code="RAG_RETRIEVAL_UNAVAILABLE";
+    throw err;
   }
   return matches;
 }
@@ -1384,6 +1383,23 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
     readableSearches++;
     if(lexical.length) groups.push(lexical);
   } catch {}
+
+  // Secondary cluster: positive evidence can rescue a query, but an empty secondary
+  // result never becomes proof that the authoritative library is empty.
+  if(secondarySupabaseConfigured(env)) {
+    try {
+      const secondary=await retrieveSecondaryHybridContext(
+        env,
+        question,
+        suppliedEmbedding,
+        {perDocumentK:50,globalLimit:150}
+      );
+      if(Array.isArray(secondary?.matches) && secondary.matches.length){
+        groups.push(secondary.matches);
+        readableSearches++;
+      }
+    } catch {}
+  }
 
   if(Array.isArray(suppliedEmbedding) && suppliedEmbedding.length>=64) {
     try {
@@ -3687,31 +3703,32 @@ async function chat(request, env) {
   }
 
   const ownerId = await memoryOwner(request, body);
-  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-GROQ_HISTORY_MESSAGES * 2) : [];
+  // Stateful window: até 10 interações (20 mensagens), sem ampliar o orçamento do Groq.
+  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-20) : [];
   let storedHistory = [];
   try {
-    storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, GROQ_HISTORY_MESSAGES * 2));
+    storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, 20));
   } catch {}
   const historySource = storedHistory.length
     ? storedHistory.map(x => ({ role: x.role, content: x.content }))
     : clientHistory;
   const history = slidingHistory(historySource);
 
-  // Cognitive v7.4 reference resolver: the current question remains sovereign,
-  // but underspecified follow-ups may borrow only recent user turns for retrieval.
-  // This does not modify memory storage or the RAG engine itself.
-  let retrievalQuestion=question;
-  if(cognitiveContract.use_history && history.length){
-    const priorUserTurns=history
-      .filter(x=>String(x?.role||"").toLowerCase()==="user")
-      .slice(-3)
-      .map(x=>String(x?.content||"").trim())
-      .filter(Boolean);
-    if(priorUserTurns.length){
-      retrievalQuestion=question+"\n\nCONTEXTO DE REFERÊNCIA PARA RECUPERAÇÃO (não amplia o escopo):\n"+
-        priorUserTurns.join("\n");
-    }
-  }
+  // V7.5 staging: resolve apenas referências conversacionais necessárias.
+  // Não chama LLM, não muda a memória persistente e mantém a pergunta atual soberana.
+  const statefulResolution=resolveStatefulQuery(question,historySource,cognitiveContract);
+  const retrievalQuestion=String(statefulResolution?.query || question);
+  const retrievalEmbedding=statefulResolution?.used_history
+    ? null
+    : (Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
+  cognitiveRuntime.stateful_rag={
+    enabled:true,
+    window_interactions:10,
+    rewriter_mode:String(statefulResolution?.mode || "standalone-current-question"),
+    history_used:Boolean(statefulResolution?.used_history),
+    source_turns:Number(statefulResolution?.source_turns || 0),
+    rewriter_llm_calls:0
+  };
 
   const ragStarted=Date.now();
   const clientContext = normalizeClientContext(body?.client_context);
@@ -3725,7 +3742,7 @@ async function chat(request, env) {
       const serverContext = await retrieveContext(
         env,
         retrievalQuestion,
-        Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null
+        retrievalEmbedding
       );
       context = mergeRetrievedMatches(clientContext, serverContext);
       if(serverContext.length) retrievalLevel=Math.max(retrievalLevel,5);
@@ -4035,8 +4052,8 @@ async function status(env) {
     client_and_server_context_merge: true,
     lexical_full_scan_limit: VECTOR_SCAN_LIMIT,
     lexical_single_anchor_opens_pipeline: true,
-    supabase_lexical_fallback: false,
-    durable_object_quota_fails_open_to_supabase: false,
+    supabase_lexical_fallback: secondarySupabaseConfigured(env),
+    durable_object_quota_fails_open_to_supabase: secondarySupabaseConfigured(env),
     empty_mirror_is_not_empty_library: true,
     retrieval_unavailable_is_distinct_from_no_match: true,
     failure_message_requires_zero_sources: true,
@@ -4051,10 +4068,10 @@ async function status(env) {
     raw_excerpt_dump_in_references: false,
     inline_citation_grounding: true,
     synthesis_independent_document_cap: TOP_K,
-    multicloud_mirror: false,
+    multicloud_mirror: secondarySupabaseConfigured(env),
     provider_auth_surface: "server-side-secrets-only",
     client_provider_keys_exposed: false,
-    supabase_transport: "disabled-official-build",
+    supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
     direct_postgres_connections: 0,
     logical_worker_nodes: MASSIVE_NODE_COUNT,
     worker_pool_concurrency: MASSIVE_WORKER_CONCURRENCY,
@@ -4211,7 +4228,7 @@ async function status(env) {
     rag_local_levels: [1,2,3,10],
     rag_cloudflare_level: 5,
     rag_external_slots: [],
-    supabase_mirror_configured: false,
+    supabase_mirror_configured: secondarySupabaseConfigured(env),
     pinecone_mirror_configured: false,
     local_library_catalog: true,
     admin_access_password_version: "gadu-v1",
@@ -4286,7 +4303,7 @@ async function handleApi(request, env, url, ctx) {
         ok:true,
         levels:10,
         providers:{
-          supabase:false,
+          supabase:secondarySupabaseConfigured(env),
           pinecone:false,
           mongodb:false,
           astra:false,
@@ -5324,7 +5341,7 @@ export default {
         llm_provider: "groq",
         provider_auth_surface: "server-side-secrets-only",
         client_provider_keys_exposed: false,
-        supabase_transport: "disabled-official-build",
+        supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
         direct_postgres_connections: 0,
         embedding_provider: "browser-transformers",
         server_pdf_parsing: false,
@@ -5484,7 +5501,7 @@ export default {
         static_backup_hydration: true,
         static_backup_expected_embeddings: 25199,
         static_backup_payload_status: "scheduled-export",
-        supabase_mirror_configured: false,
+        supabase_mirror_configured: secondarySupabaseConfigured(env),
         pinecone_mirror_configured: false,
         whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
