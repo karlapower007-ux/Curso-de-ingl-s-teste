@@ -1028,23 +1028,59 @@ async function r2OmniSyncPage(env,url){
   if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
   const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
   const generation=String(pointer?.generation||"");
-  if(!generation)return json({ok:true,rows:[],done:true,next_cursor:"",total:0,batch_size:200,backend:"cloudflare-r2"});
-  const cursor=String(url.searchParams.get("cursor")||"") || undefined;
-  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
-  const listed=await env.PDFS.list({prefix,limit:1,cursor});
-  const object=listed.objects?.[0]||null;
-  if(!object)return json({
-    ok:true,rows:[],done:true,next_cursor:"",total:Number(pointer?.chunks||0),generation,batch_size:200,backend:"cloudflare-r2"
+  const total=Math.max(0,Number(pointer?.chunks||0));
+  const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
+  const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||200)));
+  if(!generation || offset>=total)return json({
+    ok:true,rows:[],offset,next_offset:offset,done:true,total,generation,batch_size:200,
+    memory_bounded:true,backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
   });
-  const shard=await r2JsonGet(env.PDFS,object.key);
-  let rows=Array.isArray(shard?.rows)?shard.rows.slice(0,200):[];
-  const count=rows.length;
-  const nextCursor=listed.truncated?String(listed.cursor||""):"";
+
+  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
+  let listCursor=undefined;
+  let cumulative=0;
+  let exhausted=false;
+  let rows=[];
+  const shardKeys=[];
+
+  while(rows.length<limit && !exhausted){
+    const listed=await env.PDFS.list({prefix,limit:100,cursor:listCursor,include:["customMetadata"]});
+    const objects=Array.isArray(listed.objects)?listed.objects:[];
+    if(!objects.length){exhausted=true;break;}
+    for(const object of objects){
+      let count=Math.max(0,Number(object?.customMetadata?.count||0));
+      let shard=null;
+      if(!count){
+        shard=await r2JsonGet(env.PDFS,object.key);
+        count=Array.isArray(shard?.rows)?shard.rows.length:0;
+      }
+      const start=cumulative;
+      const end=start+count;
+      cumulative=end;
+      if(end<=offset || count<=0)continue;
+      if(rows.length>=limit)break;
+      if(!shard)shard=await r2JsonGet(env.PDFS,object.key);
+      const source=Array.isArray(shard?.rows)?shard.rows:[];
+      const within=Math.max(0,offset-start);
+      const take=Math.max(0,limit-rows.length);
+      if(take>0)rows.push(...source.slice(within,within+take));
+      shardKeys.push(object.key);
+    }
+    if(rows.length>=limit)break;
+    if(listed.truncated && listed.cursor){
+      listCursor=String(listed.cursor);
+    }else{
+      exhausted=true;
+    }
+  }
+
+  const nextOffset=offset+rows.length;
+  const done=nextOffset>=total || (exhausted && rows.length<limit);
   const response=json({
-    ok:true,rows,cursor:String(cursor||""),next_cursor:nextCursor,
-    done:!listed.truncated,total:Number(pointer?.chunks||0),generation,
-    batch_size:200,memory_bounded:true,backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs",
-    shard_key:object.key
+    ok:true,rows,offset,next_offset:nextOffset,next_cursor:String(nextOffset),
+    done,total,generation,batch_size:200,memory_bounded:true,
+    backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs",
+    shard_keys:shardKeys.slice(0,4)
   });
   rows.length=0; rows=null;
   return response;

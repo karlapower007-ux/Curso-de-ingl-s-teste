@@ -395,23 +395,21 @@ log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_
 if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=START"
   rm -f /tmp/r2-library-rows.ndjson
-  cursor=""
+  recovery_offset=0
   shard_guard=0
   while [ "$shard_guard" -lt 20000 ]; do
     shard_guard=$((shard_guard+1))
-    if [ -n "$cursor" ]; then
-      page_http=$(curl -sS --max-time 30 -G -o /tmp/r2-page.json -w '%{http_code}' "${HDR[@]}" --data-urlencode "cursor=$cursor" "$BASE/api/admin/omni-sync-page" || echo 000)
-    else
-      page_http=$(curl -sS --max-time 30 -o /tmp/r2-page.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/omni-sync-page" || echo 000)
-    fi
+    page_http=$(curl -sS --max-time 30 -G -o /tmp/r2-page.json -w '%{http_code}' "${HDR[@]}" \
+      --data-urlencode "offset=$recovery_offset" --data-urlencode "limit=200" "$BASE/api/admin/omni-sync-page" || echo 000)
     [ "$page_http" = "200" ] || { log "LIBRARY_RECOVERY_FROM_R2=PAGE_HTTP_$page_http"; break; }
     jq -c '.rows[]?' /tmp/r2-page.json >>/tmp/r2-library-rows.ndjson
     page_rows=$(jq -r '(.rows|length) // 0' /tmp/r2-page.json)
     done_flag=$(jq -r '.done // true' /tmp/r2-page.json)
-    log "LIBRARY_RECOVERY_PAGE=$shard_guard,rows:$page_rows,done:$done_flag"
-    cursor=$(jq -r '.next_cursor // ""' /tmp/r2-page.json)
+    next_offset=$(jq -r '(.next_offset // 0) | tonumber' /tmp/r2-page.json)
+    log "LIBRARY_RECOVERY_PAGE=$shard_guard,offset:$recovery_offset,rows:$page_rows,next:$next_offset,done:$done_flag"
     [ "$done_flag" = "true" ] && break
-    [ -n "$cursor" ] || break
+    [ "$next_offset" -gt "$recovery_offset" ] || break
+    recovery_offset=$next_offset
   done
 
   row_count=$(wc -l </tmp/r2-library-rows.ndjson 2>/dev/null | tr -d ' ' || echo 0)
@@ -455,7 +453,7 @@ for n,(docid,d) in enumerate(sorted(docs.items()),1):
                 pages.append({"page":p if k==0 else 900000+p*100+k,"text":piece})
     if not pages: continue
     canonical="\n".join(x["text"] for x in pages)
-    digest=hashlib.sha256(("r2-rehydrate-v1\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
+    digest=hashlib.sha256(("r2-rehydrate-v2\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
     key=f"{n:05d}"
     dd=root/key; dd.mkdir()
     start={
@@ -492,7 +490,12 @@ PY
       duplicate=$(jq -r '.duplicate // false' /tmp/hydrate-start.json)
       if [ "$duplicate" = "true" ]; then
         existing_chunks=$(jq -r '(.chunks // 0) | tonumber' /tmp/hydrate-start.json)
-        if [ "$existing_chunks" -gt 0 ]; then hydrate_ok=$((hydrate_ok+1)); else hydrate_fail=$((hydrate_fail+1)); fi
+        if [ "$existing_chunks" -gt 0 ]; then
+          hydrate_ok=$((hydrate_ok+1))
+        else
+          log "LIBRARY_RECOVERY_DOC_FAIL=duplicate_zero_chunks"
+          hydrate_fail=$((hydrate_fail+1))
+        fi
         continue
       fi
       if [ -z "$job_id" ]; then hydrate_fail=$((hydrate_fail+1)); continue; fi
