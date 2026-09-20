@@ -130,51 +130,54 @@ let sourceMode="durable-object";
 let sourceGeneration="";
 let primaryTotal=0;
 let probeReason="";
+let r2Reason="";
 
 try{
-  const probe=await adminGet(BASE+"/api/admin/export-library?mode=cursor&limit=1&include_total=1");
-  if(probe.waiting){
-    probeReason="primary quota/read limit not reset";
-  }else if(probe.ok && probe.data?.ok===true && Number(probe.data?.total||0)>0){
-    primaryTotal=Math.max(0,Number(probe.data.total||0));
+  const r2=await adminGet(BASE+"/api/admin/omni-sync-state");
+  const r2Total=Math.max(0,Number(r2?.data?.total||0));
+  const r2Vectors=Math.max(0,Number(r2?.data?.vectors||0));
+  const r2Authoritative=r2?.data?.authoritative===true;
+  if(r2.ok && r2.data?.ok===true && r2Authoritative && r2Total>0 && r2Vectors>0){
+    sourceMode="r2";
+    primaryTotal=r2Total;
+    sourceGeneration=String(r2.data?.generation||"");
+    console.log("FNS_ETL_SOURCE=r2-authoritative total="+primaryTotal+" vectors="+r2Vectors+" generation="+sourceGeneration);
+  }else if(r2.ok && r2.data?.ok===true && r2Total>0){
+    r2Reason="R2 snapshot is non-authoritative or has zero vectors";
   }else{
-    probeReason="primary export endpoint not readable";
+    r2Reason=r2?.waiting ? "R2 snapshot temporarily unavailable" : "R2 snapshot empty or unreadable";
   }
 }catch(error){
-  const message=String(error?.message||error);
-  probeReason=/Error 1101|Worker threw exception/i.test(message)
-    ? "primary Cloudflare Worker 1101"
-    : "primary export unavailable: "+message.slice(0,220);
+  r2Reason="R2 state failed: "+String(error?.message||error).slice(0,220);
 }
 
 if(primaryTotal<=0){
   try{
-    const r2=await adminGet(BASE+"/api/admin/omni-sync-state");
-    const r2Total=Math.max(0,Number(r2?.data?.total||0));
-    if(r2.ok && r2.data?.ok===true && r2Total>0){
-      sourceMode="r2";
-      primaryTotal=r2Total;
-      sourceGeneration=String(r2.data?.generation||"");
-      console.log("FNS_ETL_SOURCE=r2 total="+primaryTotal+" generation="+sourceGeneration);
+    const probe=await adminGet(BASE+"/api/admin/export-library?mode=cursor&limit=1&include_total=1");
+    if(probe.waiting){
+      probeReason="primary quota/read limit not reset";
+    }else if(probe.ok && probe.data?.ok===true && Number(probe.data?.total||0)>0){
+      primaryTotal=Math.max(0,Number(probe.data.total||0));
+      sourceMode="durable-object";
+      console.log("FNS_ETL_SOURCE=durable-object total="+primaryTotal);
     }else{
-      const r2Reason=r2?.waiting
-        ? "R2 snapshot temporarily unavailable"
-        : "R2 snapshot empty or unreadable";
-      await writeStatus({
-        state:"waiting",
-        source:"none",
-        reason:[probeReason,r2Reason].filter(Boolean).join("; ")
-      });
-      process.exit(0);
+      probeReason="primary export endpoint not readable";
     }
   }catch(error){
-    await writeStatus({
-      state:"waiting",
-      source:"none",
-      reason:[probeReason,"R2 fallback failed: "+String(error?.message||error).slice(0,220)].filter(Boolean).join("; ")
-    });
-    process.exit(0);
+    const message=String(error?.message||error);
+    probeReason=/Error 1101|Worker threw exception/i.test(message)
+      ? "primary Cloudflare Worker 1101"
+      : "primary export unavailable: "+message.slice(0,220);
   }
+}
+
+if(primaryTotal<=0){
+  await writeStatus({
+    state:"waiting",
+    source:"none",
+    reason:[probeReason,r2Reason].filter(Boolean).join("; ")
+  });
+  process.exit(0);
 }
 
 const generation="v75-etl-"+Date.now().toString(36);
