@@ -246,12 +246,12 @@ function inferOutput(query,contract){
   if(/\b(cronologia|timeline|linha do tempo)\b/.test(q)) return "timeline";
   if(/\b(citacao literal|quotation block|quote block)\b/.test(q)) return "quotation_block";
   if(/\b(lista de fontes|source list|fontes somente)\b/.test(q)) return "source_list";
-  if(/\b(profund|deep|encicloped|encyclopedic)\b/.test(q)) return "deep_answer";
+  if(/profund|\bdeep\b|encicloped|encyclopedic/.test(q)) return "deep_answer";
   return contract?.mode==="summary"?"short_answer":"balanced_answer";
 }
 
 function inferDeepResearch(query){
-  return /\b(profundo|deep research|pesquisa profunda|exaustiv|completo|comprehensive|multiplas fontes|multiple sources)\b/.test(normalize(query));
+  return /\b(deep research|pesquisa profunda|exaustiv|comprehensive|multiplas fontes|multiple sources)\b/.test(normalize(query));
 }
 
 function triggerScore(t,qNorm){
