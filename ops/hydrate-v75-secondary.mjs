@@ -152,7 +152,6 @@ if(primaryTotal<=0){
 
 const generation="v75-etl-"+Date.now().toString(36);
 const signature=crypto.createHash("sha256");
-let cursorCreatedAt="";
 let cursorId="";
 let exported=0;
 
@@ -162,7 +161,6 @@ try{
       mode:"cursor",
       limit:String(PAGE_SIZE)
     });
-    if(cursorCreatedAt) params.set("after_created_at",cursorCreatedAt);
     if(cursorId) params.set("after_id",cursorId);
 
     const page=await adminGet(BASE+"/api/admin/export-library?"+params.toString());
@@ -194,9 +192,8 @@ try{
     exported+=records.length;
     const next=page.data?.next_cursor||null;
     if(page.data?.done===true) break;
-    if(!next?.created_at || !next?.id) throw new Error("Primary cursor missing next_cursor");
-    if(next.created_at===cursorCreatedAt && next.id===cursorId) throw new Error("Primary cursor did not advance");
-    cursorCreatedAt=String(next.created_at);
+    if(!next?.id) throw new Error("Primary cursor missing next_cursor");
+    if(next.id===cursorId) throw new Error("Primary cursor did not advance");
     cursorId=String(next.id);
   }
 
