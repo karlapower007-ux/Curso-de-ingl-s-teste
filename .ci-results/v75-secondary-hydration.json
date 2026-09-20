@@ -1,10 +1,10 @@
 {
-  "state": "blocked",
+  "state": "waiting",
   "primary_total": 0,
   "mirrored_chunks": 0,
   "hydrated_embeddings": 0,
   "total_books": 0,
   "generation": "",
   "source_signature": "",
-  "reason": "missing SUPABASE_DB_URL"
+  "reason": "primary Cloudflare Worker 1101 on manual run 35542238285; quota/reset not confirmed"
 }
