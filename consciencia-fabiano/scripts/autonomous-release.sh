@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: V7.2 GROUNDED HYBRID RAG release =="
+log "== Consciência do Fabiano :: V7.3 COGNITIVE ORCHESTRATOR release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -139,7 +139,7 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.2.0-grounded-hybrid-rag"
+    and .version == "7.3.0-cognitive-orchestrator"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
@@ -154,6 +154,16 @@ for i in $(seq 1 15); do
     and .online_offline_search_symmetry == false
     and .hybrid_grounded_retrieval == true
     and .hybrid_context_limit == 120
+    and .cognitive_orchestrator == true
+    and .cognitive_contract_version == "1.0"
+    and .current_question_scope_guard == true
+    and .memory_scope_guard == true
+    and .epistemic_labeling == true
+    and .unsupported_claim_policy == "abstain"
+    and .reference_only_llm_bypass == true
+    and .groq_final_stage_only == true
+    and .analytic_llm_calls_max == 1
+    and .pre_master_llm_calls == 0
     and .semantic_query_embedding_server_enabled == true
     and .semantic_multilingual_min_score == 0.62
     and .semantic_multilingual_strong_score == 0.72
@@ -384,8 +394,20 @@ PY
     jq -nc --arg q "$smoke_query" '{pergunta:("Explain in English, using only the library and citing the source: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-en-payload.json
     en_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-en.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-en-payload.json || echo 000)
     [ "$en_http" = "200" ] || die "GROUNDED_CHAT_EN_HTTP_$en_http"
-    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0' /tmp/chat-smoke-en.json >/dev/null || die "GROUNDED_CHAT_EN_BAD"
+    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0 and .cognitive_mode == "analysis" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1' /tmp/chat-smoke-en.json >/dev/null || die "GROUNDED_CHAT_EN_BAD"
     log "GROUNDED_CHAT_EN_PASS=yes"
+
+    jq -nc --arg q "$smoke_query" '{pergunta:("Responda somente com a referência documental, sem explicação: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-ref-payload.json
+    ref_http=$(curl -sS --max-time 30 -o /tmp/chat-smoke-ref.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-ref-payload.json || echo 000)
+    [ "$ref_http" = "200" ] || die "COGNITIVE_REFERENCE_HTTP_$ref_http"
+    jq -e '.ok == true and .fallback == false and .cognitive_mode == "reference_only" and .reference_only_llm_bypass == true and .llm_calls == 0 and (.fontes|length) > 0' /tmp/chat-smoke-ref.json >/dev/null || die "COGNITIVE_REFERENCE_BAD"
+    log "COGNITIVE_REFERENCE_ONLY_PASS=yes"
+
+    jq -nc --arg q "$smoke_query" '{pergunta:("Faça uma hipótese explicitamente rotulada, baseada somente nos documentos, sobre: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-hyp-payload.json
+    hyp_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-hyp.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-hyp-payload.json || echo 000)
+    [ "$hyp_http" = "200" ] || die "COGNITIVE_HYPOTHESIS_HTTP_$hyp_http"
+    jq -e '.ok == true and .fallback == false and .cognitive_mode == "hypothesis" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1 and ((.resposta|ascii_downcase)|contains("hipótese") or contains("hipotese") or contains("hypothesis"))' /tmp/chat-smoke-hyp.json >/dev/null || die "COGNITIVE_HYPOTHESIS_BAD"
+    log "COGNITIVE_HYPOTHESIS_PASS=yes"
   else
     log "GROUNDED_CHAT_SMOKE=skipped-empty-sample"
   fi
