@@ -824,9 +824,12 @@
     const bar=document.createElement("div");
     bar.className="raw-document-status";
     const offline=meta?.offline_takeover===true;
+    const localTakeover=meta?.local_takeover===true;
     bar.textContent=offline
       ? "Modo Offline Ativado - Leitura Contínua Local"
-      : "Leitura documental direta • LLM bypass • ordem verificada";
+      : localTakeover
+        ? "Contingência local ativada - a internet está disponível, mas o servidor principal falhou"
+        : "Leitura documental direta • LLM bypass • ordem verificada";
     wrap.appendChild(bar);
 
     const source=document.createElement("div");
@@ -1568,7 +1571,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.2 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
+              "V7.4 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
               ...renderedCards.slice(0,24).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1590,7 +1593,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.2 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
+              $("backendText").textContent="V7.4 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
@@ -1633,7 +1636,7 @@
             role:"assistant",content:persisted,sources:recovered.sources||[],fallback:false,
             failover_plan:"C",strict_precision:true,offline_turbines:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • sem fuzzy matching";
+          if($("backendText")) $("backendText").textContent=(navigator.onLine?"Contingência local":"Modo offline")+" • BOOLEAN EXACT • sem fuzzy matching";
         }else{
           const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
           appendElegantSilence(silence);
@@ -1641,7 +1644,7 @@
             role:"assistant",content:silence,sources:[],fallback:false,
             failover_plan:"C",strict_precision:true,strict_empty:true,zero_noise:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • zero resultados";
+          if($("backendText")) $("backendText").textContent=(navigator.onLine?"Contingência local":"Modo offline")+" • BOOLEAN EXACT • zero resultados";
         }
         saveHistory();
         setAvatar("closed");
