@@ -1486,7 +1486,7 @@ async function enforceDenseEncyclopedicMode(env,question,answer,sources) {
   return answer;
 }
 
-function finalizeGroundedAnswer(answer,sources) {
+function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
   const rows=Array.isArray(sources)?sources:[];
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
   let base=stripModelReferenceSection(answer);
@@ -1497,6 +1497,8 @@ function finalizeGroundedAnswer(answer,sources) {
     base=deterministicSynthesisFromSources(rows);
     cited=selectCitedSources(base,rows);
   }
+
+  base=applyCognitivePostGuard(base,cognitiveContract);
 
   const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
     ? base
@@ -2078,7 +2080,7 @@ async function massivePipelineStreamResponse(env,meta) {
 
         let answer=String(reduced.masterSynthesis || "").trim();
         if(meta.sources.length && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(meta.sources);
-        answer=finalizeGroundedAnswer(applyCognitivePostGuard(answer,meta.cognitiveContract),meta.sources);
+        answer=finalizeGroundedAnswer(answer,meta.sources,meta.cognitiveContract);
         const usedSources=selectCitedSources(answer,meta.sources);
         const memoryPersisted=await persistChatTurn(
           env,meta.ownerId,meta.body,meta.question,answer,usedSources,false
@@ -2825,12 +2827,25 @@ function applyCognitivePostGuard(answer,contract) {
   const mode=String(contract?.mode || "factual");
   const lang=String(contract?.language || "pt");
   if(!text) return text;
+
   if(mode==="reflection" && !/\b(reflex[aã]o|reflection)\b/i.test(text)){
-    text=(lang==="en"?"REFLECTION:\n\n":"REFLEXÃO:\n\n")+text;
+    const factsLabel=lang==="en"?"DOCUMENTED FACTS":"FATOS DOCUMENTADOS";
+    const reflectionLabel=lang==="en"?"REFLECTION":"REFLEXÃO";
+    const abstain=lang==="en"
+      ? "The retrieved documents do not support an additional reflection without going beyond the documentary basis."
+      : "Os documentos recuperados não sustentam uma reflexão adicional sem ultrapassar a base documental.";
+    text=factsLabel+":\n\n"+text+"\n\n"+reflectionLabel+":\n\n"+abstain;
   }
+
   if(mode==="hypothesis" && !/\b(hip[oó]tese|hypothesis)\b/i.test(text)){
-    text=(lang==="en"?"HYPOTHESIS:\n\n":"HIPÓTESE:\n\n")+text;
+    const basisLabel=lang==="en"?"DOCUMENTARY BASIS":"BASE DOCUMENTAL";
+    const hypothesisLabel=lang==="en"?"HYPOTHESIS":"HIPÓTESE";
+    const abstain=lang==="en"
+      ? "The retrieved documents are not sufficient to formulate an additional hypothesis without extrapolating beyond the sources."
+      : "Os documentos recuperados não são suficientes para formular uma hipótese adicional sem extrapolar as fontes.";
+    text=basisLabel+":\n\n"+text+"\n\n"+hypothesisLabel+":\n\n"+abstain;
   }
+
   return text;
 }
 
@@ -3381,7 +3396,7 @@ async function chat(request, env) {
   const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveContract);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
-  answer = finalizeGroundedAnswer(applyCognitivePostGuard(answer,cognitiveContract),sources);
+  answer = finalizeGroundedAnswer(answer,sources,cognitiveContract);
   const usedSources=selectCitedSources(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
 
