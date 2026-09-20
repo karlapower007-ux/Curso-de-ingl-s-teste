@@ -6,5 +6,5 @@
   "total_books": 0,
   "generation": "",
   "source_signature": "",
-  "reason": "primary Cloudflare Worker 1101; quota/reset not confirmed"
+  "reason": "V7.4 primary-key cursor hotfix deployed by official release 35543025890; Durable Object read quota still exhausted: post-deploy cursor probe mode=cursor limit=1 returned Cloudflare 1101"
 }
