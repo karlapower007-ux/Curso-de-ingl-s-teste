@@ -1954,6 +1954,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
         "\n\nRESPONDA AGORA EXATAMENTE NO FORMATO E NO ESCOPO DO CONTRATO COGNITIVO."
     }
   ];
+  const groqStarted=Date.now();
   try{
     const res=await groqCompletion(env,messages,false,{
       input_budget:9200,
@@ -1963,11 +1964,11 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
     });
     const data=await res.json().catch(()=>({}));
     const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text};
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,groq_ms:Date.now()-groqStarted};
   }catch(error){
-    return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error)};
+    return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
   }
-  return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output"};
+  return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output",groq_ms:Date.now()-groqStarted};
 }
 
 async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null,cognitiveContract=null) {
@@ -1999,6 +2000,7 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
   );
 
   const evidence=nodeResults.filter(x=>x?.evidence);
+  const reducerStarted=Date.now();
   const groups=[];
   for(let i=0;i<evidence.length;i+=MASSIVE_NODE_GROUP_SIZE){
     groups.push(evidence.slice(i,i+MASSIVE_NODE_GROUP_SIZE));
@@ -2019,6 +2021,7 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
       }
     }
   );
+  const reducerMs=Date.now()-reducerStarted;
 
   const master=await massiveMasterSynthesis(env,question,reducerResults,history,rows,cognitiveContract);
   return {
@@ -2034,6 +2037,8 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     master_node:"final-fusion",
     llm_calls:1,
     pre_master_llm_calls:0,
+    reducer_ms:reducerMs,
+    groq_ms:Number(master.groq_ms || 0),
     cognitive_mode:String(cognitiveContract?.mode || "analysis"),
     node_results:nodeResults
   };
@@ -2763,10 +2768,15 @@ function questionNeedsMemory(question) {
 function buildCognitiveContract(question) {
   const raw=String(question || "").trim();
   const q=foldSearchText(raw);
+  const structuralReferenceRequest=
+    /^(?:qual|diga|informe|mostre|me de|me passe)\b/i.test(q) &&
+    /\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q) &&
+    !/\b(?:explique|analise|comente|reflita|resuma|compare)\b/i.test(q);
   const onlyReference=
     /\b(?:apenas|somente|so)\s+(?:com\s+)?(?:a\s+)?(?:referencia|fonte|citacao|pagina|localizacao)(?:\s+documental)?\b/i.test(q) ||
     /\b(?:reference|source|citation|page)\s+only\b/i.test(q) ||
-    (/^(?:qual|diga|informe|mostre|me de|me passe)\b/i.test(q) && /\b(?:referencia|fonte|citacao|pagina)\b/i.test(q) && !/\b(?:explique|analise|comente|reflita)\b/i.test(q));
+    (/^(?:qual|diga|informe|mostre|me de|me passe)\b/i.test(q) && /\b(?:referencia|fonte|citacao|pagina)\b/i.test(q) && !/\b(?:explique|analise|comente|reflita)\b/i.test(q)) ||
+    structuralReferenceRequest;
 
   let mode="factual";
   if(onlyReference) mode="reference_only";
@@ -2828,17 +2838,33 @@ function cognitiveContractPrompt(contract) {
       "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência documental."
   };
   const plan=c?.v74_plan || null;
+  const semanticContracts=Array.from(plan?.executed_contracts || plan?.semantic_contracts || []).slice(0,24)
+    .map(x=>String(x?.capability || "")+"["+String(x?.profile || "")+"]: "+String(x?.semantic_role || x?.role || ""))
+    .filter(Boolean);
   const planText=plan
     ? " V7.4 MICROCOMPETÊNCIAS SELECIONADAS: "+String(plan.selected_count || 0)+
       " de 1000; operações="+Array.from(plan.operations || []).slice(0,24).join(", ")+
       "; famílias="+Array.from(plan.families || []).join(", ")+
-      ". Use esse plano somente como restrição operacional; não invente conteúdo a partir dos nomes das competências."
+      "; contratos comportamentais="+semanticContracts.join(" | ")+
+      ". Os contratos executados são restrições operacionais reais; não invente conteúdo a partir dos nomes das competências."
     : "";
   return common+(rules[c.mode] || rules.factual)+planText;
 }
 
-function referenceOnlyAnswer(sources) {
+function referenceOnlyAnswer(sources,question="") {
   const rows=Array.isArray(sources)?sources:[];
+  const q=foldSearchText(question);
+  const wantsStructural=/\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q);
+  if(wantsStructural){
+    for(const s of rows){
+      const title=String(s?.titulo || s?.title || s?.arquivo || "").replace(/[\r\n]+/g," ").trim();
+      const corpus=[title,s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ");
+      const location=corpus.match(/\b(\d{1,3})\s*:\s*(\d{1,3})\b/);
+      const chapter=Number(s?.chapter || s?.capitulo || location?.[1] || 0);
+      const verse=Number(s?.verse || s?.versiculo || location?.[2] || 0);
+      if(title && chapter>0 && verse>0) return title+" "+chapter+":"+verse;
+    }
+  }
   const seen=new Set(),lines=[];
   for(let i=0;i<rows.length;i++){
     const s=rows[i];
@@ -3277,12 +3303,15 @@ async function directRetrievalResponse(request,env) {
 }
 
 async function chat(request, env) {
+  const chatStarted=Date.now();
   const body = await request.json().catch(() => ({}));
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
 
+  const routerStarted=Date.now();
   const cognitiveContract=buildCognitiveContract(question);
   const cognitivePlan=buildV74ExecutionPlan(question,cognitiveContract);
+  const routerMs=Date.now()-routerStarted;
   const cognitiveRuntime={
     ...cognitiveContract,
     v74_plan:{
@@ -3290,6 +3319,13 @@ async function chat(request, env) {
       selected_ids:cognitivePlan.selected_ids,
       operations:cognitivePlan.selected.map(t=>t.operation),
       families:[...new Set(cognitivePlan.selected.map(t=>t.family))],
+      semantic_contracts:cognitivePlan.selected.map(t=>({
+        capability:t.base_capability,
+        profile:t.profile,
+        role:String(t.rules?.semantic_role || ""),
+        output_contract:t.output_contract,
+        requires_evidence:Boolean(t.requires_evidence)
+      })),
       output:cognitivePlan.output,
       intents:cognitivePlan.intents
     }
@@ -3379,6 +3415,7 @@ async function chat(request, env) {
     }
   }
 
+  const ragStarted=Date.now();
   const clientContext = normalizeClientContext(body?.client_context);
   let context = clientContext;
   let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
@@ -3412,8 +3449,20 @@ async function chat(request, env) {
   );
   const crossLibrary = crossLibraryStats(mappedContext);
   const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
+  const ragMs=Date.now()-ragStarted;
+  const turbinesStarted=Date.now();
   const microExecution=await runCognitivePlan(cognitivePlan,{sources,contract:cognitiveRuntime});
+  const turbinesMs=Date.now()-turbinesStarted;
+  cognitiveRuntime.v74_plan.executed_contracts=Array.from(microExecution.outputs || []).map(x=>({
+    capability:x.base_capability,
+    profile:x.profile,
+    semantic_role:x.semantic_role,
+    output_contract:x.output_contract,
+    execution_contract:x.execution_contract
+  }));
+  const validatorStarted=Date.now();
   const evidenceGate=evidenceGateV74(cognitivePlan,sources,microExecution);
+  let validatorMs=Date.now()-validatorStarted;
   const fallback = sources.length === 0 || evidenceGate.canAnswer===false;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
@@ -3461,8 +3510,9 @@ async function chat(request, env) {
   }
 
   if(cognitiveContract.mode==="reference_only"){
-    const answer=referenceOnlyAnswer(sources);
-    const usedSources=selectCitedSources(answer,sources);
+    const answer=referenceOnlyAnswer(sources,question);
+    const citedSources=selectCitedSources(answer,sources);
+    const usedSources=citedSources.length ? citedSources : sources.slice(0,1).map((s,i)=>({...s,ref_id:sourceRefId(s,i)}));
     const memoryPersisted=await persistChatTurn(env,ownerId,body,question,answer,usedSources,false);
     const payload={
       ok:true,
@@ -3484,7 +3534,11 @@ async function chat(request, env) {
       turbine_selected_ids:cognitivePlan.selected_ids,
       turbine_executed_count:microExecution.executed_count,
       turbine_concurrency:microExecution.concurrency,
-      evidence_gate:evidenceGate
+      evidence_gate:evidenceGate,
+      timings:{
+        router_ms:routerMs,rag_ms:ragMs,turbines_ms:turbinesMs,
+        reducer_ms:0,groq_ms:0,validator_ms:validatorMs,total_ms:Date.now()-chatStarted
+      }
     };
     if(wantsStream){
       const frames=sseFrame("meta",{...payload,resposta:undefined})+
@@ -3515,10 +3569,12 @@ async function chat(request, env) {
   const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveRuntime);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
+  const postValidationStarted=Date.now();
   answer = enforceFinalEpistemicEnvelope(
     finalizeGroundedAnswer(answer,sources,cognitiveContract),
     cognitiveContract
   );
+  validatorMs+=Date.now()-postValidationStarted;
   const usedSources=selectCitedSources(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
 
@@ -3556,7 +3612,12 @@ async function chat(request, env) {
     groq_final_stage_only: true,
     reference_only_llm_bypass: true,
     unsupported_claim_policy: "abstain",
-    ui_virtualization: true
+    ui_virtualization: true,
+    timings:{
+      router_ms:routerMs,rag_ms:ragMs,turbines_ms:turbinesMs,
+      reducer_ms:Number(reduced.reducer_ms || 0),groq_ms:Number(reduced.groq_ms || 0),
+      validator_ms:validatorMs,total_ms:Date.now()-chatStarted
+    }
   });
 }
 

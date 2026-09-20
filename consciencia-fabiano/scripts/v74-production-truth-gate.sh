@@ -44,9 +44,10 @@ log_gate "START"
 curl -fsS --max-time 20 "${HDR[@]}" "$BASE/api/admin/cognitive-v74" >"$REPORT_DIR/catalog.json"
 assert_jq "CATALOG_1000_REAL" "$REPORT_DIR/catalog.json" '.audit.total==1000 and .audit.unique_ids==1000 and .audit.family_count==20 and .audit.valid==true and ([.audit.families[]]|all(.==50))'
 curl -fsS --max-time 30 "${HDR[@]}" "$BASE/api/admin/cognitive-v74/manifest" >"$REPORT_DIR/manifest.json"
-assert_jq "CATALOG_CONTRACTS" "$REPORT_DIR/manifest.json" '(.manifest|length)==1000 and ([.manifest[]|select((.handler|length)==0 or (.family|length)==0 or (.output_contract|length)==0 or .requires_llm!=false)]|length)==0'
+assert_jq "CATALOG_CONTRACTS" "$REPORT_DIR/manifest.json" '(.manifest|length)==1000 and ([.manifest[]|select((.handler|length)==0 or (.family|length)==0 or (.output_contract|length)==0 or (.base_capability|length)==0 or (.behavior_contract|length)==0 or .requires_llm!=false)]|length)==0'
 assert_jq "CATALOG_UNIQUE_NAMES" "$REPORT_DIR/manifest.json" '([.manifest[].name]|unique|length)==1000'
 assert_jq "CATALOG_NO_GROQ" "$REPORT_DIR/manifest.json" '([.manifest[]|select(.requires_llm!=false)]|length)==0'
+assert_jq "CATALOG_SEMANTIC_VARIANTS" "$REPORT_DIR/manifest.json" '([.manifest|group_by(.family+"|"+.base_capability)[]|select(length!=5 or ([.[].profile]|unique|length)!=5 or ([.[].rules.semantic_role]|unique|length)!=5 or ([.[].behavior_contract]|unique|length)!=5)]|length)==0 and ([.manifest[].behavior_contract]|unique|length)==1000'
 
 # Pull enough private records to choose real, non-logged evidence samples.
 curl -fsS --max-time 30 "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=200" >"$REPORT_DIR/library.json"
@@ -126,8 +127,16 @@ assert_jq "CONTEXT_PC" "$REPORT_DIR/context_pc.json" '.ok==true and .fallback==f
 chat "test_A" "Me dê somente a referência." "$memory_key" "Mozilla/5.0 (Linux; Android 16; Mobile) FNS-Mobile" || true
 assert_jq "TEST_A_REFERENCE_ONLY" "$REPORT_DIR/test_A.json" '.ok==true and .fallback==false and .cognitive_mode=="reference_only" and .llm_calls==0 and (.fontes|length)>0'
 
-chat "test_B" "Qual é o capítulo e o versículo?" "$memory_key" "Mozilla/5.0 (Linux; Android 16; Mobile) FNS-Mobile" || true
-assert_jq "TEST_B_CHAPTER_VERSE_NO_LECTURE" "$REPORT_DIR/test_B.json" '.ok==true and .llm_calls==0 and (.resposta|type)=="string" and (.resposta|length)>0'
+jq -nc '{
+  pergunta:"Qual é o capítulo e o versículo?",historico:[],stream:false,
+  client_context:[{id:"accept-scripture-1",document_id:"accept-scripture-alma-32-21",title:"Alma",page:1,score:10,retrieval_mode:"client-resilience",text:"Alma 32:21. Referência documental: capítulo 32, versículo 21. Este fixture existe somente no gate e não altera a biblioteca."}]
+}' >"$REPORT_DIR/test_B.payload.json"
+b_code=$(curl -sS --max-time 90 -o "$REPORT_DIR/test_B.json" -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @"$REPORT_DIR/test_B.payload.json" || echo 000)
+if [ "$b_code" = "200" ]; then
+  assert_jq "TEST_B_CHAPTER_VERSE_NO_LECTURE" "$REPORT_DIR/test_B.json" '.ok==true and .fallback==false and .cognitive_mode=="reference_only" and .llm_calls==0 and (.resposta|test("^\\s*Alma\\s+32\\s*:\\s*21\\s*$";"i"))'
+else
+  record "TEST_B_CHAPTER_VERSE_NO_LECTURE" FAIL "http_$b_code"
+fi
 
 chat "test_C" "Copie exatamente a citação que contém: $phrase1 — e diga de qual livro ela veio. Não parafraseie." "" || true
 assert_jq "TEST_C_LITERAL_PROVENANCE" "$REPORT_DIR/test_C.json" '.ok==true and .fallback==false and (.fontes|length)>0 and ([.fontes[]|select((.document_id//"")!="")]|length)>0'
@@ -166,14 +175,20 @@ assert_jq "TEST_I_CRITICAL_QUESTIONS" "$REPORT_DIR/test_I.json" '.ok==true and .
 
 chat "test_J_mobile" "Continue." "$memory_key" "Mozilla/5.0 (Linux; Android 16; Mobile) FNS-Mobile" || true
 assert_jq "TEST_J_CONTINUE_CROSS_DEVICE" "$REPORT_DIR/test_J_mobile.json" '.ok==true and .fallback==false and (.fontes|length)>0 and .memory_persisted==true'
-
-# Reverse device direction, same server-side key, no client history.
-chat "test_J_pc_back" "Agora resuma em uma frase." "$memory_key" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FNS-PC" || true
-assert_jq "CROSS_DEVICE_REVERSE" "$REPORT_DIR/test_J_pc_back.json" '.ok==true and .fallback==false and (.fontes|length)>0 and .memory_persisted==true'
 mem_code=$(curl -sS --max-time 20 -o "$REPORT_DIR/memory.json" -w '%{http_code}' "$BASE/api/memory" -H "X-FNS-Memory-Key: $memory_key" || echo 000)
 if [ "$mem_code" = "200" ]; then
-  assert_jq "CROSS_DEVICE_MEMORY_SYNC" "$REPORT_DIR/memory.json" '.ok==true and .persistent==true and .total>=4'
+  assert_jq "CROSS_DEVICE_MEMORY_SYNC" "$REPORT_DIR/memory.json" '.ok==true and .persistent==true and .total>=2'
 else record "CROSS_DEVICE_MEMORY_SYNC" FAIL "http_$mem_code"; fi
+
+memory_key_reverse="v74-truth-cross-device-reverse-20260920-fedcba9876543210"
+chat "reverse_mobile_seed" "Analise somente com base na biblioteca este trecho: $phrase1" "$memory_key_reverse" "Mozilla/5.0 (Linux; Android 16; Mobile) FNS-Mobile" || true
+assert_jq "CROSS_DEVICE_REVERSE_SEED" "$REPORT_DIR/reverse_mobile_seed.json" '.ok==true and .fallback==false and (.fontes|length)>0 and .memory_persisted==true'
+chat "test_J_pc_back" "Continue." "$memory_key_reverse" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FNS-PC" || true
+assert_jq "CROSS_DEVICE_REVERSE" "$REPORT_DIR/test_J_pc_back.json" '.ok==true and .fallback==false and (.fontes|length)>0 and .memory_persisted==true'
+mem2_code=$(curl -sS --max-time 20 -o "$REPORT_DIR/memory-reverse.json" -w '%{http_code}' "$BASE/api/memory" -H "X-FNS-Memory-Key: $memory_key_reverse" || echo 000)
+if [ "$mem2_code" = "200" ]; then
+  assert_jq "CROSS_DEVICE_REVERSE_MEMORY_SYNC" "$REPORT_DIR/memory-reverse.json" '.ok==true and .persistent==true and .total>=2'
+else record "CROSS_DEVICE_REVERSE_MEMORY_SYNC" FAIL "http_$mem2_code"; fi
 
 # Main hallucination sentinel.
 chat "test_abstain" "Informe a citação literal, livro, autor e página de ZXQ_V74_NONEXISTENT_76398421. Se não existir, não invente." "" || true
@@ -244,19 +259,23 @@ json.dump({"checked":checked,"failures":failures,"pass":checked>0 and not failur
 PY
 assert_jq "CITATION_PROVENANCE_AUDIT" "$REPORT_DIR/citation-audit.json" '.pass==true and .checked>0'
 
-# Production performance: external stage probes without changing frozen architecture.
-# router_ms = admin planner; rag_ms = /api/rag/search; total_ms = /api/chat.
-# Internal reducer/groq/validator are intentionally not instrumented in production to honor the freeze.
+# Production performance: measure every requested stage from response telemetry.
 perf="$REPORT_DIR/performance.ndjson"
 : >"$perf"
 perf_case(){
   local type="$1" q="$2"
   for i in 1 2 3 4 5; do
-    encoded=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$q")
-    router=$(curl -sS --max-time 30 -o /dev/null -w '%{time_total}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74?q=$encoded" || echo 0)
-    rag=$(curl -sS --max-time 30 -o /dev/null -w '%{time_total}' "$BASE/api/rag/search" -H 'Content-Type: application/json' --data "$(jq -nc --arg q "$q" '{question:$q}')" || echo 0)
-    total=$(curl -sS --max-time 90 -o /dev/null -w '%{time_total}' "$BASE/api/chat" -H 'Content-Type: application/json' --data "$(jq -nc --arg q "$q" '{pergunta:$q,historico:[],stream:false}')" || echo 0)
-    jq -nc --arg type "$type" --argjson router_ms "$(python3 -c "print(float('$router')*1000)")" --argjson rag_ms "$(python3 -c "print(float('$rag')*1000)")" --argjson total_ms "$(python3 -c "print(float('$total')*1000)")" '{type:$type,router_ms:$router_ms,rag_ms:$rag_ms,total_ms:$total_ms}' >>"$perf"
+    output="$REPORT_DIR/perf-$type-$i.json"
+    code=$(curl -sS --max-time 90 -o "$output" -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data "$(jq -nc --arg q "$q" '{pergunta:$q,historico:[],stream:false}')" || echo 000)
+    if [ "$code" != "200" ]; then
+      record "PERFORMANCE_$type-$i" FAIL "http_$code"
+      continue
+    fi
+    if jq -e '.timings and (.timings|has("router_ms") and has("rag_ms") and has("turbines_ms") and has("reducer_ms") and has("groq_ms") and has("validator_ms") and has("total_ms"))' "$output" >/dev/null; then
+      jq -c --arg type "$type" '{type:$type,router_ms:(.timings.router_ms//0),rag_ms:(.timings.rag_ms//0),turbines_ms:(.timings.turbines_ms//0),reducer_ms:(.timings.reducer_ms//0),groq_ms:(.timings.groq_ms//0),validator_ms:(.timings.validator_ms//0),total_ms:(.timings.total_ms//0)}' "$output" >>"$perf"
+    else
+      record "PERFORMANCE_$type-$i" FAIL "missing_stage_timings"
+    fi
   done
 }
 perf_case reference "Somente a fonte de: $phrase1"
@@ -265,26 +284,27 @@ perf_case summary "Resuma: $phrase1"
 perf_case comparison "Compare: $phrase1 ; $phrase2"
 perf_case deep "Explique profundamente, com base nas fontes: $phrase1 ; $phrase2"
 python3 - "$perf" "$REPORT_DIR/performance-summary.json" <<'PY'
-import json,sys,statistics
+import json,sys
 src,dst=sys.argv[1:3]
 rows=[json.loads(x) for x in open(src,encoding="utf-8") if x.strip()]
+fields=("router_ms","rag_ms","turbines_ms","reducer_ms","groq_ms","validator_ms","total_ms")
 out={}
 for typ in sorted({r["type"] for r in rows}):
     rs=[r for r in rows if r["type"]==typ]
     out[typ]={}
-    for field in ("router_ms","rag_ms","total_ms"):
+    for field in fields:
         vals=sorted(float(r[field]) for r in rs)
         def p(q):
             i=min(len(vals)-1,max(0,round((len(vals)-1)*q)))
             return round(vals[i],3)
-        out[typ][field]={"p50":p(.5),"p95":p(.95),"p99":p(.99)}
-    out[typ]["turbines_ms"]="measured_in_local_load_gate"
-    out[typ]["reducer_ms"]="not_separately_observable_without_runtime_instrumentation"
-    out[typ]["groq_ms"]="not_separately_observable_without_runtime_instrumentation"
-    out[typ]["validator_ms"]="not_separately_observable_without_runtime_instrumentation"
-json.dump({"frozen_architecture":True,"metrics":out},open(dst,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
+        out[typ][field]={"p50":p(.50),"p95":p(.95),"p99":p(.99)}
+json.dump({"frozen_architecture":True,"metrics":out,"sample_count":len(rows)},open(dst,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
 PY
-record "PERFORMANCE_EXTERNAL_P50_P95_P99" PASS "router/rag/total measured; internal stages left uninstrumented to honor freeze"
+if [ "$(wc -l <"$perf" | tr -d ' ')" -eq 25 ]; then
+  record "PERFORMANCE_STAGE_P50_P95_P99" PASS "router/rag/turbines/reducer/groq/validator/total measured"
+else
+  record "PERFORMANCE_STAGE_P50_P95_P99" FAIL "incomplete_samples"
+fi
 
 # Consolidate machine-readable report without printing private content.
 python3 - "$results" "$REPORT_DIR/performance-summary.json" "$REPORT_DIR/final.json" <<'PY'

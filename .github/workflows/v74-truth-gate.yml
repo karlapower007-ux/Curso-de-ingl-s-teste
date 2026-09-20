@@ -5,7 +5,9 @@ on:
     branches: [consciencia-cloudflare-native-v1]
     paths:
       - 'consciencia-fabiano/scripts/v74-truth-gate-local.mjs'
+      - 'consciencia-fabiano/scripts/v74-production-truth-gate.sh'
       - 'consciencia-fabiano/src/cognitive-turbines-v74.js'
+      - 'consciencia-fabiano/src/index.js'
       - '.github/workflows/v74-truth-gate.yml'
   workflow_dispatch:
 

@@ -164,6 +164,7 @@ for(const fam of FAMILY_DEFINITIONS){
         output_contract:profile.output,
         operation,
         base_capability:capability,
+        behavior_contract:capability+" | "+profile.semantic_role,
         handler:familyHandler(fam.id)+"."+operation,
         rules:Object.freeze({
           current_question_is_sovereign:true,
@@ -358,10 +359,29 @@ export function buildExecutionPlan(query,contract={},options={}){
 function handlerResult(t,ctx){
   const sources=Array.isArray(ctx?.sources)?ctx.sources:[];
   const evidenceCount=sources.length;
+  const profileContract=({
+    exact:{scope:"exact",context_window:"none",cross_source:false,conflict_scan:false,validate_result:false},
+    contextual:{scope:"contextual",context_window:"bounded",cross_source:false,conflict_scan:false,validate_result:false},
+    cross_source:{scope:"cross_source",context_window:"bounded",cross_source:true,conflict_scan:false,validate_result:false},
+    conflict_aware:{scope:"conflict_aware",context_window:"bounded",cross_source:true,conflict_scan:true,validate_result:false},
+    validation:{scope:"validation",context_window:"bounded",cross_source:true,conflict_scan:true,validate_result:true}
+  })[t.profile] || {scope:"generic",context_window:"bounded",cross_source:false,conflict_scan:false,validate_result:false};
   const base={
     turbine_id:t.id,
     family:t.family,
     operation:t.operation,
+    base_capability:t.base_capability,
+    profile:t.profile,
+    behavior_contract:t.behavior_contract,
+    semantic_role:String(t.rules?.semantic_role || ""),
+    semantic_parameter:String(t.rules?.semantic_parameter || t.base_capability || t.operation || ""),
+    output_contract:t.output_contract,
+    execution_contract:Object.freeze({
+      ...profileContract,
+      capability:String(t.base_capability || t.operation || ""),
+      requires_evidence:Boolean(t.requires_evidence),
+      preserve_provenance:Boolean(t.rules?.preserve_provenance)
+    }),
     handler:t.handler,
     requires_evidence:t.requires_evidence,
     llm_calls:0,
@@ -478,6 +498,7 @@ export function catalogManifest(){
     priority:t.priority,profile:t.profile,triggers:t.triggers,intents:t.intents,objects:t.objects,
     requires_evidence:t.requires_evidence,requires_llm:t.requires_llm,allowed_memory:t.allowed_memory,
     may_invent_facts:t.may_invent_facts,output_contract:t.output_contract,operation:t.operation,
+    base_capability:t.base_capability,behavior_contract:t.behavior_contract,
     handler:t.handler,rules:t.rules
   }));
 }
