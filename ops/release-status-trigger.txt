@@ -1,0 +1,1 @@
+inspect official autonomous Fabiano release after cursor hotfix
