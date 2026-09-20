@@ -404,7 +404,7 @@ if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]
     [ "$page_http" = "200" ] || { log "LIBRARY_RECOVERY_FROM_R2=PAGE_HTTP_$page_http"; break; }
     jq -c '.rows[]?' /tmp/r2-page.json >>/tmp/r2-library-rows.ndjson
     page_rows=$(jq -r '(.rows|length) // 0' /tmp/r2-page.json)
-    done_flag=$(jq -r '.done // true' /tmp/r2-page.json)
+    done_flag=$(jq -r 'if has("done") then (.done|tostring) else "true" end' /tmp/r2-page.json)
     next_offset=$(jq -r '(.next_offset // 0) | tonumber' /tmp/r2-page.json)
     log "LIBRARY_RECOVERY_PAGE=$shard_guard,offset:$recovery_offset,rows:$page_rows,next:$next_offset,done:$done_flag"
     [ "$done_flag" = "true" ] && break
@@ -453,7 +453,7 @@ for n,(docid,d) in enumerate(sorted(docs.items()),1):
                 pages.append({"page":p if k==0 else 900000+p*100+k,"text":piece})
     if not pages: continue
     canonical="\n".join(x["text"] for x in pages)
-    digest=hashlib.sha256(("r2-rehydrate-v2\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
+    digest=hashlib.sha256(("r2-rehydrate-v3\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
     key=f"{n:05d}"
     dd=root/key; dd.mkdir()
     start={
@@ -482,8 +482,9 @@ PY
       [ -d "$docdir" ] || continue
       start_http=$(curl -sS --max-time 30 -o /tmp/hydrate-start.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @"$docdir/start.json" "$BASE/api/admin/local-ingest-start" || echo 000)
       if [ "$start_http" != "201" ] && [ "$start_http" != "200" ]; then
-        start_code=$(jq -r '.code // .message // "unknown"' /tmp/hydrate-start.json 2>/dev/null || echo unknown)
-        log "LIBRARY_RECOVERY_DOC_FAIL=start_http_$start_http:$start_code"
+        start_code=$(jq -r '.code // "unknown"' /tmp/hydrate-start.json 2>/dev/null || echo unknown)
+        start_message=$(jq -r '.message // "no_message"' /tmp/hydrate-start.json 2>/dev/null | tr '\n\r' '  ' | cut -c1-240 || echo no_message)
+        log "LIBRARY_RECOVERY_DOC_FAIL=start_http_$start_http:$start_code:$start_message"
         hydrate_fail=$((hydrate_fail+1)); continue
       fi
       job_id=$(jq -r '.job_id // ""' /tmp/hydrate-start.json)
