@@ -55,13 +55,7 @@ jobs:
           grep -q 'provider:"deterministic-reference-only"' src/index.js
           grep -q 'provider:"groq-final-only+500-node-grounded-rag"' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
-          python3 - <<'PY'
-from pathlib import Path
-s=Path("src/index.js").read_text(encoding="utf-8")
-a=s.index("async function massiveReduceGroup")
-b=s.index("async function massiveMasterSynthesis",a)
-assert "groqCompletion(" not in s[a:b], "Reducer must remain deterministic; Groq is final-stage only"
-PY
+          python3 -c 'from pathlib import Path; s=Path("src/index.js").read_text(encoding="utf-8"); a=s.index("async function massiveReduceGroup"); b=s.index("async function massiveMasterSynthesis",a); assert "groqCompletion(" not in s[a:b], "Reducer must remain deterministic; Groq is final-stage only"'
 
           grep -q 'fuzzy_matching_disabled: true' src/index.js
           grep -q 'or_matching_disabled: true' src/index.js
