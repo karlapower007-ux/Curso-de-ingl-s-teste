@@ -1,0 +1,41 @@
+name: V7.4 Truth Acceptance Gate
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - 'consciencia-fabiano/scripts/v74-truth-gate-local.mjs'
+      - 'consciencia-fabiano/src/cognitive-turbines-v74.js'
+      - '.github/workflows/v74-truth-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  truth-gate-local:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run frozen v7.4 truth gate
+        id: truth
+        continue-on-error: true
+        run: |
+          node scripts/v74-truth-gate-local.mjs | tee /tmp/v74-truth-console.txt
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload truth gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v74-truth-gate-local
+          path: |
+            consciencia-fabiano/artifacts/v74-truth-gate-local.json
+            /tmp/v74-truth-console.txt
+      - name: Enforce acceptance result
+        run: |
+          test "${{ steps.truth.outputs.rc }}" = "0"
