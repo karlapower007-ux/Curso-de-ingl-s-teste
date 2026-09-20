@@ -6,7 +6,7 @@ const BASE=String(process.env.FNS_BASE_URL || "https://consciencia-fabiano.focoe
 const SECONDARY=String(process.env.FNS_SECONDARY_URL || "https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary").replace(/\/$/,"");
 const OWNER=String(process.env.FNS_OWNER_TOKEN || "").trim();
 const STATUS_PATH=path.resolve(process.env.ETL_STATUS_PATH || ".ci-results/v75-secondary-hydration.json");
-const PAGE_SIZE=250;
+const PAGE_SIZE=200;
 const UPSERT_BATCH=200;
 const MAX_FETCH_RETRIES=4;
 
@@ -126,7 +126,7 @@ if(!OWNER){
 
 let probe;
 try{
-  probe=await adminGet(BASE+"/api/admin/export-library?offset=0&limit=1");
+  probe=await adminGet(BASE+"/api/admin/export-library?mode=cursor&limit=1&include_total=1");
 }catch(error){
   const message=String(error?.message||error);
   const reason=/Error 1101|Worker threw exception/i.test(message)
@@ -152,20 +152,31 @@ if(primaryTotal<=0){
 
 const generation="v75-etl-"+Date.now().toString(36);
 const signature=crypto.createHash("sha256");
-let offset=0;
+let cursorCreatedAt="";
+let cursorId="";
 let exported=0;
 
 try{
-  while(offset<primaryTotal){
-    const page=await adminGet(BASE+"/api/admin/export-library?offset="+offset+"&limit="+PAGE_SIZE);
+  while(exported<primaryTotal){
+    const params=new URLSearchParams({
+      mode:"cursor",
+      limit:String(PAGE_SIZE)
+    });
+    if(cursorCreatedAt) params.set("after_created_at",cursorCreatedAt);
+    if(cursorId) params.set("after_id",cursorId);
+
+    const page=await adminGet(BASE+"/api/admin/export-library?"+params.toString());
     if(page.waiting){
-      await writeStatus({state:"waiting",primary_total:primaryTotal,generation,reason:"quota returned during ETL; manifest not promoted"});
+      await writeStatus({state:"waiting",primary_total:primaryTotal,generation,reason:"quota returned during cursor ETL; manifest not promoted"});
       process.exit(0);
     }
-    if(!page.ok || page.data?.ok!==true) throw new Error("Primary export page failed at offset "+offset);
+    if(!page.ok || page.data?.ok!==true) throw new Error("Primary cursor export failed after "+exported+" records");
 
     const raw=Array.isArray(page.data?.records)?page.data.records:[];
-    if(!raw.length) throw new Error("Primary ended early at "+offset+" of "+primaryTotal);
+    if(!raw.length){
+      if(page.data?.done===true && exported===primaryTotal) break;
+      throw new Error("Primary cursor ended early at "+exported+" of "+primaryTotal);
+    }
 
     const records=raw.map(r=>normalizeRecord(r,generation));
     for(const row of records){
@@ -176,13 +187,17 @@ try{
       const batch=records.slice(i,i+UPSERT_BATCH);
       const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
       if(Number(mirrored?.records||0)!==batch.length){
-        throw new Error("Secondary batch count mismatch at offset "+offset);
+        throw new Error("Secondary batch count mismatch after "+exported+" records");
       }
     }
 
     exported+=records.length;
-    offset=Number(page.data?.next_offset ?? (offset+raw.length));
-    if(!Number.isFinite(offset) || offset<=0) throw new Error("Invalid next_offset");
+    const next=page.data?.next_cursor||null;
+    if(page.data?.done===true) break;
+    if(!next?.created_at || !next?.id) throw new Error("Primary cursor missing next_cursor");
+    if(next.created_at===cursorCreatedAt && next.id===cursorId) throw new Error("Primary cursor did not advance");
+    cursorCreatedAt=String(next.created_at);
+    cursorId=String(next.id);
   }
 
   if(exported!==primaryTotal){
