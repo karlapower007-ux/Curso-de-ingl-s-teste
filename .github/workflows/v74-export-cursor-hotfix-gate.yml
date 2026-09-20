@@ -44,7 +44,7 @@ jobs:
           mkdir -p .ci-results
           {
             echo "V74_EXPORT_CURSOR_GATE=${{ steps.gate.outputs.gate || 'failed' }}"
-            echo "HOTFIX_HEAD=082841502459ae656aaedf01b3e0f18acd6150f9"
+            echo "HOTFIX_HEAD=087459926f6144112c9c8a8ec100947c3b657c87"
             echo "WORKFLOW_RUN=${GITHUB_RUN_ID}"
           } > .ci-results/v74-export-cursor-hotfix.txt
           git config user.name "github-actions[bot]"
