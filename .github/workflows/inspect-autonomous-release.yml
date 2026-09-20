@@ -1,0 +1,35 @@
+name: Inspect Autonomous Fabiano Release
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ops/release-status-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect official release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "LATEST_RELEASES"
+          gh run list --repo "$GITHUB_REPOSITORY"             --workflow "Autonomous Cloudflare Native Release"             --branch "consciencia-cloudflare-native-v1"             --limit 5             --json databaseId,status,conclusion,headSha,createdAt,updatedAt,url,displayTitle
+          RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY"             --workflow "Autonomous Cloudflare Native Release"             --branch "consciencia-cloudflare-native-v1"             --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          echo "LATEST_RUN_ID=$RUN_ID"
+          if [ -n "$RUN_ID" ]; then
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,url,jobs
+            STATUS="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
+            if [ "$STATUS" = "completed" ]; then
+              echo "LATEST_RELEASE_LOG_TAIL"
+              gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log | tail -n 220
+            fi
+          fi
