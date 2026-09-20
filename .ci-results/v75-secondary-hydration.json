@@ -6,5 +6,5 @@
   "total_books": 0,
   "generation": "",
   "source_signature": "",
-  "reason": "primary Cloudflare Worker 1101 on manual run 35542238285; quota/reset not confirmed"
+  "reason": "primary Cloudflare Worker 1101; quota/reset not confirmed"
 }
