@@ -1,1 +1,2 @@
 validate V7.4 primary-key cursor hotfix2
+retry after residual index removal
