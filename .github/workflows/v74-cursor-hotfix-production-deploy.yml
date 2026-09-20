@@ -1,0 +1,95 @@
+name: V7.4 Cursor Hotfix Production Deploy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ops/v74-hotfix-deploy-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v74-cursor-hotfix-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+          fetch-depth: 0
+
+      - name: Validate merged hotfix
+        working-directory: consciencia-fabiano
+        run: |
+          npm install --ignore-scripts
+          npm run check
+
+      - name: Deploy production Worker
+        working-directory: consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npx wrangler deploy
+
+      - name: Probe cursor page 1
+        id: page1
+        env:
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+        shell: bash
+        run: |
+          sleep 8
+          BODY="$(curl -fsS --max-time 25             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library?mode=cursor&limit=1&include_total=1')"
+          OK="$(printf '%s' "$BODY" | jq -r '.ok // false')"
+          MODE="$(printf '%s' "$BODY" | jq -r '.mode // ""')"
+          TOTAL="$(printf '%s' "$BODY" | jq -r '.total // 0')"
+          BOOKS="$(printf '%s' "$BODY" | jq -r '.total_books // 0')"
+          RECORDS="$(printf '%s' "$BODY" | jq -r '.records | length')"
+          C_CREATED="$(printf '%s' "$BODY" | jq -r '.next_cursor.created_at // ""')"
+          C_ID="$(printf '%s' "$BODY" | jq -r '.next_cursor.id // ""')"
+          test "$OK" = "true"
+          test "$MODE" = "cursor"
+          test "$TOTAL" -gt 0
+          test "$BOOKS" -gt 0
+          test "$RECORDS" -eq 1
+          test -n "$C_CREATED"
+          test -n "$C_ID"
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "books=$BOOKS" >> "$GITHUB_OUTPUT"
+          echo "cursor_created=$C_CREATED" >> "$GITHUB_OUTPUT"
+          echo "cursor_id=$C_ID" >> "$GITHUB_OUTPUT"
+          echo "CURSOR_PAGE_1_PASS=yes total=$TOTAL books=$BOOKS records=$RECORDS"
+
+      - name: Probe cursor page 2
+        env:
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+          C_CREATED: ${{ steps.page1.outputs.cursor_created }}
+          C_ID: ${{ steps.page1.outputs.cursor_id }}
+        shell: bash
+        run: |
+          BODY="$(curl -fsS -G --max-time 25             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             --data-urlencode 'mode=cursor'             --data-urlencode 'limit=1'             --data-urlencode "after_created_at=$C_CREATED"             --data-urlencode "after_id=$C_ID"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library')"
+          OK="$(printf '%s' "$BODY" | jq -r '.ok // false')"
+          MODE="$(printf '%s' "$BODY" | jq -r '.mode // ""')"
+          RECORDS="$(printf '%s' "$BODY" | jq -r '.records | length')"
+          NEXT_ID="$(printf '%s' "$BODY" | jq -r '.next_cursor.id // ""')"
+          test "$OK" = "true"
+          test "$MODE" = "cursor"
+          test "$RECORDS" -eq 1
+          test -n "$NEXT_ID"
+          test "$NEXT_ID" != "$C_ID"
+          echo "CURSOR_PAGE_2_PASS=yes records=$RECORDS cursor_advanced=yes"
+
+      - name: Production cursor gate
+        run: |
+          echo "V74_CURSOR_HOTFIX_DEPLOY=success"
+          echo "PRIMARY_TOTAL=${{ steps.page1.outputs.total }}"
+          echo "TOTAL_BOOKS=${{ steps.page1.outputs.books }}"
