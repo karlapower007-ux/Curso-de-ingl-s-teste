@@ -1,6 +1,12 @@
 name: V7.5 Secondary Hydration and Promotion
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "ops/hydrate-v75-secondary.mjs"
+      - ".github/workflows/v75-secondary-hydration-promotion.yml"
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
