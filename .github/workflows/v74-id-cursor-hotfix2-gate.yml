@@ -1,0 +1,31 @@
+name: V7.4 ID Cursor Hotfix2 Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/v74-id-cursor-hotfix2-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout operations branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate ID cursor hotfix2
+        shell: bash
+        run: |
+          git fetch origin consciencia-v74-export-id-cursor-hotfix2-20260920
+          git worktree add /tmp/v74-hotfix2 origin/consciencia-v74-export-id-cursor-hotfix2-20260920
+          cd /tmp/v74-hotfix2/consciencia-fabiano
+          npm install --ignore-scripts
+          npm run check
