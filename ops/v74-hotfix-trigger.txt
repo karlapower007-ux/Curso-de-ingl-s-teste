@@ -1,0 +1,1 @@
+trigger V7.4 export cursor hotfix validation
