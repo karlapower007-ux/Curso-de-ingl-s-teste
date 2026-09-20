@@ -2736,7 +2736,7 @@ function buildCognitiveContract(question) {
   const raw=String(question || "").trim();
   const q=foldSearchText(raw);
   const onlyReference=
-    /\b(?:apenas|somente|so)\s+(?:a\s+)?(?:referencia|fonte|citacao|pagina|localizacao)\b/i.test(q) ||
+    /\b(?:apenas|somente|so)\s+(?:com\s+)?(?:a\s+)?(?:referencia|fonte|citacao|pagina|localizacao)(?:\s+documental)?\b/i.test(q) ||
     /\b(?:reference|source|citation|page)\s+only\b/i.test(q) ||
     (/^(?:qual|diga|informe|mostre|me de|me passe)\b/i.test(q) && /\b(?:referencia|fonte|citacao|pagina)\b/i.test(q) && !/\b(?:explique|analise|comente|reflita)\b/i.test(q));
 
