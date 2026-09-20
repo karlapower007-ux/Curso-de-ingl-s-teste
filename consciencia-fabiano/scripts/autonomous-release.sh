@@ -361,6 +361,38 @@ else
   log "RAG_ENDPOINT_REACHABLE=degraded-$rag_http"
 fi
 
+log "6.5/7 Grounded bilingual chat smoke"
+curl -fsS --max-time 20 "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" >/tmp/library-smoke.json || true
+if jq -e '.ok == true and (.records|length) > 0' /tmp/library-smoke.json >/dev/null 2>&1; then
+  python3 - <<'PY' >/tmp/library-smoke-query.txt
+import json,re
+with open("/tmp/library-smoke.json","r",encoding="utf-8") as f:
+    data=json.load(f)
+text=str((data.get("records") or [{}])[0].get("text") or "")
+words=re.findall(r"[A-Za-zÀ-ÿ0-9'-]+",text)
+chosen=words[2:14] if len(words)>=14 else words[:12]
+print(" ".join(chosen))
+PY
+  smoke_query=$(tr -d '\r\n' </tmp/library-smoke-query.txt)
+  if [ -n "$smoke_query" ]; then
+    jq -nc --arg q "$smoke_query" '{pergunta:("Explique em português, usando somente a biblioteca e citando a fonte: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-pt-payload.json
+    pt_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-pt.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-pt-payload.json || echo 000)
+    [ "$pt_http" = "200" ] || die "GROUNDED_CHAT_PT_HTTP_$pt_http"
+    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0' /tmp/chat-smoke-pt.json >/dev/null || die "GROUNDED_CHAT_PT_BAD"
+    log "GROUNDED_CHAT_PT_PASS=yes"
+
+    jq -nc --arg q "$smoke_query" '{pergunta:("Explain in English, using only the library and citing the source: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-en-payload.json
+    en_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-en.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-en-payload.json || echo 000)
+    [ "$en_http" = "200" ] || die "GROUNDED_CHAT_EN_HTTP_$en_http"
+    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0' /tmp/chat-smoke-en.json >/dev/null || die "GROUNDED_CHAT_EN_BAD"
+    log "GROUNDED_CHAT_EN_PASS=yes"
+  else
+    log "GROUNDED_CHAT_SMOKE=skipped-empty-sample"
+  fi
+else
+  log "GROUNDED_CHAT_SMOKE=skipped-empty-library"
+fi
+
 log "7/7 Release complete"
 log "DEPLOY_ONLY_PROTOCOL=success"
 log "AUTONOMOUS_RELEASE=success"
