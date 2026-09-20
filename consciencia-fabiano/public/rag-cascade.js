@@ -384,18 +384,27 @@ async function omniAgentSearch(question,{onProgress}={}){
   }
 
   // Bugfix V7.4: o Agent 2 semântico não é mais desligado quando há hit literal.
-  // A mesma malha existente agora pode localizar "mundo dos espíritos" em outros livros
-  // enquanto preserva os hits exatos de "mundo espiritual".
+  // A mesma malha existente cruza vetores + BM25 local, permitindo recuperar outros
+  // livros mesmo quando a vetorização de um PDF ainda não terminou por completo.
   let semanticMatches=[];
+  let bm25Matches=[];
   try{
     const ew=ensureSemanticWorker();
-    const embedded=await rpc(ew,"embed-query",{text:q,priority:"high"},30000);
+    const [embeddedResult,bm25Result]=await Promise.allSettled([
+      rpc(ew,"embed-query",{text:q,priority:"high"},30000),
+      rpc(searchWorker,"search-bm25",{question:q,top_k:OFFLINE_TOP_K},12000)
+    ]);
+    const embedded=embeddedResult.status==="fulfilled"?embeddedResult.value:null;
+    const bm25=bm25Result.status==="fulfilled"?bm25Result.value:{matches:[]};
+    bm25Matches=(bm25.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v7.4-bm25-expansion"));
+    let vectorMatches=[];
     if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
       const semantic=await rpc(searchWorker,"search-semantic",{
         query:embedded.vector,top_k:OFFLINE_TOP_K,min_score:0.62
-      },20000);
-      semanticMatches=(semantic.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v7.4-transformers-semantic-expansion"));
+      },20000).catch(()=>({matches:[]}));
+      vectorMatches=(semantic.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v7.4-transformers-semantic-expansion"));
     }
+    semanticMatches=mergeSearchMatches(vectorMatches,bm25Matches);
   }catch{}
 
   const swarm=await import("/agent-swarm.js?v=7.4.2");
@@ -413,6 +422,7 @@ async function omniAgentSearch(question,{onProgress}={}){
     cloud_literal_hits:cloudRows.length,
     semantic_expansion_used:semanticMatches.length>0,
     semantic_expansion_hits:semanticMatches.length,
+    bm25_expansion_hits:bm25Matches.length,
     library_coverage_known:Boolean(cloudReadable||Number(localStrict.scanned||0)>0||literalMatches.length||semanticMatches.length),
     logical_capacity:OFFLINE_TOP_K
   };
