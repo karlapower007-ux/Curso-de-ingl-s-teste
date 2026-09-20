@@ -453,7 +453,7 @@ for n,(docid,d) in enumerate(sorted(docs.items()),1):
                 pages.append({"page":p if k==0 else 900000+p*100+k,"text":piece})
     if not pages: continue
     canonical="\n".join(x["text"] for x in pages)
-    digest=hashlib.sha256(("r2-rehydrate-v3\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
+    digest=hashlib.sha256(("r2-rehydrate-v4\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
     key=f"{n:05d}"
     dd=root/key; dd.mkdir()
     start={

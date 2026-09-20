@@ -4147,6 +4147,30 @@ export class LibraryDO {
       initStage = "jobs";
       const jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
       const addJobColumn=(name,ddl)=>{if(!jobColumns.includes(name))this.sql.exec("ALTER TABLE index_jobs ADD COLUMN "+name+" "+ddl);};
+      // Compatibility-only schema repair for an older persisted Durable Object table
+      // that used job_id instead of id. No RAG/memory/model behavior is changed.
+      if(!jobColumns.includes("id")){
+        this.sql.exec("ALTER TABLE index_jobs ADD COLUMN id TEXT");
+        if(jobColumns.includes("job_id")){
+          this.sql.exec("UPDATE index_jobs SET id=job_id WHERE id IS NULL OR id=''");
+        }else{
+          this.sql.exec("UPDATE index_jobs SET id='legacy-'||lower(hex(randomblob(16))) WHERE id IS NULL OR id=''");
+        }
+      }
+      addJobColumn("kind","TEXT NOT NULL DEFAULT 'pdf-index'");
+      addJobColumn("storage_key","TEXT NOT NULL DEFAULT ''");
+      addJobColumn("filename","TEXT NOT NULL DEFAULT ''");
+      addJobColumn("size_bytes","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("status","TEXT NOT NULL DEFAULT 'queued'");
+      addJobColumn("progress","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("attempts","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("error","TEXT");
+      addJobColumn("document_id","TEXT");
+      addJobColumn("pages","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("chunks","INTEGER NOT NULL DEFAULT 0");
+      addJobColumn("created_at","TEXT NOT NULL DEFAULT ''");
+      addJobColumn("updated_at","TEXT NOT NULL DEFAULT ''");
+      this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_index_jobs_id_unique ON index_jobs(id)");
       addJobColumn("expected_pages","INTEGER NOT NULL DEFAULT 0");
       addJobColumn("received_pages","INTEGER NOT NULL DEFAULT 0");
       addJobColumn("title","TEXT");
