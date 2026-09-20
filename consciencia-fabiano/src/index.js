@@ -1370,7 +1370,7 @@ function deterministicSynthesisFromSources(sources) {
     if(evidence) parts.push(label+" sustenta este ponto documental: "+evidence+" "+refs);
   }
   if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser sintetizada com segurança.";
-  return "Os documentos recuperados permitem construir uma síntese sustentada pelas evidências abaixo. "+parts.join(" ");
+  return "Os documentos recuperados permitem construir uma síntese sustentada pelas evidências abaixo:\n\n"+parts.join("\n\n");
 }
 
 async function repairFalseNegativeSynthesis(env,question,sources) {
