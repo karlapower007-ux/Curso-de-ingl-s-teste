@@ -97,13 +97,16 @@ async function putChunkBatch(rows,generation){
     const chunkStore=tx.objectStore("chunks");
     const vectorStore=tx.objectStore("vectors");
     for(const row of rows){
-      const documentId=String(row?.document_id||"");
+      const cloudDocumentId=String(row?.document_id||"");
+      const contentHash=String(row?.content_hash||"").toLowerCase();
+      const documentId=/^[0-9a-f]{64}$/.test(contentHash)?contentHash:cloudDocumentId;
       const text=String(row?.text||"").trim();
       if(!documentId||!text)continue;
       const chunkIndex=Number(row?.chunk_index||0);
       const id=String(row?.id||documentId+":"+chunkIndex);
       const base={
         key:"omni:"+id,id,doc_key:documentId,document_id:documentId,
+        cloud_document_id:cloudDocumentId,
         filename:String(row?.filename||row?.title||"Documento"),
         title:String(row?.title||row?.filename||"Documento"),
         author:String(row?.author||""),language:String(row?.language||"pt"),
