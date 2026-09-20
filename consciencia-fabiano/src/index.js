@@ -4145,10 +4145,80 @@ export class LibraryDO {
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
       `);
       initStage = "jobs";
-      const jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
-      const addJobColumn=(name,ddl)=>{if(!jobColumns.includes(name))this.sql.exec("ALTER TABLE index_jobs ADD COLUMN "+name+" "+ddl);};
-      // Compatibility-only schema repair for an older persisted Durable Object table
-      // that used job_id instead of id. No RAG/memory/model behavior is changed.
+      let jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
+
+      // Compatibility-only migration for the pre-v7.4 R2 job schema.
+      // It repairs only ingestion persistence. RAG, memory, Groq and cognitive
+      // micro-turbines remain byte-for-byte outside this migration.
+      if(jobColumns.includes("r2_key") && jobColumns.includes("page_count")){
+        this.sql.exec("ALTER TABLE index_jobs RENAME TO index_jobs_legacy_r2_v70");
+        this.sql.exec("DROP INDEX IF EXISTS idx_index_jobs_status_updated");
+        this.sql.exec("DROP INDEX IF EXISTS idx_index_jobs_id_unique");
+        this.sql.exec(`
+          CREATE TABLE index_jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL DEFAULT 'pdf-index',
+            storage_key TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'queued',
+            progress INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            document_id TEXT,
+            pages INTEGER NOT NULL DEFAULT 0,
+            chunks INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expected_pages INTEGER NOT NULL DEFAULT 0,
+            received_pages INTEGER NOT NULL DEFAULT 0,
+            title TEXT,
+            author TEXT,
+            content_sha256 TEXT,
+            original_r2_key TEXT,
+            processed_pages INTEGER NOT NULL DEFAULT 0
+          )
+        `);
+        this.sql.exec(`
+          INSERT OR IGNORE INTO index_jobs (
+            id,kind,storage_key,filename,size_bytes,status,progress,attempts,error,
+            document_id,pages,chunks,created_at,updated_at,expected_pages,received_pages,
+            title,author,content_sha256,original_r2_key,processed_pages
+          )
+          SELECT
+            COALESCE(NULLIF(id,''),NULLIF(document_id,''),'legacy-'||lower(hex(randomblob(16)))),
+            COALESCE(NULLIF(kind,''),'legacy-r2'),
+            COALESCE(NULLIF(storage_key,''),NULLIF(r2_key,''),'legacy://r2'),
+            COALESCE(NULLIF(filename,''),'Documento legado'),
+            COALESCE(size_bytes,0),
+            CASE
+              WHEN status IN ('ready','done','completed','ready_local') THEN 'ready'
+              WHEN status IN ('error','failed') THEN 'failed'
+              ELSE COALESCE(NULLIF(status,''),'queued')
+            END,
+            COALESCE(progress,CASE WHEN status IN ('ready','done','completed','ready_local') THEN 100 ELSE 0 END),
+            COALESCE(attempts,0),
+            COALESCE(error,error_message),
+            document_id,
+            COALESCE(pages,page_count,0),
+            COALESCE(chunks,0),
+            COALESCE(NULLIF(created_at,''),datetime('now')),
+            COALESCE(NULLIF(updated_at,''),datetime('now')),
+            COALESCE(expected_pages,page_count,0),
+            COALESCE(received_pages,page_count,0),
+            COALESCE(NULLIF(title,''),filename),
+            COALESCE(author,''),
+            COALESCE(content_sha256,''),
+            COALESCE(NULLIF(original_r2_key,''),r2_key,''),
+            COALESCE(processed_pages,0)
+          FROM index_jobs_legacy_r2_v70
+        `);
+        this.sql.exec("CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at)");
+        this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_index_jobs_id_unique ON index_jobs(id)");
+        jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
+      }
+
+      const addJobColumn=(name,ddl)=>{if(!jobColumns.includes(name)){this.sql.exec("ALTER TABLE index_jobs ADD COLUMN "+name+" "+ddl);jobColumns.push(name);}};
       if(!jobColumns.includes("id")){
         this.sql.exec("ALTER TABLE index_jobs ADD COLUMN id TEXT");
         if(jobColumns.includes("job_id")){
@@ -4156,6 +4226,7 @@ export class LibraryDO {
         }else{
           this.sql.exec("UPDATE index_jobs SET id='legacy-'||lower(hex(randomblob(16))) WHERE id IS NULL OR id=''");
         }
+        jobColumns.push("id");
       }
       addJobColumn("kind","TEXT NOT NULL DEFAULT 'pdf-index'");
       addJobColumn("storage_key","TEXT NOT NULL DEFAULT ''");
