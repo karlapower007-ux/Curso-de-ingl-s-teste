@@ -25,9 +25,13 @@ jobs:
           node --check scripts/browser-voice-smoke.mjs
           node --check scripts/browser-ingest-smoke.mjs
           bash -n scripts/autonomous-release.sh
+          node scripts/cognitive-v74-acceptance.mjs
+          node scripts/build-cognitive-v74-manifest.mjs
+          test -f public/cognitive-v74-manifest.json
+          node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8")); if(m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20||!m.audit.valid) process.exit(1)'
 
-          # Core V7.3 cognitive orchestrator identity
-          grep -q '7.3.0-cognitive-orchestrator' src/index.js
+          # Core V7.4 cognitive 1000 micro-turbines identity
+          grep -q '7.4.0-cognitive-1000-microturbines' src/index.js
           grep -q 'cloudflare-v7.1-fabiano-r2-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
           grep -q 'online_offline_search_symmetry: false' src/index.js
@@ -52,6 +56,24 @@ jobs:
           grep -q 'groq_final_stage_only: true' src/index.js
           grep -q 'analytic_llm_calls_max: 1' src/index.js
           grep -q 'pre_master_llm_calls: 0' src/index.js
+
+          # V7.4 catalog, router, planner, evidence gate, bounded execution
+          test -f src/cognitive-turbines-v74.js
+          grep -q 'CATALOG_EXPECTED_SIZE = 1000' src/cognitive-turbines-v74.js
+          grep -q 'defaultActiveLimit: 24' src/cognitive-turbines-v74.js
+          grep -q 'deepResearchActiveLimit: 64' src/cognitive-turbines-v74.js
+          grep -q 'absoluteActiveLimit: 96' src/cognitive-turbines-v74.js
+          grep -q 'workerConcurrency: 8' src/cognitive-turbines-v74.js
+          grep -q 'allowTurbineToCallGroq: false' src/cognitive-turbines-v74.js
+          grep -q 'executeAll1000: false' src/cognitive-turbines-v74.js
+          grep -q 'export function buildExecutionPlan' src/cognitive-turbines-v74.js
+          grep -q 'export async function runCognitivePlan' src/cognitive-turbines-v74.js
+          grep -q 'export function evidenceGateV74' src/cognitive-turbines-v74.js
+          grep -q 'export function catalogAudit' src/cognitive-turbines-v74.js
+          grep -q 'export function catalogManifest' src/cognitive-turbines-v74.js
+          grep -q 'cognitive_1000_microturbines: true' src/index.js
+          grep -q '/api/admin/cognitive-v74' src/index.js
+          grep -q '/api/admin/cognitive-v74/manifest' src/index.js
           grep -q 'provider:"deterministic-reference-only"' src/index.js
           grep -q 'provider:"groq-final-only+500-node-grounded-rag"' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
