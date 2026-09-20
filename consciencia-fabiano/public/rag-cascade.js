@@ -25,9 +25,23 @@ const opfsWorker=new Worker("/opfs-sqlite-worker.js?v="+Date.now(),{type:"module
 let semanticWorker=null;
 function ensureSemanticWorker(){
   if(semanticWorker)return semanticWorker;
-  semanticWorker=new Worker("/embedding-worker.js?v=6.0.0",{type:"module"});
+  semanticWorker=new Worker("/embedding-worker.js?v=7.2.0",{type:"module"});
   semanticWorker.onmessage=onWorkerMessage;
   return semanticWorker;
+}
+
+async function embedQuery(text){
+  const q=String(text||"").trim();
+  if(!q)return [];
+  await ready;
+  try{
+    const ew=ensureSemanticWorker();
+    const embedded=await rpc(ew,"embed-query",{text:q,priority:"high"},12000);
+    const vector=Array.isArray(embedded?.vector)?embedded.vector.map(Number).filter(Number.isFinite):[];
+    return vector.length>=64?vector:[];
+  }catch{
+    return [];
+  }
 }
 
 function onWorkerMessage(event){
@@ -447,5 +461,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,offlineSearch,omniAgentSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,offlineSearch,omniAgentSearch,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,offlineSearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,offlineSearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
