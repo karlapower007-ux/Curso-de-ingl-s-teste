@@ -44,7 +44,7 @@ function toCard(row,index){
 }
 export async function runAgentSwarm({question,literalMatches=[],semanticMatches=[],onProgress}){
   const workerCount=physicalCount();
-  const workers=Array.from({length:workerCount},()=>new Worker("/agent-node-worker.js?v=7.0.0",{type:"module"}));
+  const workers=Array.from({length:workerCount},()=>new Worker("/agent-node-worker.js?v=7.4.2",{type:"module"}));
   const pending=new Map();let seq=0,cursor=0;
   for(const worker of workers){
     worker.onmessage=event=>{
@@ -66,14 +66,11 @@ export async function runAgentSwarm({question,literalMatches=[],semanticMatches=
     onProgress?.({agent:1,name:"Literal",count:a1.rows?.length||0});
     const literal=Array.isArray(a1.rows)?a1.rows:[];
 
-    let semantic=[];
-    if(!literal.length){
-      const a2=await run(2,{semantic:semanticMatches});
-      semantic=Array.isArray(a2.rows)?a2.rows:[];
-      onProgress?.({agent:2,name:"Semantic",count:semantic.length});
-    }else onProgress?.({agent:2,name:"Semantic",count:0,skipped:true});
+    const a2=await run(2,{semantic:semanticMatches});
+    const semantic=Array.isArray(a2.rows)?a2.rows:[];
+    onProgress?.({agent:2,name:"Semantic",count:semantic.length,skipped:false});
 
-    const seed=literal.length?literal:semantic;
+    const seed=mergeRows(literal,semantic);
     if(!seed.length)return {
       ok:false,cards:[],strict_empty:true,zero_noise:true,
       logical_agents:LOGICAL_AGENT_COUNT,physical_workers:workerCount,literal_hits:0,semantic_candidates:0
@@ -97,6 +94,7 @@ export async function runAgentSwarm({question,literalMatches=[],semanticMatches=
       hardware_concurrency:Number(navigator.hardwareConcurrency||0)||null,
       literal_hits:literal.length,semantic_candidates:semantic.length,
       semantic_fallback_used:literal.length===0&&semantic.length>0,
+      semantic_expansion_used:semantic.length>0,
       agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker",
       final_gate:"Agent 10 Bouncer",main_thread_analysis:false
     };
@@ -127,6 +125,7 @@ export async function runAgentSwarm({question,literalMatches=[],semanticMatches=
       literal_hits:literal.length,
       semantic_candidates:semantic.length,
       semantic_fallback_used:literal.length===0&&semantic.length>0,
+      semantic_expansion_used:semantic.length>0,
       agent_2_engine:"Transformers.js MiniLM q8 via embedding-worker",
       agent_11_short_terms:true,
       agent_12_long_explanation:true,

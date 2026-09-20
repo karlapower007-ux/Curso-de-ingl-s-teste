@@ -20,7 +20,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=4.0.0").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=7.4.2").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -824,9 +824,12 @@
     const bar=document.createElement("div");
     bar.className="raw-document-status";
     const offline=meta?.offline_takeover===true;
+    const localTakeover=meta?.local_takeover===true;
     bar.textContent=offline
       ? "Modo Offline Ativado - Leitura Contínua Local"
-      : "Leitura documental direta • LLM bypass • ordem verificada";
+      : localTakeover
+        ? "Contingência local ativada - internet disponível, servidor principal indisponível"
+        : "Leitura documental direta • LLM bypass • ordem verificada";
     wrap.appendChild(bar);
 
     const source=document.createElement("div");
@@ -883,12 +886,20 @@
       const recovered=await failover.recoverDirect({question:String(question||""),query_embedding:queryEmbedding||[]});
       if(recovered?.ok){
         if(recovered.plan==="C"){
+          const trulyOffline=!navigator.onLine;
           try{navigator.vibrate?.(35);}catch{}
-          if($("avatarState")) $("avatarState").textContent="Modo Offline Ativado - Leitura Contínua Local";
+          if($("avatarState")) $("avatarState").textContent=trulyOffline
+            ? "Modo Offline Ativado - Leitura Contínua Local"
+            : "Contingência local ativada - servidor principal indisponível";
         }else if($("avatarState")){
           $("avatarState").textContent="Contingência Plano "+String(recovered.plan||"?")+" ativa";
         }
-        return {...recovered,offline_takeover:recovered.plan==="C",primary_failure:primaryFailure};
+        return {
+          ...recovered,
+          offline_takeover:recovered.plan==="C" && !navigator.onLine,
+          local_takeover:recovered.plan==="C",
+          primary_failure:primaryFailure
+        };
       }
       return {...recovered,primary_failure:primaryFailure,bypass_llm:true,text:""};
     }catch(error){
@@ -1085,10 +1096,10 @@
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
     status.textContent=agents
-      ? "V7.2 Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
-        (data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal-first")+
+      ? "V7.4 Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+        (data?.semantic_expansion_used?" • literal + semântica em paralelo":data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal")+
         (mergedCount?" • "+mergedCount+" chunks costurados":"")
-      : "Plano C V6.0 • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
+      : (navigator.onLine?"Contingência local":"Modo offline")+" • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
         (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
     wrap.appendChild(status);
 
@@ -1558,8 +1569,8 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.2 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
-              ...renderedCards.slice(0,10).map((card,i)=>
+              "V7.4 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
+              ...renderedCards.slice(0,24).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
               )
@@ -1580,7 +1591,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.2 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
+              $("backendText").textContent="V7.4 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
@@ -1614,7 +1625,7 @@
           const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
           const persisted=[
             resposta,
-            ...renderedCards.slice(0,8).map((card,i)=>
+            ...renderedCards.slice(0,24).map((card,i)=>
               "[T"+String(card.node||i+1).padStart(4,"0")+"] "+canonicalHeader(card)+
               (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
             )
@@ -1623,7 +1634,7 @@
             role:"assistant",content:persisted,sources:recovered.sources||[],fallback:false,
             failover_plan:"C",strict_precision:true,offline_turbines:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • sem fuzzy matching";
+          if($("backendText")) $("backendText").textContent=(navigator.onLine?"Contingência local":"Modo offline")+" • BOOLEAN EXACT • sem fuzzy matching";
         }else{
           const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
           appendElegantSilence(silence);
@@ -1631,7 +1642,7 @@
             role:"assistant",content:silence,sources:[],fallback:false,
             failover_plan:"C",strict_precision:true,strict_empty:true,zero_noise:true,ts:Date.now()
           });
-          if($("backendText")) $("backendText").textContent="Plano C V6.0 • BOOLEAN EXACT • zero resultados";
+          if($("backendText")) $("backendText").textContent=(navigator.onLine?"Contingência local":"Modo offline")+" • BOOLEAN EXACT • zero resultados";
         }
         saveHistory();
         setAvatar("closed");
@@ -1644,7 +1655,8 @@
         if(direct?.ok===true && typeof direct?.text==="string" && direct.text.length){
           appendRawDocumentMessage(direct.text,{
             ...direct,
-            offline_takeover:direct.plan==="C",
+            offline_takeover:direct.offline_takeover===true,
+            local_takeover:direct.local_takeover===true,
             scope:direct.scope || direct.direct_scope || "",
             title:direct.title || direct.filename || "Documento"
           });
@@ -1653,7 +1665,8 @@
             content:direct.text,
             raw_document:true,
             direct_meta:{
-              offline_takeover:direct.plan==="C",
+              offline_takeover:direct.offline_takeover===true,
+            local_takeover:direct.local_takeover===true,
               title:direct.title || direct.filename || "Documento",
               filename:direct.filename || "",
               author:direct.author || "",
@@ -1677,12 +1690,20 @@
         return;
       }
 
-      // Plano A analítico V7.2: envia, quando disponível, o embedding multilíngue
-      // gerado localmente. Se o modelo local não carregar a tempo, BM25/strict seguem funcionando.
+      // Hotfix V7.4: preserva o RAG congelado, mas entrega ao servidor os trechos
+      // que já existem no IndexedDB deste aparelho. Isso evita perder livros locais
+      // quando a sincronização R2 ainda não terminou.
       let analyticQueryEmbedding=[];
+      let analyticClientContext=[];
       try{
-        const engine=await ensureRagCascade("v7.2-hybrid-query");
+        const engine=await ensureRagCascade("v7.4-local-context-handoff");
         if(engine?.embedQuery) analyticQueryEmbedding=await engine.embedQuery(q);
+        if(engine?.search){
+          const localSearch=await engine.search(q,analyticQueryEmbedding);
+          analyticClientContext=Array.isArray(localSearch?.matches)
+            ? localSearch.matches.slice(0,120)
+            : [];
+        }
       }catch{}
 
       let data=null;
@@ -1692,7 +1713,8 @@
           pergunta:q,
           turn_id:turnId,
           historico:recentHistory,
-          query_embedding:analyticQueryEmbedding
+          query_embedding:analyticQueryEmbedding,
+          client_context:analyticClientContext
         });
       }catch(error){
         primaryError=error;
@@ -1726,7 +1748,7 @@
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
             const persisted=[
               resposta,
-              ...renderedCards.slice(0,8).map((card,i)=>
+              ...renderedCards.slice(0,24).map((card,i)=>
                 "[T"+String(card.node||i+1).padStart(4,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
               )
@@ -1800,11 +1822,13 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "V6.0 • Omni Agent Swarm • Phantom Daemon"
-        : "Modo local resiliente ativo";
+        ? "V7.4 • nuvem online • RAG híbrido + biblioteca local"
+        : (navigator.onLine?"Nuvem indisponível • contingência local pronta":"Offline • biblioteca local ativa");
     } catch {
       $("backendDot").className="dot ok";
-      $("backendText").textContent="Modo local resiliente ativo";
+      $("backendText").textContent=navigator.onLine
+        ? "Nuvem indisponível • contingência local pronta"
+        : "Offline • biblioteca local ativa";
     }
   }
 
