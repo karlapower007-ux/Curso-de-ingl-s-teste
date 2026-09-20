@@ -2704,6 +2704,123 @@ async function exportLibraryPage(env,url){
 }
 
 
+function questionLanguage(question) {
+  const q=" "+foldSearchText(question)+" ";
+  const en=[" the "," what "," who "," where "," when "," why "," how "," explain "," compare "," source "," reference "," hypothesis "," reflect "," summary "]
+    .reduce((n,t)=>n+(q.split(t).length-1),0);
+  const pt=[" o "," a "," que "," qual "," quem "," onde "," quando "," por que "," como "," explique "," compare "," fonte "," referencia "," hipotese "," reflita "," resumo "]
+    .reduce((n,t)=>n+(q.split(t).length-1),0);
+  return en>pt ? "en" : "pt";
+}
+
+function questionNeedsMemory(question) {
+  const q=foldSearchText(question);
+  return /\b(isso|isto|esse|essa|aquele|aquela|ele|ela|eles|elas|anterior|acima|continue|continuar|that|this|it|they|them|above|previous|continue)\b/i.test(q) ||
+    (/^(e|and|mas|but|entao|then)\b/i.test(q) && q.length<120);
+}
+
+function buildCognitiveContract(question) {
+  const raw=String(question || "").trim();
+  const q=foldSearchText(raw);
+  const onlyReference=
+    /\b(?:apenas|somente|so)\s+(?:a\s+)?(?:referencia|fonte|citacao|pagina|localizacao)\b/i.test(q) ||
+    /\b(?:reference|source|citation|page)\s+only\b/i.test(q) ||
+    (/^(?:qual|diga|informe|mostre|me de|me passe)\b/i.test(q) && /\b(?:referencia|fonte|citacao|pagina)\b/i.test(q) && !/\b(?:explique|analise|comente|reflita)\b/i.test(q));
+
+  let mode="factual";
+  if(onlyReference) mode="reference_only";
+  else if(/\b(hipotese|especul|possibilidade|poderia ser|suponha|imagine|hypothesis|speculat|what if|could it be)\b/i.test(q)) mode="hypothesis";
+  else if(/\b(reflexao|reflita|refletir|ponder|medite|reflection|reflect|ponder)\b/i.test(q)) mode="reflection";
+  else if(/\b(compare|comparar|comparacao|diferencas|semelhancas|versus|vs|comparison|differences|similarities)\b/i.test(q)) mode="comparison";
+  else if(/\b(resuma|resumo|sintese breve|em poucas palavras|summarize|summary|briefly)\b/i.test(q)) mode="summary";
+  else if(/\b(analise|analisar|explique|explicar|por que|como se relaciona|interprete|analyze|analyse|explain|why|how does|interpret)\b/i.test(q)) mode="analysis";
+
+  const language=questionLanguage(raw);
+  const useHistory=questionNeedsMemory(raw);
+  const maxWords={
+    reference_only:0,
+    factual:260,
+    summary:320,
+    comparison:750,
+    analysis:1100,
+    reflection:900,
+    hypothesis:850
+  }[mode] || 700;
+
+  return Object.freeze({
+    version:"1.0",
+    mode,
+    language,
+    use_history:useHistory,
+    current_question_is_scope:true,
+    external_knowledge:false,
+    factual_claims_require_citations:true,
+    label_inference:["reflection","hypothesis"].includes(mode),
+    max_words:maxWords,
+    llm_calls_max:mode==="reference_only" ? 0 : 1
+  });
+}
+
+function cognitiveContractPrompt(contract) {
+  const c=contract || {};
+  const common=
+    "CONTRATO COGNITIVO DO TURNO: modo="+String(c.mode || "factual")+
+    "; idioma="+String(c.language || "pt")+
+    "; memória="+(c.use_history?"somente para desambiguação":"não usar para ampliar resposta")+
+    "; máximo aproximado="+Number(c.max_words || 700)+" palavras. " +
+    "Responda SOMENTE ao que foi pedido. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. ";
+
+  const rules={
+    factual:
+      "MODO FATO: responda diretamente ao fato perguntado. Não acrescente hipótese, reflexão ou interpretação não solicitada. Toda afirmação factual deve estar sustentada por [F#].",
+    summary:
+      "MODO RESUMO: sintetize apenas o material necessário para o pedido, sem ampliar o assunto. Preserve [F#] nos pontos factuais.",
+    comparison:
+      "MODO COMPARAÇÃO: compare somente os critérios presentes no pedido. Distinga convergências e diferenças documentadas; não invente vencedor, hierarquia ou motivo.",
+    analysis:
+      "MODO ANÁLISE: desenvolva apenas a questão analítica pedida. Diferencie evidência de inferência e não trate inferência como fato.",
+    reflection:
+      "MODO REFLEXÃO: use duas partes claramente rotuladas no idioma da pergunta: 'FATOS DOCUMENTADOS'/'DOCUMENTED FACTS' e 'REFLEXÃO'/'REFLECTION'. A reflexão deve nascer das evidências, não criar fatos novos. Fatos exigem [F#].",
+    hypothesis:
+      "MODO HIPÓTESE: use duas partes claramente rotuladas no idioma da pergunta: 'BASE DOCUMENTAL'/'DOCUMENTARY BASIS' e 'HIPÓTESE'/'HYPOTHESIS'. A hipótese deve ser apresentada como possibilidade condicional, nunca como fato estabelecido. Não invente dados ausentes.",
+    reference_only:
+      "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência documental."
+  };
+  return common+(rules[c.mode] || rules.factual);
+}
+
+function referenceOnlyAnswer(sources) {
+  const rows=Array.isArray(sources)?sources:[];
+  const seen=new Set(),lines=[];
+  for(let i=0;i<rows.length;i++){
+    const s=rows[i];
+    const ref=sourceRefId(s,i);
+    const key=[s?.document_id||"",s?.pagina||"",s?.titulo||s?.arquivo||""].join("|");
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
+    const page=s?.pagina ? "p. "+Number(s.pagina) : "";
+    lines.push("["+ref+"] "+[name,author,page].filter(Boolean).join(" — "));
+    if(lines.length>=12) break;
+  }
+  return lines.join("\n");
+}
+
+function applyCognitivePostGuard(answer,contract) {
+  let text=String(answer || "").trim();
+  const mode=String(contract?.mode || "factual");
+  const lang=String(contract?.language || "pt");
+  if(!text) return text;
+  if(mode==="reflection" && !/\b(reflex[aã]o|reflection)\b/i.test(text)){
+    text=(lang==="en"?"REFLECTION:\n\n":"REFLEXÃO:\n\n")+text;
+  }
+  if(mode==="hypothesis" && !/\b(hip[oó]tese|hypothesis)\b/i.test(text)){
+    text=(lang==="en"?"HYPOTHESIS:\n\n":"HIPÓTESE:\n\n")+text;
+  }
+  return text;
+}
+
 function detectExactRetrievalIntent(question) {
   const raw=String(question || "").trim();
   const q=foldSearchText(raw);
@@ -3073,6 +3190,7 @@ async function chat(request, env) {
   const question = String(body?.pergunta || "").trim();
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
 
+  const cognitiveContract=buildCognitiveContract(question);
   const exactIntent=detectExactRetrievalIntent(question);
   if(exactIntent.triggered){
     const direct=await directRetrievalPayload(env,body);
@@ -3102,7 +3220,12 @@ async function chat(request, env) {
       max_concurrency:EXACT_MAX_CONCURRENT_REQUESTS,
       ordered_buffer:true,
       chunks_reassembled:Number(direct.chunks_reassembled || 0),
-      code:direct.code || ""
+      code:direct.code || "",
+      cognitive_mode:"exact_retrieval",
+      cognitive_contract_version:"1.0",
+      llm_calls:0,
+      pre_master_llm_calls:0,
+      groq_final_stage_only:true
     };
     if(wantsStream){
       const frames=
@@ -3117,8 +3240,6 @@ async function chat(request, env) {
     }
     return json(payload,direct.ok?200:503);
   }
-
-  requireGroqKeys(env);
 
   const ownerId = await memoryOwner(request, body);
   const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-GROQ_HISTORY_MESSAGES * 2) : [];
@@ -3198,17 +3319,52 @@ async function chat(request, env) {
     });
   }
 
+  if(cognitiveContract.mode==="reference_only"){
+    const answer=referenceOnlyAnswer(sources);
+    const usedSources=selectCitedSources(answer,sources);
+    const memoryPersisted=await persistChatTurn(env,ownerId,body,question,answer,usedSources,false);
+    const payload={
+      ok:true,
+      resposta:answer,
+      fontes:usedSources,
+      fallback:false,
+      memory_persisted:memoryPersisted,
+      provider:"deterministic-reference-only",
+      retrieval_level:retrievalLevel,
+      cognitive_mode:"reference_only",
+      cognitive_contract_version:"1.0",
+      llm_calls:0,
+      pre_master_llm_calls:0,
+      groq_final_stage_only:true,
+      reference_only_llm_bypass:true
+    };
+    if(wantsStream){
+      const frames=sseFrame("meta",{...payload,resposta:undefined})+
+        sseFrame("delta",{text:answer})+
+        sseFrame("done",payload);
+      return new Response(frames,{headers:securityHeaders(new Headers({
+        "Content-Type":"text/event-stream; charset=utf-8",
+        "Cache-Control":"no-cache, no-transform",
+        "X-Accel-Buffering":"no"
+      }))});
+    }
+    return json(payload);
+  }
+
+  requireGroqKeys(env);
+
   if (wantsStream) {
     return massivePipelineStreamResponse(env,{
       ownerId,body,question,sources,history,retrievalLevel,
-      independentDocuments:crossLibrary.independent_documents
+      independentDocuments:crossLibrary.independent_documents,
+      cognitiveContract
     });
   }
 
-  const reduced=await massivePipelineSynthesis(env,question,sources,history);
+  const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveContract);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
-  answer = finalizeGroundedAnswer(answer,sources);
+  answer = finalizeGroundedAnswer(applyCognitivePostGuard(answer,cognitiveContract),sources);
   const usedSources=selectCitedSources(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
 
@@ -3218,7 +3374,10 @@ async function chat(request, env) {
     fontes: usedSources,
     fallback: false,
     memory_persisted: memoryPersisted,
-    provider: "groq+500-node-async-rag",
+    provider: "groq-final-only+500-node-grounded-rag",
+    cognitive_mode: cognitiveContract.mode,
+    cognitive_contract_version: cognitiveContract.version,
+    cognitive_memory_used: cognitiveContract.use_history,
     retrieval_level: retrievalLevel,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
@@ -3231,6 +3390,11 @@ async function chat(request, env) {
     active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
     relay_mode: "async-worker-pool",
     master_node: "final-fusion",
+    llm_calls: Number(reduced.llm_calls || 1),
+    pre_master_llm_calls: 0,
+    groq_final_stage_only: true,
+    reference_only_llm_bypass: true,
+    unsupported_claim_policy: "abstain",
     ui_virtualization: true
   });
 }
