@@ -1,1 +1,2 @@
 deploy validated V7.4 export cursor hotfix to production
+retry with official Fabiano Cloudflare credentials
