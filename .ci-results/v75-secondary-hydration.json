@@ -1,12 +1,12 @@
 {
-  "state": "failed",
-  "primary_total": 2200,
+  "state": "waiting",
+  "primary_total": 0,
   "mirrored_chunks": 0,
   "hydrated_embeddings": 0,
   "total_books": 0,
-  "generation": "v75-etl-muagvwoa",
+  "generation": "",
   "source_signature": "",
-  "source": "r2",
-  "source_generation": "pc-mu9mgg84-s13e449c2-91",
-  "reason": "Secondary hydrated_embeddings is zero"
+  "source": "none",
+  "source_generation": "",
+  "reason": "primary Cloudflare Worker 1101; R2 snapshot is non-authoritative or has zero vectors"
 }
