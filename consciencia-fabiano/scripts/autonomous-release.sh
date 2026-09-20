@@ -384,12 +384,13 @@ log "R2_CROSS_DEVICE_STATE_PASS=yes"
 r2_total=$(jq -r '(.total // 0) | tonumber' /tmp/r2-sync-state.json 2>/dev/null || echo 0)
 r2_documents=$(jq -r '(.documents // 0) | tonumber' /tmp/r2-sync-state.json 2>/dev/null || echo 0)
 r2_generation=$(jq -r '.generation // ""' /tmp/r2-sync-state.json 2>/dev/null || true)
+r2_shards=$(jq -r '(.shards // 0) | tonumber' /tmp/r2-sync-state.json 2>/dev/null || echo 0)
 server_http=$(curl -sS --max-time 20 -o /tmp/server-library-state.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" || echo 000)
 server_total=0
 if [ "$server_http" = "200" ]; then
   server_total=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state.json 2>/dev/null || echo 0)
 fi
-log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents"
+log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents,r2_shards:$r2_shards"
 
 if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=START"
@@ -405,7 +406,9 @@ if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]
     fi
     [ "$page_http" = "200" ] || { log "LIBRARY_RECOVERY_FROM_R2=PAGE_HTTP_$page_http"; break; }
     jq -c '.rows[]?' /tmp/r2-page.json >>/tmp/r2-library-rows.ndjson
+    page_rows=$(jq -r '(.rows|length) // 0' /tmp/r2-page.json)
     done_flag=$(jq -r '.done // true' /tmp/r2-page.json)
+    log "LIBRARY_RECOVERY_PAGE=$shard_guard,rows:$page_rows,done:$done_flag"
     cursor=$(jq -r '.next_cursor // ""' /tmp/r2-page.json)
     [ "$done_flag" = "true" ] && break
     [ -n "$cursor" ] || break
@@ -481,6 +484,8 @@ PY
       [ -d "$docdir" ] || continue
       start_http=$(curl -sS --max-time 30 -o /tmp/hydrate-start.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @"$docdir/start.json" "$BASE/api/admin/local-ingest-start" || echo 000)
       if [ "$start_http" != "201" ] && [ "$start_http" != "200" ]; then
+        start_code=$(jq -r '.code // .message // "unknown"' /tmp/hydrate-start.json 2>/dev/null || echo unknown)
+        log "LIBRARY_RECOVERY_DOC_FAIL=start_http_$start_http:$start_code"
         hydrate_fail=$((hydrate_fail+1)); continue
       fi
       job_id=$(jq -r '.job_id // ""' /tmp/hydrate-start.json)
@@ -495,12 +500,22 @@ PY
       for batch in "$docdir"/batch-*.json; do
         jq --arg job "$job_id" '. + {job_id:$job}' "$batch" >/tmp/hydrate-append.json
         append_http=$(curl -sS --max-time 45 -o /tmp/hydrate-append-response.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @/tmp/hydrate-append.json "$BASE/api/admin/local-ingest-append" || echo 000)
-        if [ "$append_http" != "200" ]; then append_failed=1; break; fi
+        if [ "$append_http" != "200" ]; then
+          append_code=$(jq -r '.code // .message // "unknown"' /tmp/hydrate-append-response.json 2>/dev/null || echo unknown)
+          log "LIBRARY_RECOVERY_DOC_FAIL=append_http_$append_http:$append_code"
+          append_failed=1; break
+        fi
       done
       if [ "$append_failed" -ne 0 ]; then hydrate_fail=$((hydrate_fail+1)); continue; fi
       jq -nc --arg job "$job_id" '{job_id:$job}' >/tmp/hydrate-commit.json
       commit_http=$(curl -sS --max-time 30 -o /tmp/hydrate-commit-response.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @/tmp/hydrate-commit.json "$BASE/api/admin/local-ingest-commit" || echo 000)
-      if [ "$commit_http" = "200" ]; then hydrate_ok=$((hydrate_ok+1)); else hydrate_fail=$((hydrate_fail+1)); fi
+      if [ "$commit_http" = "200" ]; then
+        hydrate_ok=$((hydrate_ok+1))
+      else
+        commit_code=$(jq -r '.code // .message // "unknown"' /tmp/hydrate-commit-response.json 2>/dev/null || echo unknown)
+        log "LIBRARY_RECOVERY_DOC_FAIL=commit_http_$commit_http:$commit_code"
+        hydrate_fail=$((hydrate_fail+1))
+      fi
     done
     curl -sS --max-time 20 -o /tmp/server-library-state-after.json "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" || true
     server_total_after=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state-after.json 2>/dev/null || echo 0)
