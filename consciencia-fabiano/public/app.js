@@ -1085,7 +1085,7 @@
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
     status.textContent=agents
-      ? "V7.1 Fabiano R2 Cross Device • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+      ? "V7.2 Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
         (data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal-first")+
         (mergedCount?" • "+mergedCount+" chunks costurados":"")
       : "Plano C V6.0 • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
@@ -1502,11 +1502,16 @@
       if (stopBtn) stopBtn.disabled = false;
       activeAudioDone = resolve;
       const u = new SpeechSynthesisUtterance(speechText.slice(0, 5000));
-      u.lang = "pt-BR";
+      const sample=" "+speechText.toLowerCase().replace(/[^a-záàâãéêíóôõúç\s]/g," ")+" ";
+      const enScore=[" the "," and "," of "," to "," in "," is "," with "," for "].reduce((n,w)=>n+(sample.split(w).length-1),0);
+      const ptScore=[" de "," que "," e "," para "," com "," não "," por "," em "].reduce((n,w)=>n+(sample.split(w).length-1),0);
+      u.lang = enScore>ptScore ? "en-US" : "pt-BR";
       u.rate = 0.96;
       const voices = speechSynthesis.getVoices();
-      const pt = voices.find(v => /^pt-BR/i.test(v.lang)) || voices.find(v => /^pt/i.test(v.lang));
-      if (pt) u.voice = pt;
+      const preferred = u.lang==="en-US"
+        ? (voices.find(v=>/^en-US/i.test(v.lang)) || voices.find(v=>/^en/i.test(v.lang)))
+        : (voices.find(v=>/^pt-BR/i.test(v.lang)) || voices.find(v=>/^pt/i.test(v.lang)));
+      if (preferred) u.voice = preferred;
       const finish = () => {
         activeAudioDone = null;
         if (stopBtn) stopBtn.disabled = true;
@@ -1536,8 +1541,9 @@
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
       const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
 
-      // V6: 1000 candidatos alimentam 20 agentes lógicos isolados em Web Workers.
-      // Agent 2 usa Transformers.js/MiniLM apenas quando o literal não encontra nada.
+      // V7.2: a malha local fica como fallback/offline. Online, a pergunta segue
+      // primeiro para o RAG híbrido do servidor para produzir síntese inteligente.
+      if(!navigator.onLine){
       try{
         const engine=await ensureRagCascade("v6-omni-agent-query");
         if(engine?.omniAgentSearch){
@@ -1552,7 +1558,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.1 Fabiano R2 Cross Device: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
+              "V7.2 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
               ...renderedCards.slice(0,10).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1574,7 +1580,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.1 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
+              $("backendText").textContent="V7.2 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
@@ -1593,6 +1599,7 @@
           }
         }
       }catch{}
+      }
 
       // V3.3: referências diretas nunca passam por fuzzy/LLM antes do filtro booleano local.
       if(isStrictPrecisionReferenceIntent(q)){
@@ -1670,14 +1677,22 @@
         return;
       }
 
-      // Plano A analítico: nenhum IndexedDB, pdf.js, embedding local ou RAG local é carregado.
+      // Plano A analítico V7.2: envia, quando disponível, o embedding multilíngue
+      // gerado localmente. Se o modelo local não carregar a tempo, BM25/strict seguem funcionando.
+      let analyticQueryEmbedding=[];
+      try{
+        const engine=await ensureRagCascade("v7.2-hybrid-query");
+        if(engine?.embedQuery) analyticQueryEmbedding=await engine.embedQuery(q);
+      }catch{}
+
       let data=null;
       let primaryError=null;
       try{
         data=await streamChat({
           pergunta:q,
           turn_id:turnId,
-          historico:recentHistory
+          historico:recentHistory,
+          query_embedding:analyticQueryEmbedding
         });
       }catch(error){
         primaryError=error;
