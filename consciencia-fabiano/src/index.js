@@ -3174,7 +3174,11 @@ async function status(env) {
     } catch (error) {
       // Expose only an error class, never SQL, keys, document names, or private data.
       const message = String(error?.message || error).toLowerCase();
-      storageProbe = /quota|limit|exceeded/.test(message) ? "quota-or-limit" :
+      storageProbe = /library_init_schema/.test(message) ? "library-init-schema" :
+        /library_init_jobs/.test(message) ? "library-init-jobs" :
+        /library_init_documents/.test(message) ? "library-init-documents" :
+        /library_init_pending/.test(message) ? "library-init-pending" :
+        /quota|limit|exceeded/.test(message) ? "quota-or-limit" :
         /timeout|timed out/.test(message) ? "storage-timeout" :
         /librarydo\s+5\d\d/.test(message) ? "library-http-5xx" :
         /sqlite|sql|database/.test(message) ? "storage-sql-error" : "storage-unavailable";
@@ -3504,6 +3508,8 @@ export class LibraryDO {
     this.env = env;
     this.sql = ctx.storage.sql;
     ctx.blockConcurrencyWhile(async () => {
+      let initStage = "schema";
+      try {
       this.sql.exec(`
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS documents (
@@ -3555,6 +3561,7 @@ export class LibraryDO {
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
       `);
+      initStage = "jobs";
       const jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
       const addJobColumn=(name,ddl)=>{if(!jobColumns.includes(name))this.sql.exec("ALTER TABLE index_jobs ADD COLUMN "+name+" "+ddl);};
       addJobColumn("expected_pages","INTEGER NOT NULL DEFAULT 0");
@@ -3564,12 +3571,17 @@ export class LibraryDO {
       addJobColumn("content_sha256","TEXT");
       addJobColumn("original_r2_key","TEXT");
       addJobColumn("processed_pages","INTEGER NOT NULL DEFAULT 0");
+      initStage = "documents";
       const docColumns=[...this.sql.exec("PRAGMA table_info(documents)")].map(row=>String(row.name || ""));
       if(!docColumns.includes("r2_key")) this.sql.exec("ALTER TABLE documents ADD COLUMN r2_key TEXT");
       if(!docColumns.includes("embedding_model")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_model TEXT");
       if(!docColumns.includes("embedding_dimensions")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_dimensions INTEGER NOT NULL DEFAULT 0");
+      initStage = "pending";
       const pending=[...this.sql.exec("SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY updated_at LIMIT 1")][0] || null;
       if(pending?.id) await this.ctx.storage.setAlarm(Date.now()+250);
+      } catch (error) {
+        throw new Error("LIBRARY_INIT_"+initStage+": "+String(error?.message || error));
+      }
     });
   }
 
