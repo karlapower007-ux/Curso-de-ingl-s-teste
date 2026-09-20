@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: V7.1 FABIANO R2 CROSS DEVICE release =="
+log "== Consciência do Fabiano :: V7.2 GROUNDED HYBRID RAG release =="
 log "1/7 Validate source"
 npm run check
 node --check scripts/browser-voice-smoke.mjs
@@ -139,7 +139,7 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.1.0-fabiano-r2-cross-device"
+    and .version == "7.2.0-grounded-hybrid-rag"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
@@ -151,8 +151,14 @@ for i in $(seq 1 15); do
     and .exact_swarm_logical_nodes == 1000
     and .strict_lazy_local_engines == true
     and .universal_strict_match_core == "strict-match-core-v4"
-    and .online_offline_search_symmetry == true
-    and .same_paragraph_phrase_required == true
+    and .online_offline_search_symmetry == false
+    and .hybrid_grounded_retrieval == true
+    and .hybrid_context_limit == 120
+    and .semantic_query_embedding_server_enabled == true
+    and .semantic_multilingual_min_score == 0.62
+    and .semantic_multilingual_strong_score == 0.72
+    and .strict_exact_path_preserved == true
+    and .same_paragraph_phrase_required_for_exact_mode == true
     and .fuzzy_matching_disabled == true
     and .or_matching_disabled == true
     and .omni_library_sync == true
