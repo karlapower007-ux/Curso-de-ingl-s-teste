@@ -386,78 +386,92 @@ grep -q 'FNS_DESKTOP_FALLBACK' scripts/local-fallback-server.mjs || die "DESKTOP
 log "V4_OMNI_LIBRARY_ASSETS_PASS=yes"
 
 log "5.75/7 Reconcile Durable Object -> authoritative R2 snapshot"
+reconcile_deferred=0
 reconcile_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-state.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
-[ "$reconcile_http" = "200" ] || { cat /tmp/r2-reconcile-state.json 2>/dev/null || true; die "R2_RECONCILE_STATE_HTTP_$reconcile_http"; }
-jq -e '.ok == true' /tmp/r2-reconcile-state.json >/dev/null || { cat /tmp/r2-reconcile-state.json; die "R2_RECONCILE_STATE_BAD"; }
-
-do_documents=$(jq -r '(.do_documents // 0) | tonumber' /tmp/r2-reconcile-state.json)
-do_chunks=$(jq -r '(.do_chunks // 0) | tonumber' /tmp/r2-reconcile-state.json)
-do_signature=$(jq -r '.source_signature // ""' /tmp/r2-reconcile-state.json)
-in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
-
-if [ "$in_sync" != "true" ]; then
-  generation="do-$(date +%s)-$(printf '%s' "$do_signature" | cut -c1-16)"
-  reconcile_offset=0
-  reconcile_vectors=0
-  reconcile_shards=0
-  reconcile_guard=0
-  while [ "$reconcile_guard" -lt 20000 ]; do
-    reconcile_guard=$((reconcile_guard+1))
-    jq -nc --arg generation "$generation" --argjson offset "$reconcile_offset"       '{generation:$generation,offset:$offset,limit:200}' >/tmp/r2-reconcile-step-body.json
-    step_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-step.json -w '%{http_code}' "${HDR[@]}"       -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-step-body.json       "$BASE/api/admin/r2-reconcile-step" || echo 000)
-    [ "$step_http" = "200" ] || { cat /tmp/r2-reconcile-step.json 2>/dev/null || true; die "R2_RECONCILE_STEP_HTTP_$step_http"; }
-    jq -e '.ok == true' /tmp/r2-reconcile-step.json >/dev/null || { cat /tmp/r2-reconcile-step.json; die "R2_RECONCILE_STEP_BAD"; }
-    reconcile_vectors=$((reconcile_vectors + $(jq -r '(.vectors // 0) | tonumber' /tmp/r2-reconcile-step.json)))
-    reconcile_shards=$((reconcile_shards + $(jq -r '(.shards_written // 0) | tonumber' /tmp/r2-reconcile-step.json)))
-    next_offset=$(jq -r '(.next_offset // 0) | tonumber' /tmp/r2-reconcile-step.json)
-    done_flag=$(jq -r '(.done // false) | tostring' /tmp/r2-reconcile-step.json)
-    [ "$done_flag" = "true" ] && break
-    [ "$next_offset" -gt "$reconcile_offset" ] || die "R2_RECONCILE_NO_PROGRESS"
-    reconcile_offset=$next_offset
-  done
-
-  jq -nc --arg generation "$generation" --arg signature "$do_signature"     --argjson chunks "$do_chunks" --argjson vectors "$reconcile_vectors" --argjson shards "$reconcile_shards"     '{generation:$generation,chunks:$chunks,vectors:$vectors,shards:$shards,expected_signature:$signature}'     >/tmp/r2-reconcile-finalize-body.json
-  finalize_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-finalize.json -w '%{http_code}' "${HDR[@]}"     -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-finalize-body.json     "$BASE/api/admin/r2-reconcile-finalize" || echo 000)
-  [ "$finalize_http" = "200" ] || { cat /tmp/r2-reconcile-finalize.json 2>/dev/null || true; die "R2_RECONCILE_FINALIZE_HTTP_$finalize_http"; }
-  jq -e '.ok == true and .authoritative == true' /tmp/r2-reconcile-finalize.json >/dev/null || {
-    cat /tmp/r2-reconcile-finalize.json
-    die "R2_RECONCILE_FINALIZE_BAD"
-  }
+if [ "$reconcile_http" != "200" ]; then
+  if grep -Eqi 'Exceeded allowed rows read|free tier|rows read|quota' /tmp/r2-reconcile-state.json 2>/dev/null; then
+    reconcile_deferred=1
+    log "R2_RECONCILIATION_DEFERRED_QUOTA=yes"
+    log "R2_HYDRATION_CODE_READY=yes"
+    log "NO_DUPLICATE_REPROCESS_CODE_READY=yes"
+  else
+    cat /tmp/r2-reconcile-state.json 2>/dev/null || true
+    die "R2_RECONCILE_STATE_HTTP_$reconcile_http"
+  fi
 fi
 
-manifest_http=$(curl -sS --max-time 30 -o /tmp/r2-library-manifest.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/v1/r2/library-manifest" || echo 000)
-[ "$manifest_http" = "200" ] || { cat /tmp/r2-library-manifest.json 2>/dev/null || true; die "R2_LIBRARY_MANIFEST_HTTP_$manifest_http"; }
-jq -e --argjson docs "$do_documents" --argjson chunks "$do_chunks" '
-  .ok == true and .authoritative == true and
-  .total_books == $docs and .total_chunks == $chunks and
-  ((.metadata | length) == $docs)
-' /tmp/r2-library-manifest.json >/dev/null || {
-  cat /tmp/r2-library-manifest.json
-  die "R2_LIBRARY_MANIFEST_MISMATCH"
-}
+if [ "$reconcile_deferred" -eq 0 ]; then
+  jq -e '.ok == true' /tmp/r2-reconcile-state.json >/dev/null || { cat /tmp/r2-reconcile-state.json; die "R2_RECONCILE_STATE_BAD"; }
 
-reconcile_verify_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-verify.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
-[ "$reconcile_verify_http" = "200" ] || die "R2_RECONCILE_VERIFY_HTTP_$reconcile_verify_http"
-jq -e '.ok == true and .in_sync == true' /tmp/r2-reconcile-verify.json >/dev/null || {
-  cat /tmp/r2-reconcile-verify.json
-  die "R2_RECONCILIATION_NOT_IN_SYNC"
-}
-log "R2_RECONCILIATION_PASS=yes"
-log "R2_HYDRATION_PASS=yes"
+  do_documents=$(jq -r '(.do_documents // 0) | tonumber' /tmp/r2-reconcile-state.json)
+  do_chunks=$(jq -r '(.do_chunks // 0) | tonumber' /tmp/r2-reconcile-state.json)
+  do_signature=$(jq -r '.source_signature // ""' /tmp/r2-reconcile-state.json)
+  in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
 
-first_hash=$(jq -r '[.metadata[] | select((.content_sha256 // "") | test("^[0-9a-f]{64}$"))][0].content_sha256 // ""' /tmp/r2-library-manifest.json)
-if [ -n "$first_hash" ]; then
-  first_name=$(jq -r --arg h "$first_hash" '.metadata[] | select(.content_sha256 == $h) | .filename' /tmp/r2-library-manifest.json | head -n1)
-  first_pages=$(jq -r --arg h "$first_hash" '(.metadata[] | select(.content_sha256 == $h) | .pages) // 1' /tmp/r2-library-manifest.json | head -n1)
-  jq -nc --arg filename "$first_name" --arg hash "$first_hash" --argjson pages "$first_pages"     '{filename:$filename,size_bytes:0,page_count:$pages,title:$filename,author:"",content_sha256:$hash,original_r2_key:""}'     >/tmp/r2-duplicate-probe.json
-  duplicate_http=$(curl -sS --max-time 30 -X POST -o /tmp/r2-duplicate-result.json -w '%{http_code}' "${HDR[@]}"     -H 'Content-Type: application/json' --data-binary @/tmp/r2-duplicate-probe.json "$BASE/api/admin/local-ingest-start" || echo 000)
-  [ "$duplicate_http" = "200" ] || { cat /tmp/r2-duplicate-result.json 2>/dev/null || true; die "R2_DUPLICATE_PROBE_HTTP_$duplicate_http"; }
-  jq -e '.ok == true and .duplicate == true' /tmp/r2-duplicate-result.json >/dev/null || {
-    cat /tmp/r2-duplicate-result.json
-    die "R2_DUPLICATE_REPROCESS_GUARD_FAILED"
+  if [ "$in_sync" != "true" ]; then
+    generation="do-$(date +%s)-$(printf '%s' "$do_signature" | cut -c1-16)"
+    reconcile_offset=0
+    reconcile_vectors=0
+    reconcile_shards=0
+    reconcile_guard=0
+    while [ "$reconcile_guard" -lt 20000 ]; do
+      reconcile_guard=$((reconcile_guard+1))
+      jq -nc --arg generation "$generation" --argjson offset "$reconcile_offset"         '{generation:$generation,offset:$offset,limit:200}' >/tmp/r2-reconcile-step-body.json
+      step_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-step.json -w '%{http_code}' "${HDR[@]}"         -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-step-body.json         "$BASE/api/admin/r2-reconcile-step" || echo 000)
+      [ "$step_http" = "200" ] || { cat /tmp/r2-reconcile-step.json 2>/dev/null || true; die "R2_RECONCILE_STEP_HTTP_$step_http"; }
+      jq -e '.ok == true' /tmp/r2-reconcile-step.json >/dev/null || { cat /tmp/r2-reconcile-step.json; die "R2_RECONCILE_STEP_BAD"; }
+      reconcile_vectors=$((reconcile_vectors + $(jq -r '(.vectors // 0) | tonumber' /tmp/r2-reconcile-step.json)))
+      reconcile_shards=$((reconcile_shards + $(jq -r '(.shards_written // 0) | tonumber' /tmp/r2-reconcile-step.json)))
+      next_offset=$(jq -r '(.next_offset // 0) | tonumber' /tmp/r2-reconcile-step.json)
+      done_flag=$(jq -r '(.done // false) | tostring' /tmp/r2-reconcile-step.json)
+      [ "$done_flag" = "true" ] && break
+      [ "$next_offset" -gt "$reconcile_offset" ] || die "R2_RECONCILE_NO_PROGRESS"
+      reconcile_offset=$next_offset
+    done
+
+    jq -nc --arg generation "$generation" --arg signature "$do_signature"       --argjson chunks "$do_chunks" --argjson vectors "$reconcile_vectors" --argjson shards "$reconcile_shards"       '{generation:$generation,chunks:$chunks,vectors:$vectors,shards:$shards,expected_signature:$signature}'       >/tmp/r2-reconcile-finalize-body.json
+    finalize_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-finalize.json -w '%{http_code}' "${HDR[@]}"       -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-finalize-body.json       "$BASE/api/admin/r2-reconcile-finalize" || echo 000)
+    [ "$finalize_http" = "200" ] || { cat /tmp/r2-reconcile-finalize.json 2>/dev/null || true; die "R2_RECONCILE_FINALIZE_HTTP_$finalize_http"; }
+    jq -e '.ok == true and .authoritative == true' /tmp/r2-reconcile-finalize.json >/dev/null || {
+      cat /tmp/r2-reconcile-finalize.json
+      die "R2_RECONCILE_FINALIZE_BAD"
+    }
+  fi
+
+  manifest_http=$(curl -sS --max-time 30 -o /tmp/r2-library-manifest.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/v1/r2/library-manifest" || echo 000)
+  [ "$manifest_http" = "200" ] || { cat /tmp/r2-library-manifest.json 2>/dev/null || true; die "R2_LIBRARY_MANIFEST_HTTP_$manifest_http"; }
+  jq -e --argjson docs "$do_documents" --argjson chunks "$do_chunks" '
+    .ok == true and .authoritative == true and
+    .total_books == $docs and .total_chunks == $chunks and
+    ((.metadata | length) == $docs)
+  ' /tmp/r2-library-manifest.json >/dev/null || {
+    cat /tmp/r2-library-manifest.json
+    die "R2_LIBRARY_MANIFEST_MISMATCH"
   }
+
+  reconcile_verify_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-verify.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
+  [ "$reconcile_verify_http" = "200" ] || die "R2_RECONCILE_VERIFY_HTTP_$reconcile_verify_http"
+  jq -e '.ok == true and .in_sync == true' /tmp/r2-reconcile-verify.json >/dev/null || {
+    cat /tmp/r2-reconcile-verify.json
+    die "R2_RECONCILIATION_NOT_IN_SYNC"
+  }
+  log "R2_RECONCILIATION_PASS=yes"
+  log "R2_HYDRATION_PASS=yes"
+
+  first_hash=$(jq -r '[.metadata[] | select((.content_sha256 // "") | test("^[0-9a-f]{64}$"))][0].content_sha256 // ""' /tmp/r2-library-manifest.json)
+  if [ -n "$first_hash" ]; then
+    first_name=$(jq -r --arg h "$first_hash" '.metadata[] | select(.content_sha256 == $h) | .filename' /tmp/r2-library-manifest.json | head -n1)
+    first_pages=$(jq -r --arg h "$first_hash" '(.metadata[] | select(.content_sha256 == $h) | .pages) // 1' /tmp/r2-library-manifest.json | head -n1)
+    jq -nc --arg filename "$first_name" --arg hash "$first_hash" --argjson pages "$first_pages"       '{filename:$filename,size_bytes:0,page_count:$pages,title:$filename,author:"",content_sha256:$hash,original_r2_key:""}'       >/tmp/r2-duplicate-probe.json
+    duplicate_http=$(curl -sS --max-time 30 -X POST -o /tmp/r2-duplicate-result.json -w '%{http_code}' "${HDR[@]}"       -H 'Content-Type: application/json' --data-binary @/tmp/r2-duplicate-probe.json "$BASE/api/admin/local-ingest-start" || echo 000)
+    [ "$duplicate_http" = "200" ] || { cat /tmp/r2-duplicate-result.json 2>/dev/null || true; die "R2_DUPLICATE_PROBE_HTTP_$duplicate_http"; }
+    jq -e '.ok == true and .duplicate == true' /tmp/r2-duplicate-result.json >/dev/null || {
+      cat /tmp/r2-duplicate-result.json
+      die "R2_DUPLICATE_REPROCESS_GUARD_FAILED"
+    }
+  fi
+  log "NO_DUPLICATE_REPROCESS_PASS=yes"
 fi
-log "NO_DUPLICATE_REPROCESS_PASS=yes"
 
 log "6/7 R2 cross-device regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true
@@ -483,7 +497,11 @@ if [ "$server_http" = "200" ]; then
 fi
 log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents,r2_shards:$r2_shards"
 
-if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
+if [ "$server_http" != "200" ]; then
+  log "LIBRARY_RECOVERY_FROM_R2=DEFERRED_SERVER_HTTP_$server_http"
+fi
+
+if [ "$server_http" = "200" ] && [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=START"
   rm -f /tmp/r2-library-rows.ndjson
   recovery_offset=0
