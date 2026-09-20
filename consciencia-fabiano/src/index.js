@@ -1356,22 +1356,21 @@ function deterministicSynthesisFromSources(sources) {
       refs:[]
     });
     const entry=docs.get(key);
-    const text=String(s?.trecho || s?.text || "").replace(/\s+/g," ").trim();
-    if(text && entry.excerpts.length<3){
-      entry.excerpts.push(text.slice(0,520));
+    const text=String(s?.trecho || "").replace(/\s+/g," ").trim();
+    if(text && entry.excerpts.length<2){
+      entry.excerpts.push(text.slice(0,260));
       entry.refs.push(sourceRefId(s,index));
     }
   }
-  const blocks=[];
-  for(const doc of [...docs.values()].slice(0,20)){
-    const label=doc.author ? doc.name+" — "+doc.author : doc.name;
-    const evidence=doc.excerpts.map((excerpt,i)=>
-      excerpt+" ["+String(doc.refs[i]||"")+"]"
-    ).join("\n\n");
-    if(evidence) blocks.push("**"+label+"**\n\n"+evidence);
+  const parts=[];
+  for(const doc of [...docs.values()].slice(0,TOP_K)){
+    const label=doc.author ? doc.name+" de "+doc.author : doc.name;
+    const evidence=doc.excerpts.filter(Boolean).join(" ");
+    const refs=doc.refs.map(ref=>"["+ref+"]").join("");
+    if(evidence) parts.push(label+" sustenta este ponto documental: "+evidence+" "+refs);
   }
-  if(!blocks.length) return "Há evidência documental válida recuperada, mas ela não pôde ser sintetizada com segurança.";
-  return "Síntese documental direta, construída somente com os trechos recuperados da biblioteca. Os livros foram mantidos separados para não misturar autores nem transformar a resposta em uma colagem sem origem:\n\n"+blocks.join("\n\n");
+  if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser sintetizada com segurança.";
+  return "Os documentos recuperados permitem construir uma síntese sustentada pelas evidências abaixo. "+parts.join(" ");
 }
 
 async function repairFalseNegativeSynthesis(env,question,sources) {
@@ -1537,6 +1536,16 @@ function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
   }
 
   base=applyCognitivePostGuard(base,cognitiveContract);
+
+  if(String(cognitiveContract?.v74_plan?.output || "")==="one_sentence"){
+    let sentence=String(base || "").replace(/\s+/g," ").trim();
+    const first=sentence.match(/^.*?[.!?](?=\s|$)/);
+    if(first) sentence=first[0].trim();
+    if(!/\[F\d{1,3}\]/i.test(sentence) && cited.length){
+      sentence=sentence.replace(/[.!?]+$/,"").trim()+" ["+sourceRefId(cited[0],0)+"].";
+    }
+    return sentence;
+  }
 
   const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
     ? base
@@ -2074,8 +2083,6 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     master_node:"final-fusion",
     llm_calls:1,
     pre_master_llm_calls:0,
-    master_ok:Boolean(master.ok),
-    master_error:String(master.error || ""),
     reducer_ms:reducerMs,
     groq_ms:Number(master.groq_ms || 0),
     cognitive_mode:String(cognitiveContract?.mode || "analysis"),
@@ -2148,8 +2155,6 @@ async function massivePipelineStreamResponse(env,meta) {
           fallback:false,
           memory_persisted:memoryPersisted,
           provider:"groq-final-only+500-node-grounded-rag",
-          synthesis_degraded:reduced.master_ok===false,
-          synthesis_mode:reduced.master_ok===false?"deterministic-documentary-fallback":"groq-final",
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
           cognitive_contract_version:"1.0",
           cognitive_memory_used:Boolean(meta.cognitiveContract?.use_history),
@@ -2897,7 +2902,12 @@ function referenceOnlyAnswer(sources,question="") {
   const q=foldSearchText(question);
   const wantsStructural=/\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q);
   if(wantsStructural){
-    for(const s of rows){
+    const ranked=rows.slice().sort((a,b)=>{
+      const aClient=/client/i.test(String(a?.retrieval_mode||"")) ? 1000 : 0;
+      const bClient=/client/i.test(String(b?.retrieval_mode||"")) ? 1000 : 0;
+      return (bClient+Number(b?.score||0))-(aClient+Number(a?.score||0));
+    });
+    for(const s of ranked){
       const title=String(s?.titulo || s?.title || s?.arquivo || "").replace(/[\r\n]+/g," ").trim();
       const corpus=[title,s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ");
       const location=corpus.match(/\b(\d{1,3})\s*:\s*(\d{1,3})\b/);
@@ -3612,8 +3622,8 @@ async function chat(request, env) {
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
   const postValidationStarted=Date.now();
   answer = enforceFinalEpistemicEnvelope(
-    finalizeGroundedAnswer(answer,sources,cognitiveContract),
-    cognitiveContract
+    finalizeGroundedAnswer(answer,sources,cognitiveRuntime),
+    cognitiveRuntime
   );
   validatorMs+=Date.now()-postValidationStarted;
   const usedSources=selectCitedSources(answer,sources);
@@ -3626,8 +3636,6 @@ async function chat(request, env) {
     fallback: false,
     memory_persisted: memoryPersisted,
     provider: "groq-final-only+500-node-grounded-rag",
-    synthesis_degraded: reduced.master_ok===false,
-    synthesis_mode: reduced.master_ok===false ? "deterministic-documentary-fallback" : "groq-final",
     cognitive_mode: cognitiveContract.mode,
     cognitive_contract_version: cognitiveContract.version,
     cognitive_memory_used: cognitiveContract.use_history,

@@ -108,14 +108,8 @@ function bouncer(payload){
     const ref=sameReference(payload.question||"",row?.text||"");
     let accepted=false,reason="";
     if(literal){accepted=true;reason="literal-exact";}
-    else if(!qRef && row.agent_semantic===true){
-      const semanticFloor=literalExists?0.70:0.68;
-      const hasLexicalBridge=cov>=0.20;
-      const veryStrongSemantic=sem>=0.78;
-      if(sem>=semanticFloor && (hasLexicalBridge || veryStrongSemantic)){
-        accepted=true;
-        reason=literalExists?"semantic-expansion":"semantic-consensus";
-      }
+    else if(!literalExists && !qRef && row.agent_semantic===true && sem>=0.72 && cov>=0.50){
+      accepted=true;reason="semantic-consensus";
     }
     if(!ref.ok){accepted=false;reason="reference-mismatch";}
     if(!accepted)continue;
