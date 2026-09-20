@@ -124,7 +124,17 @@ if(!OWNER){
   process.exit(2);
 }
 
-const probe=await adminGet(BASE+"/api/admin/export-library?offset=0&limit=1");
+let probe;
+try{
+  probe=await adminGet(BASE+"/api/admin/export-library?offset=0&limit=1");
+}catch(error){
+  const message=String(error?.message||error);
+  const reason=/Error 1101|Worker threw exception/i.test(message)
+    ? "primary Cloudflare Worker 1101; quota/reset not confirmed"
+    : "primary export unavailable: "+message.slice(0,240);
+  await writeStatus({state:"waiting",reason});
+  process.exit(0);
+}
 if(probe.waiting){
   await writeStatus({state:"waiting",reason:"primary quota/read limit not reset"});
   process.exit(0);
