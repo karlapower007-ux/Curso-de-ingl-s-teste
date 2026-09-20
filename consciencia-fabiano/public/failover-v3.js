@@ -85,7 +85,7 @@ function deterministicEvidenceAnswer(matches,planLabel){
     const text=String(r.text||r.trecho||"").trim().replace(/\s+/g," ").slice(0,1100);
     return "[F"+(i+1)+"] "+name+(page?" — página "+page:"")+"\n"+text;
   });
-  return "Modo de contingência documental "+planLabel+" (sem reescrita por IA).\n\n"+blocks.join("\n\n");
+  return "Encontrei estes trechos relevantes na biblioteca"+(planLabel ? " ("+planLabel+")" : "")+".\n\n"+blocks.join("\n\n");
 }
 async function planCLocalAnalytic(payload){
   try{
@@ -123,7 +123,7 @@ async function planCLocalAnalytic(payload){
         ok:true,
         plan:"C",
         provider:"indexeddb-local-worker-swarm",
-        answer:"Modo Offline V4.0: "+cards.length+" correspondências de alta confiança foram extraídas localmente.",
+        answer:"Encontrei "+cards.length+" trechos de alta confiança na biblioteca local.",
         sources:cards.slice(0,24).map(card=>({
           arquivo:card.filename || card.title,
           titulo:card.title,
@@ -333,15 +333,16 @@ export async function recoverStrictPrecision(payload){
   const c=await planCLocalAnalytic({...payload,strict_precision:true});
   if(c?.ok)return c;
   return {
-    ok:true,
+    ok:false,
     plan:"C",
     provider:"indexeddb-local-worker-swarm",
-    strict_empty:true,
-    terminal:true,
+    strict_empty:false,
+    terminal:false,
     zero_noise:true,
     strict_mode:"boolean-exact",
     strict_unavailable:true,
-    answer:"Nenhuma correspondência exata encontrada na biblioteca total.",
+    code:"LOCAL_INDEX_UNAVAILABLE",
+    answer:"",
     sources:[],
     cards:[],
     matches:[],
