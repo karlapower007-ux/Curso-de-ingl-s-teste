@@ -1,1 +1,2 @@
 trigger V7.4 export cursor hotfix validation
+validate primary-key cursor hotfix2
