@@ -903,24 +903,21 @@
     const wrap=document.createElement("div");
     wrap.className="msg assistant raw-document-msg";
 
-    const bar=document.createElement("div");
-    bar.className="raw-document-status";
     const offline=meta?.offline_takeover===true;
     const localTakeover=meta?.local_takeover===true;
-    bar.textContent=offline
-      ? "Modo Offline Ativado - Leitura Contínua Local"
+    const systemStatus=offline
+      ? "Biblioteca local ativa"
       : localTakeover
-        ? "Contingência local ativada - internet disponível, servidor principal indisponível"
-        : "Leitura documental direta • LLM bypass • ordem verificada";
-    wrap.appendChild(bar);
+        ? "Contingência local ativa"
+        : "Leitura documental direta";
+    if($("backendText")) $("backendText").textContent=systemStatus;
 
     const source=document.createElement("div");
     source.className="raw-document-source";
     const bits=[
       meta?.title || meta?.filename || "Documento",
       meta?.author ? "autor: "+meta.author : "",
-      meta?.page ? "página "+meta.page : "",
-      meta?.scope ? "modo: "+meta.scope : ""
+      meta?.page ? "página "+meta.page : ""
     ].filter(Boolean);
     source.textContent=bits.join(" • ");
     wrap.appendChild(source);
@@ -1881,7 +1878,8 @@
       saveHistory();
       await playAudio(data.audio_url,resposta);
     } catch (error) {
-      appendMessage("assistant","Não consegui responder agora. "+String(error?.message||error));
+      appendMessage("assistant","Não consegui responder agora.");
+      if($("backendText")) $("backendText").textContent="Diagnóstico interno: "+String(error?.message||error);
       setAvatar("closed");
     } finally {
       $("sendBtn").disabled = false;
@@ -2056,7 +2054,9 @@
           setTimeout(() => startRecorderFallback().catch(stopVoiceLoop), 300);
         }
       } catch (e) {
-        appendMessage("assistant", "Não consegui transcrever sua voz: " + e.message);
+        const detail=String(e?.message || e || "Falha de transcrição");
+        if($("status-whisper")) $("status-whisper").textContent="Não consegui transcrever a voz agora.";
+        if($("backendText")) $("backendText").textContent="Diagnóstico de voz: "+detail;
         if (voiceLoopEnabled) scheduleVoiceReconnect("falha na transcrição",700);
       }
     };
