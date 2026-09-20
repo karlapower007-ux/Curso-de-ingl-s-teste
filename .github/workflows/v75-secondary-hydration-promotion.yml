@@ -1,0 +1,172 @@
+name: V7.5 Secondary Hydration and Promotion
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+concurrency:
+  group: v75-secondary-hydration-promotion
+  cancel-in-progress: false
+
+jobs:
+  hydrate-and-promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout operations branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Stop after verified promotion
+        id: previous
+        shell: bash
+        run: |
+          if [ -f .ci-results/v75-secondary-hydration.json ] && \
+             [ "$(jq -r '.state // ""' .ci-results/v75-secondary-hydration.json)" = "promoted" ]; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure PostgreSQL client
+        if: steps.previous.outputs.done != 'true'
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql --version
+
+      - name: Run idempotent hydration ETL
+        if: steps.previous.outputs.done != 'true'
+        id: etl
+        continue-on-error: true
+        env:
+          FNS_BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          ETL_STATUS_PATH: .ci-results/v75-secondary-hydration.json
+        run: node ops/hydrate-v75-secondary.mjs
+
+      - name: Read ETL state
+        if: steps.previous.outputs.done != 'true'
+        id: state
+        shell: bash
+        run: |
+          STATE="failed"
+          if [ -f .ci-results/v75-secondary-hydration.json ]; then
+            STATE="$(jq -r '.state // "failed"' .ci-results/v75-secondary-hydration.json)"
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "ETL state: $STATE"
+
+      - name: Record non-sensitive hydration state
+        if: steps.previous.outputs.done != 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-results/v75-secondary-hydration.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Record V7.5 secondary hydration state"
+            git push origin HEAD:main
+          fi
+
+      - name: Require hydrated mirror before promotion
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state != 'hydrated'
+        shell: bash
+        run: |
+          echo "Mirror is not hydrated yet. Production remains on V7.4."
+          exit 0
+
+      - name: Confirm PR acceptance checks
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh pr checks 2 --repo "${GITHUB_REPOSITORY}" --watch --fail-fast
+
+      - name: Promote PR 2
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh pr ready 2 --repo "${GITHUB_REPOSITORY}" || true
+          gh pr merge 2 --repo "${GITHUB_REPOSITORY}" --merge
+
+      - name: Checkout promoted production branch
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+          fetch-depth: 0
+
+      - name: Validate promoted branch before deploy
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        working-directory: consciencia-fabiano
+        run: |
+          npm install --ignore-scripts
+          npm run check
+
+      - name: Deploy with Wrangler when Cloudflare token is configured
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        id: wrangler
+        continue-on-error: true
+        working-directory: consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Cloudflare API token not configured in GitHub; checking Git integration deployment instead."
+            exit 0
+          fi
+          npx wrangler deploy
+
+      - name: Verify V7.5 on official production endpoint
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated'
+        id: production
+        shell: bash
+        run: |
+          OK=false
+          for i in $(seq 1 12); do
+            BODY="$(curl -fsS --max-time 15 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
+            VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
+            if [ "$VERSION" = "7.5.0-stateful-resilience" ]; then
+              OK=true
+              break
+            fi
+            sleep 25
+          done
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          if [ "$OK" != "true" ]; then
+            echo "V7.5 was merged but the official endpoint is not serving it yet."
+            exit 1
+          fi
+
+      - name: Mark promotion complete
+        if: steps.previous.outputs.done != 'true' && steps.state.outputs.state == 'hydrated' && steps.production.outputs.ok == 'true'
+        shell: bash
+        run: |
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          mkdir -p .ci-results
+          jq '.state="promoted" | .reason=""' .ci-results/v75-secondary-hydration.json > /tmp/v75.json
+          mv /tmp/v75.json .ci-results/v75-secondary-hydration.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-results/v75-secondary-hydration.json
+          git diff --cached --quiet || git commit -m "Mark V7.5 production promotion complete"
+          git push origin HEAD:main
