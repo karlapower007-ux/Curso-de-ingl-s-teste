@@ -2080,7 +2080,10 @@ async function massivePipelineStreamResponse(env,meta) {
 
         let answer=String(reduced.masterSynthesis || "").trim();
         if(meta.sources.length && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(meta.sources);
-        answer=finalizeGroundedAnswer(answer,meta.sources,meta.cognitiveContract);
+        answer=enforceFinalEpistemicEnvelope(
+          finalizeGroundedAnswer(answer,meta.sources,meta.cognitiveContract),
+          meta.cognitiveContract
+        );
         const usedSources=selectCitedSources(answer,meta.sources);
         const memoryPersisted=await persistChatTurn(
           env,meta.ownerId,meta.body,meta.question,answer,usedSources,false
@@ -2849,6 +2852,36 @@ function applyCognitivePostGuard(answer,contract) {
   return text;
 }
 
+function enforceFinalEpistemicEnvelope(answer,contract) {
+  const text=String(answer || "").trim();
+  const mode=String(contract?.mode || "factual");
+  const lang=String(contract?.language || "pt");
+  if(!text || !["reflection","hypothesis"].includes(mode)) return text;
+
+  const marker=/\n\s*2\.\s*(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS/i;
+  const match=marker.exec(text);
+  let body=match ? text.slice(0,match.index).trim() : text;
+  const refs=match ? text.slice(match.index).trim() : "";
+
+  if(mode==="reflection" && !/\b(reflex[aã]o|reflection)\b/i.test(body)){
+    const label=lang==="en"?"REFLECTION":"REFLEXÃO";
+    const abstain=lang==="en"
+      ? "The retrieved documents do not support an additional reflection without going beyond the documentary basis."
+      : "Os documentos recuperados não sustentam uma reflexão adicional sem ultrapassar a base documental.";
+    body += "\n\n"+label+":\n\n"+abstain;
+  }
+
+  if(mode==="hypothesis" && !/\b(hip[oó]tese|hypothesis)\b/i.test(body)){
+    const label=lang==="en"?"HYPOTHESIS":"HIPÓTESE";
+    const abstain=lang==="en"
+      ? "The retrieved documents are not sufficient to formulate an additional hypothesis without extrapolating beyond the sources."
+      : "Os documentos recuperados não são suficientes para formular uma hipótese adicional sem extrapolar as fontes.";
+    body += "\n\n"+label+":\n\n"+abstain;
+  }
+
+  return refs ? body+"\n\n"+refs : body;
+}
+
 function detectExactRetrievalIntent(question) {
   const raw=String(question || "").trim();
   const q=foldSearchText(raw);
@@ -3396,7 +3429,10 @@ async function chat(request, env) {
   const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveContract);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
-  answer = finalizeGroundedAnswer(answer,sources,cognitiveContract);
+  answer = enforceFinalEpistemicEnvelope(
+    finalizeGroundedAnswer(answer,sources,cognitiveContract),
+    cognitiveContract
+  );
   const usedSources=selectCitedSources(answer,sources);
   const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
 
