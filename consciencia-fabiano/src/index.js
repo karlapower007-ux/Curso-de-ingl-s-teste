@@ -2052,7 +2052,11 @@ async function massivePipelineStreamResponse(env,meta) {
         emit("meta",{
           fontes:meta.sources,
           fallback:false,
-          provider:"groq+500-node-async-rag",
+          provider:"groq-final-only+500-node-grounded-rag",
+          cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
+          cognitive_contract_version:"1.0",
+          pre_master_llm_calls:0,
+          max_llm_calls:1,
           retrieval_level:meta.retrievalLevel || 0,
           embedding_model:LOCAL_EMBEDDING_MODEL,
           chat_model:CHAT_MODEL,
@@ -2068,12 +2072,13 @@ async function massivePipelineStreamResponse(env,meta) {
           meta.question,
           meta.sources,
           meta.history || [],
-          async(event,payload)=>emit(event,payload)
+          async(event,payload)=>emit(event,payload),
+          meta.cognitiveContract || null
         );
 
         let answer=String(reduced.masterSynthesis || "").trim();
         if(meta.sources.length && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(meta.sources);
-        answer=finalizeGroundedAnswer(answer,meta.sources);
+        answer=finalizeGroundedAnswer(applyCognitivePostGuard(answer,meta.cognitiveContract),meta.sources);
         const usedSources=selectCitedSources(answer,meta.sources);
         const memoryPersisted=await persistChatTurn(
           env,meta.ownerId,meta.body,meta.question,answer,usedSources,false
@@ -2085,7 +2090,10 @@ async function massivePipelineStreamResponse(env,meta) {
           fontes:usedSources,
           fallback:false,
           memory_persisted:memoryPersisted,
-          provider:"groq+500-node-async-rag",
+          provider:"groq-final-only+500-node-grounded-rag",
+          cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
+          cognitive_contract_version:"1.0",
+          cognitive_memory_used:Boolean(meta.cognitiveContract?.use_history),
           retrieval_level:meta.retrievalLevel || 0,
           embedding_model:LOCAL_EMBEDDING_MODEL,
           chat_model:CHAT_MODEL,
@@ -2098,6 +2106,11 @@ async function massivePipelineStreamResponse(env,meta) {
           active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
           relay_mode:"async-worker-pool",
           master_node:"final-fusion",
+          llm_calls:Number(reduced.llm_calls || 1),
+          pre_master_llm_calls:0,
+          groq_final_stage_only:true,
+          reference_only_llm_bypass:true,
+          unsupported_claim_policy:"abstain",
           false_negative_guard:true,
           ui_virtualization:true
         });
@@ -3298,6 +3311,8 @@ async function chat(request, env) {
         ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
         strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
         provider:emptyProvider,retrieval_level:retrievalLevel,
+        cognitive_mode:cognitiveContract.mode,cognitive_contract_version:cognitiveContract.version,
+        llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
         map_reduce:false,map_batches:0,
         micro_nodes_total:MASSIVE_NODE_COUNT,
@@ -3312,6 +3327,8 @@ async function chat(request, env) {
       ok:true,resposta:emptyAnswer,fontes:[],fallback:true,retrieval_unavailable:retrievalUnavailable,
       strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
       provider:emptyProvider,retrieval_level:retrievalLevel,
+      cognitive_mode:cognitiveContract.mode,cognitive_contract_version:cognitiveContract.version,
+      llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
       map_reduce:false,map_batches:0,
       micro_nodes_total:MASSIVE_NODE_COUNT,
@@ -3485,6 +3502,17 @@ async function status(env) {
     search_top_k: TOP_K,
     rag_map_reduce: true,
     anti_hallucination_mode: "strict-grounded",
+    cognitive_orchestrator: true,
+    cognitive_contract_version: "1.0",
+    cognitive_modes: ["reference_only","factual","summary","comparison","analysis","reflection","hypothesis"],
+    current_question_scope_guard: true,
+    memory_scope_guard: true,
+    epistemic_labeling: true,
+    unsupported_claim_policy: "abstain",
+    reference_only_llm_bypass: true,
+    groq_final_stage_only: true,
+    analytic_llm_calls_max: 1,
+    pre_master_llm_calls: 0,
     groq_temperature: 0.0,
     deterministic_reference_rendering: true,
     cross_document_citation_mode: "mandatory",
@@ -4613,6 +4641,16 @@ export default {
         semantic_min_score: SEMANTIC_MIN_SCORE,
         search_top_k: TOP_K,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
+        cognitive_orchestrator: true,
+        cognitive_contract_version: "1.0",
+        current_question_scope_guard: true,
+        memory_scope_guard: true,
+        epistemic_labeling: true,
+        unsupported_claim_policy: "abstain",
+        reference_only_llm_bypass: true,
+        groq_final_stage_only: true,
+        analytic_llm_calls_max: 1,
+        pre_master_llm_calls: 0,
         rag_map_reduce: true,
         map_batch_size: MAP_BATCH_SIZE,
         micro_node_chain: false,
