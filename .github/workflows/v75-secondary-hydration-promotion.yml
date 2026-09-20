@@ -7,6 +7,11 @@ on:
     paths:
       - "ops/hydrate-v75-secondary.mjs"
       - ".github/workflows/v75-secondary-hydration-promotion.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "ops/v75-manual-trigger.txt"
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
