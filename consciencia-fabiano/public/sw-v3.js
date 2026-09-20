@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-ultimate-resilience-v7-4-r2truth";
+const CACHE_NAME="fns-ultimate-resilience-v7-1";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const BATCH_SIZE=200;
 const DAEMON_DB="fns_omni_daemon_v6";
