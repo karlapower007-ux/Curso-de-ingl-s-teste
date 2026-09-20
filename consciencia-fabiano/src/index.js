@@ -1,5 +1,5 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
-const VERSION = "7.2.0-grounded-hybrid-rag";
+const VERSION = "7.3.0-cognitive-orchestrator";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -47,7 +47,7 @@ const MICRO_NODE_COUNT = 20;
 const MICRO_NODE_BATCH_SIZE = 5;
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
-// Os nós de evidência são determinísticos e baratos; somente reducers + master usam Groq.
+// V7.3: nós e reducers são 100% determinísticos; somente o MASTER FINAL pode chamar Groq.
 const MASSIVE_NODE_COUNT = 500;
 const MASSIVE_WORKER_CONCURRENCY = 25;
 const MASSIVE_NODE_GROUP_SIZE = 25;
@@ -1875,65 +1875,80 @@ async function runAsyncWorkerPool(tasks,limit,worker,onSettled=null) {
   return results;
 }
 
-async function massiveReduceGroup(env,question,group,groupIndex) {
-  const evidence=Array.from(group || []).filter(x=>x?.evidence).map(x=>x.evidence).join("\n");
-  if(!evidence) return {ok:true,text:"",group:groupIndex+1};
-  const messages=[
-    {
-      role:"system",
-      content:
-        "Você é um REDUCER documental determinístico de um RAG massivo. Trabalhe somente com as evidências [F#] recebidas. " +
-        "Produza um resumo denso, factual e articulado; preserve os identificadores [F#] imediatamente após cada afirmação sustentada. " +
-        "Não invente fatos, metadados, autores, páginas ou citações. Não escreva seção de referências. Temperatura lógica: 0."
-    },
-    {
-      role:"user",
-      content:"PERGUNTA:\n"+trimToTokenBudget(question,600)+"\n\nEVIDÊNCIAS DO GRUPO "+(groupIndex+1)+":\n"+
-        trimToTokenBudget(evidence,5200)
-    }
-  ];
-  try{
-    const res=await groqCompletion(env,messages,false,{
-      input_budget:6500,
-      max_completion_tokens:720,
-      temperature:0.0,
-      max_retries:MASSIVE_GROQ_MAX_RETRIES
-    });
-    const data=await res.json().catch(()=>({}));
-    const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    if(text) return {ok:true,text,group:groupIndex+1};
-  }catch(error){
-    return {ok:false,text:trimToTokenBudget(evidence,1600),group:groupIndex+1,error:String(error?.message||error)};
+async function massiveReduceGroup(_env,question,group,groupIndex) {
+  const rows=Array.from(group || []).filter(x=>String(x?.evidence || "").trim());
+  if(!rows.length) return {ok:true,text:"",group:groupIndex+1,deterministic:true,llm_calls:0};
+
+  // Compressão extrativa: nenhum LLM é chamado aqui.
+  const ranked=rows.slice().sort((a,b)=>
+    Number(b?.metadata?.retrieval_score || 0)-Number(a?.metadata?.retrieval_score || 0)
+  );
+  const picked=[];
+  const seenDocs=new Set();
+
+  for(const row of ranked){
+    const doc=String(row?.metadata?.document_id || row?.source || "");
+    if(doc && seenDocs.has(doc)) continue;
+    seenDocs.add(doc);
+    picked.push(row);
+    if(picked.length>=5) break;
   }
-  return {ok:false,text:trimToTokenBudget(evidence,1600),group:groupIndex+1,error:"empty-reducer-output"};
+  if(picked.length<5){
+    for(const row of ranked){
+      if(picked.includes(row)) continue;
+      picked.push(row);
+      if(picked.length>=5) break;
+    }
+  }
+
+  const evidence=picked.map(row=>{
+    const line=String(row.evidence || "").replace(/\s+/g," ").trim();
+    return line.length>360 ? line.slice(0,357)+"..." : line;
+  }).join("\n");
+
+  return {
+    ok:true,
+    text:evidence,
+    group:groupIndex+1,
+    deterministic:true,
+    llm_calls:0,
+    selected_evidence:picked.length,
+    question_fingerprint:foldSearchText(question).slice(0,120)
+  };
 }
 
-async function massiveMasterSynthesis(env,question,reducers,history,sources) {
+async function massiveMasterSynthesis(env,question,reducers,history,sources,cognitiveContract=null) {
   const reducerText=Array.from(reducers || [])
     .filter(x=>String(x?.text || "").trim())
     .map(x=>"GRUPO "+x.group+":\n"+String(x.text || "").trim())
     .join("\n\n");
-  const historyText=slidingHistory(history,4,650)
-    .map(x=>x.role.toUpperCase()+": "+x.content).join("\n");
+  const contract=cognitiveContract || buildCognitiveContract(question);
+  const historyText=contract.use_history
+    ? slidingHistory(history,4,650).map(x=>x.role.toUpperCase()+": "+x.content).join("\n")
+    : "";
   const ledger=crossLibraryLedger(sources);
+  const contractRules=cognitiveContractPrompt(contract);
   const messages=[
     {
       role:"system",
       content:
-        "Você é o MASTER FINAL do RAG V2.0 MASSIVE SCALE. Escreva somente a seção '1. SÍNTESE PRINCIPAL:' no mesmo idioma da pergunta (português ou inglês). " +
-        "Produza um verbete enciclopédico denso, profundo, coeso e articulado, cruzando todas as evidências diretamente relevantes. " +
-        "Cada afirmação factual deve conservar os identificadores [F#] que realmente a sustentam. " +
-        "Não despeje trechos soltos, não invente fatos, autores, páginas, capítulos ou citações e não escreva a seção de referências. " +
-        "Se houver tensões entre fontes, descreva-as sem resolver por invenção. Temperatura obrigatória: 0."
+        "Você é o MASTER FINAL da Consciência Fabiano. Esta é a ÚNICA etapa autorizada a usar LLM neste turno analítico. " +
+        "Trabalhe somente com as evidências documentais fornecidas e cumpra rigorosamente o CONTRATO COGNITIVO DO TURNO. " +
+        "A pergunta atual tem prioridade sobre memória, contexto anterior e tópicos relacionados. Não amplie o escopo por iniciativa própria. " +
+        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. " +
+        "É proibido inventar fatos, autores, páginas, capítulos, citações, causalidade, consenso ou certeza ausentes das evidências. " +
+        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. " +
+        "Não escreva seção final de referências: o servidor fará isso deterministicamente. Temperatura obrigatória: 0.\n\n" +
+        contractRules
     },
     {
       role:"user",
       content:
-        "PERGUNTA:\n"+trimToTokenBudget(question,700)+
-        (historyText?"\n\nCONTEXTO RECENTE:\n"+trimToTokenBudget(historyText,650):"")+
+        "PERGUNTA ATUAL — ESCOPO SOBERANO:\n"+trimToTokenBudget(question,700)+
+        (historyText?"\n\nMEMÓRIA RECENTE — USE SOMENTE PARA DESAMBIGUAÇÃO; NÃO EXPANDA O ESCOPO:\n"+trimToTokenBudget(historyText,650):"")+
         "\n\nMAPA DE DOCUMENTOS:\n"+trimToTokenBudget(ledger,1300)+
-        "\n\nREDUÇÕES DOS NÓS:\n"+trimToTokenBudget(reducerText,7200)+
-        "\n\nREDAJA A SÍNTESE ENCICLOPÉDICA FINAL."
+        "\n\nEVIDÊNCIAS EXTRATIVAS DETERMINÍSTICAS:\n"+trimToTokenBudget(reducerText,7200)+
+        "\n\nRESPONDA AGORA EXATAMENTE NO FORMATO E NO ESCOPO DO CONTRATO COGNITIVO."
     }
   ];
   try{
@@ -1952,7 +1967,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources) {
   return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output"};
 }
 
-async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null) {
+async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null,cognitiveContract=null) {
   const rows=Array.from(sources || []).slice(0,MASSIVE_NODE_COUNT);
   const tasks=Array.from({length:MASSIVE_NODE_COUNT},(_,index)=>({node:index+1,source:rows[index] || null}));
   let completed=0;
@@ -2002,7 +2017,7 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     }
   );
 
-  const master=await massiveMasterSynthesis(env,question,reducerResults,history,rows);
+  const master=await massiveMasterSynthesis(env,question,reducerResults,history,rows,cognitiveContract);
   return {
     text:reducerResults.map(x=>x?.text || "").filter(Boolean).join("\n\n"),
     masterSynthesis:master.text,
@@ -2014,6 +2029,9 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     relay_mode:"async-worker-pool",
     active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
     master_node:"final-fusion",
+    llm_calls:1,
+    pre_master_llm_calls:0,
+    cognitive_mode:String(cognitiveContract?.mode || "analysis"),
     node_results:nodeResults
   };
 }
