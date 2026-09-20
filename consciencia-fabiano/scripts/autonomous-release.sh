@@ -493,11 +493,42 @@ PY
         existing_chunks=$(jq -r '(.chunks // 0) | tonumber' /tmp/hydrate-start.json)
         if [ "$existing_chunks" -gt 0 ]; then
           hydrate_ok=$((hydrate_ok+1))
-        else
+          continue
+        fi
+
+        # A zero-chunk duplicate is a stale metadata row left by an earlier
+        # interrupted ingestion. Remove only that empty document and retry the
+        # same existing ingest path; no RAG, memory or model logic is changed.
+        stale_document_id=$(jq -r '.document_id // ""' /tmp/hydrate-start.json)
+        if [ -n "$stale_document_id" ]; then
+          jq -nc --arg id "$stale_document_id" '{document_id:$id}' >/tmp/hydrate-delete.json
+          delete_http=$(curl -sS --max-time 20 -o /tmp/hydrate-delete-response.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @/tmp/hydrate-delete.json "$BASE/api/admin/delete-pdf" || echo 000)
+          if [ "$delete_http" = "200" ]; then
+            retry_http=$(curl -sS --max-time 30 -o /tmp/hydrate-start-retry.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @"$docdir/start.json" "$BASE/api/admin/local-ingest-start" || echo 000)
+            if [ "$retry_http" = "201" ] || [ "$retry_http" = "200" ]; then
+              cp /tmp/hydrate-start-retry.json /tmp/hydrate-start.json
+              job_id=$(jq -r '.job_id // ""' /tmp/hydrate-start.json)
+              duplicate=$(jq -r '.duplicate // false' /tmp/hydrate-start.json)
+              if [ "$duplicate" = "true" ]; then
+                existing_chunks=$(jq -r '(.chunks // 0) | tonumber' /tmp/hydrate-start.json)
+                if [ "$existing_chunks" -gt 0 ]; then
+                  hydrate_ok=$((hydrate_ok+1))
+                  continue
+                fi
+              fi
+            else
+              log "LIBRARY_RECOVERY_DOC_FAIL=retry_start_http_$retry_http"
+            fi
+          else
+            log "LIBRARY_RECOVERY_DOC_FAIL=delete_stale_http_$delete_http"
+          fi
+        fi
+
+        if [ -z "$job_id" ] || [ "$duplicate" = "true" ]; then
           log "LIBRARY_RECOVERY_DOC_FAIL=duplicate_zero_chunks"
           hydrate_fail=$((hydrate_fail+1))
+          continue
         fi
-        continue
       fi
       if [ -z "$job_id" ]; then hydrate_fail=$((hydrate_fail+1)); continue; fi
       append_failed=0
