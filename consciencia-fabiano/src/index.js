@@ -1,5 +1,6 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
-const VERSION = "7.3.0-cognitive-orchestrator";
+import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
+const VERSION = "7.4.0-cognitive-1000-microturbines";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -2804,7 +2805,14 @@ function cognitiveContractPrompt(contract) {
     reference_only:
       "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência documental."
   };
-  return common+(rules[c.mode] || rules.factual);
+  const plan=c?.v74_plan || null;
+  const planText=plan
+    ? " V7.4 MICROCOMPETÊNCIAS SELECIONADAS: "+String(plan.selected_count || 0)+
+      " de 1000; operações="+Array.from(plan.operations || []).slice(0,24).join(", ")+
+      "; famílias="+Array.from(plan.families || []).join(", ")+
+      ". Use esse plano somente como restrição operacional; não invente conteúdo a partir dos nomes das competências."
+    : "";
+  return common+(rules[c.mode] || rules.factual)+planText;
 }
 
 function referenceOnlyAnswer(sources) {
@@ -3252,6 +3260,18 @@ async function chat(request, env) {
   if (question.length < 2) return json({ ok: false, message: "Pergunta vazia." }, 400);
 
   const cognitiveContract=buildCognitiveContract(question);
+  const cognitivePlan=buildV74ExecutionPlan(question,cognitiveContract);
+  const cognitiveRuntime={
+    ...cognitiveContract,
+    v74_plan:{
+      selected_count:cognitivePlan.selected_count,
+      selected_ids:cognitivePlan.selected_ids,
+      operations:cognitivePlan.selected.map(t=>t.operation),
+      families:[...new Set(cognitivePlan.selected.map(t=>t.family))],
+      output:cognitivePlan.output,
+      intents:cognitivePlan.intents
+    }
+  };
   const exactIntent=detectExactRetrievalIntent(question);
   if(exactIntent.triggered){
     const direct=await directRetrievalPayload(env,body);
@@ -3261,17 +3281,19 @@ async function chat(request, env) {
     const wantsStream=
       String(request.headers.get("Accept") || "").includes("text/event-stream") ||
       body?.stream === true;
+    const directSources=direct.ok ? [{
+      document_id:direct.document_id,
+      arquivo:direct.filename,
+      titulo:direct.title,
+      autor:direct.author,
+      pagina:direct.page,
+      ref_id:"RAW1"
+    }] : [];
+    const directExecution=await runCognitivePlan(cognitivePlan,{sources:directSources,contract:cognitiveRuntime});
     const payload={
       ok:direct.ok,
       resposta:answer,
-      fontes:direct.ok ? [{
-        document_id:direct.document_id,
-        arquivo:direct.filename,
-        titulo:direct.title,
-        autor:direct.author,
-        pagina:direct.page,
-        ref_id:"RAW1"
-      }] : [],
+      fontes:directSources,
       fallback:!direct.ok,
       bypass_llm:true,
       direct_retrieval:true,
@@ -3286,7 +3308,13 @@ async function chat(request, env) {
       cognitive_contract_version:"1.0",
       llm_calls:0,
       pre_master_llm_calls:0,
-      groq_final_stage_only:true
+      groq_final_stage_only:true,
+      cognitive_v74:true,
+      cognitive_catalog_size:1000,
+      turbine_selected_count:cognitivePlan.selected_count,
+      turbine_selected_ids:cognitivePlan.selected_ids,
+      turbine_executed_count:directExecution.executed_count,
+      turbine_concurrency:directExecution.concurrency
     };
     if(wantsStream){
       const frames=
@@ -3346,7 +3374,9 @@ async function chat(request, env) {
   );
   const crossLibrary = crossLibraryStats(mappedContext);
   const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
-  const fallback = sources.length === 0;
+  const microExecution=await runCognitivePlan(cognitivePlan,{sources,contract:cognitiveRuntime});
+  const evidenceGate=evidenceGateV74(cognitivePlan,sources,microExecution);
+  const fallback = sources.length === 0 || evidenceGate.canAnswer===false;
   const wantsStream =
     String(request.headers.get("Accept") || "").includes("text/event-stream") ||
     body?.stream === true;
@@ -3360,6 +3390,10 @@ async function chat(request, env) {
         strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
         provider:emptyProvider,retrieval_level:retrievalLevel,
         cognitive_mode:cognitiveContract.mode,cognitive_contract_version:cognitiveContract.version,
+        cognitive_v74:true,cognitive_catalog_size:1000,
+        turbine_selected_count:cognitivePlan.selected_count,turbine_selected_ids:cognitivePlan.selected_ids,
+        turbine_executed_count:microExecution.executed_count,turbine_concurrency:microExecution.concurrency,
+        evidence_gate:evidenceGate,
         llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
         map_reduce:false,map_batches:0,
@@ -3376,6 +3410,10 @@ async function chat(request, env) {
       strict_empty:!retrievalUnavailable,zero_noise:!retrievalUnavailable,
       provider:emptyProvider,retrieval_level:retrievalLevel,
       cognitive_mode:cognitiveContract.mode,cognitive_contract_version:cognitiveContract.version,
+      cognitive_v74:true,cognitive_catalog_size:1000,
+      turbine_selected_count:cognitivePlan.selected_count,turbine_selected_ids:cognitivePlan.selected_ids,
+      turbine_executed_count:microExecution.executed_count,turbine_concurrency:microExecution.concurrency,
+      evidence_gate:evidenceGate,
       llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
       map_reduce:false,map_batches:0,
@@ -3401,7 +3439,14 @@ async function chat(request, env) {
       llm_calls:0,
       pre_master_llm_calls:0,
       groq_final_stage_only:true,
-      reference_only_llm_bypass:true
+      reference_only_llm_bypass:true,
+      cognitive_v74:true,
+      cognitive_catalog_size:1000,
+      turbine_selected_count:cognitivePlan.selected_count,
+      turbine_selected_ids:cognitivePlan.selected_ids,
+      turbine_executed_count:microExecution.executed_count,
+      turbine_concurrency:microExecution.concurrency,
+      evidence_gate:evidenceGate
     };
     if(wantsStream){
       const frames=sseFrame("meta",{...payload,resposta:undefined})+
@@ -3422,11 +3467,14 @@ async function chat(request, env) {
     return massivePipelineStreamResponse(env,{
       ownerId,body,question,sources,history,retrievalLevel,
       independentDocuments:crossLibrary.independent_documents,
-      cognitiveContract
+      cognitiveContract:cognitiveRuntime,
+      cognitivePlan,
+      microExecution,
+      evidenceGate
     });
   }
 
-  const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveContract);
+  const reduced=await massivePipelineSynthesis(env,question,sources,history,null,cognitiveRuntime);
   let answer = String(reduced.masterSynthesis || "").trim();
   if(sources.length>0 && isEmptyGroundedFailure(answer)) answer=deterministicSynthesisFromSources(sources);
   answer = enforceFinalEpistemicEnvelope(
@@ -3446,6 +3494,13 @@ async function chat(request, env) {
     cognitive_mode: cognitiveContract.mode,
     cognitive_contract_version: cognitiveContract.version,
     cognitive_memory_used: cognitiveContract.use_history,
+    cognitive_v74: true,
+    cognitive_catalog_size: 1000,
+    turbine_selected_count: cognitivePlan.selected_count,
+    turbine_selected_ids: cognitivePlan.selected_ids,
+    turbine_executed_count: microExecution.executed_count,
+    turbine_concurrency: microExecution.concurrency,
+    evidence_gate: evidenceGate,
     retrieval_level: retrievalLevel,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
@@ -3554,6 +3609,16 @@ async function status(env) {
     rag_map_reduce: true,
     anti_hallucination_mode: "strict-grounded",
     cognitive_orchestrator: true,
+    cognitive_1000_microturbines: true,
+    cognitive_catalog_size: catalogAudit().total,
+    cognitive_catalog_unique_ids: catalogAudit().unique_ids,
+    cognitive_catalog_families: catalogAudit().family_count,
+    cognitive_catalog_valid: catalogAudit().valid,
+    cognitive_default_active_limit: COGNITIVE_PERFORMANCE_GUARD.defaultActiveLimit,
+    cognitive_deep_active_limit: COGNITIVE_PERFORMANCE_GUARD.deepResearchActiveLimit,
+    cognitive_hard_active_limit: COGNITIVE_PERFORMANCE_GUARD.absoluteActiveLimit,
+    cognitive_worker_concurrency: COGNITIVE_PERFORMANCE_GUARD.workerConcurrency,
+    cognitive_never_execute_all_1000: COGNITIVE_PERFORMANCE_GUARD.executeAll1000===false,
     cognitive_contract_version: "1.0",
     cognitive_modes: ["reference_only","factual","summary","comparison","analysis","reflection","hypothesis"],
     current_question_scope_guard: true,
@@ -3782,6 +3847,25 @@ async function handleApi(request, env, url, ctx) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
+    if (url.pathname === "/api/admin/cognitive-v74" && request.method === "GET") {
+      const q=String(url.searchParams.get("q") || "").trim();
+      const audit=catalogAudit();
+      if(!q) return json({ok:true,version:VERSION,audit,performance:COGNITIVE_PERFORMANCE_GUARD,manifest_route:"/api/admin/cognitive-v74/manifest"});
+      const contract=buildCognitiveContract(q);
+      const plan=buildV74ExecutionPlan(q,contract);
+      return json({
+        ok:true,version:VERSION,audit,
+        plan:{
+          intents:plan.intents,objects:plan.objects,output:plan.output,deepResearch:plan.deepResearch,
+          activeLimit:plan.activeLimit,concurrency:plan.concurrency,selected_count:plan.selected_count,
+          selected_ids:plan.selected_ids,preferred_families:plan.preferred_families,
+          constraints:plan.constraints
+        }
+      });
+    }
+    if (url.pathname === "/api/admin/cognitive-v74/manifest" && request.method === "GET") {
+      return json({ok:true,version:VERSION,audit:catalogAudit(),manifest:catalogManifest()});
+    }
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-shard" && request.method === "POST") return r2LibraryShardUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-finalize" && request.method === "POST") return r2LibraryFinalize(request,env);
@@ -4693,6 +4777,16 @@ export default {
         search_top_k: TOP_K,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
+        cognitive_1000_microturbines: true,
+        cognitive_catalog_size: catalogAudit().total,
+        cognitive_catalog_unique_ids: catalogAudit().unique_ids,
+        cognitive_catalog_families: catalogAudit().family_count,
+        cognitive_catalog_valid: catalogAudit().valid,
+        cognitive_default_active_limit: COGNITIVE_PERFORMANCE_GUARD.defaultActiveLimit,
+        cognitive_deep_active_limit: COGNITIVE_PERFORMANCE_GUARD.deepResearchActiveLimit,
+        cognitive_hard_active_limit: COGNITIVE_PERFORMANCE_GUARD.absoluteActiveLimit,
+        cognitive_worker_concurrency: COGNITIVE_PERFORMANCE_GUARD.workerConcurrency,
+        cognitive_never_execute_all_1000: COGNITIVE_PERFORMANCE_GUARD.executeAll1000===false,
         cognitive_contract_version: "1.0",
         current_question_scope_guard: true,
         memory_scope_guard: true,
