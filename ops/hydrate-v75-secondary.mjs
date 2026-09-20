@@ -22,6 +22,8 @@ async function writeStatus(data){
     total_books:Number(data.total_books||0),
     generation:String(data.generation||""),
     source_signature:String(data.source_signature||""),
+    source:String(data.source||""),
+    source_generation:String(data.source_generation||""),
     reason:String(data.reason||"")
   };
   await fs.writeFile(STATUS_PATH,JSON.stringify(safe,null,2)+"\n");
@@ -124,30 +126,55 @@ if(!OWNER){
   process.exit(2);
 }
 
-let probe;
+let sourceMode="durable-object";
+let sourceGeneration="";
+let primaryTotal=0;
+let probeReason="";
+
 try{
-  probe=await adminGet(BASE+"/api/admin/export-library?mode=cursor&limit=1&include_total=1");
+  const probe=await adminGet(BASE+"/api/admin/export-library?mode=cursor&limit=1&include_total=1");
+  if(probe.waiting){
+    probeReason="primary quota/read limit not reset";
+  }else if(probe.ok && probe.data?.ok===true && Number(probe.data?.total||0)>0){
+    primaryTotal=Math.max(0,Number(probe.data.total||0));
+  }else{
+    probeReason="primary export endpoint not readable";
+  }
 }catch(error){
   const message=String(error?.message||error);
-  const reason=/Error 1101|Worker threw exception/i.test(message)
-    ? "primary Cloudflare Worker 1101; quota/reset not confirmed"
-    : "primary export unavailable: "+message.slice(0,240);
-  await writeStatus({state:"waiting",reason});
-  process.exit(0);
-}
-if(probe.waiting){
-  await writeStatus({state:"waiting",reason:"primary quota/read limit not reset"});
-  process.exit(0);
-}
-if(!probe.ok || probe.data?.ok!==true){
-  await writeStatus({state:"waiting",reason:"primary export endpoint not readable"});
-  process.exit(0);
+  probeReason=/Error 1101|Worker threw exception/i.test(message)
+    ? "primary Cloudflare Worker 1101"
+    : "primary export unavailable: "+message.slice(0,220);
 }
 
-const primaryTotal=Math.max(0,Number(probe.data?.total||0));
 if(primaryTotal<=0){
-  await writeStatus({state:"blocked",reason:"primary reported zero records"});
-  process.exit(3);
+  try{
+    const r2=await adminGet(BASE+"/api/admin/omni-sync-state");
+    const r2Total=Math.max(0,Number(r2?.data?.total||0));
+    if(r2.ok && r2.data?.ok===true && r2Total>0){
+      sourceMode="r2";
+      primaryTotal=r2Total;
+      sourceGeneration=String(r2.data?.generation||"");
+      console.log("FNS_ETL_SOURCE=r2 total="+primaryTotal+" generation="+sourceGeneration);
+    }else{
+      const r2Reason=r2?.waiting
+        ? "R2 snapshot temporarily unavailable"
+        : "R2 snapshot empty or unreadable";
+      await writeStatus({
+        state:"waiting",
+        source:"none",
+        reason:[probeReason,r2Reason].filter(Boolean).join("; ")
+      });
+      process.exit(0);
+    }
+  }catch(error){
+    await writeStatus({
+      state:"waiting",
+      source:"none",
+      reason:[probeReason,"R2 fallback failed: "+String(error?.message||error).slice(0,220)].filter(Boolean).join("; ")
+    });
+    process.exit(0);
+  }
 }
 
 const generation="v75-etl-"+Date.now().toString(36);
@@ -156,45 +183,91 @@ let cursorId="";
 let exported=0;
 
 try{
-  while(exported<primaryTotal){
-    const params=new URLSearchParams({
-      mode:"cursor",
-      limit:String(PAGE_SIZE)
-    });
-    if(cursorId) params.set("after_id",cursorId);
+  if(sourceMode==="durable-object"){
+    let cursorId="";
+    while(exported<primaryTotal){
+      const params=new URLSearchParams({
+        mode:"cursor",
+        limit:String(PAGE_SIZE)
+      });
+      if(cursorId) params.set("after_id",cursorId);
 
-    const page=await adminGet(BASE+"/api/admin/export-library?"+params.toString());
-    if(page.waiting){
-      await writeStatus({state:"waiting",primary_total:primaryTotal,generation,reason:"quota returned during cursor ETL; manifest not promoted"});
-      process.exit(0);
-    }
-    if(!page.ok || page.data?.ok!==true) throw new Error("Primary cursor export failed after "+exported+" records");
-
-    const raw=Array.isArray(page.data?.records)?page.data.records:[];
-    if(!raw.length){
-      if(page.data?.done===true && exported===primaryTotal) break;
-      throw new Error("Primary cursor ended early at "+exported+" of "+primaryTotal);
-    }
-
-    const records=raw.map(r=>normalizeRecord(r,generation));
-    for(const row of records){
-      signature.update(row.id+"|"+row.document_id+"|"+row.content_hash+"\n");
-    }
-
-    for(let i=0;i<records.length;i+=UPSERT_BATCH){
-      const batch=records.slice(i,i+UPSERT_BATCH);
-      const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
-      if(Number(mirrored?.records||0)!==batch.length){
-        throw new Error("Secondary batch count mismatch after "+exported+" records");
+      const page=await adminGet(BASE+"/api/admin/export-library?"+params.toString());
+      if(page.waiting){
+        await writeStatus({
+          state:"waiting",primary_total:primaryTotal,generation,source:sourceMode,
+          reason:"quota returned during cursor ETL; manifest not promoted"
+        });
+        process.exit(0);
       }
-    }
+      if(!page.ok || page.data?.ok!==true) throw new Error("Primary cursor export failed after "+exported+" records");
 
-    exported+=records.length;
-    const next=page.data?.next_cursor||null;
-    if(page.data?.done===true) break;
-    if(!next?.id) throw new Error("Primary cursor missing next_cursor");
-    if(next.id===cursorId) throw new Error("Primary cursor did not advance");
-    cursorId=String(next.id);
+      const raw=Array.isArray(page.data?.records)?page.data.records:[];
+      if(!raw.length){
+        if(page.data?.done===true && exported===primaryTotal) break;
+        throw new Error("Primary cursor ended early at "+exported+" of "+primaryTotal);
+      }
+
+      const records=raw.map(r=>normalizeRecord(r,generation));
+      for(const row of records){
+        signature.update(row.id+"|"+row.document_id+"|"+row.content_hash+"\n");
+      }
+
+      for(let i=0;i<records.length;i+=UPSERT_BATCH){
+        const batch=records.slice(i,i+UPSERT_BATCH);
+        const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
+        if(Number(mirrored?.records||0)!==batch.length){
+          throw new Error("Secondary batch count mismatch after "+exported+" records");
+        }
+      }
+
+      exported+=records.length;
+      const next=page.data?.next_cursor||null;
+      if(page.data?.done===true) break;
+      if(!next?.id) throw new Error("Primary cursor missing next_cursor");
+      if(next.id===cursorId) throw new Error("Primary cursor did not advance");
+      cursorId=String(next.id);
+    }
+  }else{
+    let offset=0;
+    while(exported<primaryTotal){
+      const page=await adminGet(
+        BASE+"/api/admin/omni-sync-page?offset="+encodeURIComponent(offset)+"&limit="+encodeURIComponent(PAGE_SIZE)
+      );
+      if(page.waiting){
+        await writeStatus({
+          state:"waiting",primary_total:primaryTotal,generation,source:sourceMode,source_generation:sourceGeneration,
+          reason:"R2 snapshot temporarily unavailable during ETL"
+        });
+        process.exit(0);
+      }
+      if(!page.ok || page.data?.ok!==true) throw new Error("R2 omni-sync page failed at offset "+offset);
+
+      const raw=Array.isArray(page.data?.rows)?page.data.rows:[];
+      if(!raw.length){
+        if(page.data?.done===true && exported===primaryTotal) break;
+        throw new Error("R2 snapshot ended early at "+exported+" of "+primaryTotal);
+      }
+
+      const records=raw.map(r=>normalizeRecord(r,generation));
+      for(const row of records){
+        signature.update(row.id+"|"+row.document_id+"|"+row.content_hash+"\n");
+      }
+
+      for(let i=0;i<records.length;i+=UPSERT_BATCH){
+        const batch=records.slice(i,i+UPSERT_BATCH);
+        const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
+        if(Number(mirrored?.records||0)!==batch.length){
+          throw new Error("Secondary R2 batch count mismatch after "+exported+" records");
+        }
+      }
+
+      exported+=records.length;
+      const nextOffset=Number(page.data?.next_offset ?? (offset+raw.length));
+      if(page.data?.done===true) break;
+      if(!Number.isFinite(nextOffset) || nextOffset<=offset) throw new Error("R2 snapshot cursor did not advance");
+      offset=nextOffset;
+    }
   }
 
   if(exported!==primaryTotal){
@@ -233,13 +306,17 @@ try{
     hydrated_embeddings:hydratedEmbeddings,
     total_books:totalBooks,
     generation,
-    source_signature:sourceSignature
+    source_signature:sourceSignature,
+    source:sourceMode,
+    source_generation:sourceGeneration
   });
 }catch(error){
   await writeStatus({
     state:"failed",
     primary_total:primaryTotal,
     generation,
+    source:sourceMode,
+    source_generation:sourceGeneration,
     reason:String(error?.message||error)
   });
   process.exitCode=1;
