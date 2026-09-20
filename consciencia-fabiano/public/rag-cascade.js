@@ -277,6 +277,35 @@ function mergeSearchMatches(...groups){
   return out.slice(0,TOP_K);
 }
 
+function diversifyAcrossDocuments(rows,limit=OFFLINE_TOP_K){
+  const groups=new Map(),order=[],seen=new Set();
+  for(const row of (Array.isArray(rows)?rows:[])){
+    const text=String(row?.text||"").trim();
+    if(!text)continue;
+    const rowKey=String(row?.id||row?.key||"") || [row?.document_id||"",row?.page||0,row?.chunk_index||0,fold(text).slice(0,180)].join("|");
+    if(seen.has(rowKey))continue;
+    seen.add(rowKey);
+    const docKey=String(row?.document_id||row?.doc_key||row?.title||row?.filename||"unknown");
+    if(!groups.has(docKey)){groups.set(docKey,[]);order.push(docKey);}
+    groups.get(docKey).push(row);
+  }
+  for(const list of groups.values()) list.sort((a,b)=>Number(b?.score||0)-Number(a?.score||0));
+  const out=[];
+  let round=0;
+  while(out.length<limit){
+    let added=false;
+    for(const key of order){
+      const row=groups.get(key)?.[round];
+      if(!row)continue;
+      out.push(row);added=true;
+      if(out.length>=limit)break;
+    }
+    if(!added)break;
+    round++;
+  }
+  return out;
+}
+
 async function search(question,queryEmbedding){
   await ready;
   const attempts=[];
@@ -374,43 +403,59 @@ async function omniAgentSearch(question,{onProgress}={}){
     }catch{}finally{clearTimeout(timer);}
   }
 
-  const seen=new Set(),literalMatches=[];
+  const seen=new Set(),literalCandidates=[];
   for(const row of [...(localStrict.matches||[]),...cloudRows]){
-    const item=normalizeMatch(row,String(row?.retrieval_mode||"v6-literal"));
+    const item=normalizeMatch(row,String(row?.retrieval_mode||"v7.4-literal"));
     const key=item.id||[item.document_id,item.chunk_index,item.page,fold(item.text).slice(0,180)].join("|");
     if(seen.has(key))continue;
-    seen.add(key);literalMatches.push(item);
-    if(literalMatches.length>=OFFLINE_TOP_K)break;
+    seen.add(key);literalCandidates.push(item);
+    if(literalCandidates.length>=OFFLINE_TOP_K)break;
   }
+  const literalMatches=diversifyAcrossDocuments(literalCandidates,OFFLINE_TOP_K);
 
+  // V7.4.1: nunca desligar a expansão semântica só porque existe uma frase literal.
+  // "mundo espiritual", "mundo dos espíritos" e "spirit world" podem estar em livros
+  // diferentes. BM25 + MiniLM entram juntos, e a diversidade por documento impede
+  // que um único PDF ocupe todas as posições.
   let semanticMatches=[];
-  if(!literalMatches.length){
-    try{
-      const ew=ensureSemanticWorker();
-      const embedded=await rpc(ew,"embed-query",{text:q,priority:"high"},30000);
-      if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
-        const semantic=await rpc(searchWorker,"search-semantic",{
-          query:embedded.vector,top_k:OFFLINE_TOP_K,min_score:0.62
-        },20000);
-        semanticMatches=(semantic.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v6-transformers-semantic"));
-      }
-    }catch{}
-  }
+  let bm25Matches=[];
+  try{
+    const ew=ensureSemanticWorker();
+    const [semanticResult,bm25Result]=await Promise.allSettled([
+      rpc(ew,"embed-query",{text:q,priority:"high"},30000),
+      rpc(searchWorker,"search-bm25",{question:q,top_k:OFFLINE_TOP_K},12000)
+    ]);
+    const embedded=semanticResult.status==="fulfilled" ? semanticResult.value : null;
+    const bm25=bm25Result.status==="fulfilled" ? bm25Result.value : {matches:[]};
+    bm25Matches=(bm25.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v7.4-bm25-expansion"));
+    let semanticRows=[];
+    if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
+      const semantic=await rpc(searchWorker,"search-semantic",{
+        query:embedded.vector,top_k:OFFLINE_TOP_K,min_score:SEMANTIC_MIN_SCORE
+      },20000).catch(()=>({matches:[]}));
+      semanticRows=(semantic.matches||[]).slice(0,OFFLINE_TOP_K).map(x=>normalizeMatch(x,"v7.4-transformers-semantic"));
+    }
+    semanticMatches=diversifyAcrossDocuments([...semanticRows,...bm25Matches],OFFLINE_TOP_K);
+  }catch{}
 
-  const swarm=await import("/agent-swarm.js?v=7.0.0");
+  const swarm=await import("/agent-swarm.js?v=7.4.1");
   const result=await swarm.runAgentSwarm({
     question:q,literalMatches,semanticMatches,onProgress
   });
   return {
     ...result,
-    provider:"omni-agent-swarm-v6",
-    literal_sources:"IndexedDB+Cloudflare+Supabase strict",
+    provider:"omni-agent-swarm-v7.4.1",
+    literal_sources:"IndexedDB+Cloudflare strict",
     local_scanned:Number(localStrict.scanned||0),
     local_exact_hits:Number(localStrict.exact_hits||0),
     local_documents_hit:Number(localStrict.documents_hit||0),
     cloud_readable:cloudReadable,
     cloud_literal_hits:cloudRows.length,
-    library_coverage_known:Boolean(cloudReadable||Number(localStrict.scanned||0)>0),
+    semantic_expansion_used:semanticMatches.length>0,
+    semantic_expansion_hits:semanticMatches.length,
+    bm25_expansion_hits:bm25Matches.length,
+    hybrid_documents_hit:new Set([...literalMatches,...semanticMatches].map(x=>String(x?.document_id||x?.title||x?.filename||""))).size,
+    library_coverage_known:Boolean(cloudReadable||Number(localStrict.scanned||0)>0||literalMatches.length||semanticMatches.length),
     logical_capacity:OFFLINE_TOP_K
   };
 }
