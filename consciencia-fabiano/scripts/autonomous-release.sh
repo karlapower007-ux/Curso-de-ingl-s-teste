@@ -406,6 +406,7 @@ PY
     jq -nc --arg q "$smoke_query" '{pergunta:("Faça uma hipótese explicitamente rotulada, baseada somente nos documentos, sobre: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-hyp-payload.json
     hyp_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-hyp.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-hyp-payload.json || echo 000)
     [ "$hyp_http" = "200" ] || die "COGNITIVE_HYPOTHESIS_HTTP_$hyp_http"
+    jq -c '{ok,fallback,cognitive_mode,llm_calls,pre_master_llm_calls,groq_final_stage_only,fontes_count:(.fontes|length),resposta_len:(.resposta|length),has_hypothesis:((.resposta|ascii_downcase)|contains("hipótese") or contains("hipotese") or contains("hypothesis"))}' /tmp/chat-smoke-hyp.json | sed 's/^/COGNITIVE_HYPOTHESIS_DIAG=/'
     jq -e '.ok == true and .fallback == false and .cognitive_mode == "hypothesis" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1 and ((.resposta|ascii_downcase)|contains("hipótese") or contains("hipotese") or contains("hypothesis"))' /tmp/chat-smoke-hyp.json >/dev/null || die "COGNITIVE_HYPOTHESIS_BAD"
     log "COGNITIVE_HYPOTHESIS_PASS=yes"
   else
