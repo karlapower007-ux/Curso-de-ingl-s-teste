@@ -70,18 +70,20 @@
           <button id="reindexBtn" class="secondary" type="button">Retomar vetores</button>
         </div>
 
-        <label class="dropzone" for="pdfInput">
-          <strong>Adicionar PDF</strong>
-          <span>Livros, artigos, discursos, filosofia, religião, arte, história e muito mais.</span>
-          <input id="pdfInput" type="file" accept="application/pdf,.pdf">
-        </label>
-        <button id="uploadBtn" class="primary full" type="button">Extrair localmente e indexar</button>
+        <div id="uploadControls" class="hidden">
+          <label class="dropzone" for="pdfInput">
+            <strong>Adicionar primeiro PDF</strong>
+            <span>Este bloco só aparece quando IndexedDB, R2 e biblioteca ativa estão confirmadamente vazios.</span>
+            <input id="pdfInput" type="file" accept="application/pdf,.pdf">
+          </label>
+          <button id="uploadBtn" class="primary full" type="button">Extrair localmente e indexar</button>
+          <p class="client-extract-note">⚡ Livros já conhecidos são recuperados automaticamente do R2, sem novo upload e sem novo processamento.</p>
+        </div>
         <p id="adminStatus" class="status"></p>
         <div id="omniSyncProgress" class="omni-sync-progress hidden" aria-live="polite">
           <div class="omni-sync-progress-bar"><span id="omniSyncProgressFill"></span></div>
           <small id="omniSyncProgressText">Phantom Daemon ativo em segundo plano.</small>
         </div>
-        <p class="client-extract-note">⚡ pdf.js extrai o texto localmente. A busca lexical fica disponível primeiro; os embeddings são gerados em Web Worker no navegador e salvos em checkpoints no IndexedDB para retomada automática após falhas ou atualização da aba.</p>
 
         <div class="library-note">
           <strong>Regra de resposta</strong>

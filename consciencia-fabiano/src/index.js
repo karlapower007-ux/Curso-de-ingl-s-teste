@@ -690,8 +690,23 @@ async function deletePdf(request, env) {
 async function localIngestStart(request, env) {
   assertBindings(env);
   const body=await request.json().catch(()=>({}));
-  return json(await libraryCall(env,"/local/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+  const digest=String(body?.content_sha256||"").toLowerCase();
+  const r2Duplicate=await r2ManifestDocumentByHash(env,digest);
+  if(r2Duplicate){
+    return json({
+      ok:true,duplicate:true,source:"r2-authoritative-manifest",
+      document_id:String(r2Duplicate.document_id||""),
+      arquivo:String(r2Duplicate.filename||"Documento"),
+      status:String(r2Duplicate.status||"ready"),
+      paginas:Number(r2Duplicate.pages||0),chunks:Number(r2Duplicate.chunks||0),
+      embedding_model:String(r2Duplicate.embedding_model||LOCAL_EMBEDDING_MODEL)
+    });
+  }
+  return json(await libraryCall(env,"/local/start",{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)
+  }));
 }
+
 async function localIngestAppend(request, env) {
   assertBindings(env);
   const body=await request.json().catch(()=>({}));
@@ -961,6 +976,9 @@ const R2_LIBRARY_POINTER_KEY="library/current.json";
 function r2LibrarySegment(value){
   return encodeURIComponent(String(value||"unknown").replace(/[^\p{L}\p{N}._-]+/gu,"-").slice(0,160) || "unknown");
 }
+function r2LibraryManifestKey(generation){
+  return "library/generations/"+r2LibrarySegment(generation)+"/manifest.json";
+}
 async function r2JsonGet(bucket,key){
   const obj=await bucket.get(key);
   if(!obj)return null;
@@ -991,39 +1009,58 @@ async function r2LibraryFinalize(request,env){
   const body=await request.json().catch(()=>({}));
   const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
   if(!generation)return json({ok:false,code:"R2_LIBRARY_BAD_REQUEST",message:"generation ausente."},400);
+
+  const current=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(current?.source==="durable-object-authoritative"){
+    return json({
+      ok:true,ignored:true,reason:"backend_authoritative_snapshot_active",
+      generation:String(current.generation||""),documents:Number(current.documents||0),
+      chunks:Number(current.chunks||0),vectors:Number(current.vectors||0),
+      source:String(current.source||"")
+    });
+  }
+
   const pointer={
-    version:1,
-    generation,
+    version:1,generation,
     documents:Math.max(0,Number(body?.documents||0)),
     chunks:Math.max(0,Number(body?.chunks||0)),
     shards:Math.max(0,Number(body?.shards||0)),
+    vectors:Math.max(0,Number(body?.vectors||0)),
     updated_at:new Date().toISOString(),
     bucket:"consciencia-fabiano-pdfs",
     source:"indexeddb-pc-backfill"
   };
   await env.PDFS.put(R2_LIBRARY_POINTER_KEY,JSON.stringify(pointer),{
     httpMetadata:{contentType:"application/json"},
-    customMetadata:{generation}
+    customMetadata:{generation,source:pointer.source}
   });
   return json({ok:true,...pointer,r2:true});
 }
+
 async function r2OmniSyncState(env){
   if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING",message:"Binding R2 PDFS ausente."},503);
   const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
   if(!pointer?.generation)return json({
-    ok:true,signature:"r2-empty",generation:"",total:0,documents:0,shards:0,batch_size:200,
+    ok:true,signature:"r2-empty",generation:"",total:0,documents:0,shards:0,vectors:0,
+    source:"",source_signature:"",authoritative:false,batch_size:200,
     backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
   });
   const signature=await sha256Text([
-    pointer.generation,pointer.documents||0,pointer.chunks||0,pointer.shards||0,pointer.updated_at||""
+    pointer.generation,pointer.documents||0,pointer.chunks||0,pointer.shards||0,
+    pointer.vectors||0,pointer.source_signature||"",pointer.updated_at||""
   ].join("|"));
   return json({
     ok:true,signature,generation:String(pointer.generation),
     total:Number(pointer.chunks||0),documents:Number(pointer.documents||0),shards:Number(pointer.shards||0),
+    vectors:Number(pointer.vectors||0),source:String(pointer.source||""),
+    source_signature:String(pointer.source_signature||""),
+    manifest_key:String(pointer.manifest_key||""),
+    authoritative:pointer.source==="durable-object-authoritative",
     updated_at:String(pointer.updated_at||""),batch_size:200,
     backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
   });
 }
+
 async function r2OmniSyncPage(env,url){
   if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
   const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
@@ -1084,6 +1121,194 @@ async function r2OmniSyncPage(env,url){
   });
   rows.length=0; rows=null;
   return response;
+}
+
+function canonicalR2DocumentMetadata(raw){
+  const hash=String(raw?.content_sha256 || raw?.sha256 || "").toLowerCase();
+  return {
+    document_id:String(raw?.id || raw?.document_id || "").slice(0,180),
+    filename:String(raw?.arquivo || raw?.filename || "Documento").slice(0,300),
+    title:String(raw?.titulo || raw?.title || raw?.arquivo || raw?.filename || "Documento").slice(0,500),
+    author:String(raw?.autor || raw?.author || "").slice(0,300),
+    language:String(raw?.idioma || raw?.language || "pt").slice(0,40),
+    pages:Math.max(0,Number(raw?.paginas || raw?.pages || raw?.page_count || 0)),
+    chunks:Math.max(0,Number(raw?.chunks || raw?.chunk_count || 0)),
+    size_bytes:Math.max(0,Number(raw?.size_bytes || 0)),
+    status:String(raw?.status || "ready").slice(0,80),
+    content_sha256:/^[0-9a-f]{64}$/.test(hash)?hash:"",
+    original_r2_key:String(raw?.original_r2_key || raw?.r2_key || "").slice(0,700),
+    embedding_model:String(raw?.embedding_model || LOCAL_EMBEDDING_MODEL).slice(0,180),
+    embedding_dimensions:Math.max(0,Number(raw?.embedding_dimensions || 0))
+  };
+}
+
+async function r2AuthoritativeState(env){
+  if(!env.PDFS)return {ok:false,code:"R2_LIBRARY_BINDING_MISSING"};
+  const [docsData,exportHead]=await Promise.all([
+    libraryCall(env,"/docs"),
+    libraryCall(env,"/export-page?offset=0&limit=1")
+  ]);
+  const metadata=(Array.isArray(docsData?.livros)?docsData.livros:[])
+    .map(canonicalR2DocumentMetadata).filter(x=>x.document_id)
+    .sort((a,b)=>a.document_id.localeCompare(b.document_id));
+  const signatureMaterial=metadata.map(doc=>[
+    doc.document_id,doc.content_sha256,doc.filename,doc.pages,doc.chunks,doc.status,
+    doc.embedding_model,doc.embedding_dimensions
+  ].join("|")).join("||");
+  const sourceSignature=await sha256Text(signatureMaterial);
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  const doChunks=Math.max(0,Number(exportHead?.total||0));
+  const doDocuments=metadata.length;
+  const inSync=Boolean(pointer?.generation) &&
+    pointer?.source==="durable-object-authoritative" &&
+    String(pointer?.source_signature||"")===sourceSignature &&
+    Number(pointer?.documents||0)===doDocuments &&
+    Number(pointer?.chunks||0)===doChunks;
+  return {
+    ok:true,in_sync:inSync,
+    do_documents:doDocuments,do_chunks:doChunks,
+    source_signature:sourceSignature,metadata,
+    r2_generation:String(pointer?.generation||""),
+    r2_documents:Math.max(0,Number(pointer?.documents||0)),
+    r2_chunks:Math.max(0,Number(pointer?.chunks||0)),
+    r2_vectors:Math.max(0,Number(pointer?.vectors||0)),
+    r2_source:String(pointer?.source||""),
+    r2_source_signature:String(pointer?.source_signature||"")
+  };
+}
+
+async function r2ReconcileStep(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  const offset=Math.max(0,Number(body?.offset||0));
+  const limit=Math.max(1,Math.min(200,Number(body?.limit||200)));
+  if(!generation)return json({ok:false,code:"R2_RECONCILE_BAD_REQUEST",message:"generation ausente."},400);
+
+  const page=await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit);
+  const records=normalizeLibraryChunkRecords(page?.records);
+  const groups=new Map();
+  let vectors=0;
+  for(const record of records){
+    if(record.vector.length>=64)vectors++;
+    if(!groups.has(record.document_id))groups.set(record.document_id,[]);
+    groups.get(record.document_id).push(record);
+  }
+
+  let shardNo=0;
+  for(const [documentId,rows] of groups){
+    const key="library/generations/"+r2LibrarySegment(generation)+"/shards/"+
+      r2LibrarySegment(documentId)+"/"+String(offset).padStart(10,"0")+"-"+String(shardNo++).padStart(3,"0")+".json";
+    const payload={version:2,generation,document_id:documentId,offset,count:rows.length,updated_at:new Date().toISOString(),rows};
+    await env.PDFS.put(key,JSON.stringify(payload),{
+      httpMetadata:{contentType:"application/json"},
+      customMetadata:{generation,document_id:documentId,count:String(rows.length),source:"durable-object"}
+    });
+  }
+
+  return json({
+    ok:true,generation,offset,records:records.length,vectors,shards_written:groups.size,
+    total:Math.max(0,Number(page?.total||0)),
+    next_offset:Math.max(offset,Number(page?.next_offset||offset+records.length)),
+    done:page?.done===true
+  });
+}
+
+async function r2ReconcileFinalize(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  if(!generation)return json({ok:false,code:"R2_RECONCILE_BAD_REQUEST",message:"generation ausente."},400);
+
+  const state=await r2AuthoritativeState(env);
+  const expectedSignature=String(body?.expected_signature||"");
+  const expectedChunks=Math.max(0,Number(body?.chunks||0));
+  if(expectedSignature && expectedSignature!==state.source_signature){
+    return json({ok:false,code:"R2_RECONCILE_SOURCE_CHANGED",message:"A biblioteca mudou durante a reconciliação.",state},409);
+  }
+  if(expectedChunks!==state.do_chunks){
+    return json({ok:false,code:"R2_RECONCILE_INCOMPLETE",message:"Snapshot incompleto.",expected:state.do_chunks,received:expectedChunks},409);
+  }
+
+  const manifestKey=r2LibraryManifestKey(generation);
+  const manifest={
+    version:2,generation,source:"durable-object-authoritative",
+    source_signature:state.source_signature,
+    total_books:state.do_documents,total_chunks:state.do_chunks,
+    vector_count:Math.max(0,Number(body?.vectors||0)),
+    shards:Math.max(0,Number(body?.shards||0)),
+    metadata:state.metadata,
+    sync:{
+      manifest_endpoint:"/api/v1/r2/library-manifest",
+      page_endpoint:"/api/admin/omni-sync-page",
+      batch_size:200,indexeddb_target:"fns_rag_resilience_v1",
+      vectors_preserved:true
+    },
+    updated_at:new Date().toISOString()
+  };
+  await env.PDFS.put(manifestKey,JSON.stringify(manifest),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation,source:"durable-object-authoritative"}
+  });
+  const pointer={
+    version:2,generation,
+    documents:state.do_documents,chunks:state.do_chunks,
+    shards:manifest.shards,vectors:manifest.vector_count,
+    source:"durable-object-authoritative",
+    source_signature:state.source_signature,
+    manifest_key:manifestKey,
+    updated_at:manifest.updated_at,
+    bucket:"consciencia-fabiano-pdfs"
+  };
+  await env.PDFS.put(R2_LIBRARY_POINTER_KEY,JSON.stringify(pointer),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation,source:"durable-object-authoritative"}
+  });
+  return json({ok:true,authoritative:true,...pointer,total_books:state.do_documents,total_chunks:state.do_chunks});
+}
+
+async function r2LibraryManifestResponse(env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(!pointer?.generation){
+    return json({
+      ok:true,authoritative:true,empty:true,generation:"",
+      total_books:0,total_chunks:0,vector_count:0,metadata:[],
+      source:"durable-object-authoritative",batch_size:200
+    });
+  }
+  const manifestKey=String(pointer.manifest_key||r2LibraryManifestKey(pointer.generation));
+  const manifest=await r2JsonGet(env.PDFS,manifestKey);
+  if(!manifest){
+    return json({
+      ok:true,authoritative:false,degraded:true,empty:Number(pointer.documents||0)===0,
+      generation:String(pointer.generation||""),total_books:Number(pointer.documents||0),
+      total_chunks:Number(pointer.chunks||0),vector_count:Number(pointer.vectors||0),
+      metadata:[],source:String(pointer.source||""),batch_size:200
+    });
+  }
+  return json({
+    ok:true,authoritative:manifest.source==="durable-object-authoritative",
+    empty:Number(manifest.total_books||0)===0,
+    generation:String(manifest.generation||pointer.generation||""),
+    source_signature:String(manifest.source_signature||""),
+    total_books:Number(manifest.total_books||0),
+    total_chunks:Number(manifest.total_chunks||0),
+    vector_count:Number(manifest.vector_count||0),
+    metadata:Array.isArray(manifest.metadata)?manifest.metadata:[],
+    sync:manifest.sync||{},source:String(manifest.source||""),
+    updated_at:String(manifest.updated_at||""),batch_size:200
+  });
+}
+
+async function r2ManifestDocumentByHash(env,hash){
+  const digest=String(hash||"").toLowerCase();
+  if(!/^[0-9a-f]{64}$/.test(digest)||!env.PDFS)return null;
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(pointer?.source!=="durable-object-authoritative")return null;
+  const manifest=await r2JsonGet(env.PDFS,String(pointer.manifest_key||r2LibraryManifestKey(pointer.generation)));
+  const metadata=Array.isArray(manifest?.metadata)?manifest.metadata:[];
+  return metadata.find(doc=>String(doc?.content_sha256||"").toLowerCase()===digest)||null;
 }
 
 async function retrieveContextV4Strict(env,question){
@@ -2682,6 +2907,14 @@ function normalizeMirrorRecords(items){
     vector:Array.isArray(raw?.vector) ? raw.vector.map(Number).filter(Number.isFinite).slice(0,2048) : []
   })).filter(r=>r.text && r.vector.length>=64);
 }
+function normalizeLibraryVector(raw){
+  let vector=Array.isArray(raw?.vector)?raw.vector:(Array.isArray(raw?.embedding)?raw.embedding:[]);
+  if(!vector.length && typeof raw?.embedding==="string"){
+    try{const parsed=JSON.parse(raw.embedding);if(Array.isArray(parsed))vector=parsed;}catch{}
+  }
+  const clean=vector.map(Number).filter(Number.isFinite).slice(0,2048);
+  return clean.length>=64?clean:[];
+}
 function normalizeLibraryChunkRecords(items){
   if(!Array.isArray(items)) return [];
   return items.slice(0,200).map((raw,index)=>({
@@ -2694,7 +2927,11 @@ function normalizeLibraryChunkRecords(items){
     page:Number(raw?.page || 0) || 0,
     chunk_index:Number(raw?.chunk_index || 0) || 0,
     text:String(raw?.text || "").slice(0,12000),
-    content_hash:String(raw?.content_hash || "").slice(0,180)
+    content_hash:String(raw?.content_hash || raw?.content_sha256 || "").toLowerCase().slice(0,180),
+    original_r2_key:String(raw?.original_r2_key || raw?.r2_key || "").slice(0,700),
+    embedding_model:String(raw?.embedding_model || "").slice(0,180),
+    embedding_dimensions:Math.max(0,Number(raw?.embedding_dimensions || 0)),
+    vector:normalizeLibraryVector(raw)
   })).filter(r=>r.document_id && r.text);
 }
 
@@ -3920,6 +4157,13 @@ async function status(env) {
     cross_device_mobile_hydration: true,
     cross_device_r2_generation_pointer: true,
     cross_device_batch_size: 200,
+    r2_authoritative_source_of_truth: true,
+    r2_reconciliation_backend: "durable-object-to-r2",
+    r2_manifest_endpoint: "/api/v1/r2/library-manifest",
+    indexeddb_persistent_storage_requested: true,
+    indexeddb_r2_self_heal: true,
+    r2_vectors_preserved: true,
+    upload_gate_requires_indexeddb_and_r2_empty: true,
     map_reduce_threshold: MAP_REDUCE_THRESHOLD,
     map_batch_size: MAP_BATCH_SIZE,
     micro_node_chain: false,
@@ -3990,6 +4234,7 @@ async function handleApi(request, env, url, ctx) {
   try {
     const privateIndexRoute =
       url.pathname.startsWith("/api/admin/") ||
+      url.pathname === "/api/v1/r2/library-manifest" ||
       url.pathname === "/api/trigger-index" ||
       url.pathname === "/api/index-status";
 
@@ -4019,6 +4264,10 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-shard" && request.method === "POST") return r2LibraryShardUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-finalize" && request.method === "POST") return r2LibraryFinalize(request,env);
+    if (url.pathname === "/api/admin/r2-reconcile-state" && request.method === "GET") return json(await r2AuthoritativeState(env));
+    if (url.pathname === "/api/admin/r2-reconcile-step" && request.method === "POST") return r2ReconcileStep(request,env);
+    if (url.pathname === "/api/admin/r2-reconcile-finalize" && request.method === "POST") return r2ReconcileFinalize(request,env);
+    if ((url.pathname === "/api/admin/r2-library-manifest" || url.pathname === "/api/v1/r2/library-manifest") && request.method === "GET") return r2LibraryManifestResponse(env);
     if (url.pathname === "/api/admin/export-library" && request.method === "GET") return exportLibraryPage(env,url);
     if (url.pathname === "/api/admin/omni-sync-state" && request.method === "GET") return r2OmniSyncState(env);
     if (url.pathname === "/api/admin/omni-sync-page" && request.method === "GET") return r2OmniSyncPage(env,url);
@@ -4722,7 +4971,9 @@ export class LibraryDO {
       if (url.pathname === "/docs") {
         const rows = [...this.sql.exec(`
           SELECT id, filename AS arquivo, title AS titulo, author AS autor, language AS idioma,
-                 page_count AS paginas, chunk_count AS chunks, size_bytes, status, created_at
+                 page_count AS paginas, chunk_count AS chunks, size_bytes, status, created_at,
+                 sha256 AS content_sha256, r2_key AS original_r2_key,
+                 embedding_model, embedding_dimensions
           FROM documents ORDER BY created_at DESC
         `)];
         return json({ ok: true, livros: rows, total: rows.length });
@@ -4804,7 +5055,8 @@ export class LibraryDO {
         const total=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
         const rows=[...this.sql.exec(`
           SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,c.embedding,
-                 d.filename,d.title,d.author,d.language
+                 d.filename,d.title,d.author,d.language,d.sha256 AS content_hash,
+                 d.r2_key AS original_r2_key,d.embedding_model,d.embedding_dimensions
           FROM chunks c JOIN documents d ON d.id=c.document_id
           ORDER BY c.created_at,c.chunk_index LIMIT ? OFFSET ?
         `,limit,offset)].map(row=>{
@@ -4815,6 +5067,10 @@ export class LibraryDO {
             chunk_index:Number(row.chunk_index||0),text:String(row.text||""),
             filename:String(row.filename||""),title:String(row.title||""),
             author:String(row.author||""),language:String(row.language||"pt"),
+            content_hash:String(row.content_hash||""),
+            original_r2_key:String(row.original_r2_key||""),
+            embedding_model:String(row.embedding_model||LOCAL_EMBEDDING_MODEL),
+            embedding_dimensions:Number(row.embedding_dimensions||0),
             vector:Array.isArray(vector)?vector:[]
           };
         });

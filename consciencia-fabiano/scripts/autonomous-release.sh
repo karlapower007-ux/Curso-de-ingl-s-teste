@@ -232,6 +232,12 @@ for i in $(seq 1 15); do
     and .cross_device_mobile_hydration == true
     and .cross_device_r2_generation_pointer == true
     and .cross_device_batch_size == 200
+    and .r2_authoritative_source_of_truth == true
+    and .r2_reconciliation_backend == "durable-object-to-r2"
+    and .indexeddb_persistent_storage_requested == true
+    and .indexeddb_r2_self_heal == true
+    and .r2_vectors_preserved == true
+    and .upload_gate_requires_indexeddb_and_r2_empty == true
     and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
     and .plan_c_main_thread_extraction == false
     and .plan_c_offline_intelligence == "strict-same-paragraph-phrase-v4"
@@ -330,6 +336,10 @@ grep -q 'r2OmniSyncState' src/index.js || die "R2_OMNI_SYNC_STATE_MISSING"
 grep -q 'r2OmniSyncPage' src/index.js || die "R2_OMNI_SYNC_PAGE_MISSING"
 grep -q 'r2LibraryShardUpsert' src/index.js || die "R2_LIBRARY_SHARD_UPSERT_MISSING"
 grep -q 'r2LibraryFinalize' src/index.js || die "R2_LIBRARY_FINALIZE_MISSING"
+grep -q 'r2ReconcileStep' src/index.js || die "R2_RECONCILE_STEP_MISSING"
+grep -q 'r2ReconcileFinalize' src/index.js || die "R2_RECONCILE_FINALIZE_MISSING"
+grep -q 'r2AuthoritativeState' src/index.js || die "R2_AUTHORITATIVE_STATE_MISSING"
+grep -q '/api/v1/r2/library-manifest' src/index.js || die "R2_MANIFEST_ROUTE_MISSING"
 grep -q 'strictParagraphMatch' src/index.js || die "SERVER_SHARED_MATCH_CORE_MISSING"
 
 grep -q 'configurePhantomDaemon' public/app.js || die "PHANTOM_DAEMON_CLIENT_CONFIG_MISSING"
@@ -353,7 +363,14 @@ grep -q 'Cross Library Balancer' public/agent-node-worker.js || die "V7_AGENT17_
 grep -q 'Citation Specialist' public/agent-node-worker.js || die "V7_AGENT18_MISSING"
 grep -q 'Conflict and Duplicate Auditor' public/agent-node-worker.js || die "V7_AGENT19_MISSING"
 grep -q 'Mission Master' public/agent-node-worker.js || die "V7_AGENT20_MISSING"
-grep -q 'backfillLibraryChunksToCloud' public/app.js || die "CROSS_DEVICE_BACKFILL_MISSING"
+grep -q 'backfillLibraryChunksToCloud' public/app.js || die "CROSS_DEVICE_BACKFILL_COMPAT_MISSING"
+grep -q 'reconcileBackendLibraryToR2' public/app.js || die "R2_BACKEND_RECONCILIATION_CLIENT_MISSING"
+grep -q 'ensureLibraryAlwaysAvailable' public/app.js || die "R2_HYDRATION_BOOTSTRAP_MISSING"
+grep -q 'navigator.storage.persist' public/app.js || die "INDEXEDDB_PERSISTENCE_REQUEST_MISSING"
+grep -q 'uploadControls' public/index.html || die "UPLOAD_SAFETY_GATE_MISSING"
+grep -q 'hydrate-r2-library' public/sw-v3.js || die "R2_SELF_HEAL_SW_MISSING"
+grep -q 'r2-hydration' public/sw-v3.js || die "R2_VECTOR_HYDRATION_MISSING"
+grep -q '/api/v1/r2/library-manifest' public/sw-v3.js || die "R2_MANIFEST_SW_CACHE_MISSING"
 grep -q '/api/admin/r2-library-shard' public/app.js || die "R2_CROSS_DEVICE_UPLOAD_ROUTE_MISSING"
 grep -q '/api/admin/r2-library-finalize' public/app.js || die "R2_CROSS_DEVICE_FINALIZE_ROUTE_MISSING"
 grep -q '/api/admin/r2-library-shard' src/index.js || die "R2_CROSS_DEVICE_SERVER_ROUTE_MISSING"
@@ -367,6 +384,80 @@ grep -q 'offline-turbine-viewport' public/style.css || die "VIRTUAL_SCROLLER_STY
 
 grep -q 'FNS_DESKTOP_FALLBACK' scripts/local-fallback-server.mjs || die "DESKTOP_FALLBACK_SOURCE_MISSING"
 log "V4_OMNI_LIBRARY_ASSETS_PASS=yes"
+
+log "5.75/7 Reconcile Durable Object -> authoritative R2 snapshot"
+reconcile_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-state.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
+[ "$reconcile_http" = "200" ] || { cat /tmp/r2-reconcile-state.json 2>/dev/null || true; die "R2_RECONCILE_STATE_HTTP_$reconcile_http"; }
+jq -e '.ok == true' /tmp/r2-reconcile-state.json >/dev/null || { cat /tmp/r2-reconcile-state.json; die "R2_RECONCILE_STATE_BAD"; }
+
+do_documents=$(jq -r '(.do_documents // 0) | tonumber' /tmp/r2-reconcile-state.json)
+do_chunks=$(jq -r '(.do_chunks // 0) | tonumber' /tmp/r2-reconcile-state.json)
+do_signature=$(jq -r '.source_signature // ""' /tmp/r2-reconcile-state.json)
+in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
+
+if [ "$in_sync" != "true" ]; then
+  generation="do-$(date +%s)-$(printf '%s' "$do_signature" | cut -c1-16)"
+  reconcile_offset=0
+  reconcile_vectors=0
+  reconcile_shards=0
+  reconcile_guard=0
+  while [ "$reconcile_guard" -lt 20000 ]; do
+    reconcile_guard=$((reconcile_guard+1))
+    jq -nc --arg generation "$generation" --argjson offset "$reconcile_offset"       '{generation:$generation,offset:$offset,limit:200}' >/tmp/r2-reconcile-step-body.json
+    step_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-step.json -w '%{http_code}' "${HDR[@]}"       -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-step-body.json       "$BASE/api/admin/r2-reconcile-step" || echo 000)
+    [ "$step_http" = "200" ] || { cat /tmp/r2-reconcile-step.json 2>/dev/null || true; die "R2_RECONCILE_STEP_HTTP_$step_http"; }
+    jq -e '.ok == true' /tmp/r2-reconcile-step.json >/dev/null || { cat /tmp/r2-reconcile-step.json; die "R2_RECONCILE_STEP_BAD"; }
+    reconcile_vectors=$((reconcile_vectors + $(jq -r '(.vectors // 0) | tonumber' /tmp/r2-reconcile-step.json)))
+    reconcile_shards=$((reconcile_shards + $(jq -r '(.shards_written // 0) | tonumber' /tmp/r2-reconcile-step.json)))
+    next_offset=$(jq -r '(.next_offset // 0) | tonumber' /tmp/r2-reconcile-step.json)
+    done_flag=$(jq -r '(.done // false) | tostring' /tmp/r2-reconcile-step.json)
+    [ "$done_flag" = "true" ] && break
+    [ "$next_offset" -gt "$reconcile_offset" ] || die "R2_RECONCILE_NO_PROGRESS"
+    reconcile_offset=$next_offset
+  done
+
+  jq -nc --arg generation "$generation" --arg signature "$do_signature"     --argjson chunks "$do_chunks" --argjson vectors "$reconcile_vectors" --argjson shards "$reconcile_shards"     '{generation:$generation,chunks:$chunks,vectors:$vectors,shards:$shards,expected_signature:$signature}'     >/tmp/r2-reconcile-finalize-body.json
+  finalize_http=$(curl -sS --max-time 45 -X POST -o /tmp/r2-reconcile-finalize.json -w '%{http_code}' "${HDR[@]}"     -H 'Content-Type: application/json' --data-binary @/tmp/r2-reconcile-finalize-body.json     "$BASE/api/admin/r2-reconcile-finalize" || echo 000)
+  [ "$finalize_http" = "200" ] || { cat /tmp/r2-reconcile-finalize.json 2>/dev/null || true; die "R2_RECONCILE_FINALIZE_HTTP_$finalize_http"; }
+  jq -e '.ok == true and .authoritative == true' /tmp/r2-reconcile-finalize.json >/dev/null || {
+    cat /tmp/r2-reconcile-finalize.json
+    die "R2_RECONCILE_FINALIZE_BAD"
+  }
+fi
+
+manifest_http=$(curl -sS --max-time 30 -o /tmp/r2-library-manifest.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/v1/r2/library-manifest" || echo 000)
+[ "$manifest_http" = "200" ] || { cat /tmp/r2-library-manifest.json 2>/dev/null || true; die "R2_LIBRARY_MANIFEST_HTTP_$manifest_http"; }
+jq -e --argjson docs "$do_documents" --argjson chunks "$do_chunks" '
+  .ok == true and .authoritative == true and
+  .total_books == $docs and .total_chunks == $chunks and
+  ((.metadata | length) == $docs)
+' /tmp/r2-library-manifest.json >/dev/null || {
+  cat /tmp/r2-library-manifest.json
+  die "R2_LIBRARY_MANIFEST_MISMATCH"
+}
+
+reconcile_verify_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-verify.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
+[ "$reconcile_verify_http" = "200" ] || die "R2_RECONCILE_VERIFY_HTTP_$reconcile_verify_http"
+jq -e '.ok == true and .in_sync == true' /tmp/r2-reconcile-verify.json >/dev/null || {
+  cat /tmp/r2-reconcile-verify.json
+  die "R2_RECONCILIATION_NOT_IN_SYNC"
+}
+log "R2_RECONCILIATION_PASS=yes"
+log "R2_HYDRATION_PASS=yes"
+
+first_hash=$(jq -r '[.metadata[] | select((.content_sha256 // "") | test("^[0-9a-f]{64}$"))][0].content_sha256 // ""' /tmp/r2-library-manifest.json)
+if [ -n "$first_hash" ]; then
+  first_name=$(jq -r --arg h "$first_hash" '.metadata[] | select(.content_sha256 == $h) | .filename' /tmp/r2-library-manifest.json | head -n1)
+  first_pages=$(jq -r --arg h "$first_hash" '(.metadata[] | select(.content_sha256 == $h) | .pages) // 1' /tmp/r2-library-manifest.json | head -n1)
+  jq -nc --arg filename "$first_name" --arg hash "$first_hash" --argjson pages "$first_pages"     '{filename:$filename,size_bytes:0,page_count:$pages,title:$filename,author:"",content_sha256:$hash,original_r2_key:""}'     >/tmp/r2-duplicate-probe.json
+  duplicate_http=$(curl -sS --max-time 30 -X POST -o /tmp/r2-duplicate-result.json -w '%{http_code}' "${HDR[@]}"     -H 'Content-Type: application/json' --data-binary @/tmp/r2-duplicate-probe.json "$BASE/api/admin/local-ingest-start" || echo 000)
+  [ "$duplicate_http" = "200" ] || { cat /tmp/r2-duplicate-result.json 2>/dev/null || true; die "R2_DUPLICATE_PROBE_HTTP_$duplicate_http"; }
+  jq -e '.ok == true and .duplicate == true' /tmp/r2-duplicate-result.json >/dev/null || {
+    cat /tmp/r2-duplicate-result.json
+    die "R2_DUPLICATE_REPROCESS_GUARD_FAILED"
+  }
+fi
+log "NO_DUPLICATE_REPROCESS_PASS=yes"
 
 log "6/7 R2 cross-device regression probe"
 curl -fsS --max-time 15 "$BASE/api/status" | tee /tmp/runtime-status.json || true

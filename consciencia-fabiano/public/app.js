@@ -10,6 +10,8 @@
   const LOCAL_EMBED_DB = "fns_local_embeddings_v1";
   const LOCAL_EMBED_DB_VERSION = 4;
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
+  const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
+  const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
 
   // V3.0 micro-kernel: heavy browser engines remain dormant until a failure,
   // an offline event, or an explicit Library/Admin action requires them.
@@ -53,7 +55,7 @@
     setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
     setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
     setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
-    setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),1900);
+    setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),1900);
   }
 
   let history = [];
@@ -147,6 +149,19 @@
       tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
     });
   }
+  async function enforcePersistentStorage(){
+    if(!navigator.storage?.persist)return false;
+    try{
+      if(await navigator.storage.persisted?.())return true;
+      const granted=await navigator.storage.persist();
+      console.info("IndexedDB Persistence Active:",Boolean(granted));
+      return Boolean(granted);
+    }catch(error){
+      console.info("IndexedDB Persistence unavailable:",String(error?.message||error));
+      return false;
+    }
+  }
+
   async function pruneIndexedDbPointers(maxDoneJobs=20){
     const jobs=await idbGetAll("jobs").catch(()=>[]);
     const done=jobs.filter(j=>j.state==="done").sort((a,b)=>(b.updated_at||0)-(a.updated_at||0));
@@ -356,7 +371,7 @@
     const token=ownerToken(); if(token) headers["X-FNS-Owner-Token"]=token;
     return {...headers,...extra};
   }
-  function isPrivateApi(path){return /\/api\/(admin\/|trigger-index|index-status)/.test(String(path || ""));}
+  function isPrivateApi(path){return /\/api\/(admin\/|v1\/r2\/library-manifest|trigger-index|index-status)/.test(String(path || ""));}
   async function api(path,options={},canPrompt=true){
     if(isPrivateApi(path) && !ownerToken()){
       if(!ensureLocalAdminAccess()){
@@ -474,6 +489,73 @@
     let h=2166136261;
     for(let i=0;i<raw.length;i++){h^=raw.charCodeAt(i);h=Math.imul(h,16777619);}
     return "s"+(h>>>0).toString(16)+"-"+raw.length;
+  }
+
+  let backendR2ReconcileRunning=false;
+
+  async function requestR2Hydration(force=true){
+    if(!("serviceWorker" in navigator) || !ownerToken())return false;
+    const reg=await navigator.serviceWorker.ready;
+    const target=reg.active||reg.waiting||reg.installing;
+    target?.postMessage({type:"hydrate-r2-library",token:ownerToken(),force:Boolean(force)});
+    return true;
+  }
+
+  async function reconcileBackendLibraryToR2({force=false}={}){
+    if(backendR2ReconcileRunning || !navigator.onLine || !ownerToken())return;
+    backendR2ReconcileRunning=true;
+    try{
+      const authoritative=await api("/api/admin/r2-reconcile-state",{},false);
+      if(authoritative?.in_sync===true && !force)return;
+      if(authoritative?.in_sync===true)return;
+
+      const signature=String(authoritative?.source_signature||"");
+      let state={generation:"",source_signature:"",offset:0,vectors:0,shards:0,chunks:0};
+      try{state=JSON.parse(localStorage.getItem(BACKEND_R2_RECONCILE_STATE_KEY)||"{}")||state;}catch{}
+      if(!state.generation || state.source_signature!==signature){
+        state={
+          generation:"do-"+Date.now().toString(36)+"-"+signature.slice(0,16),
+          source_signature:signature,offset:0,vectors:0,shards:0,
+          chunks:Number(authoritative?.do_chunks||0),updated_at:Date.now()
+        };
+      }
+
+      let batches=0,done=false;
+      while(!done && batches<5){
+        const step=await api("/api/admin/r2-reconcile-step",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({generation:state.generation,offset:Number(state.offset||0),limit:200})
+        },false);
+        state.offset=Number(step?.next_offset||state.offset||0);
+        state.vectors=Number(state.vectors||0)+Number(step?.vectors||0);
+        state.shards=Number(state.shards||0)+Number(step?.shards_written||0);
+        state.chunks=Number(step?.total||state.chunks||0);
+        state.updated_at=Date.now();
+        done=step?.done===true;
+        batches++;
+        localStorage.setItem(BACKEND_R2_RECONCILE_STATE_KEY,JSON.stringify(state));
+        await new Promise(resolve=>setTimeout(resolve,120));
+      }
+
+      if(done){
+        await api("/api/admin/r2-reconcile-finalize",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            generation:state.generation,chunks:state.chunks,
+            vectors:state.vectors,shards:state.shards,
+            expected_signature:state.source_signature
+          })
+        },false);
+        localStorage.removeItem(BACKEND_R2_RECONCILE_STATE_KEY);
+        await requestR2Hydration(true).catch(()=>{});
+      }else{
+        setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),1800);
+      }
+    }catch{
+      setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),5*60*1000);
+    }finally{
+      backendR2ReconcileRunning=false;
+    }
   }
 
   async function backfillLibraryChunksToCloud(){
@@ -2106,8 +2188,13 @@
     return {stored:true,r2_key:presign.r2_key,etag:res.headers.get("etag") || ""};
   }
   function bookIdentity(item){
+    const hash=String(item?.content_sha256 || item?.sha256 || "").toLowerCase();
+    if(/^[0-9a-f]{64}$/.test(hash))return "sha:"+hash;
+    const id=String(item?.document_id || item?.id || "").trim();
+    if(/^[0-9a-f]{64}$/i.test(id))return "sha:"+id.toLowerCase();
+    if(id)return "id:"+id;
     const name=String(item?.arquivo || item?.filename || item?.titulo || item?.title || "").trim().toLowerCase();
-    return name ? "name:"+name : "id:"+String(item?.document_id || item?.id || "");
+    return name ? "name:"+name : "";
   }
 
   async function saveLocalCatalogEntry(entry){
@@ -2123,6 +2210,11 @@
       chunks:Number(entry?.chunks || 0),
       idioma:String(entry?.idioma || entry?.language || "pt"),
       status:String(entry?.status || "local-ready"),
+      content_sha256:String(entry?.content_sha256 || entry?.sha256 || "").toLowerCase(),
+      r2_generation:String(entry?.r2_generation || ""),
+      original_r2_key:String(entry?.original_r2_key || entry?.r2_key || ""),
+      embedding_model:String(entry?.embedding_model || ""),
+      embedding_dimensions:Number(entry?.embedding_dimensions || 0),
       source:"indexeddb-catalog",
       updated_at:Number(entry?.updated_at || Date.now())
     });
@@ -2198,7 +2290,12 @@
         autor:String(item.autor || item.author || ""),
         paginas:Number(item.paginas || item.pages || 0),
         chunks:Number(item.chunks || 0),
-        idioma:String(item.idioma || item.language || "pt")
+        idioma:String(item.idioma || item.language || "pt"),
+        content_sha256:String(item.content_sha256 || item.sha256 || "").toLowerCase(),
+        r2_generation:String(item.r2_generation || ""),
+        original_r2_key:String(item.original_r2_key || item.r2_key || ""),
+        embedding_model:String(item.embedding_model || ""),
+        embedding_dimensions:Number(item.embedding_dimensions || 0)
       };
       const key=bookIdentity(normalized);
       if(!key) continue;
@@ -2212,6 +2309,12 @@
       });
     }
     return [...map.values()];
+  }
+
+  function setUploadGate(allowInitialUpload){
+    const controls=$("uploadControls");
+    if(controls)controls.classList.toggle("hidden",!allowInitialUpload);
+    if($("uploadBtn"))$("uploadBtn").disabled=!allowInitialUpload;
   }
 
   function renderBooks(list,cloudAvailable=true){
@@ -2257,6 +2360,7 @@
               method:"POST",headers:{"Content-Type":"application/json"},
               body:JSON.stringify({document_id:cloudId || localId,arquivo:item.arquivo || ""})
             }).catch(()=>{});
+            reconcileBackendLibraryToR2({force:true}).catch(()=>{});
           }
           await loadBooks();
         }catch(e){$("adminStatus").textContent="Não foi possível excluir agora: "+e.message;}
@@ -2399,6 +2503,7 @@
     if(syncQueueRunning || !navigator.onLine || !ownerToken()) return;
     if(!window.FNSRagCascade?.getDocumentChunks) return;
     syncQueueRunning=true;
+    let backendLibraryChanged=false;
     try{
       const now=Date.now();
       const items=(await idbGetAll("sync_queue").catch(()=>[]))
@@ -2455,6 +2560,7 @@
             status:"local+cloud"
           });
           await idbDelete("sync_queue",item.id);
+          backendLibraryChanged=true;
         }catch(error){
           const msg=String(error?.message || error || "");
           const quota=error?.status===429 || /Exceeded allowed rows read|free tier|rows read|quota/i.test(msg);
@@ -2466,6 +2572,7 @@
       }
     }finally{
       syncQueueRunning=false;
+      if(backendLibraryChanged)reconcileBackendLibraryToR2({force:true}).catch(()=>{});
     }
   }
 
@@ -2505,6 +2612,7 @@
         chunks:Number(extracted.pages?.length || 0),
         idioma:"pt",
         status:"local-lexical-ready",
+        content_sha256:String(extracted.content_sha256||""),
         updated_at:Date.now()
       });
 
@@ -2568,12 +2676,12 @@
       const data=event.data||{};
       if(data.type==="omni-daemon-synced"){
         localStorage.setItem(OMNI_SYNC_STAMP_KEY,String(Date.now()));
-        if($("backendText")) $("backendText").textContent="V6.0 • Phantom Daemon sincronizou "+Number(data.written||0)+" chunks";
+        if($("backendText")) $("backendText").textContent="V7.4 • R2 hidratou "+Number(data.written||0)+" chunks no IndexedDB";
         if(!$("libraryPanel")?.classList.contains("hidden")) loadBooks().catch(()=>{});
         return;
       }
       if(data.type==="omni-daemon-idle"){
-        if($("backendText")) $("backendText").textContent="V6.0 • biblioteca sincronizada • daemon ativo";
+        if($("backendText")) $("backendText").textContent="V7.4 • R2 + IndexedDB sincronizados";
         return;
       }
       if(data.type==="omni-daemon-error"){
@@ -2582,34 +2690,90 @@
     });
   }
 
-  async function loadBooks() {
+  async function ensureLibraryAlwaysAvailable(){
+    await enforcePersistentStorage().catch(()=>false);
     const local=await localBookCatalog();
     renderBooks(local,false);
+    setUploadGate(false);
 
-    if(local.length){
-      $("adminStatus").textContent="Biblioteca local ativa: "+local.length+" PDF(s) carregado(s) do IndexedDB.";
-    }else{
-      $("adminStatus").textContent="Consultando biblioteca local e nuvem…";
+    if(!navigator.onLine){
+      $("adminStatus").textContent=local.length
+        ? "Offline • biblioteca carregada do IndexedDB: "+local.length+" PDF(s)."
+        : "Offline • cache local vazio. O resgate automático será feito pelo R2 quando a conexão voltar.";
+      return local;
     }
 
+    let manifest=null;
+    try{manifest=await api("/api/v1/r2/library-manifest",{},false);}catch{}
+    const r2Books=Array.isArray(manifest?.metadata)
+      ? manifest.metadata.map(item=>({
+          document_id:String(item.document_id||""),
+          arquivo:String(item.filename||item.arquivo||"Documento"),
+          titulo:String(item.title||item.titulo||item.filename||"Documento"),
+          autor:String(item.author||item.autor||""),
+          paginas:Number(item.pages||item.paginas||0),
+          chunks:Number(item.chunks||0),
+          idioma:String(item.language||item.idioma||"pt"),
+          status:String(item.status||"ready"),
+          content_sha256:String(item.content_sha256||"").toLowerCase(),
+          original_r2_key:String(item.original_r2_key||""),
+          embedding_model:String(item.embedding_model||""),
+          embedding_dimensions:Number(item.embedding_dimensions||0),
+          r2_generation:String(manifest?.generation||""),
+          source:"r2-authoritative"
+        }))
+      : [];
+
+    if(Number(manifest?.total_books||0)>0){
+      const merged=mergeBookLists(local,r2Books);
+      for(const item of merged)if(item.document_id)saveLocalCatalogEntry(item).catch(()=>{});
+      renderBooks(merged,true);
+      setUploadGate(false);
+
+      const generation=String(manifest?.generation||"");
+      const lastGeneration=String(localStorage.getItem(R2_LIBRARY_GENERATION_KEY)||"");
+      const needsHydration=local.length<Number(manifest.total_books||0) || generation!==lastGeneration;
+      if(needsHydration){
+        $("adminStatus").textContent="Biblioteca recuperada do R2 • "+merged.length+" livro(s) visíveis • hidratando IndexedDB silenciosamente…";
+        localStorage.setItem(R2_LIBRARY_GENERATION_KEY,generation);
+        requestR2Hydration(true).catch(()=>{});
+      }else{
+        $("adminStatus").textContent="Biblioteca íntegra • R2 + IndexedDB sincronizados • "+merged.length+" PDF(s).";
+      }
+      return merged;
+    }
+
+    // Somente se o R2 estiver vazio, confirme também o DO antes de liberar upload.
     try{
-      const data=await api("/api/admin/livros");
+      const data=await api("/api/admin/livros",{},false);
       const cloud=Array.isArray(data?.livros)?data.livros:[];
       const merged=mergeBookLists(local,cloud);
-      for(const item of merged){
-        if(item.document_id) saveLocalCatalogEntry(item).catch(()=>{});
-      }
+      for(const item of merged)if(item.document_id)saveLocalCatalogEntry(item).catch(()=>{});
       renderBooks(merged,true);
-      $("adminStatus").textContent="Biblioteca sincronizada: "+merged.length+" PDF(s) disponível(is).";
+      if(merged.length){
+        setUploadGate(false);
+        $("adminStatus").textContent="Biblioteca ativa no backend • reconciliando R2 automaticamente…";
+        reconcileBackendLibraryToR2({force:true}).catch(()=>{});
+      }else{
+        setUploadGate(local.length===0);
+        $("adminStatus").textContent=local.length
+          ? "Biblioteca local ativa no IndexedDB."
+          : "Biblioteca vazia no IndexedDB e no R2. Você pode adicionar o primeiro PDF.";
+      }
       processSyncQueue().catch(()=>{});
-    }catch(error){
-      const msg=String(error?.message || error || "");
-      const quota=error?.status===429 || /Exceeded allowed rows read|free tier|rows read|quota/i.test(msg);
+      return merged;
+    }catch{
       renderBooks(local,false);
-      $("adminStatus").textContent=quota
-        ? "Cloudflare em limite diário. A lista foi carregada do IndexedDB local; seus livros continuam disponíveis."
-        : "Nuvem temporariamente indisponível. A lista local do IndexedDB continua ativa.";
+      setUploadGate(false);
+      $("adminStatus").textContent=local.length
+        ? "Nuvem temporariamente indisponível • usando IndexedDB local."
+        : "Não foi possível confirmar que o R2 está vazio. Upload bloqueado por segurança até a nuvem responder.";
+      return local;
     }
+  }
+
+  async function loadBooks() {
+    return ensureLibraryAlwaysAvailable();
   }
 
   async function reindex() {
@@ -2660,6 +2824,7 @@
   syncPersistentHistory();
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
+  enforcePersistentStorage().catch(()=>false);
 
   // V6 Phantom Daemon: zero-touch. Nenhum botão de sincronização é necessário.
   if("serviceWorker" in navigator){
@@ -2678,7 +2843,7 @@
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
-    backfillLibraryChunksToCloud().catch(()=>{});
+    reconcileBackendLibraryToR2().catch(()=>{});
   },20*60*1000);
 
   window.addEventListener("offline",()=>{
@@ -2690,6 +2855,8 @@
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
+    reconcileBackendLibraryToR2().catch(()=>{});
+    requestR2Hydration(false).catch(()=>{});
   });
   document.addEventListener("visibilitychange",()=>{
     if(document.visibilityState==="visible" && heavyLocalSubsystemsActivated){

@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-ultimate-resilience-v7-1";
+const CACHE_NAME="fns-ultimate-resilience-v7-4-r2truth";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const BATCH_SIZE=200;
 const DAEMON_DB="fns_omni_daemon_v6";
@@ -93,54 +93,62 @@ function openRagDb(){
 async function putChunkBatch(rows,generation){
   const db=await openRagDb();
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction("chunks","readwrite");
-    const store=tx.objectStore("chunks");
+    const tx=db.transaction(["chunks","vectors"],"readwrite");
+    const chunkStore=tx.objectStore("chunks");
+    const vectorStore=tx.objectStore("vectors");
     for(const row of rows){
       const documentId=String(row?.document_id||"");
       const text=String(row?.text||"").trim();
       if(!documentId||!text)continue;
       const chunkIndex=Number(row?.chunk_index||0);
       const id=String(row?.id||documentId+":"+chunkIndex);
-      store.put({
-        key:"omni:"+id,
-        id,
-        doc_key:documentId,
-        document_id:documentId,
+      const base={
+        key:"omni:"+id,id,doc_key:documentId,document_id:documentId,
         filename:String(row?.filename||row?.title||"Documento"),
         title:String(row?.title||row?.filename||"Documento"),
-        author:String(row?.author||""),
-        language:String(row?.language||"pt"),
-        page:Number(row?.page||0)||null,
-        chunk_index:chunkIndex,
-        text,
-        source:"supabase-omni-sync",
-        sync_generation:generation,
-        updated_at:Date.now()
-      });
+        author:String(row?.author||""),language:String(row?.language||"pt"),
+        page:Number(row?.page||0)||null,chunk_index:chunkIndex,text,
+        content_hash:String(row?.content_hash||""),
+        source:"r2-hydration",sync_generation:generation,updated_at:Date.now()
+      };
+      chunkStore.put(base);
+      const vector=Array.isArray(row?.vector)?row.vector.map(Number).filter(Number.isFinite):[];
+      if(vector.length>=64)vectorStore.put({...base,vector});
     }
     tx.oncomplete=()=>{db.close();resolve(true);};
     tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
     tx.onabort=()=>{const e=tx.error;db.close();reject(e);};
   });
 }
+
 async function cleanupOldGeneration(generation){
   const db=await openRagDb();
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction("chunks","readwrite");
-    const store=tx.objectStore("chunks");
-    const req=store.openCursor();
+    const tx=db.transaction(["chunks","vectors"],"readwrite");
     let deleted=0;
-    req.onsuccess=()=>{
-      const cursor=req.result;
-      if(!cursor)return;
-      const row=cursor.value||{};
-      if(row.source==="supabase-omni-sync"&&String(row.sync_generation||"")!==generation){
-        cursor.delete();deleted++;
-      }
-      cursor.continue();
-    };
+    for(const name of ["chunks","vectors"]){
+      const store=tx.objectStore(name),req=store.openCursor();
+      req.onsuccess=()=>{
+        const cursor=req.result;
+        if(!cursor)return;
+        const row=cursor.value||{};
+        if((row.source==="supabase-omni-sync"||row.source==="r2-hydration") &&
+           String(row.sync_generation||"")!==generation){
+          cursor.delete();deleted++;
+        }
+        cursor.continue();
+      };
+    }
     tx.oncomplete=()=>{db.close();resolve(deleted);};
     tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
+  });
+}
+async function countRagChunks(){
+  const db=await openRagDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction("chunks","readonly"),req=tx.objectStore("chunks").count();
+    req.onsuccess=()=>{const n=Number(req.result||0);db.close();resolve(n);};
+    req.onerror=()=>{const e=req.error;db.close();reject(e);};
   });
 }
 function authHeaders(token){
@@ -174,17 +182,17 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
     const state=await fetchJson("/api/admin/omni-sync-state",token);
     const previous=String(await metaGet("cloud_signature").catch(()=>"")||"");
     const signature=String(state?.signature||"");
-    if(!force&&signature&&previous===signature){
+    const localChunkCount=await countRagChunks().catch(()=>0);
+    if(!force&&signature&&previous===signature&&localChunkCount>=Number(state?.total||0)){
       await metaPut("last_success",Date.now()).catch(()=>{});
-      await notifyClients({type:"omni-daemon-idle",signature,total:Number(state?.total||0),reason});
+      await notifyClients({type:"omni-daemon-idle",signature,total:Number(state?.total||0),reason,local_chunks:localChunkCount});
       return {ok:true,changed:false,total:Number(state?.total||0)};
     }
 
     const generation="r2-"+String(state?.generation||Date.now().toString(36));
-    let cursor="",totalWritten=0,done=false,batches=0;
+    let offset=0,totalWritten=0,done=false,batches=0;
     while(!done){
-      const query=cursor ? "?cursor="+encodeURIComponent(cursor) : "";
-      let payload=await fetchJson("/api/admin/omni-sync-page"+query,token);
+      let payload=await fetchJson("/api/admin/omni-sync-page?offset="+encodeURIComponent(offset)+"&limit="+BATCH_SIZE,token);
       let rows=Array.isArray(payload?.rows)?payload.rows:[];
       const count=rows.length;
       if(count){
@@ -193,8 +201,9 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
       }
       batches++;
       done=payload?.done===true;
-      cursor=String(payload?.next_cursor||"");
-      if(!done && !cursor)done=true;
+      const nextOffset=Number(payload?.next_offset||offset+count);
+      if(!done && nextOffset<=offset)done=true;
+      offset=nextOffset;
       await notifyClients({
         type:"omni-daemon-progress",written:totalWritten,total:Number(payload?.total||state?.total||0),
         batch:batches,batch_size:BATCH_SIZE,reason,
@@ -270,6 +279,14 @@ self.addEventListener("message",event=>{
   }
   if(data.type==="omni-daemon-tick"){
     event.waitUntil(runPhantomDaemon({reason:"window-heartbeat"}).catch(()=>{}));
+    return;
+  }
+  if(data.type==="hydrate-r2-library"){
+    event.waitUntil((async()=>{
+      const token=String(data.token||"");
+      if(token)await metaPut("owner_token",token);
+      await runPhantomDaemon({force:data.force!==false,reason:"r2-self-heal"}).catch(()=>{});
+    })());
   }
 });
 
@@ -290,6 +307,28 @@ self.addEventListener("fetch",event=>{
   if(url.origin===self.location.origin)maybeRunOnActivity(event);
   if(req.method!=="GET") return;
   if(url.origin!==self.location.origin) return;
+
+  if(url.pathname==="/api/v1/r2/library-manifest"){
+    // Private stale-while-revalidate: never serve the private cache without the owner header.
+    if(!req.headers.get("X-FNS-Owner-Token"))return;
+    event.respondWith((async()=>{
+      const cache=await caches.open(CACHE_NAME);
+      const cached=await cache.match(req);
+      const network=fetch(req).then(async res=>{
+        if(res.ok)await cache.put(req,res.clone());
+        return res;
+      }).catch(()=>null);
+      if(cached){
+        event.waitUntil(network.then(()=>{}));
+        return cached;
+      }
+      return (await network) || new Response(JSON.stringify({ok:false,offline:true,metadata:[]}),{
+        status:503,headers:{"Content-Type":"application/json"}
+      });
+    })());
+    return;
+  }
+
   if(url.pathname.startsWith("/api/") || url.pathname.startsWith("/health")) return;
 
   const isSteel=url.pathname.startsWith("/steel/");
