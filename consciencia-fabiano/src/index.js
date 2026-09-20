@@ -2748,8 +2748,16 @@ function questionLanguage(question) {
 
 function questionNeedsMemory(question) {
   const q=foldSearchText(question);
-  return /\b(isso|isto|esse|essa|aquele|aquela|ele|ela|eles|elas|anterior|acima|continue|continuar|that|this|it|they|them|above|previous|continue)\b/i.test(q) ||
-    (/^(e|and|mas|but|entao|then)\b/i.test(q) && q.length<120);
+  const short=q.length<140;
+  const explicitContext=/\b(isso|isto|esse|essa|aquele|aquela|ele|ela|eles|elas|anterior|acima|continue|continuar|that|this|it|they|them|above|previous|continue)\b/i.test(q);
+  const followUpLead=/^(e|and|mas|but|entao|then|agora|now)\b/i.test(q) && short;
+  const underspecifiedReference=short &&
+    /\b(referencia|fonte|capitulo|versiculo|pagina|livro|trecho|reference|source|chapter|verse|page|book|excerpt)\b/i.test(q) &&
+    !/\b\d{1,3}\s*:\s*\d{1,3}\b/.test(q);
+  const underspecifiedContinuation=short &&
+    /\b(resuma|resumo|explique|continue|continuar|summarize|summary|explain|continue)\b/i.test(q) &&
+    !/["“”']/.test(q);
+  return explicitContext || followUpLead || underspecifiedReference || underspecifiedContinuation;
 }
 
 function buildCognitiveContract(question) {
@@ -3355,6 +3363,22 @@ async function chat(request, env) {
     : clientHistory;
   const history = slidingHistory(historySource);
 
+  // Cognitive v7.4 reference resolver: the current question remains sovereign,
+  // but underspecified follow-ups may borrow only recent user turns for retrieval.
+  // This does not modify memory storage or the RAG engine itself.
+  let retrievalQuestion=question;
+  if(cognitiveContract.use_history && history.length){
+    const priorUserTurns=history
+      .filter(x=>String(x?.role||"").toLowerCase()==="user")
+      .slice(-3)
+      .map(x=>String(x?.content||"").trim())
+      .filter(Boolean);
+    if(priorUserTurns.length){
+      retrievalQuestion=question+"\n\nCONTEXTO DE REFERÊNCIA PARA RECUPERAÇÃO (não amplia o escopo):\n"+
+        priorUserTurns.join("\n");
+    }
+  }
+
   const clientContext = normalizeClientContext(body?.client_context);
   let context = clientContext;
   let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
@@ -3365,7 +3389,7 @@ async function chat(request, env) {
     try {
       const serverContext = await retrieveContext(
         env,
-        question,
+        retrievalQuestion,
         Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null
       );
       context = mergeRetrievedMatches(clientContext, serverContext);
@@ -3378,10 +3402,10 @@ async function chat(request, env) {
   }
 
   context=(Array.isArray(context)?context:[])
-    .filter(row=>groundedHybridCandidate(row,question));
+    .filter(row=>groundedHybridCandidate(row,retrievalQuestion));
   const mappedContext = diversifyContextAcrossDocuments(
     context
-      .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,question)}))
+      .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,retrievalQuestion)}))
       .sort((a,b)=>Number(b.__hybrid_rank||0)-Number(a.__hybrid_rank||0))
       .map(({__hybrid_rank,...row})=>row),
     HYBRID_CONTEXT_LIMIT
