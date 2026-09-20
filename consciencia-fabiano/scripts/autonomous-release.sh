@@ -378,6 +378,140 @@ jq -e '.ok == true and .backend == "cloudflare-r2" and .bucket == "consciencia-f
 }
 log "R2_CROSS_DEVICE_STATE_PASS=yes"
 
+# V7.4 acceptance recovery: if the Durable Object has no chunks but the already-existing
+# cross-device R2 snapshot has data, hydrate through the existing local-ingest admin routes.
+# This is an operational data repair only: no RAG, memory, Groq, router or turbine logic changes.
+r2_total=$(jq -r '(.total // 0) | tonumber' /tmp/r2-sync-state.json 2>/dev/null || echo 0)
+r2_documents=$(jq -r '(.documents // 0) | tonumber' /tmp/r2-sync-state.json 2>/dev/null || echo 0)
+r2_generation=$(jq -r '.generation // ""' /tmp/r2-sync-state.json 2>/dev/null || true)
+server_http=$(curl -sS --max-time 20 -o /tmp/server-library-state.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" || echo 000)
+server_total=0
+if [ "$server_http" = "200" ]; then
+  server_total=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state.json 2>/dev/null || echo 0)
+fi
+log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents"
+
+if [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
+  log "LIBRARY_RECOVERY_FROM_R2=START"
+  rm -f /tmp/r2-library-rows.ndjson
+  cursor=""
+  shard_guard=0
+  while [ "$shard_guard" -lt 20000 ]; do
+    shard_guard=$((shard_guard+1))
+    if [ -n "$cursor" ]; then
+      page_http=$(curl -sS --max-time 30 -G -o /tmp/r2-page.json -w '%{http_code}' "${HDR[@]}" --data-urlencode "cursor=$cursor" "$BASE/api/admin/omni-sync-page" || echo 000)
+    else
+      page_http=$(curl -sS --max-time 30 -o /tmp/r2-page.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/omni-sync-page" || echo 000)
+    fi
+    [ "$page_http" = "200" ] || { log "LIBRARY_RECOVERY_FROM_R2=PAGE_HTTP_$page_http"; break; }
+    jq -c '.rows[]?' /tmp/r2-page.json >>/tmp/r2-library-rows.ndjson
+    done_flag=$(jq -r '.done // true' /tmp/r2-page.json)
+    cursor=$(jq -r '.next_cursor // ""' /tmp/r2-page.json)
+    [ "$done_flag" = "true" ] && break
+    [ -n "$cursor" ] || break
+  done
+
+  row_count=$(wc -l </tmp/r2-library-rows.ndjson 2>/dev/null | tr -d ' ' || echo 0)
+  log "LIBRARY_RECOVERY_R2_ROWS=$row_count"
+  if [ "$row_count" -gt 0 ]; then
+    rm -rf /tmp/r2-rehydrate
+    mkdir -p /tmp/r2-rehydrate
+    python3 - /tmp/r2-library-rows.ndjson /tmp/r2-rehydrate "$r2_generation" <<'PY'
+import sys,json,hashlib,pathlib
+src,outdir,generation=sys.argv[1:4]
+docs={}
+with open(src,encoding="utf-8") as fh:
+    for line in fh:
+        try:r=json.loads(line)
+        except:continue
+        text=str(r.get("text") or "").replace("\x00","").strip()
+        docid=str(r.get("document_id") or "").strip()
+        if not text or not docid: continue
+        d=docs.setdefault(docid,{
+            "document_id":docid,
+            "filename":str(r.get("filename") or r.get("title") or "Documento"),
+            "title":str(r.get("title") or r.get("filename") or "Documento"),
+            "author":str(r.get("author") or ""),
+            "pages":{}
+        })
+        p=max(1,int(r.get("page") or 1))
+        d["pages"].setdefault(p,[]).append((int(r.get("chunk_index") or 0),text))
+root=pathlib.Path(outdir)
+manifest=[]
+for n,(docid,d) in enumerate(sorted(docs.items()),1):
+    pages=[]
+    for p,chunks in sorted(d["pages"].items()):
+        text="\n".join(t for _,t in sorted(chunks))
+        if not text.strip(): continue
+        # Keep API batches safe if an old source collapsed many chunks into one page.
+        if len(text)<=600000:
+            pages.append({"page":p,"text":text})
+        else:
+            pieces=[text[i:i+600000] for i in range(0,len(text),600000)]
+            for k,piece in enumerate(pieces):
+                pages.append({"page":p if k==0 else 900000+p*100+k,"text":piece})
+    if not pages: continue
+    canonical="\n".join(x["text"] for x in pages)
+    digest=hashlib.sha256(("r2-rehydrate-v1\n"+generation+"\n"+docid+"\n"+canonical).encode()).hexdigest()
+    key=f"{n:05d}"
+    dd=root/key; dd.mkdir()
+    start={
+        "filename":d["filename"],"title":d["title"],"author":d["author"],
+        "page_count":len(pages),"size_bytes":len(canonical.encode()),
+        "content_sha256":digest,"original_r2_key":"library/generations/"+generation+"/shards/"+docid
+    }
+    (dd/"start.json").write_text(json.dumps(start,ensure_ascii=False),encoding="utf-8")
+    batches=[]; current=[]; chars=0
+    for page in pages:
+        nchar=len(page["text"])
+        if current and chars+nchar>1000000:
+            batches.append(current); current=[]; chars=0
+        current.append(page); chars+=nchar
+    if current:batches.append(current)
+    for bi,batch in enumerate(batches):
+        (dd/f"batch-{bi:05d}.json").write_text(json.dumps({"pages":batch},ensure_ascii=False),encoding="utf-8")
+    manifest.append({"key":key,"document_id":docid,"pages":len(pages),"batches":len(batches)})
+(root/"manifest.json").write_text(json.dumps(manifest,ensure_ascii=False),encoding="utf-8")
+print(len(manifest))
+PY
+    hydrate_docs=$(jq 'length' /tmp/r2-rehydrate/manifest.json 2>/dev/null || echo 0)
+    hydrate_ok=0
+    hydrate_fail=0
+    for docdir in /tmp/r2-rehydrate/[0-9][0-9][0-9][0-9][0-9]; do
+      [ -d "$docdir" ] || continue
+      start_http=$(curl -sS --max-time 30 -o /tmp/hydrate-start.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @"$docdir/start.json" "$BASE/api/admin/local-ingest-start" || echo 000)
+      if [ "$start_http" != "201" ] && [ "$start_http" != "200" ]; then
+        hydrate_fail=$((hydrate_fail+1)); continue
+      fi
+      job_id=$(jq -r '.job_id // ""' /tmp/hydrate-start.json)
+      duplicate=$(jq -r '.duplicate // false' /tmp/hydrate-start.json)
+      if [ "$duplicate" = "true" ]; then
+        existing_chunks=$(jq -r '(.chunks // 0) | tonumber' /tmp/hydrate-start.json)
+        if [ "$existing_chunks" -gt 0 ]; then hydrate_ok=$((hydrate_ok+1)); else hydrate_fail=$((hydrate_fail+1)); fi
+        continue
+      fi
+      if [ -z "$job_id" ]; then hydrate_fail=$((hydrate_fail+1)); continue; fi
+      append_failed=0
+      for batch in "$docdir"/batch-*.json; do
+        jq --arg job "$job_id" '. + {job_id:$job}' "$batch" >/tmp/hydrate-append.json
+        append_http=$(curl -sS --max-time 45 -o /tmp/hydrate-append-response.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @/tmp/hydrate-append.json "$BASE/api/admin/local-ingest-append" || echo 000)
+        if [ "$append_http" != "200" ]; then append_failed=1; break; fi
+      done
+      if [ "$append_failed" -ne 0 ]; then hydrate_fail=$((hydrate_fail+1)); continue; fi
+      jq -nc --arg job "$job_id" '{job_id:$job}' >/tmp/hydrate-commit.json
+      commit_http=$(curl -sS --max-time 30 -o /tmp/hydrate-commit-response.json -w '%{http_code}' "${HDR[@]}" -H 'Content-Type: application/json' --data-binary @/tmp/hydrate-commit.json "$BASE/api/admin/local-ingest-commit" || echo 000)
+      if [ "$commit_http" = "200" ]; then hydrate_ok=$((hydrate_ok+1)); else hydrate_fail=$((hydrate_fail+1)); fi
+    done
+    curl -sS --max-time 20 -o /tmp/server-library-state-after.json "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" || true
+    server_total_after=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state-after.json 2>/dev/null || echo 0)
+    log "LIBRARY_RECOVERY_FROM_R2=DONE docs:$hydrate_docs,ok:$hydrate_ok,failed:$hydrate_fail,durable_chunks:$server_total_after"
+  else
+    log "LIBRARY_RECOVERY_FROM_R2=NO_ROWS"
+  fi
+else
+  log "LIBRARY_RECOVERY_FROM_R2=SKIP"
+fi
+
 rag_http=$(curl -sS --max-time 25 -o /tmp/rag-broad-probe.json -w '%{http_code}' "$BASE/api/rag/search" \
   -H 'Content-Type: application/json' \
   --data '{"question":"Jesus"}' || echo 000)
