@@ -26,11 +26,11 @@ export const PERFORMANCE_GUARD = Object.freeze({
 });
 
 const PROFILES = Object.freeze([
-  {key:"strict",priority:100,depth:"strict",output:"REFERENCE_OR_EVIDENCE"},
-  {key:"compact",priority:92,depth:"compact",output:"COMPACT"},
-  {key:"balanced",priority:84,depth:"balanced",output:"BALANCED"},
-  {key:"deep",priority:76,depth:"deep",output:"DEEP"},
-  {key:"audit",priority:68,depth:"audit",output:"AUDIT"}
+  {key:"exact",priority:100,depth:"exact",output:"REFERENCE_OR_EVIDENCE",semantic_role:"perform the capability with exact/literal constraints"},
+  {key:"contextual",priority:94,depth:"contextual",output:"CONTEXTUAL",semantic_role:"perform the capability with bounded surrounding context"},
+  {key:"cross_source",priority:88,depth:"cross_source",output:"CROSS_SOURCE",semantic_role:"perform the capability across independent sources while preserving provenance"},
+  {key:"conflict_aware",priority:82,depth:"conflict_aware",output:"CONFLICT_AWARE",semantic_role:"perform the capability while detecting conflicting evidence"},
+  {key:"validation",priority:76,depth:"validation",output:"VALIDATED",semantic_role:"validate the capability result against evidence and output constraints"}
 ]);
 
 const family = (id,name,triggers,intents,objects,capabilities) =>
@@ -142,18 +142,19 @@ for(const fam of FAMILY_DEFINITIONS){
   fam.capabilities.forEach((capability,capIndex)=>{
     PROFILES.forEach((profile,profileIndex)=>{
       const n=capIndex*PROFILES.length+profileIndex+1;
-      const id=fam.id+"."+capability+"."+String(n).padStart(3,"0");
+      const operation=capability+"_"+profile.key;
+      const id=fam.id+"."+operation+"."+String(n).padStart(3,"0");
       registerTurbine({
         id,
         family:fam.id,
         family_name:fam.name,
-        name:capability+"_"+profile.key,
+        name:operation,
         version:1,
         enabled:true,
         priority:profile.priority,
         profile:profile.key,
         depth:profile.depth,
-        triggers:unique([...fam.triggers,...capabilityTokens(capability)]),
+        triggers:unique([...fam.triggers,...capabilityTokens(capability),...capabilityTokens(profile.key)]),
         intents:[...fam.intents],
         objects:[...fam.objects],
         requires_evidence:familyRequiresEvidence(fam.id),
@@ -161,15 +162,17 @@ for(const fam of FAMILY_DEFINITIONS){
         allowed_memory:fam.id==="F16" || fam.id==="F01" ? "REFERENCE_RESOLUTION_ONLY" : "NONE",
         may_invent_facts:false,
         output_contract:profile.output,
-        operation:capability,
-        handler:familyHandler(fam.id),
+        operation,
+        base_capability:capability,
+        handler:familyHandler(fam.id)+"."+operation,
         rules:Object.freeze({
           current_question_is_sovereign:true,
           may_invent_facts:false,
           preserve_provenance:["F02","F03","F04","F05","F14","F19","F20"].includes(fam.id),
           epistemic_label:fam.id==="F09"?"REFLECTION":fam.id==="F10"?"HYPOTHESIS":null,
           specialization:profile.key,
-          semantic_parameter:capability
+          semantic_role:profile.semantic_role,
+          semantic_parameter:operation
         })
       });
     });
@@ -192,18 +195,24 @@ const FAMILY_INTENT_MAP=Object.freeze({
   fichamento:["F01","F03","F04","F05","F06","F07","F11","F14","F17","F19","F20"],
   chronology:["F01","F02","F12","F14","F17","F19","F20"],
   definition:["F01","F02","F13","F14","F17","F19","F20"],
-  what_if:["F01","F10","F12","F14","F17","F19","F20"]
+  what_if:["F01","F10","F12","F14","F17","F19","F20"],
+  questioning:["F01","F07","F11","F14","F17","F19","F20"]
 });
 
 function inferSupplementalIntents(query,baseMode){
   const q=normalize(query);
   const intents=[String(baseMode || "factual")];
   const tests=[
+    ["reference_only",/\b(somente|apenas|so)\s+(a\s+)?(referencia|fonte)|\b(reference|source)\s+only\b/],
     ["quotation",/\b(cite|citacao|citar|quote|literal|verbatim|trecho exato)\b/],
     ["fichamento",/\b(fichamento|reading notes|study notes)\b/],
     ["chronology",/\b(cronologia|timeline|linha do tempo|sequencia temporal)\b/],
     ["definition",/\b(defina|definicao|definition|o que significa|what does .* mean)\b/],
-    ["what_if",/\b(e se|what if|suponha|suppose|contrafactual)\b/]
+    ["what_if",/\b(e se|e se n|what if|suponha|suppose|contrafactual)\b/],
+    ["comparison",/\b(compare|comparar|comparacao|diferencas|semelhancas|versus|\bvs\b)\b/],
+    ["reflection",/\b(reflexao|reflita|o que voce pensa|o q vc acha|what do you think|reflect)\b/],
+    ["summary",/\b(resuma|resumo|summarize|summary)\b/],
+    ["questioning",/\b(duvida|duvidas|questao|questoes|pergunta critica|question|questions|doubts)\b/]
   ];
   for(const [intent,re] of tests) if(re.test(q)) intents.push(intent);
   return unique(intents);
@@ -237,7 +246,7 @@ function inferOutput(query,contract){
   if(/\b(cronologia|timeline|linha do tempo)\b/.test(q)) return "timeline";
   if(/\b(citacao literal|quotation block|quote block)\b/.test(q)) return "quotation_block";
   if(/\b(lista de fontes|source list|fontes somente)\b/.test(q)) return "source_list";
-  if(/\b(profundo|deep|encicloped|encyclopedic)\b/.test(q)) return "deep_answer";
+  if(/\b(profund|deep|encicloped|encyclopedic)\b/.test(q)) return "deep_answer";
   return contract?.mode==="summary"?"short_answer":"balanced_answer";
 }
 
@@ -295,21 +304,28 @@ export function buildExecutionPlan(query,contract={},options={}){
     .filter(x=>x.score>20)
     .sort((a,b)=>b.score-a.score || b.t.priority-a.t.priority || a.t.id.localeCompare(b.t.id));
 
+  // Minimal sufficient routing: first cover each required family with its best
+  // semantically relevant operation; only then add a few trigger-matched specialists.
   const selected=[];
-  const seenOperation=new Set();
-  for(const row of scored){
-    const opKey=row.t.family+"|"+row.t.operation;
-    if(seenOperation.has(opKey) && row.t.profile!=="audit") continue;
-    seenOperation.add(opKey);
-    selected.push(row.t);
+  const selectedIds=new Set();
+  const preferredOrdered=[...preferredFamilies];
+  for(const familyId of preferredOrdered){
+    const best=scored.find(row=>row.t.family===familyId && !selectedIds.has(row.t.id));
+    if(!best) continue;
+    selected.push(best.t);
+    selectedIds.add(best.t.id);
     if(selected.length>=maxActive) break;
   }
 
-  // Core guards are mandatory, but never expand beyond maxActive.
-  for(const fam of ["F01","F14","F20"]){
-    if(selected.some(t=>t.family===fam)) continue;
-    const fallback=[...TURBINES.values()].find(t=>t.family===fam && t.profile==="strict");
-    if(fallback && selected.length<maxActive) selected.push(fallback);
+  const compound=intents.length>1;
+  const triggerExtras=deepResearch?16:compound?8:3;
+  const target=Math.min(maxActive,selected.length+triggerExtras);
+  for(const row of scored){
+    if(selectedIds.has(row.t.id)) continue;
+    if(triggerScore(row.t,qNorm)<=0 && !deepResearch) continue;
+    selected.push(row.t);
+    selectedIds.add(row.t.id);
+    if(selected.length>=target) break;
   }
 
   if(selected.length>=CATALOG_EXPECTED_SIZE) throw new Error("V7.4 invariant: never execute all 1000");
