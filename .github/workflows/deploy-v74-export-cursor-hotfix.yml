@@ -1,0 +1,88 @@
+name: Deploy V7.4 Export Cursor Hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-v74-export-cursor-hotfix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout operations branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Materialize production branch
+        shell: bash
+        run: |
+          git fetch origin consciencia-cloudflare-native-v1
+          git worktree add /tmp/consciencia-prod origin/consciencia-cloudflare-native-v1
+
+      - name: Validate merged V7.4 hotfix
+        working-directory: /tmp/consciencia-prod/consciencia-fabiano
+        run: |
+          npm install --ignore-scripts
+          npm run check
+
+      - name: Deploy merged V7.4 hotfix
+        working-directory: /tmp/consciencia-prod/consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Probe cursor export
+        id: probe
+        env:
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.ci-results"
+          OK=false
+          HTTP=000
+          BODY='{}'
+          for i in $(seq 1 8); do
+            HTTP="$(curl -sS -o /tmp/cursor-probe.json -w '%{http_code}' --max-time 20               -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"               'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library?mode=cursor&limit=1&include_total=1' || true)"
+            BODY="$(cat /tmp/cursor-probe.json 2>/dev/null || echo '{}')"
+            if [ "$HTTP" = "200" ] && [ "$(printf '%s' "$BODY" | jq -r '.ok // false')" = "true" ]; then
+              OK=true
+              break
+            fi
+            sleep 10
+          done
+          TOTAL="$(printf '%s' "$BODY" | jq -r '.total // 0' 2>/dev/null || echo 0)"
+          BOOKS="$(printf '%s' "$BODY" | jq -r '.total_books // 0' 2>/dev/null || echo 0)"
+          MODE="$(printf '%s' "$BODY" | jq -r '.mode // ""' 2>/dev/null || true)"
+          {
+            echo "V74_CURSOR_DEPLOY_OK=$OK"
+            echo "HTTP_STATUS=$HTTP"
+            echo "MODE=$MODE"
+            echo "PRIMARY_TOTAL=$TOTAL"
+            echo "TOTAL_BOOKS=$BOOKS"
+            echo "PRODUCTION_COMMIT=69a176f2dd41a1e50adb649123d180375bb4f7fc"
+            echo "WORKFLOW_RUN=$GITHUB_RUN_ID"
+          } > "$GITHUB_WORKSPACE/.ci-results/v74-cursor-production-probe.txt"
+          [ "$OK" = "true" ]
+
+      - name: Record production probe
+        if: always()
+        shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git add .ci-results/v74-cursor-production-probe.txt || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Record V7.4 cursor production probe"
+            git push origin HEAD:main
+          fi
