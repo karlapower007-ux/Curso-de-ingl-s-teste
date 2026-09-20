@@ -460,6 +460,35 @@ export function evidenceGateV74(plan,sources,execution){
   if(needsEvidence && evidenceCount===0){
     return Object.freeze({canAnswer:false,reason:"documentary_evidence_not_found",evidenceCount,policy:"ABSTAIN"});
   }
+
+  // Exact high-entropy identifiers are evidence obligations. A semantically
+  // related passage is not sufficient when the user asks about a specific code,
+  // identifier or synthetic fact that the library does not actually contain.
+  const rawQuery=String(plan?.query || "");
+  const exactAnchors=(rawQuery.match(/[A-Za-zÀ-ÿ0-9_:-]{8,}/g) || [])
+    .filter(token=>{
+      const hasLetter=/[A-Za-zÀ-ÿ]/.test(token);
+      const hasDigit=/\d/.test(token);
+      return token.includes("_") || (hasLetter && hasDigit && token.length>=10);
+    })
+    .map(token=>normalize(token))
+    .filter(Boolean);
+  if(exactAnchors.length){
+    const evidenceCorpus=normalize(rows.map(row=>[
+      row?.trecho,row?.text,row?.titulo,row?.title,row?.arquivo,row?.filename,row?.autor,row?.author
+    ].filter(Boolean).join(" ")).join(" "));
+    const missingAnchors=exactAnchors.filter(anchor=>!evidenceCorpus.includes(anchor));
+    if(missingAnchors.length){
+      return Object.freeze({
+        canAnswer:false,
+        reason:"exact_identifier_not_found",
+        evidenceCount,
+        missing_exact_anchors:missingAnchors,
+        policy:"ABSTAIN"
+      });
+    }
+  }
+
   const failedCritical=Array.from(execution?.outputs||[]).some(x=>x?.family==="F14" && x?.ok===false);
   if(failedCritical){
     return Object.freeze({canAnswer:false,reason:"epistemic_validation_failed",evidenceCount,policy:"ABSTAIN"});
