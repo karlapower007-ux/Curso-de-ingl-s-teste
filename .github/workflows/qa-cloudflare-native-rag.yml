@@ -26,12 +26,17 @@ jobs:
           node --check scripts/browser-ingest-smoke.mjs
           bash -n scripts/autonomous-release.sh
 
-          # Core V4.0 identity
-          grep -q '7.1.0-fabiano-r2-cross-device' src/index.js
+          # Core V7.2 grounded hybrid identity
+          grep -q '7.2.0-grounded-hybrid-rag' src/index.js
           grep -q 'cloudflare-v7.1-fabiano-r2-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
-          grep -q 'online_offline_search_symmetry: true' src/index.js
-          grep -q 'same_paragraph_phrase_required: true' src/index.js
+          grep -q 'online_offline_search_symmetry: false' src/index.js
+          grep -q 'strict_exact_path_preserved: true' src/index.js
+grep -q 'same_paragraph_phrase_required_for_exact_mode: true' src/index.js
+grep -q 'hybrid_grounded_retrieval: true' src/index.js
+grep -q 'semantic_query_embedding_server_enabled: true' src/index.js
+grep -q 'HYBRID_SEMANTIC_MIN_SCORE = 0.62' src/index.js
+grep -q 'HYBRID_CONTEXT_LIMIT = 120' src/index.js
           grep -q 'fuzzy_matching_disabled: true' src/index.js
           grep -q 'or_matching_disabled: true' src/index.js
           grep -q 'omni_library_sync: true' src/index.js
@@ -92,7 +97,11 @@ jobs:
           grep -q 'strict-phrase-durable-v4' src/index.js
           grep -q 'pushStrictHit' src/index.js
           grep -q 'roundRobinStrictHits' src/index.js
-          grep -q 'void suppliedEmbedding' src/index.js
+          grep -q 'retrieveSemanticContext' src/index.js
+grep -q 'groundedHybridCandidate' src/index.js
+grep -q 'groundedHybridRank' src/index.js
+grep -q 'lexical-bm25-grounded' src/index.js
+grep -q 'semantic-multilingual-local' src/index.js
           grep -q 'strict-phrase-provider-v4' src/index.js
           grep -q 'Nenhuma correspondência exata encontrada na biblioteca total.' src/index.js
 
@@ -121,6 +130,8 @@ jobs:
           grep -q 'LOGICAL_AGENT_COUNT=20' public/agent-swarm.js
           grep -q 'navigator.hardwareConcurrency' public/agent-swarm.js
           grep -q 'embedding-worker.js' public/rag-cascade.js
+grep -q 'async function embedQuery' public/rag-cascade.js
+grep -q 'query_embedding:analyticQueryEmbedding' public/app.js
           grep -q 'omniAgentSearch' public/rag-cascade.js
           grep -q 'runAgentSwarm' public/agent-swarm.js
           grep -q 'The Literal' public/agent-node-worker.js
