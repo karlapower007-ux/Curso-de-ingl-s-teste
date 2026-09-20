@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "ops/hydrate-v75-secondary.mjs"
+      - "ops/reconcile-v75-r2.mjs"
       - ".github/workflows/v75-secondary-hydration-promotion.yml"
   pull_request:
     branches:
@@ -46,6 +47,16 @@ jobs:
             echo "done=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Reconcile authoritative DO snapshot to R2
+        if: steps.previous.outputs.done != 'true'
+        id: reconcile
+        continue-on-error: true
+        env:
+          FNS_BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+          R2_RECONCILE_STATUS_PATH: .ci-results/v75-r2-reconciliation.json
+        run: node ops/reconcile-v75-r2.mjs
+
       - name: Run idempotent hydration ETL
         if: steps.previous.outputs.done != 'true'
         id: etl
@@ -75,6 +86,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .ci-results/v75-secondary-hydration.json
+          if [ -f .ci-results/v75-r2-reconciliation.json ]; then
+            git add .ci-results/v75-r2-reconciliation.json
+          fi
           if ! git diff --cached --quiet; then
             git commit -m "Record V7.5 secondary hydration state"
             git push origin HEAD:main
