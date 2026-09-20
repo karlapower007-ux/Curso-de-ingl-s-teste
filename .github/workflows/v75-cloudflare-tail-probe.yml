@@ -1,0 +1,74 @@
+name: V7.5 Cloudflare 1101 Tail Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/v75-cloudflare-tail-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tail-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout operations branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Materialize production Worker
+        shell: bash
+        run: |
+          git fetch origin consciencia-cloudflare-native-v1
+          git worktree add /tmp/consciencia-prod origin/consciencia-cloudflare-native-v1
+          cd /tmp/consciencia-prod/consciencia-fabiano
+          npm install --ignore-scripts
+
+      - name: Tail and reproduce Error 1101
+        id: probe
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+        shell: bash
+        run: |
+          mkdir -p .ci-results
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            printf 'TAIL_PROBE=blocked\nREASON=missing CLOUDFLARE_API_TOKEN\n' > .ci-results/v75-cloudflare-tail.txt
+            exit 0
+          fi
+          cd /tmp/consciencia-prod/consciencia-fabiano
+          timeout 45s npx wrangler tail consciencia-fabiano --format json --status error > /tmp/cf-tail.log 2>&1 &
+          TAIL_PID=$!
+          sleep 8
+          HTTP="$(curl -sS -o /tmp/probe-body.txt -w '%{http_code}' --max-time 20             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library?offset=0&limit=1' || true)"
+          sleep 10
+          kill "$TAIL_PID" 2>/dev/null || true
+          wait "$TAIL_PID" 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          {
+            echo "TAIL_PROBE=completed"
+            echo "HTTP_STATUS=$HTTP"
+            echo "--- CLOUDFLARE TAIL ---"
+            sed -E 's/[A-Za-z0-9_=-]{32,}/[REDACTED]/g' /tmp/cf-tail.log | tail -n 160
+            echo "--- PROBE BODY ---"
+            sed -E 's/[A-Za-z0-9_=-]{32,}/[REDACTED]/g' /tmp/probe-body.txt | head -c 3000
+            echo
+          } > .ci-results/v75-cloudflare-tail.txt
+
+      - name: Record sanitized tail result
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-results/v75-cloudflare-tail.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record Cloudflare 1101 tail probe"
+            git push origin HEAD:main
+          fi
