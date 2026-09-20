@@ -1,5 +1,5 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
-const VERSION = "7.1.0-fabiano-r2-cross-device";
+const VERSION = "7.2.0-grounded-hybrid-rag";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -25,6 +25,10 @@ const searchConfig = Object.freeze({
 const TOP_K = searchConfig.top_k;
 const VECTOR_SCAN_LIMIT = 50000;
 const SEMANTIC_MIN_SCORE = searchConfig.semantic_min_score;
+const HYBRID_SEMANTIC_MIN_SCORE = 0.62;
+const HYBRID_SEMANTIC_STRONG_SCORE = 0.72;
+const HYBRID_MIN_LEXICAL_COVERAGE = 0.34;
+const HYBRID_CONTEXT_LIMIT = 120;
 const REQUIRE_LEXICAL_MATCH = searchConfig.require_lexical_match;
 const LEXICAL_MIN_COVERAGE = 0.50;
 const BM25_K1 = 1.35;
@@ -752,10 +756,34 @@ async function retrieveLexicalContext(env, question) {
   const data = await libraryCall(env, "/search-lexical", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: question, terms, top_k: TOP_K, scan_limit: VECTOR_SCAN_LIMIT }),
+    body: JSON.stringify({ query: question, terms, top_k: HYBRID_CONTEXT_LIMIT, scan_limit: VECTOR_SCAN_LIMIT }),
   });
   return Array.isArray(data.matches)
-    ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-full-library" }))
+    ? data.matches.map(item => ({ ...item, retrieval_mode: "lexical-bm25-grounded" }))
+    : [];
+}
+
+async function retrieveSemanticContext(env, question, suppliedEmbedding = null) {
+  const query = Array.isArray(suppliedEmbedding)
+    ? suppliedEmbedding.map(Number).filter(Number.isFinite).slice(0, 2048)
+    : [];
+  if (query.length < 64) return [];
+  const data = await libraryCall(env, "/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      embedding: query,
+      top_k: HYBRID_CONTEXT_LIMIT,
+      min_score: HYBRID_SEMANTIC_MIN_SCORE,
+      scan_limit: VECTOR_SCAN_LIMIT,
+    }),
+  });
+  return Array.isArray(data.matches)
+    ? data.matches.map(item => ({
+        ...item,
+        coverage: semanticAnchorCoverage(item?.text || "", question),
+        retrieval_mode: "semantic-multilingual-local",
+      }))
     : [];
 }
 
@@ -1048,10 +1076,74 @@ async function retrieveContextV4Strict(env,question){
   return matches;
 }
 
+function groundedHybridCandidate(item, question) {
+  const text=String(item?.text || item?.trecho || "");
+  if(!text) return false;
+  if(strictParagraphMatch(text,question).matched) return true;
+  const mode=String(item?.retrieval_mode || "").toLowerCase();
+  const score=Number(item?.score || 0);
+  const coverage=Number(item?.coverage ?? semanticAnchorCoverage(text,question));
+  if(mode.includes("lexical") || mode.includes("bm25")) {
+    return coverage >= 0.20 || score >= 1.25;
+  }
+  if(mode.includes("semantic") || mode.includes("vector") || mode.includes("client")) {
+    return score >= HYBRID_SEMANTIC_STRONG_SCORE ||
+      (score >= HYBRID_SEMANTIC_MIN_SCORE && coverage >= HYBRID_MIN_LEXICAL_COVERAGE);
+  }
+  return coverage >= 0.34 && score > 0;
+}
+
+function groundedHybridRank(item, question) {
+  const text=String(item?.text || item?.trecho || "");
+  const mode=String(item?.retrieval_mode || "").toLowerCase();
+  const score=Number(item?.score || 0);
+  const coverage=Number(item?.coverage ?? semanticAnchorCoverage(text,question));
+  let rank=coverage*4;
+  if(strictParagraphMatch(text,question).matched) rank+=14;
+  if(mode.includes("lexical") || mode.includes("bm25")) rank+=Math.min(8,Math.max(0,score));
+  if(mode.includes("semantic") || mode.includes("vector")) rank+=Math.max(0,score)*8;
+  const foldedQuestion=foldSearchText(question);
+  if(foldedQuestion.length>=5 && foldSearchText(text).includes(foldedQuestion)) rank+=5;
+  return rank;
+}
+
 async function retrieveContext(env, question, suppliedEmbedding = null) {
-  // V4: suppliedEmbedding é deliberadamente ignorado. Online e offline usam o mesmo núcleo de frase exata.
-  void suppliedEmbedding;
-  return retrieveContextV4Strict(env,question);
+  const groups=[];
+  let readableSearches=0;
+
+  try {
+    const strict=await retrieveContextV4Strict(env,question);
+    readableSearches++;
+    if(strict.length) groups.push(strict);
+  } catch {}
+
+  try {
+    const lexical=await retrieveLexicalContext(env,question);
+    readableSearches++;
+    if(lexical.length) groups.push(lexical);
+  } catch {}
+
+  if(Array.isArray(suppliedEmbedding) && suppliedEmbedding.length>=64) {
+    try {
+      const semantic=await retrieveSemanticContext(env,question,suppliedEmbedding);
+      readableSearches++;
+      if(semantic.length) groups.push(semantic);
+    } catch {}
+  }
+
+  if(!readableSearches) {
+    const err=new Error("Os índices documentais estão temporariamente indisponíveis; a biblioteca não foi considerada vazia.");
+    err.code="RAG_RETRIEVAL_UNAVAILABLE";
+    throw err;
+  }
+
+  const merged=mergeRetrievedMatches(...groups)
+    .filter(item=>groundedHybridCandidate(item,question))
+    .map(item=>({...item,__hybrid_rank:groundedHybridRank(item,question)}))
+    .sort((a,b)=>Number(b.__hybrid_rank||0)-Number(a.__hybrid_rank||0))
+    .map(({__hybrid_rank,...item})=>item);
+
+  return diversifyContextAcrossDocuments(merged,HYBRID_CONTEXT_LIMIT);
 }
 
 function humanDocumentName(filename, title = "") {
@@ -1828,7 +1920,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources) {
     {
       role:"system",
       content:
-        "Você é o MASTER FINAL do RAG V2.0 MASSIVE SCALE. Escreva somente a seção '1. SÍNTESE PRINCIPAL:' em português. " +
+        "Você é o MASTER FINAL do RAG V2.0 MASSIVE SCALE. Escreva somente a seção '1. SÍNTESE PRINCIPAL:' no mesmo idioma da pergunta (português ou inglês). " +
         "Produza um verbete enciclopédico denso, profundo, coeso e articulado, cruzando todas as evidências diretamente relevantes. " +
         "Cada afirmação factual deve conservar os identificadores [F#] que realmente a sustentam. " +
         "Não despeje trechos soltos, não invente fatos, autores, páginas, capítulos ou citações e não escreva a seção de referências. " +
@@ -3044,9 +3136,14 @@ async function chat(request, env) {
   }
 
   context=(Array.isArray(context)?context:[])
-    .filter(row=>strictParagraphMatch(row?.text||row?.trecho||"",question).matched)
-    .map(row=>({...row,score:100,coverage:1,retrieval_mode:String(row?.retrieval_mode||"strict-phrase-v4")}));
-  const mappedContext = diversifyContextAcrossDocuments(context,TOP_K);
+    .filter(row=>groundedHybridCandidate(row,question));
+  const mappedContext = diversifyContextAcrossDocuments(
+    context
+      .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,question)}))
+      .sort((a,b)=>Number(b.__hybrid_rank||0)-Number(a.__hybrid_rank||0))
+      .map(({__hybrid_rank,...row})=>row),
+    HYBRID_CONTEXT_LIMIT
+  );
   const crossLibrary = crossLibraryStats(mappedContext);
   const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
   const fallback = sources.length === 0;
@@ -3283,8 +3380,14 @@ async function status(env) {
     plan_c_strict_reference_cloud_fuzzy_bypass: true,
     plan_c_terminal_zero_hit: true,
     universal_strict_match_core: "strict-match-core-v4",
-    online_offline_search_symmetry: true,
-    same_paragraph_phrase_required: true,
+    online_offline_search_symmetry: false,
+    hybrid_grounded_retrieval: true,
+    hybrid_context_limit: HYBRID_CONTEXT_LIMIT,
+    semantic_query_embedding_server_enabled: true,
+    semantic_multilingual_min_score: HYBRID_SEMANTIC_MIN_SCORE,
+    semantic_multilingual_strong_score: HYBRID_SEMANTIC_STRONG_SCORE,
+    strict_exact_path_preserved: true,
+    same_paragraph_phrase_required_for_exact_mode: true,
     fuzzy_matching_disabled: true,
     or_matching_disabled: true,
     omni_library_sync: true,
@@ -3577,8 +3680,15 @@ export class LibraryDO {
       if(!docColumns.includes("embedding_model")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_model TEXT");
       if(!docColumns.includes("embedding_dimensions")) this.sql.exec("ALTER TABLE documents ADD COLUMN embedding_dimensions INTEGER NOT NULL DEFAULT 0");
       initStage = "pending";
-      const pending=[...this.sql.exec("SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY updated_at LIMIT 1")][0] || null;
-      if(pending?.id) await this.ctx.storage.setAlarm(Date.now()+250);
+      // Recovery of old queued jobs is best-effort. A stale alarm must never make
+      // the whole personal library unreadable after a successful schema migration.
+      try {
+        const pending=[...this.sql.exec("SELECT id FROM index_jobs WHERE status IN ('queued','processing') ORDER BY updated_at LIMIT 1")][0] || null;
+        if(pending?.id) {
+          try { await this.ctx.storage.setAlarm(Date.now()+250); } catch {}
+        }
+      } catch {}
+      initStage = "ready";
       } catch (error) {
         throw new Error("LIBRARY_INIT_"+initStage+": "+String(error?.message || error));
       }
@@ -4374,8 +4484,14 @@ export default {
     plan_c_strict_reference_cloud_fuzzy_bypass: true,
     plan_c_terminal_zero_hit: true,
     universal_strict_match_core: "strict-match-core-v4",
-    online_offline_search_symmetry: true,
-    same_paragraph_phrase_required: true,
+    online_offline_search_symmetry: false,
+    hybrid_grounded_retrieval: true,
+    hybrid_context_limit: HYBRID_CONTEXT_LIMIT,
+    semantic_query_embedding_server_enabled: true,
+    semantic_multilingual_min_score: HYBRID_SEMANTIC_MIN_SCORE,
+    semantic_multilingual_strong_score: HYBRID_SEMANTIC_STRONG_SCORE,
+    strict_exact_path_preserved: true,
+    same_paragraph_phrase_required_for_exact_mode: true,
     fuzzy_matching_disabled: true,
     or_matching_disabled: true,
     omni_library_sync: true,
