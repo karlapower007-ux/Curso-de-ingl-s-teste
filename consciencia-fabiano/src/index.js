@@ -3161,6 +3161,7 @@ async function status(env) {
   if (!env.LIBRARY) missing.push("LIBRARY");
   if (!groqApiKeys(env).length) missing.push("GROQ_API_KEY_POOL");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
+  let storageProbe = missing.length ? "missing-binding" : "not-started";
   if (!missing.length) {
     try {
       const st = await libraryCall(env, "/status");
@@ -3169,7 +3170,15 @@ async function status(env) {
       memoryMessages = Number(st.memory_messages || 0);
       indexJobs = Number(st.index_jobs || 0);
       ready = st.ok === true;
-    } catch {}
+      storageProbe = ready ? "ready" : "library-status-not-ready";
+    } catch (error) {
+      // Expose only an error class, never SQL, keys, document names, or private data.
+      const message = String(error?.message || error).toLowerCase();
+      storageProbe = /quota|limit|exceeded/.test(message) ? "quota-or-limit" :
+        /timeout|timed out/.test(message) ? "storage-timeout" :
+        /librarydo\s+5\d\d/.test(message) ? "library-http-5xx" :
+        /sqlite|sql|database/.test(message) ? "storage-sql-error" : "storage-unavailable";
+    }
   }
   return {
     ok: ready,
@@ -3385,6 +3394,7 @@ async function status(env) {
     r2_bucket: "consciencia-fabiano-pdfs",
     official_workers_host: "consciencia-fabiano.focoeepoder2.workers.dev",
     bindings_missing: missing,
+    storage_probe: storageProbe,
     documents, chunks, memory_messages: memoryMessages, index_jobs: indexJobs,
     embedding_model: LOCAL_EMBEDDING_MODEL,
     chat_model: CHAT_MODEL,
