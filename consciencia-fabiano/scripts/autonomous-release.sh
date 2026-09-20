@@ -12,9 +12,14 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: V7.3 COGNITIVE ORCHESTRATOR release =="
+log "== Consciência do Fabiano :: V7.4 COGNITIVE 1000 MICRO-TURBINES release =="
 log "1/7 Validate source"
 npm run check
+node scripts/cognitive-v74-acceptance.mjs | tee /tmp/cognitive-v74-acceptance.json
+node scripts/build-cognitive-v74-manifest.mjs
+test -f public/cognitive-v74-manifest.json || die "COGNITIVE_V74_MANIFEST_MISSING"
+node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8"));if(!m.audit.valid||m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20)process.exit(1)'
+log "COGNITIVE_V74_LOCAL_ACCEPTANCE_PASS=yes"
 node --check scripts/browser-voice-smoke.mjs
 node --check scripts/browser-ingest-smoke.mjs
 ! grep -q 'AI.toMarkdown' src/index.js
@@ -71,6 +76,7 @@ log "GROQ_PREFLIGHT_PASS=yes"
 log "2.75/7 Build failover manifest and compressed static vault"
 node scripts/build-failover-manifest.mjs
 node scripts/build-static-vault.mjs
+node scripts/build-cognitive-v74-manifest.mjs
 test -f public/failover-manifest.json || die "FAILOVER_MANIFEST_MISSING"
 test -f public/steel/index.json || die "STEEL_INDEX_MISSING"
 node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/failover-manifest.json","utf8"));if(m.version!=="7.1.0")process.exit(1)'
@@ -139,7 +145,7 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.3.0-cognitive-orchestrator"
+    and .version == "7.4.0-cognitive-1000-microturbines"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
@@ -155,6 +161,16 @@ for i in $(seq 1 15); do
     and .hybrid_grounded_retrieval == true
     and .hybrid_context_limit == 120
     and .cognitive_orchestrator == true
+    and .cognitive_1000_microturbines == true
+    and .cognitive_catalog_size == 1000
+    and .cognitive_catalog_unique_ids == 1000
+    and .cognitive_catalog_families == 20
+    and .cognitive_catalog_valid == true
+    and .cognitive_default_active_limit == 24
+    and .cognitive_deep_active_limit == 64
+    and .cognitive_hard_active_limit == 96
+    and .cognitive_worker_concurrency == 8
+    and .cognitive_never_execute_all_1000 == true
     and .cognitive_contract_version == "1.0"
     and .current_question_scope_guard == true
     and .memory_scope_guard == true
@@ -371,6 +387,21 @@ else
   log "RAG_ENDPOINT_REACHABLE=degraded-$rag_http"
 fi
 
+log "6.25/7 V7.4 cognitive catalog and router probes"
+catalog_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74" || echo 000)
+[ "$catalog_http" = "200" ] || die "COGNITIVE_V74_ADMIN_HTTP_$catalog_http"
+jq -e '.ok == true and .version == "7.4.0-cognitive-1000-microturbines" and .audit.valid == true and .audit.total == 1000 and .audit.unique_ids == 1000 and .audit.family_count == 20 and ([.audit.families[]] | all(. == 50)) and .performance.workerConcurrency == 8 and .performance.executeAll1000 == false and .performance.allowTurbineToCallGroq == false' /tmp/cognitive-v74.json >/dev/null || die "COGNITIVE_V74_CATALOG_BAD"
+log "COGNITIVE_V74_CATALOG_PASS=yes"
+
+router_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74-router.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74?q=Compare%20os%20autores%20e%20depois%20fa%C3%A7a%20uma%20reflex%C3%A3o" || echo 000)
+[ "$router_http" = "200" ] || die "COGNITIVE_V74_ROUTER_HTTP_$router_http"
+jq -e '.ok == true and .plan.selected_count > 0 and .plan.selected_count <= .plan.activeLimit and .plan.selected_count < 1000 and .plan.concurrency == 8 and .plan.constraints.never_execute_1000 == true and .plan.constraints.turbine_groq_calls == 0' /tmp/cognitive-v74-router.json >/dev/null || die "COGNITIVE_V74_ROUTER_BAD"
+log "COGNITIVE_V74_ROUTER_PASS=yes"
+
+curl -fsS --max-time 20 "$BASE/cognitive-v74-manifest.json" >/tmp/cognitive-v74-public-manifest.json || die "COGNITIVE_V74_PUBLIC_MANIFEST_MISSING"
+jq -e '.audit.valid == true and .audit.total == 1000 and (.manifest|length) == 1000' /tmp/cognitive-v74-public-manifest.json >/dev/null || die "COGNITIVE_V74_PUBLIC_MANIFEST_BAD"
+log "COGNITIVE_V74_MANIFEST_PASS=yes"
+
 log "6.5/7 Grounded bilingual chat smoke"
 curl -fsS --max-time 20 "${HDR[@]}" "$BASE/api/admin/export-library?offset=0&limit=1" >/tmp/library-smoke.json || true
 if jq -e '.ok == true and (.records|length) > 0' /tmp/library-smoke.json >/dev/null 2>&1; then
@@ -388,7 +419,7 @@ PY
     jq -nc --arg q "$smoke_query" '{pergunta:("Explique em português, usando somente a biblioteca e citando a fonte: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-pt-payload.json
     pt_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-pt.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-pt-payload.json || echo 000)
     [ "$pt_http" = "200" ] || die "GROUNDED_CHAT_PT_HTTP_$pt_http"
-    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0' /tmp/chat-smoke-pt.json >/dev/null || die "GROUNDED_CHAT_PT_BAD"
+    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0 and .cognitive_v74 == true and .cognitive_catalog_size == 1000 and .turbine_selected_count > 0 and .turbine_selected_count <= 96 and .turbine_executed_count == .turbine_selected_count and .turbine_concurrency == 8 and .llm_calls == 1' /tmp/chat-smoke-pt.json >/dev/null || die "GROUNDED_CHAT_PT_BAD"
     log "GROUNDED_CHAT_PT_PASS=yes"
 
     jq -nc --arg q "$smoke_query" '{pergunta:("Explain in English, using only the library and citing the source: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-en-payload.json
@@ -400,7 +431,7 @@ PY
     jq -nc --arg q "$smoke_query" '{pergunta:("Responda somente com a referência documental, sem explicação: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-ref-payload.json
     ref_http=$(curl -sS --max-time 30 -o /tmp/chat-smoke-ref.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-ref-payload.json || echo 000)
     [ "$ref_http" = "200" ] || die "COGNITIVE_REFERENCE_HTTP_$ref_http"
-    jq -e '.ok == true and .fallback == false and .cognitive_mode == "reference_only" and .reference_only_llm_bypass == true and .llm_calls == 0 and (.fontes|length) > 0' /tmp/chat-smoke-ref.json >/dev/null || die "COGNITIVE_REFERENCE_BAD"
+    jq -e '.ok == true and .fallback == false and .cognitive_mode == "reference_only" and .reference_only_llm_bypass == true and .llm_calls == 0 and (.fontes|length) > 0 and .cognitive_v74 == true and .cognitive_catalog_size == 1000 and .turbine_selected_count > 0 and .turbine_selected_count <= 96 and .turbine_executed_count == .turbine_selected_count and .turbine_concurrency == 8' /tmp/chat-smoke-ref.json >/dev/null || die "COGNITIVE_REFERENCE_BAD"
     log "COGNITIVE_REFERENCE_ONLY_PASS=yes"
 
     jq -nc --arg q "$smoke_query" '{pergunta:("Faça uma hipótese explicitamente rotulada, baseada somente nos documentos, sobre: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-hyp-payload.json
@@ -415,6 +446,12 @@ PY
     [ "$refl_http" = "200" ] || die "COGNITIVE_REFLECTION_HTTP_$refl_http"
     jq -e '.ok == true and .fallback == false and .cognitive_mode == "reflection" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1 and (.resposta|test("reflexão|reflection";"i")) and (.resposta|test("fatos documentados|documented facts";"i"))' /tmp/chat-smoke-reflection.json >/dev/null || die "COGNITIVE_REFLECTION_BAD"
     log "COGNITIVE_REFLECTION_PASS=yes"
+
+    jq -nc '{pergunta:"Qual é o fato documental exato ZXQ_V74_ABSTAIN_984731_XXYYZZ?",historico:[],stream:false}' >/tmp/chat-smoke-abstain-payload.json
+    abstain_http=$(curl -sS --max-time 30 -o /tmp/chat-smoke-abstain.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-abstain-payload.json || echo 000)
+    [ "$abstain_http" = "200" ] || die "COGNITIVE_ABSTAIN_HTTP_$abstain_http"
+    jq -e '.ok == true and .fallback == true and .llm_calls == 0 and .cognitive_v74 == true and .evidence_gate.policy == "ABSTAIN" and .evidence_gate.canAnswer == false' /tmp/chat-smoke-abstain.json >/dev/null || die "COGNITIVE_ABSTAIN_BAD"
+    log "COGNITIVE_ABSTAIN_PASS=yes"
   else
     log "GROUNDED_CHAT_SMOKE=skipped-empty-sample"
   fi
