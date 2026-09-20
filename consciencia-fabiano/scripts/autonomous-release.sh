@@ -459,6 +459,11 @@ else
   log "GROUNDED_CHAT_SMOKE=skipped-empty-library"
 fi
 
+log "6.75/7 V7.4 frozen architecture truth gate"
+bash -n scripts/v74-production-truth-gate.sh
+source scripts/v74-production-truth-gate.sh
+log "V74_PRODUCTION_TRUTH_GATE_PASS=yes"
+
 log "7/7 Release complete"
 log "DEPLOY_ONLY_PROTOCOL=success"
 log "AUTONOMOUS_RELEASE=success"
