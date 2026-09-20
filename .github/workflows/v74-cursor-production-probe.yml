@@ -1,0 +1,56 @@
+name: V7.4 Cursor Production Probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ops/v74-cursor-probe-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Probe official cursor endpoint
+        id: probe
+        env:
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY="$(curl -sS --max-time 25 -w '\nHTTP_STATUS=%{http_code}\n'             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library?mode=cursor&limit=1&include_total=1')"
+          STATUS="$(printf '%s' "$BODY" | sed -n 's/^HTTP_STATUS=//p' | tail -n1)"
+          JSON="$(printf '%s' "$BODY" | sed '/^HTTP_STATUS=/d')"
+          echo "HTTP_STATUS=$STATUS"
+          if [ "$STATUS" != "200" ]; then
+            printf '%s' "$JSON" | head -c 1200
+            exit 1
+          fi
+          OK="$(printf '%s' "$JSON" | jq -r '.ok // false')"
+          MODE="$(printf '%s' "$JSON" | jq -r '.mode // ""')"
+          TOTAL="$(printf '%s' "$JSON" | jq -r '.total // 0')"
+          BOOKS="$(printf '%s' "$JSON" | jq -r '.total_books // 0')"
+          RECORDS="$(printf '%s' "$JSON" | jq -r '.records | length')"
+          C_CREATED="$(printf '%s' "$JSON" | jq -r '.next_cursor.created_at // ""')"
+          C_ID="$(printf '%s' "$JSON" | jq -r '.next_cursor.id // ""')"
+          echo "MODE=$MODE TOTAL=$TOTAL BOOKS=$BOOKS RECORDS=$RECORDS"
+          test "$OK" = "true"
+          test "$MODE" = "cursor"
+          test "$TOTAL" -gt 0
+          test "$BOOKS" -gt 0
+          test "$RECORDS" -eq 1
+          test -n "$C_CREATED"
+          test -n "$C_ID"
+          BODY2="$(curl -fsS -G --max-time 25             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN"             --data-urlencode 'mode=cursor'             --data-urlencode 'limit=1'             --data-urlencode "after_created_at=$C_CREATED"             --data-urlencode "after_id=$C_ID"             'https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/export-library')"
+          NEXT_ID="$(printf '%s' "$BODY2" | jq -r '.next_cursor.id // ""')"
+          RECORDS2="$(printf '%s' "$BODY2" | jq -r '.records | length')"
+          test "$RECORDS2" -eq 1
+          test -n "$NEXT_ID"
+          test "$NEXT_ID" != "$C_ID"
+          echo "V74_CURSOR_PRODUCTION_PROBE=success"
+          echo "PRIMARY_TOTAL=$TOTAL"
+          echo "TOTAL_BOOKS=$BOOKS"
