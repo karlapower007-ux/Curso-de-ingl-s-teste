@@ -1,0 +1,132 @@
+name: Citation Metadata Production Audit
+
+on:
+  push:
+    branches:
+      - ops-citation-metadata-audit-20260921
+    paths:
+      - ".github/workflows/citation-metadata-production-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Scan production citation dictionary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://consciencia-fabiano.focoeepoder2.workers.dev"
+          cursor=""
+          carry_doc=""
+          carry_chapter=""
+          carry_title=""
+          scanned=0
+          found=0
+          book_total=0
+          book_complete=0
+          scripture_total=0
+          scripture_complete=0
+          page_missing=0
+          chapter_missing=0
+          scripture_ref_missing=0
+          guard=0
+
+          while [ "$guard" -lt 200 ]; do
+            guard=$((guard+1))
+            tmp="$(mktemp)"
+            args=(
+              --max-time 45
+              --retry 2
+              --retry-delay 1
+              --retry-all-errors
+              -sS
+              -G
+              -o "$tmp"
+              -w '%{http_code}'
+              --data-urlencode "q=Deus"
+              --data-urlencode "limit=50"
+            )
+            [ -n "$cursor" ] && args+=(--data-urlencode "scan_cursor=$cursor")
+            [ -n "$carry_doc" ] && args+=(--data-urlencode "carry_doc=$carry_doc")
+            [ -n "$carry_chapter" ] && args+=(--data-urlencode "carry_chapter=$carry_chapter")
+            [ -n "$carry_title" ] && args+=(--data-urlencode "carry_title=$carry_title")
+
+            http="$(curl "${args[@]}" "$BASE/api/citations" || true)"
+            body="$(cat "$tmp" 2>/dev/null || true)"
+            rm -f "$tmp"
+
+            if [ "$http" != "200" ]; then
+              echo "AUDIT_HTTP_STATUS=$http"
+              echo "$body"
+              exit 1
+            fi
+
+            echo "$body" | jq -e '
+              .ok == true and
+              .backend == "r2-authoritative" and
+              (.citations|type) == "array"
+            ' >/dev/null
+
+            batch_scanned="$(echo "$body" | jq -r '(.scanned_batch // .scanned // 0) | tonumber')"
+            batch_found="$(echo "$body" | jq -r '(.returned // (.citations|length) // 0) | tonumber')"
+            scanned=$((scanned + batch_scanned))
+            found=$((found + batch_found))
+
+            bt="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="book")] | length')"
+            bc="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="book" and .metadata_complete==true)] | length')"
+            st="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="scripture")] | length')"
+            sc="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="scripture" and .metadata_complete==true)] | length')"
+            pm="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="book" and ((.page // 0) == 0))] | length')"
+            cm="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="book" and ((.chapter // 0) == 0))] | length')"
+            srm="$(echo "$body" | jq '[.citations[] | select(.bibliographic_type=="scripture" and ((.primary_reference // "") == ""))] | length')"
+
+            book_total=$((book_total + bt))
+            book_complete=$((book_complete + bc))
+            scripture_total=$((scripture_total + st))
+            scripture_complete=$((scripture_complete + sc))
+            page_missing=$((page_missing + pm))
+            chapter_missing=$((chapter_missing + cm))
+            scripture_ref_missing=$((scripture_ref_missing + srm))
+
+            done_flag="$(echo "$body" | jq -r '(.scan_done // false) | tostring')"
+            cursor="$(echo "$body" | jq -r '.next_scan_cursor // ""')"
+            carry_doc="$(echo "$body" | jq -r '.carry.document_id // ""')"
+            carry_chapter="$(echo "$body" | jq -r '.carry.chapter_number // ""')"
+            carry_title="$(echo "$body" | jq -r '.carry.chapter_title // ""')"
+            library_total="$(echo "$body" | jq -r '(.library_total_chunks // 0) | tonumber')"
+
+            echo "SEGMENT=$guard scanned=$scanned/$library_total found=$found books=$book_total/$book_complete scriptures=$scripture_total/$scripture_complete"
+
+            if [ "$done_flag" = "true" ]; then
+              break
+            fi
+            [ -n "$cursor" ] || { echo "AUDIT_CURSOR_MISSING"; exit 1; }
+          done
+
+          echo "AUDIT_COMPLETE=yes"
+          echo "AUDIT_SCANNED=$scanned"
+          echo "AUDIT_FOUND=$found"
+          echo "AUDIT_BOOK_TOTAL=$book_total"
+          echo "AUDIT_BOOK_COMPLETE=$book_complete"
+          echo "AUDIT_BOOK_PAGE_MISSING=$page_missing"
+          echo "AUDIT_BOOK_CHAPTER_MISSING=$chapter_missing"
+          echo "AUDIT_SCRIPTURE_TOTAL=$scripture_total"
+          echo "AUDIT_SCRIPTURE_COMPLETE=$scripture_complete"
+          echo "AUDIT_SCRIPTURE_REFERENCE_MISSING=$scripture_ref_missing"
+
+          {
+            echo "### Citation metadata production audit"
+            echo ""
+            echo "- Scanned chunks: **$scanned**"
+            echo "- Found citations: **$found**"
+            echo "- Books complete (book + chapter + page): **$book_complete / $book_total**"
+            echo "- Book page missing: **$page_missing**"
+            echo "- Book chapter missing: **$chapter_missing**"
+            echo "- Scripture complete (book + chapter + verse): **$scripture_complete / $scripture_total**"
+            echo "- Scripture reference missing: **$scripture_ref_missing**"
+          } >> "$GITHUB_STEP_SUMMARY"
