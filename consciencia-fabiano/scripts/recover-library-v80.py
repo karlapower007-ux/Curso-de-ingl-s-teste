@@ -76,6 +76,7 @@ HTTP_USER_AGENT="curl/8.5.0"
 
 def admin_headers():
     return {
+        "X-FNS-Owner-Token":OWNER_TOKEN,
         "X-FNS-Automation":AUTOMATION_SECRET,
         "Accept":"application/json",
         "User-Agent":HTTP_USER_AGENT
