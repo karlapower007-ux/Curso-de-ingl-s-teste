@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const BASE=(process.env.FNS_BASE_URL || "https://consciencia-fabiano.karlapower007.workers.dev").replace(/\/$/,"");
-const OWNER_TOKEN=String(process.env.FNS_OWNER_TOKEN || "gadu").trim();
+const BASE=(process.env.FNS_BASE_URL || "https://consciencia-fabiano.focoeepoder2.workers.dev").replace(/\/$/,"");
+const OWNER_TOKEN=String(process.env.FNS_OWNER_TOKEN || "").trim();
+if(!OWNER_TOKEN) throw new Error("FNS_OWNER_TOKEN é obrigatório para exportação administrativa.");
 const OUT_DIR=path.resolve("public/biblioteca_backup");
 const MANIFEST=path.resolve("public/biblioteca_backup.json");
 const PAGE_SIZE=100;

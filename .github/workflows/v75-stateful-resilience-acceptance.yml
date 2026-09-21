@@ -1,0 +1,65 @@
+name: V7.5 Stateful Resilience Acceptance
+
+on:
+  push:
+    branches:
+      - consciencia-v7-5-stateful-resilience-staging-20260920
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/v75-stateful-resilience-acceptance.yml"
+  pull_request:
+    branches:
+      - consciencia-cloudflare-native-v1
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/v75-stateful-resilience-acceptance.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Run frozen architecture + V7.5 acceptance gate
+        id: gate
+        continue-on-error: true
+        run: npm run check
+
+      - name: Record push-gate result
+        if: always() && github.event_name == 'push'
+        working-directory: .
+        shell: bash
+        run: |
+          mkdir -p .ci-results
+          STATUS="${{ steps.gate.outcome }}"
+          {
+            echo "V75_STATEFUL_RESILIENCE_GATE=${STATUS}"
+            echo "COMMIT=${GITHUB_SHA}"
+            echo "WORKFLOW_RUN=${GITHUB_RUN_ID}"
+          } > .ci-results/v75-stateful-resilience.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-results/v75-stateful-resilience.txt
+          git diff --cached --quiet || git commit -m "Record V7.5 acceptance gate: ${STATUS}"
+          git push
+
+      - name: Fail job when gate failed
+        if: steps.gate.outcome != 'success'
+        run: exit 1
