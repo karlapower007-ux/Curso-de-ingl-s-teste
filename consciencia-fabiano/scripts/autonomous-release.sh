@@ -290,8 +290,14 @@ citation_cursor=""
 citation_carry_doc=""
 citation_carry_chapter=""
 citation_carry_title=""
+citation_carry_scripture_book=""
+citation_carry_scripture_chapter=""
 citation_scanned_total=0
 citation_found_total=0
+citation_book_total=0
+citation_book_complete=0
+citation_scripture_total=0
+citation_scripture_complete=0
 citation_library_total=0
 citation_scan_guard=0
 
@@ -314,6 +320,8 @@ while [ "$citation_scan_guard" -lt 200 ]; do
   [ -n "$citation_carry_doc" ] && citation_args+=(--data-urlencode "carry_doc=$citation_carry_doc")
   [ -n "$citation_carry_chapter" ] && citation_args+=(--data-urlencode "carry_chapter=$citation_carry_chapter")
   [ -n "$citation_carry_title" ] && citation_args+=(--data-urlencode "carry_title=$citation_carry_title")
+  [ -n "$citation_carry_scripture_book" ] && citation_args+=(--data-urlencode "carry_scripture_book=$citation_carry_scripture_book")
+  [ -n "$citation_carry_scripture_chapter" ] && citation_args+=(--data-urlencode "carry_scripture_chapter=$citation_carry_scripture_chapter")
 
   citation_http="$(curl "${citation_args[@]}" "$BASE/api/citations" || true)"
   citation_body="$(cat "$citation_tmp" 2>/dev/null || true)"
@@ -339,12 +347,18 @@ while [ "$citation_scan_guard" -lt 200 ]; do
   citation_library_total="$(echo "$citation_body" | jq -r '(.library_total_chunks // 0) | tonumber')"
   citation_scanned_total=$((citation_scanned_total + citation_batch_scanned))
   citation_found_total=$((citation_found_total + citation_batch_found))
+  citation_book_total=$((citation_book_total + $(echo "$citation_body" | jq '[.citations[]|select(.bibliographic_type=="book")]|length')))
+  citation_book_complete=$((citation_book_complete + $(echo "$citation_body" | jq '[.citations[]|select(.bibliographic_type=="book" and .metadata_complete==true)]|length')))
+  citation_scripture_total=$((citation_scripture_total + $(echo "$citation_body" | jq '[.citations[]|select(.bibliographic_type=="scripture")]|length')))
+  citation_scripture_complete=$((citation_scripture_complete + $(echo "$citation_body" | jq '[.citations[]|select(.bibliographic_type=="scripture" and .metadata_complete==true)]|length')))
 
   citation_done="$(echo "$citation_body" | jq -r '(.scan_done // false) | tostring')"
   citation_cursor="$(echo "$citation_body" | jq -r '.next_scan_cursor // ""')"
   citation_carry_doc="$(echo "$citation_body" | jq -r '.carry.document_id // ""')"
   citation_carry_chapter="$(echo "$citation_body" | jq -r '.carry.chapter_number // ""')"
   citation_carry_title="$(echo "$citation_body" | jq -r '.carry.chapter_title // ""')"
+  citation_carry_scripture_book="$(echo "$citation_body" | jq -r '.carry.scripture_book // ""')"
+  citation_carry_scripture_chapter="$(echo "$citation_body" | jq -r '.carry.scripture_chapter // ""')"
 
   log "CITATION_DICTIONARY_SEGMENT=$citation_scan_guard scanned:$citation_scanned_total/$citation_library_total found:$citation_found_total done:$citation_done"
 
@@ -357,6 +371,7 @@ done
 [ "$citation_scan_guard" -lt 200 ] || die "CITATION_DICTIONARY_SCAN_GUARD_EXCEEDED"
 [ "$citation_scanned_total" -ge 25199 ] || die "CITATION_DICTIONARY_SCAN_INCOMPLETE"
 [ "$citation_found_total" -ge 1 ] || die "CITATION_DICTIONARY_NO_MATCHES"
+log "CITATION_DICTIONARY_BIBLIOGRAPHY=books:$citation_book_total complete_books:$citation_book_complete scriptures:$citation_scripture_total complete_scriptures:$citation_scripture_complete"
 log "CITATION_DICTIONARY_R2_PASS=yes scanned:$citation_scanned_total found:$citation_found_total"
 
 log "5.5/7 V4 Omni Library asset probes"
