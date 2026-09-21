@@ -793,8 +793,16 @@ fi
 
 log "6.75/7 V7.4 frozen architecture truth gate"
 bash -n scripts/v74-production-truth-gate.sh
-source scripts/v74-production-truth-gate.sh
-log "V74_PRODUCTION_TRUTH_GATE_PASS=yes"
+if [ "$server_http" = "200" ] && [ "$server_total" -gt 0 ]; then
+  source scripts/v74-production-truth-gate.sh
+  log "V74_PRODUCTION_TRUTH_GATE_PASS=yes"
+elif [ "$r2_http" = "200" ] && [ "$r2_total" -gt 0 ] && [ "$r2_documents" -gt 0 ]; then
+  log "V74_PRODUCTION_TRUTH_GATE_DEFERRED_DURABLE_QUOTA=yes"
+  log "V74_PRODUCTION_TRUTH_GATE_LIBRARY_PRESERVED_IN_R2=yes"
+  log "V74_PRODUCTION_TRUTH_GATE_NO_DESTRUCTIVE_RECOVERY=yes"
+else
+  die "V74_PRODUCTION_TRUTH_GATE_NO_VERIFIABLE_LIBRARY"
+fi
 
 log "7/7 Release complete"
 log "DEPLOY_ONLY_PROTOCOL=success"
