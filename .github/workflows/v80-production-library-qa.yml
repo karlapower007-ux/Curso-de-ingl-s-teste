@@ -1,0 +1,98 @@
+name: V8 Production Library Desktop Mobile QA
+
+on:
+  push:
+    branches:
+      - "ops-v80-final-ui-qa-*"
+    paths:
+      - ".github/workflows/v80-production-library-qa.yml"
+      - "ops/run-v80-production-library-qa.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install browser QA tooling
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright@1.55.0
+          npx playwright install chromium --with-deps
+
+      - name: Validate production Biblioteca desktop and mobile
+        shell: bash
+        run: |
+          cat > /tmp/library-qa.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs/promises';
+          const base='https://consciencia-fabiano.focoeepoder2.workers.dev';
+          const profiles=[
+            {name:'desktop',viewport:{width:1440,height:900},isMobile:false},
+            {name:'mobile',viewport:{width:390,height:844},isMobile:true}
+          ];
+          const report={ok:false,base,profiles:[],started_at:new Date().toISOString()};
+          const browser=await chromium.launch({headless:true});
+          try{
+            for(const p of profiles){
+              const context=await browser.newContext({
+                viewport:p.viewport,isMobile:p.isMobile,
+                userAgent:p.isMobile?'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 Chrome/153 Mobile Safari/537.36':undefined
+              });
+              const page=await context.newPage();
+              const errors=[];
+              page.on('pageerror',e=>errors.push('pageerror:'+String(e.message||e)));
+              page.on('console',m=>{if(m.type()==='error')errors.push('console:'+m.text())});
+              page.on('dialog',async d=>{
+                if(d.type()==='prompt')await d.accept('gadu');
+                else await d.dismiss();
+              });
+              const response=await page.goto(base,{waitUntil:'domcontentloaded',timeout:45000});
+              if(!response?.ok())throw new Error(p.name+' homepage HTTP '+response?.status());
+              await page.locator('#libraryTab').waitFor({state:'visible',timeout:20000});
+              await page.locator('#libraryTab').click();
+              await page.locator('#libraryPanel:not(.hidden)').waitFor({state:'visible',timeout:15000});
+              await page.waitForFunction(()=>document.querySelectorAll('#booksList .book').length>0,{timeout:30000});
+              await page.waitForTimeout(1500);
+              const rows=await page.locator('#booksList .book').evaluateAll(nodes=>nodes.map(n=>({
+                title:n.querySelector('strong')?.textContent?.trim()||'',
+                detail:n.querySelector('small')?.textContent?.trim()||''
+              })));
+              const status=await page.locator('#adminStatus').textContent().catch(()=>null);
+              const panelVisible=await page.locator('#libraryPanel').isVisible();
+              const tabActive=await page.locator('#libraryTab').evaluate(el=>el.classList.contains('active'));
+              const meaningful=rows.filter(x=>x.title && !/Nenhum PDF encontrado/i.test(x.title));
+              const seriousErrors=errors.filter(x=>!/favicon|Failed to load resource.*404/i.test(x));
+              const ok=panelVisible && tabActive && meaningful.length>=8 && !/vazia|não foi possível|erro/i.test(String(status||''));
+              report.profiles.push({
+                name:p.name,viewport:p.viewport,ok,panel_visible:panelVisible,tab_active:tabActive,
+                visible_documents:meaningful.length,status:String(status||''),
+                documents:meaningful.slice(0,20),errors:seriousErrors.slice(0,20)
+              });
+              await context.close();
+            }
+            report.ok=report.profiles.every(x=>x.ok);
+            report.completed_at=new Date().toISOString();
+            await fs.writeFile('/tmp/v80-production-library-qa.json',JSON.stringify(report,null,2));
+            console.log(JSON.stringify(report,null,2));
+            if(!report.ok)process.exitCode=1;
+          }finally{await browser.close();}
+          EOF
+          node /tmp/library-qa.mjs
+
+      - name: Upload UI QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v80-production-library-ui-qa
+          path: /tmp/v80-production-library-qa.json
+          retention-days: 30
