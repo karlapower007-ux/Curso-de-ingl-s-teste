@@ -16,6 +16,12 @@ must(worker.includes('const CITATION_SCAN_LIMIT = 50000;'),"citation scan limit 
 must(worker.includes('llm_independent:true'),"citation contract must be independent of LLM output");
 must(worker.includes('extractChapterHeading'),"book chapter resolver missing");
 must(worker.includes('extractScriptureReferences'),"scripture reference resolver missing");
+must(worker.includes("spokenChapterNumber"),"spoken chapter-number resolver missing");
+must(worker.includes("extractNamedSectionHeading"),"named section resolver missing");
+must(worker.includes("extractScriptureHeading"),"scripture heading resolver missing");
+must(worker.includes("extractScriptureVerseRange"),"scripture verse-range resolver missing");
+must(worker.includes("scriptureCollectionSeed"),"canonical scripture collection seed missing");
+must(worker.includes("^(?:doutrina e convenios|doctrine and covenants)$"),"scripture classifier must not treat book titles containing D&C as scripture");
 must(worker.includes('chapter_display'),"chapter must be exposed in citation response");
 must(worker.includes('page_display'),"page must be exposed in citation response");
 must(worker.includes("async function citationSearchR2Segment"),"segmented authoritative R2 citation search missing");
@@ -46,6 +52,8 @@ must(app.includes("CITATION_UI_PAGE_SIZE=50"),"browser pagination must be 50");
 must(app.includes("scan_cursor"),"browser must continue segmented citation scans");
 must(app.includes("continueBackgroundScan"),"browser must continue citation scanning without blocking the first page");
 must(app.includes("libraryTotal"),"browser must report scanned library progress");
+must(app.includes("carry_scripture_book"),"browser must preserve scripture book across segments");
+must(app.includes("carry_scripture_chapter"),"browser must preserve scripture chapter across segments");
 must(app.includes('citation_query:q'),"citation query must be preserved with chat history");
 must(app.includes("500 nós lógicos"),"500-node label must not masquerade as 500 retrieved citations");
 
