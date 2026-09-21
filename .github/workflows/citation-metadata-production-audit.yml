@@ -25,6 +25,8 @@ jobs:
           carry_doc=""
           carry_chapter=""
           carry_title=""
+          carry_scripture_book=""
+          carry_scripture_chapter=""
           scanned=0
           found=0
           book_total=0
@@ -59,6 +61,8 @@ jobs:
             [ -n "$carry_doc" ] && args+=(--data-urlencode "carry_doc=$carry_doc")
             [ -n "$carry_chapter" ] && args+=(--data-urlencode "carry_chapter=$carry_chapter")
             [ -n "$carry_title" ] && args+=(--data-urlencode "carry_title=$carry_title")
+            [ -n "$carry_scripture_book" ] && args+=(--data-urlencode "carry_scripture_book=$carry_scripture_book")
+            [ -n "$carry_scripture_chapter" ] && args+=(--data-urlencode "carry_scripture_chapter=$carry_scripture_chapter")
 
             http="$(curl "${args[@]}" "$BASE/api/citations" || true)"
             body="$(cat "$tmp" 2>/dev/null || true)"
@@ -131,6 +135,8 @@ jobs:
             carry_doc="$(echo "$body" | jq -r '.carry.document_id // ""')"
             carry_chapter="$(echo "$body" | jq -r '.carry.chapter_number // ""')"
             carry_title="$(echo "$body" | jq -r '.carry.chapter_title // ""')"
+            carry_scripture_book="$(echo "$body" | jq -r '.carry.scripture_book // ""')"
+            carry_scripture_chapter="$(echo "$body" | jq -r '.carry.scripture_chapter // ""')"
             library_total="$(echo "$body" | jq -r '(.library_total_chunks // 0) | tonumber')"
 
             echo "SEGMENT=$guard scanned=$scanned/$library_total found=$found books=$book_total/$book_complete scriptures=$scripture_total/$scripture_complete"
@@ -187,3 +193,5 @@ jobs:
 # rerun-after-scripture-cpu-hotfix
 
 # rerun-after-ultrasafe-production-release-407
+
+# audit-v9-carry-scripture-location-state
