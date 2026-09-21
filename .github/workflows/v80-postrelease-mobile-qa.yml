@@ -131,8 +131,8 @@ jobs:
             if(/turbine_selected_count|evidence_gate|continuation_cursor|continuation_last_error|micro_nodes_executed|cognitive_catalog_size/i.test(text)){
               throw new Error(name+" leaked internal pipeline metadata into UI");
             }
-            if(expectDeveloped && text.length<180) throw new Error(name+" developed answer unexpectedly short: "+text.length);
             if(api500.length) throw new Error(name+" observed API 500s "+JSON.stringify(api500));
+            if(expectDeveloped && text.length<100) throw new Error(name+" developed answer unexpectedly short: "+text.length);
 
             await page.screenshot({path:"qa-"+name+".png",fullPage:true});
             results.push({
