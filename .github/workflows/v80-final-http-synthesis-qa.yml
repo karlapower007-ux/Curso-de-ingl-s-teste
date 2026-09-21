@@ -1,0 +1,135 @@
+name: V8 Final HTTP Synthesis QA
+
+on:
+  pull_request:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - '.github/workflows/v80-final-http-synthesis-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+    steps:
+      - name: Production verification
+        shell: bash
+        run: |
+          cat > /tmp/qa.mjs <<'NODE'
+          const base=process.env.BASE_URL;
+          const token=String(process.env.FNS_OWNER_TOKEN||"").trim();
+          const auth=token ? {Authorization:"Bearer "+token} : {};
+          const memoryKey="v80-final-qa-memory-key-20260921-abcdef0123456789";
+          const fail=(msg,extra={})=>{ console.error("QA_FAIL="+msg,JSON.stringify(extra)); process.exit(1); };
+          const request=async(path,options={})=>{
+            const res=await fetch(base+path,options);
+            const text=await res.text();
+            let data={};
+            try{ data=JSON.parse(text); }catch{}
+            return {status:res.status,data,text};
+          };
+
+          const health=await request("/health");
+          if(health.status!==200) fail("HEALTH_HTTP",{status:health.status});
+          if(health.data?.version!=="8.0.0-adaptive-20x20x20") fail("HEALTH_VERSION",{version:health.data?.version});
+          if(health.data?.synthesis_principal_single_block_disabled!==true) fail("SYNTHESIS_FLAG_MISSING");
+          if(health.data?.memory_degraded_fallback!==true) fail("MEMORY_FALLBACK_FLAG_MISSING");
+          if(health.data?.r2_reconcile_degraded_fallback!==true) fail("R2_FALLBACK_FLAG_MISSING");
+
+          if(!token) fail("OWNER_TOKEN_SECRET_MISSING");
+          const manifest=await request("/api/v1/r2/library-manifest",{headers:auth});
+          if(manifest.status!==200) fail("MANIFEST_HTTP",{status:manifest.status,code:manifest.data?.code});
+          if(manifest.data?.ok!==true) fail("MANIFEST_NOT_OK");
+          if(Number(manifest.data?.total_chunks)!==28636) fail("MANIFEST_CHUNKS",{value:manifest.data?.total_chunks});
+          if(Number(manifest.data?.vector_count)!==28636) fail("MANIFEST_VECTORS",{value:manifest.data?.vector_count});
+          if(Number(manifest.data?.total_books)<8) fail("MANIFEST_BOOKS",{value:manifest.data?.total_books});
+
+          const reconcile=await request("/api/admin/r2-reconcile-state",{headers:auth});
+          if(reconcile.status>=500) fail("RECONCILE_HTTP_5XX",{status:reconcile.status,code:reconcile.data?.code});
+          if(reconcile.status!==200 || reconcile.data?.ok!==true) fail("RECONCILE_NOT_OK",{status:reconcile.status,code:reconcile.data?.code});
+          const safeReconcile = reconcile.data?.in_sync===true ||
+            (reconcile.data?.degraded===true && reconcile.data?.safe_read_only_fallback===true &&
+             Number(reconcile.data?.r2_chunks)>=28636 && Number(reconcile.data?.r2_vectors)>=28636);
+          if(!safeReconcile) fail("RECONCILE_UNSAFE",{
+            in_sync:reconcile.data?.in_sync,degraded:reconcile.data?.degraded,
+            r2_chunks:reconcile.data?.r2_chunks,r2_vectors:reconcile.data?.r2_vectors
+          });
+
+          const memory=await request("/api/memory",{headers:{"X-FNS-Memory-Key":memoryKey}});
+          if(memory.status>=500) fail("MEMORY_HTTP_5XX",{status:memory.status,code:memory.data?.code});
+          if(memory.status!==200 || memory.data?.ok!==true) fail("MEMORY_NOT_OK",{status:memory.status,code:memory.data?.code});
+
+          const ragQuestion="temos mais amigos atrás do véu do que deste lado";
+          const rag=await request("/api/rag/search",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({question:ragQuestion})
+          });
+          if(rag.status!==200 || rag.data?.ok!==true) fail("RAG_HTTP",{status:rag.status,code:rag.data?.code});
+          const matches=Array.isArray(rag.data?.matches)?rag.data.matches:[];
+          if(!matches.length) fail("RAG_EMPTY");
+          const ragHit=matches.some(x=>String(x?.id||"")==="fe639974452546918f43f24d09c0a81e" ||
+            String(x?.text||x?.trecho||"").toLowerCase().includes("amigos atrás do véu"));
+          if(!ragHit) fail("RAG_CURRENT_ONLY_TARGET_NOT_FOUND",{matches:matches.length});
+
+          const chat=await request("/api/chat",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              pergunta:"Faça um estudo profundo e desenvolvido, usando a biblioteca, sobre Adão, seus relacionamentos familiares e o mundo dos espíritos. Não resuma em uma única síntese; desenvolva todos os pontos documentais relevantes.",
+              memory_key:memoryKey,
+              stream:false
+            })
+          });
+          if(chat.status>=500) fail("CHAT_HTTP_5XX",{status:chat.status,code:chat.data?.code});
+          if(chat.status!==200 || chat.data?.ok!==true) fail("CHAT_NOT_OK",{status:chat.status,code:chat.data?.code});
+          const answer=String(chat.data?.resposta||"").trim();
+          if(!answer) fail("CHAT_EMPTY");
+          if(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL/i.test(answer)) fail("SYNTHESIS_PRINCIPAL_LABEL_PRESENT");
+          if(String(chat.data?.full_text||"").trim()!==answer) fail("FULL_TEXT_MISMATCH");
+          const paragraphs=answer.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+          if(paragraphs.length<4) fail("CHAT_TOO_CONDENSED",{paragraphs:paragraphs.length,chars:answer.length});
+          if(answer.length<1200) fail("CHAT_TOO_SHORT",{chars:answer.length});
+          const forbiddenSourceKeys=["text","trecho","embedding","content_hash","document_id","score","retrieval_mode","updated_at"];
+          for(const source of (Array.isArray(chat.data?.fontes)?chat.data.fontes:[])){
+            for(const key of forbiddenSourceKeys){
+              if(Object.prototype.hasOwnProperty.call(source,key)) fail("SOURCE_METADATA_LEAK",{key});
+            }
+          }
+          if(!Array.isArray(chat.data?.fontes) || !chat.data.fontes.length) fail("CHAT_WITHOUT_PUBLIC_SOURCES");
+          if(Number(chat.data?.evidence_groups_total||0)>0 &&
+             Number(chat.data?.evidence_groups_developed||0)<Number(chat.data?.evidence_groups_total||0)){
+            fail("INFORMATION_PRESERVATION_INCOMPLETE",{
+              total:chat.data?.evidence_groups_total,
+              developed:chat.data?.evidence_groups_developed,
+              coverage:chat.data?.evidence_coverage_percent
+            });
+          }
+
+          console.log(JSON.stringify({
+            ok:true,
+            version:health.data.version,
+            manifest:{books:manifest.data.total_books,chunks:manifest.data.total_chunks,vectors:manifest.data.vector_count},
+            reconcile:{in_sync:reconcile.data.in_sync,degraded:reconcile.data.degraded,safe_read_only_fallback:reconcile.data.safe_read_only_fallback===true},
+            memory:{persistent:memory.data.persistent,degraded:memory.data.degraded},
+            rag:{matches:matches.length,current_only_target:true},
+            chat:{
+              chars:answer.length,
+              paragraphs:paragraphs.length,
+              sources:chat.data.fontes.length,
+              continuation_parts:Number(chat.data?.continuation_parts||0),
+              evidence_groups_total:Number(chat.data?.evidence_groups_total||0),
+              evidence_groups_developed:Number(chat.data?.evidence_groups_developed||0),
+              evidence_coverage_percent:Number(chat.data?.evidence_coverage_percent||0),
+              synthesis_principal_label:false,
+              internal_source_metadata_leak:false
+            }
+          },null,2));
+          NODE
+          node /tmp/qa.mjs
