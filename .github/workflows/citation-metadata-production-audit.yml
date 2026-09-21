@@ -34,6 +34,8 @@ jobs:
           page_missing=0
           chapter_missing=0
           scripture_ref_missing=0
+          sample_book_missing=0
+          sample_scripture_missing=0
           guard=0
 
           while [ "$guard" -lt 200 ]; do
@@ -92,6 +94,24 @@ jobs:
             page_missing=$((page_missing + pm))
             chapter_missing=$((chapter_missing + cm))
             scripture_ref_missing=$((scripture_ref_missing + srm))
+
+            if [ "$sample_book_missing" -lt 30 ]; then
+              while IFS= read -r sample; do
+                [ -n "$sample" ] || continue
+                echo "BOOK_CHAPTER_MISSING_SAMPLE=$sample"
+                sample_book_missing=$((sample_book_missing+1))
+                [ "$sample_book_missing" -ge 30 ] && break
+              done < <(echo "$body" | jq -c '.citations[] | select(.bibliographic_type=="book" and ((.chapter // 0)==0)) | {book,author,page,chunk_index,technical_document}' || true)
+            fi
+
+            if [ "$sample_scripture_missing" -lt 30 ]; then
+              while IFS= read -r sample; do
+                [ -n "$sample" ] || continue
+                echo "SCRIPTURE_REF_MISSING_SAMPLE=$sample"
+                sample_scripture_missing=$((sample_scripture_missing+1))
+                [ "$sample_scripture_missing" -ge 30 ] && break
+              done < <(echo "$body" | jq -c '.citations[] | select(.bibliographic_type=="scripture" and ((.primary_reference // "")=="")) | {work,book,page,chunk_index,technical_document}' || true)
+            fi
 
             done_flag="$(echo "$body" | jq -r '(.scan_done // false) | tostring')"
             cursor="$(echo "$body" | jq -r '.next_scan_cursor // ""')"
