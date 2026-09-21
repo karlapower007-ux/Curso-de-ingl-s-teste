@@ -1672,6 +1672,25 @@ function uniqueSources(context) {
   return sources.slice(0, TOP_K);
 }
 
+function publicSourceView(source,index=0) {
+  if(!source) return null;
+  const name=String(source?.titulo || source?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+  return {
+    ref_id:sourceRefId(source,index),
+    arquivo:name,
+    titulo:name,
+    autor:String(source?.autor || "").replace(/[\r\n]+/g," ").trim(),
+    idioma:String(source?.idioma || "unknown"),
+    pagina:source?.pagina ? Number(source.pagina) : null
+  };
+}
+
+function publicSourceViews(sources) {
+  return (Array.isArray(sources)?sources:[])
+    .map((source,index)=>publicSourceView(source,index))
+    .filter(Boolean);
+}
+
 async function persistChatTurn(env, ownerId, body, question, answer, sources, fallback) {
   if (!ownerId) return false;
   const turnId = String(body?.turn_id || crypto.randomUUID()).slice(0, 120);
@@ -1689,7 +1708,7 @@ async function persistChatTurn(env, ownerId, body, question, answer, sources, fa
       owner_id: ownerId,
       role: "assistant",
       content: String(answer).trim().slice(0, 12000),
-      sources,
+      sources: publicSourceViews(sources),
       fallback,
     });
     return true;
@@ -1798,10 +1817,17 @@ function groundedReferencesMarkdown(sources) {
   return "2. 📚 FONTES E REFERÊNCIAS — COBERTURA EXAUSTIVA\n\n"+lines.join("\n");
 }
 
-function stripModelReferenceSection(answer) {
+function stripSynthesisPrincipalLabel(answer) {
   return String(answer || "")
-    .replace(/\n\s*(?:2\.?\s*)?(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\s*:?[^]*$/i,"")
+    .replace(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL(?:\*\*)?\s*:?\s*/i,"")
     .trim();
+}
+
+function stripModelReferenceSection(answer) {
+  return stripSynthesisPrincipalLabel(
+    String(answer || "")
+      .replace(/\n\s*(?:2\.?\s*)?(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\s*:?[^]*$/i,"")
+  );
 }
 
 function isEmptyGroundedFailure(answer) {
@@ -2798,7 +2824,7 @@ async function massivePipelineStreamResponse(env,meta) {
       },SSE_KEEPALIVE_MS);
       try{
         emit("meta",{
-          fontes:meta.sources,
+          fontes:publicSourceViews(meta.sources),
           fallback:false,
           provider:"groq-final-only+500-node-grounded-rag",
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
@@ -2846,7 +2872,7 @@ async function massivePipelineStreamResponse(env,meta) {
           ok:true,
           resposta:answer,
           full_text:answer,
-          fontes:usedSources,
+          fontes:publicSourceViews(usedSources),
           fallback:false,
           memory_persisted:memoryPersisted,
           provider:"groq-final-only+500-node-grounded-rag",
@@ -2986,7 +3012,7 @@ async function precomputedRelayStreamResponse(env,answer,meta) {
   );
   const frames=
     sseFrame("meta",{
-      fontes:usedSources,
+      fontes:publicSourceViews(usedSources),
       fallback:meta.fallback,
       provider:"groq+20-node-relay",
       retrieval_level:meta.retrievalLevel || 0,
@@ -3005,7 +3031,7 @@ async function precomputedRelayStreamResponse(env,answer,meta) {
     sseFrame("done",{
       ok:true,
       resposta:finalAnswer,
-      fontes:usedSources,
+      fontes:publicSourceViews(usedSources),
       fallback:meta.fallback,
       memory_persisted:memoryPersisted,
       provider:"groq+20-node-relay",
@@ -3039,7 +3065,7 @@ async function groqStreamResponse(env, messages, meta) {
       let answer = "";
       try {
         controller.enqueue(encoder.encode(sseFrame("meta", {
-          fontes: meta.sources,
+          fontes: publicSourceViews(meta.sources),
           fallback: meta.fallback,
           provider: "groq+resilient-rag",
           retrieval_level: meta.retrievalLevel || 0,
@@ -3087,7 +3113,7 @@ async function groqStreamResponse(env, messages, meta) {
         controller.enqueue(encoder.encode(sseFrame("done", {
           ok: true,
           resposta: answer,
-          fontes: usedSources,
+          fontes: publicSourceViews(usedSources),
           fallback: meta.fallback,
           memory_persisted: memoryPersisted,
           provider: "groq+resilient-rag",
@@ -4171,7 +4197,7 @@ async function chat(request, env) {
     const payload={
       ok:direct.ok,
       resposta:answer,
-      fontes:directSources,
+      fontes:publicSourceViews(directSources),
       fallback:!direct.ok,
       bypass_llm:true,
       direct_retrieval:true,
@@ -4355,7 +4381,7 @@ async function chat(request, env) {
     const payload={
       ok:true,
       resposta:answer,
-      fontes:usedSources,
+      fontes:publicSourceViews(usedSources),
       fallback:false,
       memory_persisted:memoryPersisted,
       provider:"deterministic-reference-only",
