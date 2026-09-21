@@ -1,0 +1,38 @@
+name: Citation Bibliography Production Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - consciencia-cloudflare-native-v1
+    paths:
+      - ".github/workflows/citation-bibliography-prod-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect production citation metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://consciencia-fabiano.focoeepoder2.workers.dev"
+          tmp="$(mktemp)"
+          code="$(curl -sS --max-time 30 -G -o "$tmp" -w '%{http_code}'             --data-urlencode 'q=Deus'             --data-urlencode 'limit=50'             "$BASE/api/citations")"
+          echo "HTTP=$code"
+          cat "$tmp" | jq '{
+            ok,backend,library_total_chunks,scanned,returned,scan_done,
+            types:(.citations|group_by(.bibliographic_type)|map({type:.[0].bibliographic_type,count:length})),
+            ordinary_books:(.citations|map(select(.bibliographic_type=="book"))|length),
+            ordinary_books_complete:(.citations|map(select(.bibliographic_type=="book" and (.chapter!=null) and (.page!=null)))|length),
+            ordinary_books_incomplete:(.citations|map(select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null))))|length),
+            scriptures:(.citations|map(select(.bibliographic_type=="scripture"))|length),
+            scriptures_complete:(.citations|map(select(.bibliographic_type=="scripture" and (.primary_reference|length>0)))|length),
+            incomplete_book_samples:(.citations|map(select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null))))|.[0:8]|map({book,chapter,page,chapter_display,page_display,excerpt})),
+            scripture_samples:(.citations|map(select(.bibliographic_type=="scripture"))|.[0:8]|map({work,book,primary_reference,page}))
+          }'
+          test "$code" = "200"
