@@ -220,6 +220,36 @@ async function embedTexts(texts){
   }
   return rows;
 }
+async function mirrorEmbeddingPayloadAdaptive(payload,generation){
+  if(!Array.isArray(payload)||!payload.length)return 0;
+  try{
+    const out=await secondary("mirror_embeddings",{generation,records:payload});
+    if(Number(out?.embeddings||0)!==payload.length){
+      throw new Error("secondary embedding count mismatch "+Number(out?.embeddings||0)+" != "+payload.length);
+    }
+    return payload.length;
+  }catch(e){
+    if(quotaLike(e))throw e;
+    if(payload.length===1){
+      const row=payload[0];
+      throw new Error("single-row secondary mirror failed chunk_id="+chunkId(row)+" document_id="+docId(row)+" cause="+String(e?.message||e));
+    }
+    const mid=Math.ceil(payload.length/2);
+    return (await mirrorEmbeddingPayloadAdaptive(payload.slice(0,mid),generation))+
+           (await mirrorEmbeddingPayloadAdaptive(payload.slice(mid),generation));
+  }
+}
+
+async function mirrorEmbeddingRowsAdaptive(rows,generation){
+  let written=0;
+  for(let i=0;i<rows.length;i+=EMBEDDING_BATCH){
+    const batch=rows.slice(i,i+EMBEDDING_BATCH);
+    const payload=batch.map(r=>normalizedMirrorRow(r,vectorOf(r),generation));
+    written+=await mirrorEmbeddingPayloadAdaptive(payload,generation);
+  }
+  return written;
+}
+
 function normalizedMirrorRow(r,vector=null,generation=""){
   const row={
     id:chunkId(r),document_id:docId(r),
@@ -494,14 +524,9 @@ async function main(){
       report.patched_shards++;
     }
 
-    // Mirror the exact same R2 vectors to the active secondary index, max 64 per call.
-    for(let i=0;i<rows.length;i+=EMBEDDING_BATCH){
-      const batch=rows.slice(i,i+EMBEDDING_BATCH);
-      const payload=batch.map(r=>normalizedMirrorRow(r,vectorOf(r),activeGeneration));
-      const out=await secondary("mirror_embeddings",{generation:activeGeneration,records:payload});
-      if(Number(out?.embeddings||0)!==payload.length)return fail("secondary embedding batch mismatch");
-      persistedThisRun+=payload.length;
-    }
+    // Mirror exact R2 vectors adaptively. A persistent failure is bisected down
+    // to a single chunk_id so already-good rows remain committed and resumable.
+    persistedThisRun+=await mirrorEmbeddingRowsAdaptive(rows,activeGeneration);
 
     const after=await secondary("generation_stats",{generation:activeGeneration});
     if(Number(after?.vector_count||0)<EXPECTED_BASELINE+persistedThisRun){
