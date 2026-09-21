@@ -36,6 +36,7 @@ jobs:
           scriptures_incomplete=0
           : >/tmp/incomplete-books.ndjson
           : >/tmp/incomplete-scriptures.ndjson
+          : >/tmp/all-books.txt
 
           while [ "$guard" -lt 200 ]; do
             guard=$((guard+1))
@@ -70,6 +71,7 @@ jobs:
 
             jq -c '.citations[]|select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null)))|{book,chapter,page,chapter_display,page_display,excerpt}' "$tmp" >>/tmp/incomplete-books.ndjson
             jq -c '.citations[]|select(.bibliographic_type=="scripture" and ((.primary_reference|length)==0))|{work,book,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/incomplete-scriptures.ndjson
+            jq -r '.citations[].book // empty' "$tmp" >>/tmp/all-books.txt
 
             done_flag="$(jq -r '(.scan_done // false)|tostring' "$tmp")"
             cursor="$(jq -r '.next_scan_cursor // ""' "$tmp")"
@@ -85,6 +87,8 @@ jobs:
           done
 
           echo "FINAL scanned=$scanned found=$found books=$books books_complete=$books_complete books_incomplete=$books_incomplete scriptures=$scriptures scriptures_complete=$scriptures_complete scriptures_incomplete=$scriptures_incomplete"
+          echo "BOOK_COUNTS"
+          sort /tmp/all-books.txt | uniq -c | sort -nr | head -n 30 || true
           echo "INCOMPLETE_BOOK_SAMPLES"
           head -n 12 /tmp/incomplete-books.ndjson || true
           echo "INCOMPLETE_SCRIPTURE_SAMPLES"
