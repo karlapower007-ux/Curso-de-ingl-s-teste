@@ -286,7 +286,15 @@ done
 jq -e '.r2_direct_ready == true and .cross_device_storage == "r2-native-binding"' /tmp/health.json >/dev/null || die "R2_NATIVE_BINDING_NOT_READY"
 
 log "5.1/7 Citation dictionary authoritative R2 smoke"
-citation_body="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -fsS "$BASE/api/citations?q=Deus&offset=0&limit=1")" || die "CITATION_DICTIONARY_HTTP_FAILED"
+citation_tmp="$(mktemp)"
+citation_http="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -sS -o "$citation_tmp" -w '%{http_code}' "$BASE/api/citations?q=Deus&offset=0&limit=1" || true)"
+citation_body="$(cat "$citation_tmp" 2>/dev/null || true)"
+rm -f "$citation_tmp"
+if [ "$citation_http" != "200" ]; then
+  echo "CITATION_DICTIONARY_HTTP_STATUS=$citation_http"
+  echo "$citation_body"
+  die "CITATION_DICTIONARY_HTTP_FAILED"
+fi
 echo "$citation_body" | jq -e '
   .ok == true
   and .backend == "r2-authoritative"
