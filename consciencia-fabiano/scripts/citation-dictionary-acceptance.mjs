@@ -20,6 +20,11 @@ must(worker.includes('chapter_display'),"chapter must be exposed in citation res
 must(worker.includes('page_display'),"page must be exposed in citation response");
 must(worker.includes("async function citationSearchR2Segment"),"segmented authoritative R2 citation search missing");
 must(worker.includes("CITATION_R2_SHARDS_PER_REQUEST"),"bounded R2 shard segment missing");
+must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 4;"),"citation segments must stay at four shards to avoid CPU 1102 under concurrent PC/mobile scans");
+must(worker.includes("function chapterWordToNumber"),"written chapter number resolver missing");
+must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
+must(!worker.includes('if(/\\b(?:doutrina e convenios|doctrine and covenants)\\b/.test(value)) return "doctrine-and-covenants";'),"broad scripture filename classifier must not return");
+
 must(worker.includes('backend:"r2-authoritative"'),"citation backend must identify authoritative R2");
 must(worker.includes("authoritative_r2_preferred:true"),"public citation contract must prefer authoritative R2");
 must(worker.includes("cpu_bounded_segment:true"),"CPU bounded citation contract missing");

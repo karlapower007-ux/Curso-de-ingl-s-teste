@@ -54,7 +54,7 @@ const CITATION_SCAN_LIMIT = 50000;
 const CITATION_MAX_QUERY_CHARS = 4000;
 const CITATION_R2_CACHE_TTL_MS = 5 * 60 * 1000;
 const CITATION_R2_CACHE_MAX_QUERIES = 2;
-const CITATION_R2_SHARDS_PER_REQUEST = 8;
+const CITATION_R2_SHARDS_PER_REQUEST = 4;
 const CITATION_R2_MAX_MATCHES_PER_REQUEST = 2000;
 const citationR2SearchCache = new Map();
 
@@ -1776,16 +1776,38 @@ function romanToArabicCitation(value) {
   return total>0 ? total : null;
 }
 
+function chapterWordToNumber(value) {
+  const raw=foldSearchText(value).replace(/\s+/g," ").trim();
+  if(!raw) return null;
+  const direct=romanToArabicCitation(raw);
+  if(direct) return direct;
+  const units={
+    "one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,
+    "ten":10,"eleven":11,"twelve":12,"thirteen":13,"fourteen":14,"fifteen":15,"sixteen":16,
+    "seventeen":17,"eighteen":18,"nineteen":19,"twenty":20,"thirty":30,"forty":40,"fifty":50,
+    "um":1,"uma":1,"dois":2,"duas":2,"tres":3,"quatro":4,"cinco":5,"seis":6,"sete":7,"oito":8,"nove":9,
+    "dez":10,"onze":11,"doze":12,"treze":13,"quatorze":14,"catorze":14,"quinze":15,"dezesseis":16,
+    "dezessete":17,"dezoito":18,"dezenove":19,"vinte":20,"trinta":30,"quarenta":40,"cinquenta":50
+  };
+  if(units[raw]) return units[raw];
+  const parts=raw.split(/(?:\s+e\s+|\s+and\s+|[-\s]+)/).filter(Boolean);
+  if(parts.length===2 && units[parts[0]]>=20 && units[parts[1]]>0 && units[parts[1]]<10){
+    return units[parts[0]]+units[parts[1]];
+  }
+  return null;
+}
+
 function extractChapterHeading(text) {
   const raw=String(text || "").replace(/\r/g,"\n");
+  const token="[0-9]{1,4}|[IVXLCDM]{1,12}|[A-Za-zÀ-ÿ]+(?:[-\\s](?:e|and|[A-Za-zÀ-ÿ]+)){0,2}";
   const patterns=[
-    /(?:^|\n)\s*(?:cap[ií]tulo|chapter)\s+([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu,
-    /(?:^|\n)\s*(?:cap\.?)\s*([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu
+    new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+token+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
+    new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+token+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu")
   ];
   for(const re of patterns){
     const match=raw.match(re);
     if(!match) continue;
-    const number=romanToArabicCitation(match[1]);
+    const number=chapterWordToNumber(match[1]);
     if(!number) continue;
     const title=String(match[2] || "")
       .replace(/\s+/g," ")
@@ -1798,13 +1820,25 @@ function extractChapterHeading(text) {
 }
 
 function scriptureSourceKind(filename,title) {
-  const value=foldSearchText([filename,title].filter(Boolean).join(" "));
-  if(!value) return "";
-  if(/\b(?:obras padrao|standard works|scriptures|escrituras)\b/.test(value)) return "standard-works";
-  if(/\b(?:livro de mormon|book of mormon)\b/.test(value)) return "book-of-mormon";
-  if(/\b(?:doutrina e convenios|doctrine and covenants)\b/.test(value)) return "doctrine-and-covenants";
-  if(/\b(?:perola de grande valor|pearl of great price)\b/.test(value)) return "pearl-of-great-price";
-  if(/\b(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)\b/.test(value)) return "bible";
+  const normalize=value=>foldSearchText(
+    String(value || "")
+      .replace(/\.(?:pdf|txt|epub|docx?)$/i,"")
+      .replace(/\s+/g," ")
+      .trim()
+  );
+  const candidates=[filename,title].map(normalize).filter(Boolean);
+  const exactPatterns=[
+    ["standard-works",/^(?:obras padrao|standard works|scriptures|escrituras)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
+    ["book-of-mormon",/^(?:(?:o|the)\s+)?(?:livro de mormon|book of mormon)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
+    ["doctrine-and-covenants",/^(?:doutrina e convenios|doctrine and covenants)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
+    ["pearl-of-great-price",/^(?:perola de grande valor|pearl of great price)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
+    ["bible",/^(?:(?:a|the)\s+)?(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/]
+  ];
+  for(const value of candidates){
+    for(const [kind,re] of exactPatterns){
+      if(re.test(value)) return kind;
+    }
+  }
   return "";
 }
 
@@ -5255,6 +5289,8 @@ async function status(env) {
     citation_dictionary_segmented_r2_scan: true,
     citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_cpu_bounded: true,
+    citation_dictionary_strict_scripture_source_classification: true,
+    citation_dictionary_chapter_word_numbers: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
@@ -6741,6 +6777,8 @@ export default {
         citation_dictionary_segmented_r2_scan: true,
         citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
         citation_dictionary_cpu_bounded: true,
+        citation_dictionary_strict_scripture_source_classification: true,
+        citation_dictionary_chapter_word_numbers: true,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
         cognitive_1000_microturbines: true,
