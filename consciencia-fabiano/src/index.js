@@ -4446,7 +4446,7 @@ async function chat(request, env) {
     ok: true,
     resposta: answer,
     full_text: answer,
-    fontes: usedSources,
+    fontes: publicSourceViews(usedSources),
     fallback: false,
     memory_persisted: memoryPersisted,
     provider: "groq-final-only+500-node-grounded-rag",
