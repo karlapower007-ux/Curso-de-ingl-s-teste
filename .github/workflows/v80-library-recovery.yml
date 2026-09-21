@@ -1,0 +1,123 @@
+name: Recover Consciência Fabiano V8 Library Merge
+
+on:
+  push:
+    branches:
+      - "ops-v80-library-recovery-run-*"
+    paths:
+      - "ops/run-v80-library-recovery.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-v80-library-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+      FNS_BASE: https://consciencia-fabiano.focoeepoder2.workers.dev
+      FNS_SECONDARY_URL: https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary
+      FNS_EXPECTED_BASELINE: "25199"
+      FNS_PROTECTED_FLOOR: "14666"
+      FNS_RECOVERY_APPLY: "true"
+    steps:
+      - name: Checkout official production branch
+        uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install existing Worker tooling
+        working-directory: consciencia-fabiano
+        run: npm install --ignore-scripts
+
+      - name: Validate recovery script and frozen V8 core
+        working-directory: consciencia-fabiano
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/recover-library-v80.py
+          npm run check
+
+      - name: Discover authoritative Fabiano Cloudflare account
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          env -u CLOUDFLARE_ACCOUNT_ID npx wrangler whoami >/tmp/whoami.txt 2>&1
+          grep -Fq "associated with the email focoeepoder2@gmail.com" /tmp/whoami.txt
+          curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json" >/tmp/accounts.json
+          DISCOVERED=""
+          while IFS= read -r candidate; do
+            [ -n "$candidate" ] || continue
+            code=$(curl -sS -o /tmp/service.json -w '%{http_code}'               "https://api.cloudflare.com/client/v4/accounts/$candidate/workers/services/consciencia-fabiano"               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"               -H "Content-Type: application/json" || true)
+            if [ "$code" = "200" ]; then DISCOVERED="$candidate"; break; fi
+          done < <(jq -r '.result[].id // empty' /tmp/accounts.json)
+          test -n "$DISCOVERED"
+          echo "CLOUDFLARE_ACCOUNT_ID=$DISCOVERED" >> "$GITHUB_ENV"
+
+      - name: Rotate private automation secret for this recovery run
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUTOMATION_SECRET=$(openssl rand -hex 32)
+          printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/dev/null
+          echo "::add-mask::$AUTOMATION_SECRET"
+          echo "AUTOMATION_SECRET=$AUTOMATION_SECRET" >> "$GITHUB_ENV"
+          stable=0
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/ping.json -w '%{http_code}'               -H "X-FNS-Automation: $AUTOMATION_SECRET" "$FNS_BASE/api/admin/ping" || true)
+            if [ "$code" = "200" ]; then
+              stable=$((stable+1))
+              [ "$stable" -ge 3 ] && break
+            else
+              stable=0
+            fi
+            sleep 2
+          done
+          test "$stable" -ge 3
+
+      - name: Confirm recovery endpoints and Supabase fallback are deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH=$(curl -fsS "$FNS_BASE/health/deploy")
+          echo "$HEALTH" | jq -e '.version=="8.0.0-adaptive-20x20x20" and .supabase_mirror_configured==true and .supabase_transport=="secondary-hybrid-fallback"' >/dev/null
+          code=$(curl -sS -o /tmp/candidate-probe.json -w '%{http_code}'             -H "X-FNS-Automation: $AUTOMATION_SECRET"             "$FNS_BASE/api/admin/r2-recovery-candidate-state?generation=nonexistent-probe" || true)
+          test "$code" = "200"
+          jq -e '.ok==true and .chunks==0' /tmp/candidate-probe.json >/dev/null
+
+      - name: Execute bounded merge recovery
+        working-directory: consciencia-fabiano
+        run: python3 scripts/recover-library-v80.py
+
+      - name: Verify recovery report
+        if: always()
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .ci-results/v80-library-recovery.json
+          cat .ci-results/v80-library-recovery.json
+          jq -e '.ok==true and .result=="recovered-and-promoted" and .audit.candidate.chunks>=25199 and .post_validation.rag_matches>0' .ci-results/v80-library-recovery.json >/dev/null
+
+      - name: Upload recovery audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v80-library-recovery-audit
+          path: consciencia-fabiano/.ci-results/v80-library-recovery.json
+          retention-days: 30

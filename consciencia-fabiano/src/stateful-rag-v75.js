@@ -88,7 +88,9 @@ export function resolveStatefulQuery(question, history, contract = {}) {
 export function secondarySupabaseConfigured(env) {
   const base = String(env?.SUPABASE_URL || "").trim();
   const key = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
-  return Boolean(base && key);
+  const fn = String(env?.SUPABASE_SECONDARY_FUNCTION_URL || "").trim();
+  const owner = String(env?.FNS_OWNER_TOKEN || "").trim();
+  return Boolean((base && key) || (fn && owner));
 }
 
 function secondaryHeaders(env) {
@@ -123,6 +125,20 @@ function circuitRecover() {
   secondaryCircuit.lastReason = "";
 }
 
+function secondaryFunctionHeaders(env) {
+  return {
+    "X-FNS-Owner-Token": String(env?.FNS_OWNER_TOKEN || "").trim(),
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+}
+
+function secondaryFunctionAction(path) {
+  if (path === "/rest/v1/rpc/fns_secondary_manifest") return "manifest";
+  if (path === "/rest/v1/rpc/fns_secondary_hybrid_search") return "search";
+  return "";
+}
+
 async function secondaryFetch(env, path, body = {}) {
   if (!secondarySupabaseConfigured(env)) {
     const error = new Error("Secondary Supabase is not configured.");
@@ -135,14 +151,39 @@ async function secondaryFetch(env, path, body = {}) {
     throw error;
   }
 
-  const base = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+  const directBase = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
+  const directKey = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
+  const functionBase = String(env?.SUPABASE_SECONDARY_FUNCTION_URL || "").replace(/\/$/, "");
+  const ownerToken = String(env?.FNS_OWNER_TOKEN || "").trim();
+  const useFunction = !(directBase && directKey) && Boolean(functionBase && ownerToken);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SECONDARY_TIMEOUT_MS);
   try {
-    const res = await fetch(base + path, {
+    let target = directBase + path;
+    let headers = secondaryHeaders(env);
+    let payload = body || {};
+    if (useFunction) {
+      const action = secondaryFunctionAction(path);
+      if (!action) {
+        const error = new Error("Secondary function action is not supported.");
+        error.code = "SECONDARY_REQUEST_FAILED";
+        throw error;
+      }
+      target = functionBase + "?action=" + encodeURIComponent(action);
+      headers = secondaryFunctionHeaders(env);
+      if (action === "search") {
+        payload = {
+          query: body?.query_text || "",
+          query_embedding: body?.query_embedding_text || null,
+          per_document_k: body?.per_document_k,
+          global_limit: body?.global_limit
+        };
+      }
+    }
+    const res = await fetch(target, {
       method: "POST",
-      headers: secondaryHeaders(env),
-      body: JSON.stringify(body || {}),
+      headers,
+      body: JSON.stringify(payload),
       signal: controller.signal
     });
     if (res.status === 429 || res.status >= 500) {
@@ -238,7 +279,7 @@ export async function retrieveSecondaryHybridContext(
     global_limit: globalLimit
   });
 
-  const rows = Array.isArray(data) ? data : [];
+  const rows = Array.isArray(data) ? data : (Array.isArray(data?.matches) ? data.matches : []);
   return {
     matches: rows.map(row => ({
       ...row,
