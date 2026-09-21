@@ -32,7 +32,7 @@ jobs:
       - name: Validate production Biblioteca desktop and mobile
         shell: bash
         run: |
-          cat > /tmp/library-qa.mjs <<'EOF'
+          cat > ./library-qa.mjs <<'EOF'
           import { chromium } from 'playwright';
           import fs from 'node:fs/promises';
           const base='https://consciencia-fabiano.focoeepoder2.workers.dev';
@@ -82,17 +82,17 @@ jobs:
             }
             report.ok=report.profiles.every(x=>x.ok);
             report.completed_at=new Date().toISOString();
-            await fs.writeFile('/tmp/v80-production-library-qa.json',JSON.stringify(report,null,2));
+            await fs.writeFile('./v80-production-library-qa.json',JSON.stringify(report,null,2));
             console.log(JSON.stringify(report,null,2));
             if(!report.ok)process.exitCode=1;
           }finally{await browser.close();}
           EOF
-          node /tmp/library-qa.mjs
+          node ./library-qa.mjs
 
       - name: Upload UI QA report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: v80-production-library-ui-qa
-          path: /tmp/v80-production-library-qa.json
+          path: v80-production-library-qa.json
           retention-days: 30
