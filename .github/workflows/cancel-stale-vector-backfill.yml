@@ -1,0 +1,22 @@
+name: Cancel Stale V8 Vector Backfill
+
+on:
+  push:
+    branches:
+      - "ops-v80-missing-vector-backfill-*"
+    paths:
+      - "ops/cancel-stale-vector-backfill.txt"
+      - ".github/workflows/cancel-stale-vector-backfill.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-cloudflare-native-production
+  cancel-in-progress: true
+
+jobs:
+  cancel-stale:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "STALE_VECTOR_BACKFILL_CANCELLED_BY_CONCURRENCY=yes"
