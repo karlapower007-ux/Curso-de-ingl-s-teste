@@ -118,9 +118,10 @@ jobs:
               }));
 
               const api500=errors.filter(x=>/^http:500:/.test(x));
-              const ok=state.panelVisible&&state.tabActive&&state.books.length>=8&&
-                manifest.ok&&manifest.total_books>=8&&manifest.total_chunks===28636&&
-                manifest.vector_count===28636&&api500.length===0&&state.overflow<=8;
+              const ok=state.panelVisible&&state.tabActive&&state.books.length===8&&
+                manifest.ok&&manifest.total_books===8&&manifest.metadata_count===8&&
+                manifest.total_chunks===28636&&manifest.vector_count===28636&&
+                api500.length===0&&state.overflow<=8;
 
               results.push({
                 name:p.name,viewport:p.viewport,ok,
@@ -147,3 +148,5 @@ jobs:
           if(!report.ok) process.exit(1);
           EOF
           node ./library-secure-qa.mjs
+
+# rerun-after-canonical-library-102a845
