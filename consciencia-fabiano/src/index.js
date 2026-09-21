@@ -1012,7 +1012,7 @@ async function r2LibraryFinalize(request,env){
   if(!generation)return json({ok:false,code:"R2_LIBRARY_BAD_REQUEST",message:"generation ausente."},400);
 
   const current=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
-  if(current?.source==="durable-object-authoritative"){
+  if(r2RecoveryProtectedSource(current?.source)){
     return json({
       ok:true,ignored:true,reason:"backend_authoritative_snapshot_active",
       generation:String(current.generation||""),documents:Number(current.documents||0),
@@ -1038,6 +1038,144 @@ async function r2LibraryFinalize(request,env){
   return json({ok:true,...pointer,r2:true});
 }
 
+function r2RecoveryProtectedSource(source){
+  return ["durable-object-authoritative","recovery-merge-v8"].includes(String(source||""));
+}
+
+async function r2GenerationStats(env,generation){
+  if(!env.PDFS) return {ok:false,code:"R2_LIBRARY_BINDING_MISSING"};
+  const clean=String(generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  if(!clean) return {ok:false,code:"R2_RECOVERY_GENERATION_REQUIRED"};
+  const prefix="library/generations/"+r2LibrarySegment(clean)+"/shards/";
+  let cursor=undefined;
+  let shards=0;
+  let chunks=0;
+  let invalid=0;
+  const documents=new Set();
+  do{
+    const listed=await env.PDFS.list({prefix,limit:1000,cursor,include:["customMetadata"]});
+    for(const object of (Array.isArray(listed.objects)?listed.objects:[])){
+      if(!String(object?.key||"").endsWith(".json")) continue;
+      shards++;
+      let count=Math.max(0,Number(object?.customMetadata?.count||0));
+      let documentId=String(object?.customMetadata?.document_id||"");
+      if(!count || !documentId){
+        const shard=await r2JsonGet(env.PDFS,object.key);
+        const rows=Array.isArray(shard?.rows)?shard.rows:[];
+        count=rows.length;
+        documentId=String(shard?.document_id||rows[0]?.document_id||"");
+      }
+      if(!count || !documentId) invalid++;
+      chunks+=count;
+      if(documentId) documents.add(documentId);
+    }
+    cursor=(listed.truncated && listed.cursor)?String(listed.cursor):undefined;
+  }while(cursor);
+  return {ok:true,generation:clean,chunks,documents:documents.size,shards,invalid_shards:invalid};
+}
+
+async function r2RecoveryCandidateState(env,url){
+  const generation=String(url.searchParams.get("generation")||"");
+  const stats=await r2GenerationStats(env,generation);
+  return json(stats,stats.ok?200:400);
+}
+
+async function r2RecoveryFinalize(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  const expectedCurrentGeneration=String(body?.expected_current_generation||"").slice(0,120);
+  const expectedCurrentChunks=Math.max(0,Number(body?.expected_current_chunks||0));
+  const protectedFloor=Math.max(0,Number(body?.protected_floor||14666));
+  const expectedChunks=Math.max(0,Number(body?.expected_candidate_chunks||0));
+  const expectedDocuments=Math.max(0,Number(body?.expected_candidate_documents||0));
+  const vectors=Math.max(0,Number(body?.vectors||0));
+  const sourceSignature=String(body?.source_signature||"").toLowerCase();
+  if(!generation || !expectedCurrentGeneration || expectedChunks<25199 || expectedDocuments<1 || !/^[0-9a-f]{64}$/.test(sourceSignature)){
+    return json({ok:false,code:"R2_RECOVERY_FINALIZE_BAD_REQUEST"},400);
+  }
+
+  const current=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(String(current?.generation||"")!==expectedCurrentGeneration ||
+     Number(current?.chunks||0)!==expectedCurrentChunks ||
+     Number(current?.chunks||0)<protectedFloor){
+    return json({ok:false,code:"R2_RECOVERY_CURRENT_STATE_CHANGED",current},409);
+  }
+
+  const stats=await r2GenerationStats(env,generation);
+  if(!stats.ok || stats.invalid_shards>0 ||
+     stats.chunks!==expectedChunks || stats.documents!==expectedDocuments){
+    return json({ok:false,code:"R2_RECOVERY_CANDIDATE_MISMATCH",stats,expected:{chunks:expectedChunks,documents:expectedDocuments}},409);
+  }
+  if(stats.chunks<25199 || stats.chunks<Number(current?.chunks||0)){
+    return json({ok:false,code:"R2_RECOVERY_WOULD_REDUCE_LIBRARY",stats,current},409);
+  }
+
+  const checkpointKey="library/recovery-checkpoints/"+r2LibrarySegment(generation)+".previous-pointer.json";
+  await env.PDFS.put(checkpointKey,JSON.stringify(current||{}),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{candidate_generation:generation,kind:"previous-pointer"}
+  });
+
+  const manifestKey=r2LibraryManifestKey(generation);
+  const metadata=Array.isArray(body?.metadata)?body.metadata.slice(0,200):[];
+  const manifest={
+    version:3,generation,source:"recovery-merge-v8",source_signature:sourceSignature,
+    total_books:stats.documents,total_chunks:stats.chunks,vector_count:vectors,shards:stats.shards,
+    metadata,
+    recovery:{
+      baseline_generation:String(body?.baseline_generation||"").slice(0,160),
+      baseline_chunks:Math.max(0,Number(body?.baseline_chunks||0)),
+      protected_generation:expectedCurrentGeneration,
+      protected_chunks:expectedCurrentChunks,
+      merge_policy:"baseline-plus-current-only-by-filename-page-text-sha256",
+      destructive:false,
+      reindex:false
+    },
+    sync:{
+      manifest_endpoint:"/api/v1/r2/library-manifest",
+      page_endpoint:"/api/admin/omni-sync-page",
+      batch_size:200,indexeddb_target:"fns_rag_resilience_v1",
+      vectors_preserved:true
+    },
+    updated_at:new Date().toISOString()
+  };
+  await env.PDFS.put(manifestKey,JSON.stringify(manifest),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation,source:"recovery-merge-v8"}
+  });
+  const pointer={
+    version:3,generation,documents:stats.documents,chunks:stats.chunks,shards:stats.shards,
+    vectors,source:"recovery-merge-v8",source_signature:sourceSignature,
+    manifest_key:manifestKey,recovery_checkpoint_key:checkpointKey,
+    updated_at:manifest.updated_at,bucket:"consciencia-fabiano-pdfs"
+  };
+  await env.PDFS.put(R2_LIBRARY_POINTER_KEY,JSON.stringify(pointer),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation,source:pointer.source}
+  });
+  return json({ok:true,promoted:true,checkpoint_key:checkpointKey,...pointer});
+}
+
+async function r2RecoveryRollback(request,env){
+  if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
+  const body=await request.json().catch(()=>({}));
+  const generation=String(body?.generation||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,120);
+  if(!generation)return json({ok:false,code:"R2_RECOVERY_GENERATION_REQUIRED"},400);
+  const current=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(String(current?.generation||"")!==generation){
+    return json({ok:false,code:"R2_RECOVERY_ROLLBACK_STATE_CHANGED",current},409);
+  }
+  const checkpointKey=String(current?.recovery_checkpoint_key||("library/recovery-checkpoints/"+r2LibrarySegment(generation)+".previous-pointer.json"));
+  const previous=await r2JsonGet(env.PDFS,checkpointKey);
+  if(!previous?.generation)return json({ok:false,code:"R2_RECOVERY_ROLLBACK_CHECKPOINT_MISSING"},404);
+  await env.PDFS.put(R2_LIBRARY_POINTER_KEY,JSON.stringify(previous),{
+    httpMetadata:{contentType:"application/json"},
+    customMetadata:{generation:String(previous.generation||""),source:String(previous.source||"")}
+  });
+  return json({ok:true,rolled_back:true,generation:String(previous.generation||""),chunks:Number(previous.chunks||0),documents:Number(previous.documents||0)});
+}
+
 async function r2OmniSyncState(env){
   if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING",message:"Binding R2 PDFS ausente."},503);
   const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
@@ -1056,7 +1194,7 @@ async function r2OmniSyncState(env){
     vectors:Number(pointer.vectors||0),source:String(pointer.source||""),
     source_signature:String(pointer.source_signature||""),
     manifest_key:String(pointer.manifest_key||""),
-    authoritative:pointer.source==="durable-object-authoritative",
+    authoritative:r2RecoveryProtectedSource(pointer.source),
     updated_at:String(pointer.updated_at||""),batch_size:200,
     backend:"cloudflare-r2",bucket:"consciencia-fabiano-pdfs"
   });
@@ -1222,6 +1360,15 @@ async function r2ReconcileFinalize(request,env){
   if(!generation)return json({ok:false,code:"R2_RECONCILE_BAD_REQUEST",message:"generation ausente."},400);
 
   const state=await r2AuthoritativeState(env);
+  const currentPointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  if(String(currentPointer?.source||"")==="recovery-merge-v8" &&
+     Number(currentPointer?.chunks||0)>Number(state?.do_chunks||0)){
+    return json({
+      ok:false,code:"R2_RECONCILE_WOULD_REDUCE_RECOVERED_LIBRARY",
+      recovered_chunks:Number(currentPointer?.chunks||0),
+      durable_chunks:Number(state?.do_chunks||0)
+    },409);
+  }
   const expectedSignature=String(body?.expected_signature||"");
   const expectedChunks=Math.max(0,Number(body?.chunks||0));
   if(expectedSignature && expectedSignature!==state.source_signature){
@@ -1289,7 +1436,7 @@ async function r2LibraryManifestResponse(env){
     });
   }
   return json({
-    ok:true,authoritative:manifest.source==="durable-object-authoritative",
+    ok:true,authoritative:r2RecoveryProtectedSource(manifest.source),
     empty:Number(manifest.total_books||0)===0,
     generation:String(manifest.generation||pointer.generation||""),
     source_signature:String(manifest.source_signature||""),
@@ -4390,6 +4537,9 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/mirror-upsert" && request.method === "POST") return mirrorUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-shard" && request.method === "POST") return r2LibraryShardUpsert(request,env);
     if (url.pathname === "/api/admin/r2-library-finalize" && request.method === "POST") return r2LibraryFinalize(request,env);
+    if (url.pathname === "/api/admin/r2-recovery-candidate-state" && request.method === "GET") return r2RecoveryCandidateState(env,url);
+    if (url.pathname === "/api/admin/r2-recovery-finalize" && request.method === "POST") return r2RecoveryFinalize(request,env);
+    if (url.pathname === "/api/admin/r2-recovery-rollback" && request.method === "POST") return r2RecoveryRollback(request,env);
     if (url.pathname === "/api/admin/r2-reconcile-state" && request.method === "GET") return json(await r2AuthoritativeState(env));
     if (url.pathname === "/api/admin/r2-reconcile-step" && request.method === "POST") return r2ReconcileStep(request,env);
     if (url.pathname === "/api/admin/r2-reconcile-finalize" && request.method === "POST") return r2ReconcileFinalize(request,env);
