@@ -1,10 +1,1275 @@
 {
   "version": 2,
   "format": "fns-rag-static-backup-v2-sharded",
+  "generated_at": "2026-09-21T00:17:02.926Z",
+  "total_records": 25199,
+  "total_vectors": 0,
   "expected_embeddings": 25199,
-  "hydrated_embeddings": 0,
-  "generated_at": "2026-09-19T00:00:00Z",
-  "status": "scheduled-export-21h-BRT",
-  "note": "Loader V1.16 ativo. Os 25.199 vetores originais não estão presentes no repositório e não puderam ser exportados enquanto o Durable Objects estava sob limite de leitura. Quando o payload real for exportado, este arquivo aceita chunks e vectors sem alteração de código.",
-  "parts": []
+  "mirrored_records": 0,
+  "export_page_size": 100,
+  "mirror_batch_size": 50,
+  "export_delay_ms": 1200,
+  "mirror_delay_ms": 900,
+  "parts": [
+    {
+      "url": "/biblioteca_backup/part-0000.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0001.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0002.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0003.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0004.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0005.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0006.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0007.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0008.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0009.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0010.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0011.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0012.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0013.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0014.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0015.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0016.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0017.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0018.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0019.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0020.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0021.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0022.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0023.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0024.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0025.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0026.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0027.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0028.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0029.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0030.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0031.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0032.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0033.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0034.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0035.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0036.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0037.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0038.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0039.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0040.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0041.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0042.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0043.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0044.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0045.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0046.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0047.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0048.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0049.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0050.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0051.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0052.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0053.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0054.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0055.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0056.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0057.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0058.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0059.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0060.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0061.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0062.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0063.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0064.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0065.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0066.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0067.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0068.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0069.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0070.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0071.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0072.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0073.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0074.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0075.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0076.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0077.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0078.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0079.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0080.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0081.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0082.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0083.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0084.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0085.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0086.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0087.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0088.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0089.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0090.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0091.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0092.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0093.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0094.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0095.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0096.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0097.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0098.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0099.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0100.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0101.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0102.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0103.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0104.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0105.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0106.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0107.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0108.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0109.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0110.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0111.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0112.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0113.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0114.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0115.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0116.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0117.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0118.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0119.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0120.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0121.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0122.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0123.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0124.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0125.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0126.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0127.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0128.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0129.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0130.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0131.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0132.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0133.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0134.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0135.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0136.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0137.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0138.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0139.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0140.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0141.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0142.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0143.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0144.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0145.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0146.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0147.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0148.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0149.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0150.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0151.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0152.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0153.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0154.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0155.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0156.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0157.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0158.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0159.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0160.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0161.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0162.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0163.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0164.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0165.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0166.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0167.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0168.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0169.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0170.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0171.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0172.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0173.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0174.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0175.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0176.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0177.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0178.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0179.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0180.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0181.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0182.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0183.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0184.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0185.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0186.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0187.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0188.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0189.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0190.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0191.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0192.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0193.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0194.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0195.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0196.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0197.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0198.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0199.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0200.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0201.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0202.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0203.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0204.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0205.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0206.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0207.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0208.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0209.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0210.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0211.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0212.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0213.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0214.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0215.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0216.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0217.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0218.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0219.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0220.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0221.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0222.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0223.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0224.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0225.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0226.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0227.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0228.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0229.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0230.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0231.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0232.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0233.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0234.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0235.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0236.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0237.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0238.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0239.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0240.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0241.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0242.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0243.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0244.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0245.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0246.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0247.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0248.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0249.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0250.json",
+      "records": 100,
+      "vectors": 0
+    },
+    {
+      "url": "/biblioteca_backup/part-0251.json",
+      "records": 99,
+      "vectors": 0
+    }
+  ]
 }
