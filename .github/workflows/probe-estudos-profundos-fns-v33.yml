@@ -152,6 +152,66 @@ jobs:
           NODE
           done
 
+      - name: Locate FNS admin route implementations in published bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'), path=require('path');
+          const dir='probe/assets';
+          const files=fs.readdirSync(dir).filter(x=>x.endsWith('.js'));
+          const needles=[
+            '/api/fabiano/admin/documents',
+            '/api/fabiano/admin/chunks',
+            '/api/fabiano/admin/export',
+            '/api/fabiano/admin/index-job',
+            '/api/fabiano/admin/uploads',
+            '/api/fabiano/ask'
+          ];
+          for(const needle of needles){
+            console.log('\n===== '+needle+' =====');
+            let any=false;
+            for(const name of files){
+              const p=path.join(dir,name), src=fs.readFileSync(p,'utf8');
+              let i=src.indexOf(needle);
+              if(i<0) continue;
+              any=true;
+              console.log('\nFILE='+name);
+              console.log(src.slice(Math.max(0,i-3500),Math.min(src.length,i+7000)));
+            }
+            if(!any) console.log('NOT_FOUND_IN_DOWNLOADED_BUNDLES');
+          }
+          NODE
+
+      - name: Exercise public RAG with several evidence questions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          node - <<'NODE'
+          const questions=[
+            "O que a biblioteca contém sobre Joseph Smith?",
+            "Explique Doutrina e Convênios 129 com base nos documentos da biblioteca.",
+            "Quais fontes da biblioteca tratam da Restauração?"
+          ];
+          const base="https://estudos-profundos-fns.karlapower007.chatgpt.site";
+          for(const q of questions){
+            const res=await fetch(base+"/api/fabiano/ask",{
+              method:"POST",
+              headers:{"content-type":"application/json"},
+              body:JSON.stringify({question:q,history:[]})
+            });
+            const raw=await res.text();
+            let j={}; try{j=JSON.parse(raw)}catch{}
+            console.log(JSON.stringify({
+              q,http:res.status,
+              answer:String(j.answer||raw).slice(0,1200),
+              source_count:Array.isArray(j.sources)?j.sources.length:null,
+              sources:Array.isArray(j.sources)?j.sources.slice(0,8):null
+            }));
+          }
+          NODE
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
