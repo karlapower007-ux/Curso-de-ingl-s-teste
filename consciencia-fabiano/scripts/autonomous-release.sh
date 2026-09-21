@@ -431,6 +431,15 @@ if [ "$reconcile_deferred" -eq 0 ]; then
   do_chunks=$(jq -r '(.do_chunks // 0) | tonumber' /tmp/r2-reconcile-state.json)
   do_signature=$(jq -r '.source_signature // ""' /tmp/r2-reconcile-state.json)
   in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
+  preservation_floor=$(jq -r '(.library.expected_verified_chunks // 0) | tonumber' v8-preservation-manifest.json 2>/dev/null || echo 0)
+
+  # V8 preservation invariant: a smaller/partial runtime snapshot must never
+  # replace the previously verified library generation. Under quota pressure
+  # we keep the richer static/secondary evidence intact and defer reconciliation.
+  if [ "$preservation_floor" -gt 0 ] && [ "$do_chunks" -lt "$preservation_floor" ]; then
+    log "R2_RECONCILIATION_DEFERRED_PRESERVATION_FLOOR=yes do_chunks:$do_chunks floor:$preservation_floor"
+    in_sync=true
+  fi
 
   if [ "$in_sync" != "true" ]; then
     generation="do-$(date +%s)-$(printf '%s' "$do_signature" | cut -c1-16)"
@@ -520,12 +529,18 @@ if [ "$server_http" = "200" ]; then
   server_total=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state.json 2>/dev/null || echo 0)
 fi
 log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents,r2_shards:$r2_shards"
+preservation_floor=$(jq -r '(.library.expected_verified_chunks // 0) | tonumber' v8-preservation-manifest.json 2>/dev/null || echo 0)
+r2_recovery_eligible=1
+if [ "$preservation_floor" -gt 0 ] && [ "$r2_total" -lt "$preservation_floor" ]; then
+  r2_recovery_eligible=0
+  log "R2_PARTIAL_SNAPSHOT_PROTECTED=yes r2_chunks:$r2_total floor:$preservation_floor"
+fi
 
 if [ "$server_http" != "200" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=DEFERRED_SERVER_HTTP_$server_http"
 fi
 
-if [ "$server_http" = "200" ] && [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
+if [ "$server_http" = "200" ] && [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ "$r2_recovery_eligible" -eq 1 ] && [ -n "$r2_generation" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=START"
   rm -f /tmp/r2-library-rows.ndjson
   recovery_offset=0
