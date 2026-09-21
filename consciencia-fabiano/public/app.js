@@ -2311,10 +2311,12 @@
     return [...map.values()];
   }
 
-  function setUploadGate(allowInitialUpload){
+  function setUploadGate(_allowInitialUpload=true){
+    // V7.5 hotfix: upload is an additive library action, not a first-book-only gate.
+    // Existing IndexedDB/R2/DO content is preserved; duplicate detection remains in the ingest pipeline.
     const controls=$("uploadControls");
-    if(controls)controls.classList.toggle("hidden",!allowInitialUpload);
-    if($("uploadBtn"))$("uploadBtn").disabled=!allowInitialUpload;
+    if(controls)controls.classList.remove("hidden");
+    if($("uploadBtn") && !$("uploadBtn").dataset.busy) $("uploadBtn").disabled=false;
   }
 
   function renderBooks(list,cloudAvailable=true){
@@ -2589,11 +2591,13 @@
     }
     return api("/api/admin/local-ingest-commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:started.job_id})});
   }
-  async function uploadPdf(){
-    const file=$("pdfInput").files?.[0];
+  async function uploadPdf(fileOverride=null){
+    const file=(fileOverride && typeof fileOverride.name==="string") ? fileOverride : $("pdfInput").files?.[0];
     if(!file){$("adminStatus").textContent="Escolha um PDF.";return;}
     if(file.type!=="application/pdf" && !/\.pdf$/i.test(file.name)){$("adminStatus").textContent="Selecione um PDF.";return;}
+    $("uploadBtn").dataset.busy="true";
     $("uploadBtn").disabled=true;
+    if($("selectedPdfName")) $("selectedPdfName").textContent=file.name;
     const startedAt=performance.now();
     try{
       const extracted=await extractPdfLocally(file);
@@ -2629,8 +2633,56 @@
     }catch(error){
       $("adminStatus").textContent="Falha ao processar o PDF localmente: "+String(error?.message || error);
     }finally{
+      delete $("uploadBtn").dataset.busy;
       $("uploadBtn").disabled=false;
+      setUploadGate(true);
     }
+  }
+
+  function bindPdfUploadUi(){
+    const input=$("pdfInput");
+    const zone=$("pdfDropzone");
+    const selected=$("selectedPdfName");
+    if(input){
+      input.addEventListener("change",()=>{
+        const file=input.files?.[0];
+        if(selected) selected.textContent=file?.name || "Nenhum arquivo selecionado.";
+      });
+    }
+    if(!zone) return;
+    const activate=()=>zone.classList.add("drag-active");
+    const deactivate=()=>zone.classList.remove("drag-active");
+    ["dragenter","dragover"].forEach(type=>zone.addEventListener(type,event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      activate();
+      if(event.dataTransfer) event.dataTransfer.dropEffect="copy";
+    }));
+    ["dragleave","dragend"].forEach(type=>zone.addEventListener(type,event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      deactivate();
+    }));
+    zone.addEventListener("drop",event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      deactivate();
+      const file=Array.from(event.dataTransfer?.files || []).find(item=>
+        item?.type==="application/pdf" || /\.pdf$/i.test(String(item?.name || ""))
+      );
+      if(!file){
+        $("adminStatus").textContent="Arraste um arquivo PDF válido.";
+        return;
+      }
+      if(selected) selected.textContent=file.name;
+      uploadPdf(file);
+    });
+    zone.addEventListener("keydown",event=>{
+      if(event.key==="Enter" || event.key===" "){
+        event.preventDefault();
+        input?.click();
+      }
+    });
   }
 
   const OMNI_SYNC_STAMP_KEY="fns_omni_sync_last_v6";
@@ -2802,8 +2854,11 @@
   });
   // O botão micBtn é controlado exclusivamente pelo Whisper local em whisper-local.js.
   $("stopAudioBtn").onclick = stopAudioPlayback;
-  $("uploadBtn").onclick = uploadPdf;
+  $("uploadBtn").onclick = () => uploadPdf();
   $("reindexBtn").onclick = reindex;
+  bindPdfUploadUi();
+  setUploadGate(true);
+
   $("clearChatBtn").onclick = async () => {
     if (!confirm("Limpar todo o histórico desta conversa?")) return;
     history = [];
