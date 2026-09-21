@@ -1242,7 +1242,7 @@
       libraryTotal:0,
       citations:[],
       ids:new Set(),
-      carry:{document_id:"",chapter_number:null,chapter_title:""},
+      carry:{document_id:"",chapter_number:null,chapter_title:"",scripture:null},
       generation:""
     };
 
@@ -1293,6 +1293,12 @@
       if(state.carry?.document_id) params.set("carry_doc",state.carry.document_id);
       if(state.carry?.chapter_number) params.set("carry_chapter",String(state.carry.chapter_number));
       if(state.carry?.chapter_title) params.set("carry_title",state.carry.chapter_title);
+      if(state.carry?.scripture?.work) params.set("carry_scripture_work",state.carry.scripture.work);
+      if(state.carry?.scripture?.book) params.set("carry_scripture_book",state.carry.scripture.book);
+      if(state.carry?.scripture?.chapter) params.set("carry_scripture_chapter",String(state.carry.scripture.chapter));
+      if(state.carry?.scripture?.verse_start) params.set("carry_scripture_verse_start",String(state.carry.scripture.verse_start));
+      if(state.carry?.scripture?.verse_end) params.set("carry_scripture_verse_end",String(state.carry.scripture.verse_end));
+      if(state.carry?.scripture?.reference) params.set("carry_scripture_reference",state.carry.scripture.reference);
       return "/api/citations?"+params.toString();
     };
 
