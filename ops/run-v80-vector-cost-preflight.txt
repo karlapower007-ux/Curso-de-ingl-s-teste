@@ -1,0 +1,4 @@
+preflight=missing-vectors-3437
+read_only=true
+no_embeddings=true
+no_r2_writes=true
