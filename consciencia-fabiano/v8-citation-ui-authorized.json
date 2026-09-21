@@ -33,5 +33,6 @@
       "chapter",
       "verse"
     ]
-  }
+  },
+  "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
