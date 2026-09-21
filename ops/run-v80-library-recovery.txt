@@ -1,0 +1,10 @@
+run=v8-library-recovery
+attempt=9
+requested_at=2026-09-21
+mode=deterministic-merge
+preserve_current=true
+baseline=25199
+protected_floor=14666
+require_rag_probe=true
+stable_owner_auth=true
+serialized=true
