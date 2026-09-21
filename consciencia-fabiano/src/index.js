@@ -185,8 +185,23 @@ function libraryStub(env) {
 async function libraryCall(env, path, options = {}) {
   const res = await libraryStub(env).fetch(new Request("https://library.internal" + path, options));
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || ("LibraryDO " + res.status));
+  if (!res.ok) {
+    const error=new Error(data.message || ("LibraryDO " + res.status));
+    error.status=res.status;
+    error.code=String(data.code || "LIBRARY_DO_HTTP_"+res.status);
+    throw error;
+  }
   return data;
+}
+
+function durableFailureInfo(error){
+  const message=String(error?.message || error || "Durable Object indisponível").slice(0,500);
+  const code=String(error?.code || "");
+  const status=Number(error?.status || 0);
+  const recoverable=
+    status===429 || status>=500 ||
+    /quota|durable|sqlite|storage|temporar|timeout|unavailable|overload|too many|internal|1101|fetch|network/i.test(message+" "+code);
+  return {message,code:code || "DURABLE_OBJECT_FAILURE",status,recoverable};
 }
 
 async function memoryOwner(request, body = null) {
@@ -1283,39 +1298,67 @@ function canonicalR2DocumentMetadata(raw){
 
 async function r2AuthoritativeState(env){
   if(!env.PDFS)return {ok:false,code:"R2_LIBRARY_BINDING_MISSING"};
-  const [docsData,exportHead]=await Promise.all([
-    libraryCall(env,"/docs"),
-    libraryCall(env,"/export-page?offset=0&limit=1")
-  ]);
-  const metadata=(Array.isArray(docsData?.livros)?docsData.livros:[])
-    .map(canonicalR2DocumentMetadata).filter(x=>x.document_id)
-    .sort((a,b)=>a.document_id.localeCompare(b.document_id));
-  const signatureMaterial=metadata.map(doc=>[
-    doc.document_id,doc.content_sha256,doc.filename,doc.pages,doc.chunks,doc.status,
-    doc.embedding_model,doc.embedding_dimensions
-  ].join("|")).join("||");
-  const sourceSignature=await sha256Text(signatureMaterial);
-  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
-  const doChunks=Math.max(0,Number(exportHead?.total||0));
-  const doDocuments=metadata.length;
-  const inSync=Boolean(pointer?.generation) &&
-    pointer?.source==="durable-object-authoritative" &&
-    String(pointer?.source_signature||"")===sourceSignature &&
-    Number(pointer?.documents||0)===doDocuments &&
-    Number(pointer?.chunks||0)===doChunks;
-  return {
-    ok:true,in_sync:inSync,
-    do_documents:doDocuments,do_chunks:doChunks,
-    source_signature:sourceSignature,metadata,
-    r2_generation:String(pointer?.generation||""),
-    r2_documents:Math.max(0,Number(pointer?.documents||0)),
-    r2_chunks:Math.max(0,Number(pointer?.chunks||0)),
-    r2_vectors:Math.max(0,Number(pointer?.vectors||0)),
-    r2_source:String(pointer?.source||""),
-    r2_source_signature:String(pointer?.source_signature||"")
-  };
+  try{
+    const [docsData,exportHead]=await Promise.all([
+      libraryCall(env,"/docs"),
+      libraryCall(env,"/export-page?offset=0&limit=1")
+    ]);
+    const metadata=(Array.isArray(docsData?.livros)?docsData.livros:[])
+      .map(canonicalR2DocumentMetadata).filter(x=>x.document_id)
+      .sort((a,b)=>a.document_id.localeCompare(b.document_id));
+    const signatureMaterial=metadata.map(doc=>[
+      doc.document_id,doc.content_sha256,doc.filename,doc.pages,doc.chunks,doc.status,
+      doc.embedding_model,doc.embedding_dimensions
+    ].join("|")).join("||");
+    const sourceSignature=await sha256Text(signatureMaterial);
+    const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+    const doChunks=Math.max(0,Number(exportHead?.total||0));
+    const doDocuments=metadata.length;
+    const inSync=Boolean(pointer?.generation) &&
+      pointer?.source==="durable-object-authoritative" &&
+      String(pointer?.source_signature||"")===sourceSignature &&
+      Number(pointer?.documents||0)===doDocuments &&
+      Number(pointer?.chunks||0)===doChunks;
+    return {
+      ok:true,in_sync:inSync,degraded:false,durable_available:true,
+      do_documents:doDocuments,do_chunks:doChunks,
+      source_signature:sourceSignature,metadata,
+      r2_generation:String(pointer?.generation||""),
+      r2_documents:Math.max(0,Number(pointer?.documents||0)),
+      r2_chunks:Math.max(0,Number(pointer?.chunks||0)),
+      r2_vectors:Math.max(0,Number(pointer?.vectors||0)),
+      r2_source:String(pointer?.source||""),
+      r2_source_signature:String(pointer?.source_signature||"")
+    };
+  }catch(error){
+    const failure=durableFailureInfo(error);
+    const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY).catch(()=>null);
+    let manifest=null;
+    if(pointer?.manifest_key){
+      manifest=await r2JsonGet(env.PDFS,String(pointer.manifest_key)).catch(()=>null);
+    }
+    return {
+      ok:true,
+      in_sync:false,
+      degraded:true,
+      durable_available:false,
+      code:"R2_RECONCILE_DURABLE_DEGRADED",
+      message:"Durable Object temporariamente indisponível; estado R2 preservado e nenhuma reconciliação destrutiva foi executada.",
+      durable_error:{code:failure.code,status:failure.status,message:failure.message,recoverable:failure.recoverable},
+      do_documents:null,
+      do_chunks:null,
+      source_signature:"",
+      metadata:Array.isArray(manifest?.metadata)?manifest.metadata:[],
+      r2_generation:String(pointer?.generation||manifest?.generation||""),
+      r2_documents:Math.max(0,Number(pointer?.documents||manifest?.total_books||0)),
+      r2_chunks:Math.max(0,Number(pointer?.chunks||manifest?.total_chunks||0)),
+      r2_vectors:Math.max(0,Number(pointer?.vectors||manifest?.vector_count||0)),
+      r2_source:String(pointer?.source||manifest?.source||""),
+      r2_source_signature:String(pointer?.source_signature||manifest?.source_signature||""),
+      safe_read_only_fallback:true
+    };
+  }
 }
-
 async function r2ReconcileStep(request,env){
   if(!env.PDFS)return json({ok:false,code:"R2_LIBRARY_BINDING_MISSING"},503);
   const body=await request.json().catch(()=>({}));
@@ -1811,7 +1854,7 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
       role:"system",
       content:
         "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
-        "Produza somente a seção 1. SÍNTESE PRINCIPAL usando exclusivamente as evidências fornecidas. " +
+        "Produza texto desenvolvido, em múltiplas seções quando houver material, usando exclusivamente as evidências fornecidas. " +
         "Cruze as fontes independentes diretamente relevantes em prosa coesa, com densidade enciclopédica, sem despejar trechos ou nomes em sequência. " +
         "Depois de cada afirmação factual, mantenha os identificadores [F#] das evidências que realmente a sustentam. " +
         "Não invente fatos, autores, páginas, capítulos ou citações e não acrescente uma seção de referências."
@@ -1973,15 +2016,12 @@ function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
     return sentence;
   }
 
-  const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
-    ? base
-    : "1. SÍNTESE PRINCIPAL:\n\n"+base;
+  const normalized=base
+    .replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"")
+    .trim();
   const allSources=exhaustiveSourceRows(rows);
-  const coverage=sourceCoverageMarkdown(allSources);
   const references=groundedReferencesMarkdown(allSources);
-  return normalized+
-    (coverage?"\n\n"+coverage:"")+
-    (references?"\n\n"+references:"");
+  return normalized+(references?"\n\n"+references:"");
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
@@ -2268,7 +2308,7 @@ async function runMasterNode20(env,question,lastBatch,baton,history,source) {
         "\n\nCATÁLOGO TRANSVERSAL:\n"+trimToTokenBudget(ledger,1400)+
         "\n\nBASTÃO ACUMULADO DOS NÚCLEOS 1-19:\n"+trimToTokenBudget(baton || "(sem conteúdo acumulado)",5600)+
         "\n\nBLOCO FINAL DO NÚCLEO 20:\n"+(lastRaw || "(sem novos trechos neste núcleo; faça a fusão do bastão acumulado)")+
-        "\n\nREDAJA AGORA SOMENTE A SÍNTESE PRINCIPAL ENCICLOPÉDICA."
+        "\n\nREDAJA AGORA UM ESTUDO ENCICLOPÉDICO MULTISSEÇÃO. NÃO USE O RÓTULO 'SÍNTESE PRINCIPAL'. PRESERVE TODO CONTEÚDO ÚNICO RELEVANTE."
     }
   ],9200);
 
@@ -2396,6 +2436,157 @@ async function massiveReduceGroup(_env,question,group,groupIndex) {
   };
 }
 
+const EXHAUSTIVE_CONTINUATION_MAX_PARTS=6;
+const EXHAUSTIVE_GROUP_BATCH_SIZE=10;
+const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=1900;
+
+function exhaustiveEvidenceGroups(sources){
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const groups=[];
+  const seen=new Map();
+  for(let i=0;i<rows.length;i++){
+    const row={...rows[i],ref_id:sourceRefId(rows[i],i)};
+    const excerpt=String(row?.trecho || row?.text || "").replace(/\s+/g," ").trim();
+    if(!excerpt) continue;
+    const fingerprint=foldSearchText(excerpt).split(/\s+/).filter(Boolean).slice(0,22).join(" ");
+    const key=(fingerprint || String(row.document_id||"")+"|"+String(row.pagina||"")+"|"+String(i)).slice(0,500);
+    if(seen.has(key)){
+      seen.get(key).refs.push(row.ref_id);
+      continue;
+    }
+    const group={
+      id:"G"+(groups.length+1),
+      document_id:String(row?.document_id || ""),
+      title:String(row?.titulo || row?.arquivo || "Documento"),
+      author:String(row?.autor || ""),
+      page:row?.pagina || null,
+      refs:[row.ref_id],
+      evidence:excerpt.slice(0,520)
+    };
+    groups.push(group);
+    seen.set(key,group);
+  }
+  return groups;
+}
+
+function citedRefsInText(text){
+  const ids=new Set();
+  const re=/\[F(\d{1,3})\]/gi;
+  let m;
+  while((m=re.exec(String(text||"")))!==null) ids.add("F"+Number(m[1]));
+  return ids;
+}
+
+function exhaustiveCoverage(text,groups){
+  const cited=citedRefsInText(text);
+  const rows=Array.isArray(groups)?groups:[];
+  let covered=0;
+  const missing=[];
+  for(const g of rows){
+    const ok=(g.refs||[]).some(ref=>cited.has(ref));
+    if(ok) covered++;
+    else missing.push(g);
+  }
+  return {
+    groups_total:rows.length,
+    groups_developed:covered,
+    coverage_percent:rows.length?Math.round((covered/rows.length)*10000)/100:100,
+    missing_groups:missing
+  };
+}
+
+function exhaustiveGroupEvidence(groups){
+  return (Array.isArray(groups)?groups:[]).map(g=>{
+    const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
+    return g.id+" "+refs+" | "+g.title+(g.author?" — "+g.author:"")+(g.page?" — p. "+g.page:"")+" | "+g.evidence;
+  }).join("\n");
+}
+
+function needsExhaustiveContinuation(contract,coverage,finishReason){
+  const v80Mode=String(contract?.v80_plan?.mode || contract?.v80_plan?.runtime?.mode || "").toUpperCase();
+  const cognitive=String(contract?.mode || "").toLowerCase();
+  const deep=v80Mode==="DEEP" || ["analysis","comparison","reflection","hypothesis"].includes(cognitive);
+  if(finishReason==="length") return true;
+  if(!deep) return coverage.coverage_percent<75;
+  return coverage.groups_developed<coverage.groups_total;
+}
+
+async function continueExhaustiveFullText(env,question,initialText,sources,cognitiveContract,onSection=null,initialFinishReason="stop"){
+  const groups=exhaustiveEvidenceGroups(sources);
+  let full=stripModelReferenceSection(initialText).replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"").trim();
+  let coverage=exhaustiveCoverage(full,groups);
+  const parts=[];
+  let finishReason=String(initialFinishReason || "stop");
+
+  for(let part=0;part<EXHAUSTIVE_CONTINUATION_MAX_PARTS;part++){
+    if(!needsExhaustiveContinuation(cognitiveContract,coverage,finishReason)) break;
+    const missing=coverage.missing_groups.slice(0,EXHAUSTIVE_GROUP_BATCH_SIZE);
+    if(!missing.length && finishReason!=="length") break;
+    const evidence=exhaustiveGroupEvidence(missing.length?missing:groups.slice(part*EXHAUSTIVE_GROUP_BATCH_SIZE,(part+1)*EXHAUSTIVE_GROUP_BATCH_SIZE));
+    if(!evidence) break;
+
+    const messages=[
+      {
+        role:"system",
+        content:
+          "Você é um ESCRITOR DE CONTINUAÇÃO DOCUMENTAL da Consciência Fabiano v8. " +
+          "Continue o estudo sem resumir o que já foi escrito e sem apagar informação anterior. " +
+          "Desenvolva em prosa densa, fluida e enciclopédica TODAS as evidências pendentes recebidas. " +
+          "Cada grupo deve gerar argumento textual visível, salvo duplicata semântica explícita. " +
+          "Use [F#] junto das afirmações sustentadas. Não invente fatos, autores, páginas, datas, capítulos ou relações. " +
+          "Não escreva bibliografia e não use o rótulo 'SÍNTESE PRINCIPAL'. " +
+          "Prefira títulos de seção como 'Desenvolvimento doutrinário', 'Contexto das evidências', 'Autores e documentos', 'Convergências e divergências', 'Detalhes complementares' quando forem adequados."
+      },
+      {
+        role:"user",
+        content:
+          "PERGUNTA ORIGINAL:\n"+trimToTokenBudget(question,600)+
+          "\n\nFINAL DO TEXTO JÁ PRODUZIDO — NÃO REPITA:\n"+trimToTokenBudget(full.slice(-9000),2200)+
+          "\n\nGRUPOS AINDA NÃO DESENVOLVIDOS:\n"+trimToTokenBudget(evidence,5200)+
+          "\n\nCONTINUE DIRETAMENTE COM NOVAS SEÇÕES E PARÁGRAFOS SUBSTANCIAIS."
+      }
+    ];
+    try{
+      const res=await groqCompletion(env,messages,false,{
+        input_budget:8600,
+        max_completion_tokens:EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS,
+        temperature:0.0,
+        max_retries:2
+      });
+      const data=await res.json().catch(()=>({}));
+      const piece=stripModelReferenceSection(String(data?.choices?.[0]?.message?.content || "")).trim();
+      finishReason=String(data?.choices?.[0]?.finish_reason || "stop");
+      if(!piece) break;
+      full+=(full?"\n\n":"")+piece;
+      parts.push(piece);
+      coverage=exhaustiveCoverage(full,groups);
+      if(onSection) await onSection({
+        section_index:parts.length,
+        text:piece,
+        finish_reason:finishReason,
+        groups_total:coverage.groups_total,
+        groups_developed:coverage.groups_developed,
+        coverage_percent:coverage.coverage_percent,
+        continuation_cursor:coverage.missing_groups.length?String(parts.length):null
+      });
+    }catch{
+      break;
+    }
+  }
+
+  coverage=exhaustiveCoverage(full,groups);
+  return {
+    text:full,
+    continuation_parts:parts.length,
+    finish_reason:finishReason,
+    groups_total:coverage.groups_total,
+    groups_developed:coverage.groups_developed,
+    coverage_percent:coverage.coverage_percent,
+    continuation_cursor:coverage.missing_groups.length?String(parts.length):null,
+    complete:coverage.missing_groups.length===0
+  };
+}
+
 async function massiveMasterSynthesis(env,question,reducers,history,sources,cognitiveContract=null) {
   const reducerText=Array.from(reducers || [])
     .filter(x=>String(x?.text || "").trim())
@@ -2411,12 +2602,12 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
     {
       role:"system",
       content:
-        "Você é o MASTER FINAL da Consciência Fabiano. Esta é a ÚNICA etapa autorizada a usar LLM neste turno analítico. " +
+        "Você é o MASTER FINAL da Consciência Fabiano. Gere o primeiro bloco de um ESTUDO ENCICLOPÉDICO MULTISSEÇÃO; continuações adicionais poderão ser executadas automaticamente se houver limite de tokens ou cobertura incompleta. " +
         "Trabalhe somente com as evidências documentais fornecidas e cumpra rigorosamente o CONTRATO COGNITIVO DO TURNO. " +
         "A pergunta atual tem prioridade sobre memória, contexto anterior e tópicos relacionados. Não amplie o escopo por iniciativa própria. " +
-        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. Produza texto longo, denso, fluido e aprofundado, evitando síntese curta ou superficial. " +
+        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. Produza texto longo, denso, fluido e aprofundado, dividido em seções substantivas; é proibido condensar tudo em um único parágrafo de síntese. " +
         "É proibido inventar fatos, autores, páginas, capítulos, citações, causalidade, consenso ou certeza ausentes das evidências. " +
-        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. Integre explicitamente todas as obras independentes presentes no conjunto recuperado, inclusive Bíblia/escrituras quando recuperadas, e não omita fonte documental utilizada. " +
+        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. Integre explicitamente todas as obras e evidências independentes presentes no conjunto recuperado, inclusive Bíblia/escrituras quando recuperadas. Fonte relevante sem discussão textual é proibida. " +
         "Não escreva seção final de referências: o servidor fará isso deterministicamente. Temperatura obrigatória: 0.\n\n" +
         contractRules
     },
@@ -2440,7 +2631,8 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
     });
     const data=await res.json().catch(()=>({}));
     const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,groq_ms:Date.now()-groqStarted};
+    const finish_reason=String(data?.choices?.[0]?.finish_reason || "stop");
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,finish_reason,groq_ms:Date.now()-groqStarted};
   }catch(error){
     return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
   }
@@ -2500,9 +2692,15 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
   const reducerMs=Date.now()-reducerStarted;
 
   const master=await massiveMasterSynthesis(env,question,reducerResults,history,rows,cognitiveContract);
+  const expanded=await continueExhaustiveFullText(
+    env,question,master.text,rows,cognitiveContract,
+    onEvent ? async payload=>onEvent("section",payload) : null,
+    master.finish_reason || "stop"
+  );
   return {
     text:reducerResults.map(x=>x?.text || "").filter(Boolean).join("\n\n"),
-    masterSynthesis:master.text,
+    masterSynthesis:expanded.text,
+    fullText:expanded.text,
     used:true,
     batches:groups.length,
     micro_nodes_total:MASSIVE_NODE_COUNT,
@@ -2510,9 +2708,15 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     micro_nodes_failed:failed,
     relay_mode:"async-worker-pool",
     active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
-    master_node:"final-fusion",
-    llm_calls:1,
+    master_node:"final-fusion+adaptive-continuation",
+    llm_calls:1+Number(expanded.continuation_parts||0),
     pre_master_llm_calls:0,
+    continuation_parts:Number(expanded.continuation_parts||0),
+    continuation_cursor:expanded.continuation_cursor,
+    evidence_groups_total:Number(expanded.groups_total||0),
+    evidence_groups_developed:Number(expanded.groups_developed||0),
+    evidence_coverage_percent:Number(expanded.coverage_percent||0),
+    information_preservation_gate:expanded.complete===true ? "pass" : "partial",
     reducer_ms:reducerMs,
     groq_ms:Number(master.groq_ms || 0),
     cognitive_mode:String(cognitiveContract?.mode || "analysis"),
@@ -2581,6 +2785,7 @@ async function massivePipelineStreamResponse(env,meta) {
         emit("done",{
           ok:true,
           resposta:answer,
+          full_text:answer,
           fontes:usedSources,
           fallback:false,
           memory_persisted:memoryPersisted,
@@ -2606,7 +2811,13 @@ async function massivePipelineStreamResponse(env,meta) {
           micro_nodes_failed:reduced.micro_nodes_failed,
           active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
           relay_mode:"async-worker-pool",
-          master_node:"final-fusion",
+          master_node:"final-fusion+adaptive-continuation",
+          continuation_parts:Number(reduced.continuation_parts||0),
+          continuation_cursor:reduced.continuation_cursor || null,
+          evidence_groups_total:Number(reduced.evidence_groups_total||0),
+          evidence_groups_developed:Number(reduced.evidence_groups_developed||0),
+          evidence_coverage_percent:Number(reduced.evidence_coverage_percent||0),
+          information_preservation_gate:String(reduced.information_preservation_gate||"unknown"),
           llm_calls:Number(reduced.llm_calls || 1),
           pre_master_llm_calls:0,
           groq_final_stage_only:true,
@@ -4142,6 +4353,7 @@ async function chat(request, env) {
   return json({
     ok: true,
     resposta: answer,
+    full_text: answer,
     fontes: usedSources,
     fallback: false,
     memory_persisted: memoryPersisted,
@@ -4167,7 +4379,13 @@ async function chat(request, env) {
     micro_nodes_failed: reduced.micro_nodes_failed,
     active_worker_limit: MASSIVE_WORKER_CONCURRENCY,
     relay_mode: "async-worker-pool",
-    master_node: "final-fusion",
+    master_node: "final-fusion+adaptive-continuation",
+    continuation_parts: Number(reduced.continuation_parts || 0),
+    continuation_cursor: reduced.continuation_cursor || null,
+    evidence_groups_total: Number(reduced.evidence_groups_total || 0),
+    evidence_groups_developed: Number(reduced.evidence_groups_developed || 0),
+    evidence_coverage_percent: Number(reduced.evidence_coverage_percent || 0),
+    information_preservation_gate: String(reduced.information_preservation_gate || "unknown"),
     llm_calls: Number(reduced.llm_calls || 1),
     pre_master_llm_calls: 0,
     groq_final_stage_only: true,
@@ -4580,8 +4798,18 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/memory" && request.method === "GET") {
       const ownerId = await memoryOwner(request);
       if (!ownerId) return json({ ok: false, message: "Chave de memória ausente." }, 400);
-      const messages = await readPersistentHistory(env, ownerId, MAX_SERVER_HISTORY);
-      return json({ ok: true, messages, total: messages.length, persistent: true });
+      try{
+        const messages = await readPersistentHistory(env, ownerId, MAX_SERVER_HISTORY);
+        return json({ ok: true, messages, total: messages.length, persistent: true, degraded:false });
+      }catch(error){
+        const failure=durableFailureInfo(error);
+        return json({
+          ok:true,messages:[],total:0,persistent:false,degraded:true,
+          code:"MEMORY_DURABLE_DEGRADED",
+          message:"Memória persistente temporariamente indisponível; o histórico local do navegador permanece utilizável.",
+          durable_error:{code:failure.code,status:failure.status,message:failure.message,recoverable:failure.recoverable}
+        });
+      }
     }
     if (url.pathname === "/api/memory/clear" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
@@ -5755,6 +5983,14 @@ export default {
         deep_answer_mode: true,
         exhaustive_source_references: true,
         exhaustive_source_footer: true,
+        exhaustive_full_text_contract: true,
+        full_text_streaming: true,
+        adaptive_continuation_enabled: true,
+        continuation_max_parts: EXHAUSTIVE_CONTINUATION_MAX_PARTS,
+        information_preservation_gate: true,
+        synthesis_principal_single_block_disabled: true,
+        memory_degraded_fallback: true,
+        r2_reconcile_degraded_fallback: true,
         supabase_mirror_configured: secondarySupabaseConfigured(env),
         pinecone_mirror_configured: false,
         whisper_fallback_timeout_ms: 8000,

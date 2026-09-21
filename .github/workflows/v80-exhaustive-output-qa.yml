@@ -1,0 +1,30 @@
+name: V8 Exhaustive Full Text QA
+
+on:
+  push:
+    branches:
+      - "fix-v80-exhaustive-full-text-20260921"
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/v80-exhaustive-output-qa.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  exhaustive-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - name: Existing V8 architecture checks
+        run: npm run check
+      - name: Exhaustive full_text acceptance
+        run: node scripts/exhaustive-v80-acceptance.mjs
