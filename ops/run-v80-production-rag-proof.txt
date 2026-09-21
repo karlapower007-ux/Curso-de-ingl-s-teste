@@ -1,3 +1,4 @@
 run=production-current-only-rag-proof
 queries=4
 read_only=true
+rerun after f568592 rag
