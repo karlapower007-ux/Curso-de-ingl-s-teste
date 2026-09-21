@@ -28,7 +28,7 @@ must(worker.includes("function extractScriptureVerseRange"),"scripture verse ran
 must(worker.includes("function syntheticScriptureReference"),"scripture canonical reference builder missing");
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
 must(worker.includes("citation_dictionary_canonical_filename_suffixes: true"),"canonical scripture filename suffix flag missing");
-must(worker.includes("citation_dictionary_scripture_direct_ref_gate: true"),"scripture direct reference CPU gate missing");
+must(worker.includes("citation_dictionary_scripture_direct_ref_gate: false"),"scripture cross-reference parser must stay disabled during exhaustive scan");
 must(worker.includes("citation_dictionary_regex_precompiled: true"),"precompiled citation regex flag missing");
 must(worker.includes("citation_dictionary_ultrasafe_one_shard: true"),"ultra-safe one-shard citation flag missing");
 must(worker.includes("citation_dictionary_crossrefs_deferred: true"),"cross-reference parser must be deferred from exhaustive scan");
@@ -41,7 +41,6 @@ must(worker.includes("const SCRIPTURE_REFERENCE_RE=new RegExp"),"precompiled scr
 must(worker.includes("const SCRIPTURE_SOURCE_PATTERNS=["),"precompiled scripture source patterns missing");
 must(worker.includes("const CHAPTER_HEADING_PATTERNS=["),"precompiled chapter heading patterns missing");
 must(worker.includes("const SCRIPTURE_HEADING_LINE_RE=new RegExp"),"precompiled scripture heading regex missing");
-must(worker.includes("cross_references:scriptureCrossRefs"),"scripture cross-reference separation missing");
 
 must(worker.includes("scripture_references:scriptureLocationRefs"),"scripture primary location array missing");
 must(worker.includes('if(kind==="standard-works") return "Gênesis";'),"standard works location seed missing");
