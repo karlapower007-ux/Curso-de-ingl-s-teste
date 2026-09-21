@@ -30,8 +30,11 @@ jobs:
           test -f public/cognitive-v74-manifest.json
           node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8")); if(m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20||!m.audit.valid) process.exit(1)'
 
-          # Core V7.4 cognitive 1000 micro-turbines identity
-          grep -q 'const VERSION = "7.5.0-stateful-resilience"' src/index.js
+          # V8 identity while preserving the complete V7.4/V7.5 cognitive contract
+          grep -q 'const VERSION = "8.0.0-adaptive-20x20x20"' src/index.js
+          grep -q 'from "./adaptive-rag-v80.js"' src/index.js
+          grep -q 'llm_calls_before_final:0' src/index.js
+          grep -q 'preserve_legacy_pipeline:true' src/index.js
           grep -q 'cloudflare-v7.1-fabiano-r2-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
           grep -q 'online_offline_search_symmetry: false' src/index.js
