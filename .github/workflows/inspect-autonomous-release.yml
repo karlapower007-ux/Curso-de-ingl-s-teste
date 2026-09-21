@@ -33,6 +33,17 @@ jobs:
               gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log | tail -n 220
             fi
 
+          echo "CURRENT_R2_LIBRARY_MANIFEST"
+          curl -fsS -A 'curl/8.5.0' --max-time 20 \
+            "https://consciencia-fabiano.focoeepoder2.workers.dev/api/v1/r2/library-manifest" \
+            | jq '{ok,generation,total_chunks,total_books,vector_count,source,authoritative,updated_at}' || true
+          echo "CURRENT_RAG_PROBE"
+          curl -sS -A 'curl/8.5.0' --max-time 25 \
+            -H 'Content-Type: application/json' \
+            --data '{"question":"Jesus Cristo convênio"}' \
+            "https://consciencia-fabiano.focoeepoder2.workers.dev/api/rag/search" \
+            | jq '{ok,match_count:(.matches|if type=="array" then length else 0 end),provider,reason}' || true
+
           echo "LATEST_LIBRARY_RECOVERY"
           gh run list --repo "$GITHUB_REPOSITORY" \
             --workflow "Recover Consciência Fabiano V8 Library Merge" \
