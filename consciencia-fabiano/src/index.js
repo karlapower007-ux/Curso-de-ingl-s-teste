@@ -2,7 +2,7 @@ import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "8.0.0-adaptive-20x20x20";
+const VERSION = "8.1.0-strict-focus-dictionary";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -5293,6 +5293,44 @@ export class LibraryDO {
         const before = [...this.sql.exec("SELECT COUNT(*) AS n FROM conversation_messages WHERE owner_id = ?", ownerId)][0]?.n || 0;
         this.sql.exec("DELETE FROM conversation_messages WHERE owner_id = ?", ownerId);
         return json({ ok: true, cleared: Number(before) });
+      }
+
+      if (url.pathname === "/dictionary/search" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const question=String(body?.query||"").trim();
+        const limit=Math.max(1,Math.min(1000,Number(body?.limit||1000)));
+        const target=deriveStrictPhrase(question);
+        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",mode:"strict-focus-dictionary-v8.1"});
+        const perDocument=new Map();
+        let scanned=0,exactHits=0;
+        const cursor=this.sql.exec(`
+          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
+                 d.filename,d.title,d.author,d.language
+          FROM chunks c JOIN documents d ON d.id=c.document_id
+          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+          ORDER BY d.id ASC,c.chunk_index ASC
+        `);
+        for(const row of cursor){
+          scanned++;
+          const match=strictParagraphMatch(row?.text||"",question);
+          if(!match.matched)continue;
+          exactHits++;
+          pushStrictHit(perDocument,{
+            ...row,filename:undefined,
+            score:100,coverage:1,strict_phrase:match.target,
+            strict_paragraph_index:match.paragraph_index,
+            retrieval_mode:"strict-focus-dictionary-v8.1"
+          },Math.max(STRICT_PER_DOCUMENT_HIT_CAP,50));
+        }
+        const matches=roundRobinStrictHits(perDocument,limit).map(row=>({
+          id:row.id,document_id:row.document_id,page:Number(row.page||0),
+          chunk_index:Number(row.chunk_index||0),text:String(row.text||""),
+          title:humanDocumentName("",row.title),author:String(row.author||""),
+          score:Number(row.score||100),coverage:Number(row.coverage||1)
+        }));
+        return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,
+          documents_hit:perDocument.size,target,mode:"strict-focus-dictionary-v8.1",
+          strict_focus_lock:true,or_disabled:true,fuzzy_disabled:true});
       }
 
       if (url.pathname === "/search-strict" && request.method === "POST") {
