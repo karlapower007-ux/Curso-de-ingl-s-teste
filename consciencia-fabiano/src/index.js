@@ -4367,6 +4367,16 @@ async function handleApi(request, env, url, ctx) {
     if (privateIndexRoute && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
+    if (url.pathname === "/api/dictionary/search" && request.method === "POST") {
+      const body=await request.json().catch(()=>({}));
+      const question=String(body?.query||"").trim();
+      const limit=Math.max(1,Math.min(1000,Number(body?.limit||1000)));
+      const data=await libraryCall(env,"/dictionary/search",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({query:question,limit})
+      });
+      return json(data);
+    }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/cognitive-v74" && request.method === "GET") {
       const q=String(url.searchParams.get("q") || "").trim();
