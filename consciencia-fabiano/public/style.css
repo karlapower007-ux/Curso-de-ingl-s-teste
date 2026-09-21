@@ -176,18 +176,34 @@ textarea:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(
 }
 .section-heading{display:flex;align-items:center;justify-content:space-between;gap:18px}
 .section-heading h2{margin:5px 0 0}
+.upload-controls{display:block}
 .dropzone{
   display:block;
-  border:1px dashed rgba(56,189,248,.45);
-  background:rgba(56,189,248,.045);
+  border:1px dashed rgba(56,189,248,.55);
+  background:rgba(56,189,248,.06);
   border-radius:12px;
   padding:24px;
   text-align:center;
   margin-top:18px;
+  cursor:pointer;
+  transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease;
+}
+.dropzone:hover,.dropzone:focus-visible{
+  border-color:var(--accent);
+  background:rgba(56,189,248,.10);
+  box-shadow:0 0 0 3px rgba(56,189,248,.08);
+  outline:none;
+}
+.dropzone.drag-active{
+  border-color:var(--ok);
+  background:rgba(52,211,153,.10);
+  box-shadow:0 0 0 3px rgba(52,211,153,.08);
+  transform:translateY(-1px);
 }
 .dropzone strong,.dropzone span{display:block}
 .dropzone span{color:var(--muted);margin-top:7px}
 .dropzone input{margin-top:14px;background:transparent;border:none}
+.selected-pdf-name{display:block;margin-top:10px;color:#bae6fd;font-size:.78rem;overflow-wrap:anywhere}
 .full{width:100%;margin-top:12px}
 .status{min-height:22px;color:var(--muted);margin:12px 0 0}
 .library-note{margin-top:20px;padding:14px;border-radius:10px;background:#172236;border:1px solid var(--line)}
