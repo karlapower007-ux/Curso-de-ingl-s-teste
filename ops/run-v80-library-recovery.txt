@@ -1,0 +1,9 @@
+run=v8-library-recovery
+attempt=8
+requested_at=2026-09-21
+mode=deterministic-merge
+preserve_current=true
+baseline=25199
+protected_floor=14666
+stable_rag_smoke=Jesus Cristo convênio
+shared_concurrency_lock=true
