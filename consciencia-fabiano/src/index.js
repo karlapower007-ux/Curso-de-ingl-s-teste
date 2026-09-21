@@ -2,7 +2,7 @@ import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "8.0.0-adaptive-20x20x20";
+const VERSION = "8.0.1-adaptive-20x20x20-citation-dictionary";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -48,6 +48,10 @@ const MAP_REDUCE_THRESHOLD = 20;
 const MAP_BATCH_SIZE = 5;
 const MICRO_NODE_COUNT = 20;
 const MICRO_NODE_BATCH_SIZE = 5;
+
+const CITATION_PAGE_SIZE = 50;
+const CITATION_SCAN_LIMIT = 50000;
+const CITATION_MAX_QUERY_CHARS = 4000;
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
 // V7.3: nós e reducers são 100% determinísticos; somente o MASTER FINAL pode chamar Groq.
@@ -1749,6 +1753,211 @@ function cleanNarrativeText(text) {
     .replace(/\b(?:GEE|IE)\b[^.!?]{0,140}(?=[.!?]|$)/gi," ")
     .replace(/\s{2,}/g," ")
     .trim();
+}
+
+
+function romanToArabicCitation(value) {
+  const raw=String(value || "").trim().toUpperCase();
+  if(!raw) return null;
+  if(/^\d{1,4}$/.test(raw)) return Number(raw);
+  if(!/^[IVXLCDM]+$/.test(raw)) return null;
+  const values={I:1,V:5,X:10,L:50,C:100,D:500,M:1000};
+  let total=0,previous=0;
+  for(let i=raw.length-1;i>=0;i--){
+    const current=values[raw[i]] || 0;
+    total += current < previous ? -current : current;
+    previous=Math.max(previous,current);
+  }
+  return total>0 ? total : null;
+}
+
+function extractChapterHeading(text) {
+  const raw=String(text || "").replace(/\r/g,"\n");
+  const patterns=[
+    /(?:^|\n)\s*(?:cap[ií]tulo|chapter)\s+([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu,
+    /(?:^|\n)\s*(?:cap\.?)\s*([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu
+  ];
+  for(const re of patterns){
+    const match=raw.match(re);
+    if(!match) continue;
+    const number=romanToArabicCitation(match[1]);
+    if(!number) continue;
+    const title=String(match[2] || "")
+      .replace(/\s+/g," ")
+      .replace(/^[\s:.\-–—]+|[\s:.\-–—]+$/g,"")
+      .trim()
+      .slice(0,180);
+    return {number,title};
+  }
+  return null;
+}
+
+function scriptureSourceKind(filename,title) {
+  const value=foldSearchText([filename,title].filter(Boolean).join(" "));
+  if(!value) return "";
+  if(/\b(?:obras padrao|standard works|scriptures|escrituras)\b/.test(value)) return "standard-works";
+  if(/\b(?:livro de mormon|book of mormon)\b/.test(value)) return "book-of-mormon";
+  if(/\b(?:doutrina e convenios|doctrine and covenants)\b/.test(value)) return "doctrine-and-covenants";
+  if(/\b(?:perola de grande valor|pearl of great price)\b/.test(value)) return "pearl-of-great-price";
+  if(/\b(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)\b/.test(value)) return "bible";
+  return "";
+}
+
+function canonicalScriptureBook(raw) {
+  const normalized=foldSearchText(String(raw || "").replace(/[.]/g," ").replace(/\s+/g," ").trim());
+  const map={
+    "1 nefi":"1 Néfi","2 nefi":"2 Néfi","3 nefi":"3 Néfi","4 nefi":"4 Néfi",
+    "1 nephi":"1 Néfi","2 nephi":"2 Néfi","3 nephi":"3 Néfi","4 nephi":"4 Néfi",
+    "palavras de mormon":"Palavras de Mórmon","words of mormon":"Palavras de Mórmon",
+    "jaco":"Jacó","jacob":"Jacó","enos":"Enos","jarom":"Jarom","omni":"Ômni",
+    "mosias":"Mosias","mosiah":"Mosias","alma":"Alma","helama":"Helamã","helaman":"Helamã",
+    "mormon":"Mórmon","eter":"Éter","et":"Éter","ether":"Éter","moroni":"Morôni",
+    "doutrina e convenios":"Doutrina e Convênios","doctrine and covenants":"Doutrina e Convênios",
+    "d&c":"Doutrina e Convênios","dc":"Doutrina e Convênios",
+    "moises":"Moisés","moses":"Moisés","abraao":"Abraão","abraham":"Abraão",
+    "joseph smith historia":"Joseph Smith—História","joseph smith history":"Joseph Smith—História",
+    "genesis":"Gênesis","gen":"Gênesis","exodo":"Êxodo","ex":"Êxodo","levitico":"Levítico","lev":"Levítico",
+    "numeros":"Números","num":"Números","deuteronomio":"Deuteronômio","deut":"Deuteronômio",
+    "josue":"Josué","joshua":"Josué","juizes":"Juízes","judges":"Juízes","rute":"Rute","ruth":"Rute",
+    "1 samuel":"1 Samuel","2 samuel":"2 Samuel","1 reis":"1 Reis","2 reis":"2 Reis",
+    "1 kings":"1 Reis","2 kings":"2 Reis","1 cronicas":"1 Crônicas","2 cronicas":"2 Crônicas",
+    "1 chronicles":"1 Crônicas","2 chronicles":"2 Crônicas","esdras":"Esdras","ezra":"Esdras",
+    "neemias":"Neemias","nehemiah":"Neemias","ester":"Ester","esther":"Ester","jo":"Jó","job":"Jó",
+    "salmos":"Salmos","salmo":"Salmos","psalms":"Salmos","psalm":"Salmos",
+    "proverbios":"Provérbios","prov":"Provérbios","eclesiastes":"Eclesiastes","ecclesiastes":"Eclesiastes",
+    "cantares":"Cantares","isaias":"Isaías","isaiah":"Isaías","isa":"Isaías",
+    "jeremias":"Jeremias","jeremiah":"Jeremias","jer":"Jeremias","lamentacoes":"Lamentações",
+    "ezequiel":"Ezequiel","ezekiel":"Ezequiel","daniel":"Daniel","oseias":"Oseias","hosea":"Oseias",
+    "joel":"Joel","amos":"Amós","obadias":"Obadias","obadiah":"Obadias","jonas":"Jonas","jonah":"Jonas",
+    "miqueias":"Miqueias","micah":"Miqueias","naum":"Naum","nahum":"Naum","habacuque":"Habacuque",
+    "habakkuk":"Habacuque","sofonias":"Sofonias","zephaniah":"Sofonias","ageu":"Ageu","haggai":"Ageu",
+    "zacarias":"Zacarias","zechariah":"Zacarias","malaquias":"Malaquias","malachi":"Malaquias",
+    "mateus":"Mateus","mat":"Mateus","mt":"Mateus","matthew":"Mateus","marcos":"Marcos","mc":"Marcos","mark":"Marcos",
+    "lucas":"Lucas","lc":"Lucas","luke":"Lucas","joao":"João","john":"João","at":"Atos","atos":"Atos","acts":"Atos",
+    "romanos":"Romanos","rom":"Romanos","1 corintios":"1 Coríntios","2 corintios":"2 Coríntios",
+    "1 corinthians":"1 Coríntios","2 corinthians":"2 Coríntios","galatas":"Gálatas","galatians":"Gálatas",
+    "efesios":"Efésios","ephesians":"Efésios","filipenses":"Filipenses","philippians":"Filipenses",
+    "colossenses":"Colossenses","colossians":"Colossenses","1 tessalonicenses":"1 Tessalonicenses",
+    "2 tessalonicenses":"2 Tessalonicenses","1 timoteo":"1 Timóteo","2 timoteo":"2 Timóteo",
+    "tito":"Tito","filemom":"Filemom","hebreus":"Hebreus","hebrews":"Hebreus","tiago":"Tiago","james":"Tiago",
+    "1 pedro":"1 Pedro","2 pedro":"2 Pedro","1 peter":"1 Pedro","2 peter":"2 Pedro",
+    "1 joao":"1 João","2 joao":"2 João","3 joao":"3 João","1 john":"1 João","2 john":"2 João","3 john":"3 João",
+    "judas":"Judas","jude":"Judas","apocalipse":"Apocalipse","revelation":"Apocalipse"
+  };
+  return map[normalized] || String(raw || "").replace(/\s+/g," ").trim();
+}
+
+function scriptureWorkForBook(book) {
+  const normalized=foldSearchText(book);
+  if(/^(?:[1-4] nefi|palavras de mormon|jaco|enos|jarom|omni|mosias|alma|helama|mormon|eter|moroni)$/.test(normalized)) return "Livro de Mórmon";
+  if(normalized==="doutrina e convenios") return "Doutrina e Convênios";
+  if(/^(?:moises|abraao|joseph smith historia)$/.test(normalized)) return "Pérola de Grande Valor";
+  return "Bíblia";
+}
+
+function extractScriptureReferences(text) {
+  const raw=String(text || "");
+  if(!raw) return [];
+  const bookPattern="(?:[1-4]\\s*(?:N[eé]fi|Nephi)|Palavras\\s+de\\s+M[oó]rmon|Words\\s+of\\s+Mormon|Jac[oó]|Jacob|Enos|Jarom|[ÔO]mni|Mosias|Mosiah|Alma|Helam[aã]|Helaman|M[oó]rmon|Mormon|[EÉ]ter|[EÉ]t\\.?|Ether|Mor[oô]ni|Moroni|Doutrina\\s+e\\s+Conv[eê]nios|Doctrine\\s+and\\s+Covenants|D\\s*&\\s*C|Mois[eé]s|Moses|Abra[aã]o|Abraham|Joseph\\s+Smith[—\\- ]Hist[oó]ria|Joseph\\s+Smith[—\\- ]History|G[eê]nesis|Gen\\.?|Genesis|[EÊ]xodo|Ex\\.?|Exodus|Lev[ií]tico|Lev\\.?|N[uú]meros|N[uú]m\\.?|Deuteron[oô]mio|Deut\\.?|Josu[eé]|Ju[ií]zes|Rute|Ruth|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?(?:Reis|Kings)|(?:[12]\\s*)?(?:Cr[oô]nicas|Chronicles)|Esdras|Ezra|Neemias|Nehemiah|Ester|Esther|J[oó]|Job|Salmos?|Psalms?|Prov[eé]rbios|Prov\\.?|Eclesiastes|Ecclesiastes|Cantares|Isa[ií]as|Isa\\.?|Isaiah|Jeremias|Jer\\.?|Jeremiah|Lamenta[cç][oõ]es|Ezequiel|Ezekiel|Daniel|Oseias|Hosea|Joel|Am[oó]s|Obadias|Obadiah|Jonas|Jonah|Miqueias|Micah|Naum|Nahum|Habacuque|Habakkuk|Sofonias|Zephaniah|Ageu|Haggai|Zacarias|Zechariah|Malaquias|Malachi|Mateus|Mat\\.?|Mt\\.?|Matthew|Marcos|Mc\\.?|Mark|Lucas|Lc\\.?|Luke|Jo[aã]o|John|Atos|At\\.?|Acts|Romanos|Rom\\.?|(?:[12]\\s*)?(?:Cor[ií]ntios|Corinthians)|G[aá]atas|Galatians|Ef[eé]sios|Ephesians|Filipenses|Philippians|Colossenses|Colossians|(?:[12]\\s*)?(?:Tessalonicenses|Thessalonians)|(?:[12]\\s*)?(?:Tim[oó]teo|Timothy)|Tito|Titus|Filemom|Philemon|Hebreus|Hebrews|Tiago|James|(?:[12]\\s*)?(?:Pedro|Peter)|(?:[123]\\s*)?(?:Jo[aã]o|John)|Judas|Jude|Apocalipse|Revelation)";
+  const re=new RegExp("(?<![\\p{L}\\p{N}])("+bookPattern+")\\s*\\.?\\s*(\\d{1,3})\\s*:\\s*(\\d{1,3})(?:\\s*[–—-]\\s*(\\d{1,3}))?","giu");
+  const out=[],seen=new Set();
+  let match;
+  while((match=re.exec(raw))!==null && out.length<24){
+    const book=canonicalScriptureBook(match[1]);
+    const chapter=Number(match[2]);
+    const verseStart=Number(match[3]);
+    const verseEnd=Number(match[4] || match[3]);
+    if(!book || !chapter || !verseStart) continue;
+    const key=foldSearchText(book)+"|"+chapter+"|"+verseStart+"|"+verseEnd;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      work:scriptureWorkForBook(book),
+      book,
+      chapter,
+      verse_start:verseStart,
+      verse_end:verseEnd,
+      reference:book+" "+chapter+":"+verseStart+(verseEnd!==verseStart?"–"+verseEnd:"")
+    });
+  }
+  return out;
+}
+
+function citationPublicView(row,index=0) {
+  if(!row) return null;
+  const bookTitle=humanDocumentName(row.filename,row.title);
+  const scriptureSource=Boolean(row.scripture_source_kind);
+  const scriptureRefs=Array.isArray(row.scripture_references)?row.scripture_references:[];
+  const primaryScripture=scriptureRefs[0] || null;
+  const chapterNumber=Number(row.chapter_number || primaryScripture?.chapter || 0) || null;
+  const chapterTitle=String(row.chapter_title || "").replace(/[\r\n]+/g," ").trim();
+  const page=Number(row.page || row.pagina || 0) || null;
+  return {
+    citation_id:String(row.id || (row.document_id||"doc")+"-"+(row.chunk_index||index)).slice(0,220),
+    rank:Number(row.rank || index+1),
+    bibliographic_type:scriptureSource ? "scripture" : "book",
+    book:scriptureSource ? String(primaryScripture?.book || bookTitle) : bookTitle,
+    work:scriptureSource ? String(primaryScripture?.work || (bookTitle==="Obras Padrão"?"Obras Padrão":bookTitle)) : "",
+    author:String(row.author || "").replace(/[\r\n]+/g," ").trim(),
+    chapter:chapterNumber,
+    chapter_title:chapterTitle,
+    chapter_display:chapterNumber
+      ? "Capítulo "+chapterNumber+(chapterTitle?" — "+chapterTitle:"")
+      : "Capítulo: não localizado no texto extraído",
+    page,
+    page_display:page ? "Página "+page : "Página: não localizada",
+    primary_reference:primaryScripture?.reference || "",
+    scripture_references:scriptureRefs,
+    excerpt:cleanNarrativeText(row.text || "").slice(0,720),
+    technical_document:String(row.filename || "").replace(/[\r\n]+/g," ").trim(),
+    document_id:String(row.document_id || ""),
+    chunk_id:String(row.id || ""),
+    chunk_index:Number(row.chunk_index || 0),
+    score:Math.round(Number(row.score || 0)*10000)/10000,
+    metadata_complete:scriptureSource
+      ? Boolean(primaryScripture?.chapter && primaryScripture?.verse_start)
+      : Boolean(chapterNumber && page)
+  };
+}
+
+async function citationDictionaryResponse(env,url) {
+  if(!env.LIBRARY) return json({ok:false,code:"LIBRARY_UNAVAILABLE",citations:[]},503);
+  const query=String(url.searchParams.get("q") || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
+  if(query.length<2) return json({ok:false,code:"CITATION_QUERY_REQUIRED",citations:[]},400);
+  const offset=Math.max(0,Number(url.searchParams.get("offset") || 0));
+  const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(url.searchParams.get("limit") || CITATION_PAGE_SIZE)));
+  try{
+    const data=await libraryCall(env,"/citation-search",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({query,offset,limit,scan_limit:CITATION_SCAN_LIMIT})
+    });
+    const citations=(Array.isArray(data?.matches)?data.matches:[])
+      .map((row,index)=>citationPublicView(row,offset+index))
+      .filter(Boolean);
+    return json({
+      ok:true,
+      query,
+      total_found:Math.max(0,Number(data?.total_found || 0)),
+      scanned:Math.max(0,Number(data?.scanned || 0)),
+      offset,
+      limit,
+      returned:citations.length,
+      has_more:Boolean(data?.has_more),
+      next_offset:data?.has_more ? Math.max(0,Number(data?.next_offset || offset+citations.length)) : null,
+      citations,
+      dictionary_mode:"bibliographic-cursor-v8.0.1",
+      llm_independent:true,
+      desktop_mobile_parity:true
+    });
+  }catch(error){
+    return json({
+      ok:false,
+      code:error?.code || "CITATION_DICTIONARY_UNAVAILABLE",
+      message:String(error?.message || error),
+      citations:[]
+    },503);
+  }
 }
 
 function uniqueSources(context) {
@@ -4791,6 +5000,12 @@ async function status(env) {
     pre_master_llm_calls: 0,
     groq_temperature: 0.0,
     deterministic_reference_rendering: true,
+    citation_dictionary: true,
+    citation_dictionary_paginated: true,
+    citation_dictionary_page_size: CITATION_PAGE_SIZE,
+    citation_dictionary_scan_limit: CITATION_SCAN_LIMIT,
+    citation_dictionary_llm_independent: true,
+    citation_dictionary_mobile_desktop_parity: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
@@ -5075,7 +5290,8 @@ async function handleApi(request, env, url, ctx) {
         return json({ok:false,matches:[],retrieval_level:5,code:error?.code || "RAG_LEVEL5_FAILED",message:String(error?.message || error)},503);
       }
     }
-        if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
+        if (url.pathname === "/api/citations" && request.method === "GET") return citationDictionaryResponse(env,url);
+    if (url.pathname === "/api/status" && request.method === "GET") return json(await status(env));
     if (url.pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (url.pathname === "/api/memory" && request.method === "GET") {
       const ownerId = await memoryOwner(request);
@@ -6007,6 +6223,146 @@ export class LibraryDO {
         });
       }
 
+      if (url.pathname === "/citation-search" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const rawQuery=String(body?.query || body?.question || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
+        const query=foldSearchText(rawQuery);
+        const terms=lexicalTerms(rawQuery).slice(0,18);
+        const offset=Math.max(0,Number(body?.offset || 0));
+        const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(body?.limit || CITATION_PAGE_SIZE)));
+        const scanLimit=Math.max(200,Math.min(CITATION_SCAN_LIMIT,Number(body?.scan_limit || CITATION_SCAN_LIMIT)));
+        if(!terms.length) return json({ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,mode:"citation-dictionary-bm25"});
+
+        this.citationCache=this.citationCache || new Map();
+        const cacheKey=query+"|"+scanLimit;
+        let cached=this.citationCache.get(cacheKey);
+        if(!cached || (Date.now()-Number(cached.created_at||0))>10*60*1000){
+          const rows=[...this.sql.exec(
+            "SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,d.filename,d.title,d.author,d.language "+
+            "FROM chunks c JOIN documents d ON d.id=c.document_id "+
+            "WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local') "+
+            "ORDER BY c.created_at DESC LIMIT ?",
+            scanLimit
+          )];
+
+          const docs=rows.map(row=>{
+            const tokens=lexicalTokens(row.text);
+            const tf=new Map();
+            for(const token of tokens) tf.set(token,(tf.get(token)||0)+1);
+            return {row,tokens,tf,dl:Math.max(1,tokens.length)};
+          });
+          const N=Math.max(1,docs.length);
+          const avgdl=docs.reduce((sum,d)=>sum+d.dl,0)/N || 1;
+          const df=new Map();
+          for(const term of terms){
+            let count=0;
+            for(const d of docs) if(d.tf.has(term)) count++;
+            df.set(term,count);
+          }
+          const ranked=[];
+          for(const d of docs){
+            let score=0,matchedTerms=0,hits=0;
+            for(const term of terms){
+              const freq=d.tf.get(term)||0;
+              if(!freq) continue;
+              matchedTerms++;
+              hits+=freq;
+              const termDf=df.get(term)||0;
+              const idf=Math.log(1+((N-termDf+0.5)/(termDf+0.5)));
+              const denom=freq+BM25_K1*(1-BM25_B+BM25_B*(d.dl/avgdl));
+              score+=idf*((freq*(BM25_K1+1))/Math.max(0.0001,denom));
+            }
+            if(!matchedTerms) continue;
+            const coverage=matchedTerms/terms.length;
+            const folded=foldSearchText(d.row.text);
+            const exactPhrase=query.length>=5 && folded.includes(query);
+            if(exactPhrase) score+=3.5;
+            score+=coverage*2.0+Math.min(1.5,hits*0.12);
+            ranked.push({...d.row,score,coverage});
+          }
+          ranked.sort((a,b)=>Number(b.score||0)-Number(a.score||0) || Number(a.page||0)-Number(b.page||0) || Number(a.chunk_index||0)-Number(b.chunk_index||0));
+          cached={created_at:Date.now(),scanned:rows.length,matches:ranked};
+          this.citationCache.clear();
+          this.citationCache.set(cacheKey,cached);
+        }
+
+        const all=Array.isArray(cached.matches)?cached.matches:[];
+        const pageRows=all.slice(offset,offset+limit);
+        const chapterCandidates=new Map();
+        const previousContext=new Map();
+
+        const chapterFor=(documentId,chunkIndex,currentText)=>{
+          const direct=extractChapterHeading(currentText);
+          if(direct) return direct;
+          if(!chapterCandidates.has(documentId)){
+            const candidates=[];
+            const cursor=this.sql.exec(
+              "SELECT chunk_index,text FROM chunks WHERE document_id=? "+
+              "AND (lower(text) LIKE '%cap%' OR lower(text) LIKE '%chap%') "+
+              "ORDER BY chunk_index ASC",
+              documentId
+            );
+            for(const row of cursor){
+              const parsed=extractChapterHeading(row.text);
+              if(parsed) candidates.push({chunk_index:Number(row.chunk_index||0),...parsed});
+            }
+            chapterCandidates.set(documentId,candidates);
+          }
+          const list=chapterCandidates.get(documentId)||[];
+          let best=null;
+          for(const item of list){
+            if(Number(item.chunk_index||0)>Number(chunkIndex||0)) break;
+            best=item;
+          }
+          return best ? {number:best.number,title:best.title} : null;
+        };
+
+        const scriptureRefsFor=(row)=>{
+          let refs=extractScriptureReferences(row.text);
+          if(refs.length || !scriptureSourceKind(row.filename,row.title)) return refs;
+          const key=String(row.document_id||"")+"|"+String(row.chunk_index||0);
+          if(!previousContext.has(key)){
+            previousContext.set(key,[...this.sql.exec(
+              "SELECT chunk_index,text FROM chunks WHERE document_id=? AND chunk_index<=? "+
+              "ORDER BY chunk_index DESC LIMIT 16",
+              String(row.document_id||""),Number(row.chunk_index||0)
+            )]);
+          }
+          for(const prior of previousContext.get(key)||[]){
+            refs=extractScriptureReferences(prior.text);
+            if(refs.length) break;
+          }
+          return refs;
+        };
+
+        const enriched=pageRows.map((row,index)=>{
+          const scriptureKind=scriptureSourceKind(row.filename,row.title);
+          const scriptureRefs=scriptureRefsFor(row);
+          const chapter=scriptureKind ? null : chapterFor(String(row.document_id||""),Number(row.chunk_index||0),row.text);
+          return {
+            ...row,
+            rank:offset+index+1,
+            scripture_source_kind:scriptureKind,
+            scripture_references:scriptureRefs,
+            chapter_number:chapter?.number || null,
+            chapter_title:chapter?.title || ""
+          };
+        });
+
+        return json({
+          ok:true,
+          matches:enriched,
+          total_found:all.length,
+          scanned:Number(cached.scanned||0),
+          offset,
+          limit,
+          has_more:offset+enriched.length<all.length,
+          next_offset:offset+enriched.length<all.length ? offset+enriched.length : null,
+          mode:"citation-dictionary-bm25",
+          cache_ttl_ms:600000
+        });
+      }
+
       if (url.pathname === "/search-lexical" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const query = foldSearchText(body.query || "");
@@ -6125,6 +6481,11 @@ export default {
         embedding_concurrency_limit: EMBED_CONCURRENCY,
         semantic_min_score: SEMANTIC_MIN_SCORE,
         search_top_k: TOP_K,
+        citation_dictionary: true,
+        citation_dictionary_page_size: CITATION_PAGE_SIZE,
+        citation_dictionary_scan_limit: CITATION_SCAN_LIMIT,
+        citation_dictionary_llm_independent: true,
+        citation_dictionary_mobile_desktop_parity: true,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
         cognitive_1000_microturbines: true,

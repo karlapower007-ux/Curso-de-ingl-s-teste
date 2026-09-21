@@ -1,0 +1,38 @@
+{
+  "feature": "citation_dictionary_v8_0_1",
+  "authorization_scope": "explicit-user-request-desktop-and-mobile-citation-ui",
+  "authorized_frontend_files": [
+    "consciencia-fabiano/public/app.js",
+    "consciencia-fabiano/public/style.css"
+  ],
+  "protected_frontend_files": [
+    "consciencia-fabiano/public/index.html",
+    "consciencia-fabiano/public/failover-v3.js",
+    "consciencia-fabiano/public/sw-v3.js"
+  ],
+  "library": {
+    "mutate_existing_chunks": false,
+    "mutate_existing_vectors": false,
+    "reindex_required": false,
+    "migration_required": false
+  },
+  "citation_dictionary": {
+    "page_size": 50,
+    "scan_limit": 50000,
+    "llm_independent": true,
+    "desktop_mobile_parity": true,
+    "technical_document_secondary": true,
+    "ordinary_book_primary_fields": [
+      "book",
+      "chapter",
+      "page"
+    ],
+    "scripture_primary_fields": [
+      "work",
+      "book",
+      "chapter",
+      "verse"
+    ]
+  },
+  "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
+}

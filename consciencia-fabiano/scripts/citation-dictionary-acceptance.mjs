@@ -1,0 +1,52 @@
+import fs from "node:fs";
+
+const must=(cond,message)=>{if(!cond) throw new Error(message);};
+const read=path=>fs.readFileSync(new URL("../"+path,import.meta.url),"utf8");
+
+const worker=read("src/index.js");
+const app=read("public/app.js");
+const css=read("public/style.css");
+const manifest=JSON.parse(read("v8-citation-ui-authorized.json"));
+
+must(worker.includes('8.0.1-adaptive-20x20x20-citation-dictionary'),"version marker missing");
+must(worker.includes('url.pathname === "/api/citations"'),"public citation endpoint missing");
+must(worker.includes('url.pathname === "/citation-search"'),"internal citation search missing");
+must(worker.includes('const CITATION_PAGE_SIZE = 50;'),"citation page size must be 50");
+must(worker.includes('const CITATION_SCAN_LIMIT = 50000;'),"citation scan limit must preserve current full library capacity");
+must(worker.includes('llm_independent:true'),"citation contract must be independent of LLM output");
+must(worker.includes('extractChapterHeading'),"book chapter resolver missing");
+must(worker.includes('extractScriptureReferences'),"scripture reference resolver missing");
+must(worker.includes('chapter_display'),"chapter must be exposed in citation response");
+must(worker.includes('page_display'),"page must be exposed in citation response");
+
+const citationBlock=worker.slice(
+  worker.indexOf('if (url.pathname === "/citation-search"'),
+  worker.indexOf('if (url.pathname === "/search-lexical"')
+);
+must(citationBlock.includes("SELECT c.id,c.document_id,c.page,c.chunk_index,c.text"),"citation route must read canonical chunks");
+must(!/\b(?:INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i.test(citationBlock),"citation route must remain read-only");
+
+must(app.includes("attachCitationDictionary"),"desktop/mobile citation component missing");
+must(app.includes("Dicionário de Citações"),"citation dictionary label missing");
+must(app.includes("Capítulo: não localizado no texto extraído"),"chapter field must never silently disappear");
+must(app.includes("Página: não localizada"),"page field must never silently disappear");
+must(app.includes("CITATION_UI_PAGE_SIZE=50"),"browser pagination must be 50");
+must(app.includes('citation_query:q'),"citation query must be preserved with chat history");
+must(app.includes("500 nós lógicos"),"500-node label must not masquerade as 500 retrieved citations");
+
+must(css.includes(".citation-dictionary"),"citation dictionary styles missing");
+must(css.includes("@media(max-width:560px)"),"mobile responsive rules missing");
+must(css.includes(".citation-dictionary-nav"),"pagination navigation styles missing");
+
+must(manifest?.library?.mutate_existing_chunks===false,"existing chunks must stay frozen");
+must(manifest?.library?.mutate_existing_vectors===false,"existing vectors must stay frozen");
+must(manifest?.citation_dictionary?.desktop_mobile_parity===true,"desktop/mobile parity required");
+
+console.log(JSON.stringify({
+  ok:true,
+  feature:manifest.feature,
+  page_size:manifest.citation_dictionary.page_size,
+  scan_limit:manifest.citation_dictionary.scan_limit,
+  library_mutation:false,
+  desktop_mobile_parity:true
+},null,2));
