@@ -1125,8 +1125,8 @@
       const chapter=Number(item?.chapter || 0);
       return chapter ? book+" "+chapter : book;
     }
-    const chapter=String(item?.chapter_display || "Capítulo: não localizado no texto extraído");
-    const page=String(item?.page_display || "Página: não localizada");
+    const chapter=String(item?.chapter_display || "Capítulo: localização bibliográfica pendente");
+    const page=String(item?.page_display || "Página: localização bibliográfica pendente");
     return chapter+" • "+page;
   }
 
@@ -1157,7 +1157,7 @@
     const metaBits=[];
     if(item?.author) metaBits.push("Autor: "+item.author);
     if(item?.bibliographic_type==="scripture" && item?.page_display) metaBits.push(item.page_display+" (localização auxiliar)");
-    if(item?.metadata_complete===false) metaBits.push("Metadados bibliográficos incompletos neste trecho");
+    if(item?.metadata_complete===false) metaBits.push("Localização bibliográfica ainda incompleta neste trecho");
     meta.textContent=metaBits.join(" • ");
 
     const refs=Array.isArray(item?.scripture_references)?item.scripture_references:[];
@@ -1207,7 +1207,7 @@
 
     const status=document.createElement("div");
     status.className="citation-dictionary-status";
-    status.textContent="As citações são carregadas separadamente da IA para permitir milhares de referências.";
+    status.textContent="O dicionário consulta a biblioteca preservada em blocos para permitir milhares de referências sem travar PC ou celular.";
 
     const list=document.createElement("div");
     list.className="citation-dictionary-list";
@@ -1231,59 +1231,154 @@
     shell.append(toggle,panel);
     messageWrap.appendChild(shell);
 
-    const state={offset:0,total:0,loaded:false,loading:false,open:false};
+    const state={
+      offset:0,
+      loaded:false,
+      loading:false,
+      open:false,
+      scanCursor:"",
+      scanDone:false,
+      scanned:0,
+      libraryTotal:0,
+      citations:[],
+      ids:new Set(),
+      carry:{document_id:"",chapter_number:null,chapter_title:""},
+      generation:""
+    };
+
+    const progressText=()=>{
+      const found=state.citations.length.toLocaleString("pt-BR");
+      const scanned=state.scanned.toLocaleString("pt-BR");
+      const library=state.libraryTotal?state.libraryTotal.toLocaleString("pt-BR"):"?";
+      if(state.scanDone){
+        return found+" referências/trechos bibliográficos encontrados em "+scanned+" de "+library+" chunks examinados • varredura concluída.";
+      }
+      return found+" referências encontradas até agora • "+scanned+" de "+library+" chunks examinados • continuando em blocos seguros.";
+    };
+
+    const updateToggle=()=>{
+      const suffix=state.scanDone ? " encontrados" : "+ encontrados";
+      toggle.textContent="📚 Dicionário de Citações — "+state.citations.length.toLocaleString("pt-BR")+suffix;
+    };
+
+    const renderPage=(offset)=>{
+      const maxOffset=Math.max(0,Math.floor(Math.max(0,state.citations.length-1)/CITATION_UI_PAGE_SIZE)*CITATION_UI_PAGE_SIZE);
+      state.offset=Math.min(Math.max(0,Number(offset||0)),maxOffset);
+      const rows=state.citations.slice(state.offset,state.offset+CITATION_UI_PAGE_SIZE);
+      list.replaceChildren();
+      for(const item of rows) list.appendChild(renderCitationCard(item));
+      if(!rows.length && state.scanDone){
+        const empty=document.createElement("div");
+        empty.className="citation-empty";
+        empty.textContent="Nenhuma referência bibliográfica foi localizada para esta consulta.";
+        list.appendChild(empty);
+      }
+      const start=rows.length?state.offset+1:0;
+      const end=state.offset+rows.length;
+      status.textContent=progressText();
+      pageInfo.textContent=state.scanDone
+        ? start+"–"+end+" de "+state.citations.length.toLocaleString("pt-BR")
+        : start+"–"+end+" de "+state.citations.length.toLocaleString("pt-BR")+"+";
+      prev.disabled=state.offset<=0 || state.loading;
+      next.disabled=state.loading || (state.scanDone && end>=state.citations.length);
+      updateToggle();
+    };
+
+    const segmentUrl=()=>{
+      const params=new URLSearchParams({
+        q:query,
+        limit:String(CITATION_UI_PAGE_SIZE)
+      });
+      if(state.scanCursor) params.set("scan_cursor",state.scanCursor);
+      if(state.carry?.document_id) params.set("carry_doc",state.carry.document_id);
+      if(state.carry?.chapter_number) params.set("carry_chapter",String(state.carry.chapter_number));
+      if(state.carry?.chapter_title) params.set("carry_title",state.carry.chapter_title);
+      return "/api/citations?"+params.toString();
+    };
+
+    const scanOneSegment=async()=>{
+      if(state.scanDone) return false;
+      const beforeCursor=state.scanCursor;
+      const res=await fetch(segmentUrl(),{cache:"no-store"});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok || data?.ok===false) throw new Error(data?.message || data?.code || "Dicionário de citações indisponível.");
+
+      state.libraryTotal=Math.max(state.libraryTotal,Number(data?.library_total_chunks||0));
+      state.scanned+=Math.max(0,Number(data?.scanned_batch ?? data?.scanned ?? 0));
+      state.generation=String(data?.generation||state.generation||"");
+      state.carry=data?.carry && typeof data.carry==="object" ? data.carry : state.carry;
+
+      const rows=Array.isArray(data?.citations)?data.citations:[];
+      for(const raw of rows){
+        const id=String(raw?.citation_id || raw?.chunk_id || (raw?.document_id+"-"+raw?.chunk_index));
+        if(state.ids.has(id)) continue;
+        state.ids.add(id);
+        state.citations.push({...raw,rank:state.citations.length+1});
+      }
+
+      state.scanDone=Boolean(data?.scan_done);
+      state.scanCursor=state.scanDone ? "" : String(data?.next_scan_cursor||"");
+      if(!state.scanDone && !state.scanCursor){
+        throw new Error("A varredura de citações não forneceu cursor de continuação.");
+      }
+      if(!state.scanDone && beforeCursor && state.scanCursor===beforeCursor){
+        throw new Error("A varredura de citações não avançou.");
+      }
+      return true;
+    };
+
+    const ensureRows=async(targetCount)=>{
+      const target=Math.max(0,Number(targetCount||0));
+      while(!state.scanDone && state.citations.length<target){
+        await scanOneSegment();
+        renderPage(state.offset);
+        await new Promise(resolve=>setTimeout(resolve,35));
+      }
+    };
+
+    const continueBackgroundScan=async()=>{
+      if(state.loading || state.scanDone || !state.open) return;
+      state.loading=true;
+      try{
+        while(state.open && !state.scanDone){
+          await scanOneSegment();
+          renderPage(state.offset);
+          await new Promise(resolve=>setTimeout(resolve,90));
+        }
+      }catch(error){
+        status.textContent="A varredura foi pausada sem perder as citações já encontradas: "+String(error?.message||error);
+      }finally{
+        state.loading=false;
+        renderPage(state.offset);
+      }
+    };
 
     const loadPage=async(offset)=>{
       if(state.loading) return;
       state.loading=true;
       const safeOffset=Math.max(0,Number(offset||0));
-      status.textContent="Buscando referências bibliográficas na biblioteca…";
+      status.textContent=state.loaded
+        ? "Carregando o próximo bloco de referências…"
+        : "Buscando referências bibliográficas na biblioteca preservada…";
       prev.disabled=true;
       next.disabled=true;
       try{
-        const endpoint="/api/citations?q="+encodeURIComponent(query)+
-          "&offset="+safeOffset+"&limit="+CITATION_UI_PAGE_SIZE;
-        const res=await fetch(endpoint,{cache:"no-store"});
-        const data=await res.json().catch(()=>({}));
-        if(!res.ok || data?.ok===false) throw new Error(data?.message || "Dicionário de citações indisponível.");
-        state.offset=Math.max(0,Number(data.offset||safeOffset));
-        state.total=Math.max(0,Number(data.total_found||0));
+        await ensureRows(safeOffset+CITATION_UI_PAGE_SIZE);
         state.loaded=true;
-
-        list.replaceChildren();
-        const citations=Array.isArray(data?.citations)?data.citations:[];
-        for(const item of citations) list.appendChild(renderCitationCard(item));
-
-        if(!citations.length){
-          const empty=document.createElement("div");
-          empty.className="citation-empty";
-          empty.textContent="Nenhuma referência bibliográfica adicional foi localizada para esta consulta.";
-          list.appendChild(empty);
-        }
-
-        const start=state.total && citations.length ? state.offset+1 : 0;
-        const end=state.offset+citations.length;
-        status.textContent=state.total.toLocaleString("pt-BR")+
-          " referências/trechos bibliográficos encontrados • mostrando "+start+"–"+end+
-          " • sem limite de saída da IA.";
-        pageInfo.textContent=start+"–"+end+" de "+state.total.toLocaleString("pt-BR");
-        toggle.textContent="📚 Dicionário de Citações — "+state.total.toLocaleString("pt-BR")+" encontrados";
-        prev.disabled=state.offset<=0;
-        next.disabled=end>=state.total;
-        panel.scrollIntoView({block:"nearest",behavior:"smooth"});
+        renderPage(safeOffset);
       }catch(error){
         list.replaceChildren();
         const failure=document.createElement("div");
         failure.className="citation-empty";
-        failure.textContent="Não foi possível carregar o Dicionário agora: "+String(error?.message||error);
+        failure.textContent="Não foi possível continuar o Dicionário agora: "+String(error?.message||error);
         list.appendChild(failure);
-        status.textContent="A resposta principal foi preservada. Você pode tentar abrir o Dicionário novamente.";
-        pageInfo.textContent="Falha temporária";
-        prev.disabled=state.offset<=0;
-        next.disabled=false;
+        status.textContent="As citações já localizadas foram preservadas. Tente novamente para continuar a partir do mesmo ponto.";
+        pageInfo.textContent="Varredura pausada";
       }finally{
         state.loading=false;
+        renderPage(state.offset);
       }
+      if(state.open && !state.scanDone) setTimeout(()=>continueBackgroundScan(),120);
     };
 
     toggle.addEventListener("click",()=>{
@@ -1291,13 +1386,13 @@
       panel.classList.toggle("hidden",!state.open);
       toggle.setAttribute("aria-expanded",String(state.open));
       if(state.open && !state.loaded) loadPage(0);
+      else if(state.open && !state.scanDone) setTimeout(()=>continueBackgroundScan(),80);
     });
     prev.addEventListener("click",()=>loadPage(Math.max(0,state.offset-CITATION_UI_PAGE_SIZE)));
     next.addEventListener("click",()=>loadPage(state.offset+CITATION_UI_PAGE_SIZE));
     toggle.setAttribute("aria-expanded","false");
     return shell;
   }
-
 
   function offlineParagraphs(text){
     const raw=String(text||"").replace(/\r/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
