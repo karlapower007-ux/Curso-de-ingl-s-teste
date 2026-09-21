@@ -50,6 +50,11 @@
 
     // Defensive cleanup for legacy/raw page-ledger rows that may already exist in history.
     cleanText=cleanText.replace(
+      /^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL(?:\*\*)?\s*:?\s*/gim,
+      ""
+    );
+
+    cleanText=cleanText.replace(
       /^\s*[-*•]?\s*\**Obras\s+Padr[aã]o\**\s*(?:—|-|:)?\s*p[aá]ginas?\s*[\d,\s–-]+(?:—|-)?\s*evid[eê]ncias?\s*(?:\[[^\]]+\]\s*)+\.?\s*$/gim,
       ""
     );
@@ -1383,7 +1388,11 @@
           } else if (event === "keepalive") {
             live.virtual?.keepalive(data);
           } else if (event === "meta" || event === "done") {
-            meta = { ...meta, ...data };
+            // Keep only the public contract needed by desktop/mobile UI. Internal
+            // pipeline telemetry must never be promoted into browser state/history.
+            for (const key of ["ok","fontes","fallback","retrieval_unavailable","memory_persisted","provider","code"]) {
+              if (Object.prototype.hasOwnProperty.call(data,key)) meta[key]=data[key];
+            }
             if (event === "done") {
               live.virtual?.complete();
               if (data.resposta) answer = String(data.resposta);
@@ -1405,8 +1414,7 @@
       retrieval_unavailable: meta.retrieval_unavailable === true,
       memory_persisted: meta.memory_persisted === true,
       provider: meta.provider || "groq+resilient-rag",
-      code: meta.code || "",
-      raw_meta: meta
+      code: meta.code || ""
     };
   }
 
