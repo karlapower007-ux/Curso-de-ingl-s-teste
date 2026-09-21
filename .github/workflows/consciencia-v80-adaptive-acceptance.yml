@@ -1,0 +1,78 @@
+name: Consciência Fabiano V8 Adaptive Acceptance
+
+on:
+  push:
+    branches:
+      - consciencia-v8-production-head-staging-20260921
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+  pull_request:
+    branches:
+      - consciencia-cloudflare-native-v1
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-v80-adaptive-acceptance
+  cancel-in-progress: true
+
+jobs:
+  preserve-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout V8 staging
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch current production golden baseline
+        run: git fetch origin consciencia-cloudflare-native-v1
+
+      - name: Refuse frontend or library asset regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=origin/consciencia-cloudflare-native-v1
+          git diff --exit-code "$BASE"...HEAD --             consciencia-fabiano/public/index.html             consciencia-fabiano/public/app.js             consciencia-fabiano/public/style.css             consciencia-fabiano/public/failover-v3.js             consciencia-fabiano/public/sw-v3.js
+          CHANGED="$(git diff --name-only "$BASE"...HEAD)"
+          if printf '%s\n' "$CHANGED" | grep -Eq '^consciencia-fabiano/(supabase/migrations|public/biblioteca_backup)'; then
+            echo "V8 preservation gate: protected library/migration path changed."
+            exit 1
+          fi
+          echo "V8_PRESERVATION_GATE=pass"
+
+      - name: Verify preservation manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
+          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
+          test "$(jq -r '.hard_guards.pre_final_llm_calls' consciencia-fabiano/v8-preservation-manifest.json)" = "0"
+          test "$(jq -r '.hard_guards.production_auto_promotion' consciencia-fabiano/v8-preservation-manifest.json)" = "false"
+          echo "V8_MANIFEST_GATE=pass"
+
+      - name: Install only existing dev dependencies
+        working-directory: consciencia-fabiano
+        run: npm install --ignore-scripts
+
+      - name: Run legacy plus V8 acceptance gates
+        working-directory: consciencia-fabiano
+        run: npm run check
+
+      - name: Explicit V8 overload test
+        working-directory: consciencia-fabiano
+        run: npm run test:adaptive-v80
+
+      - name: Gate summary
+        run: |
+          echo "V8_ADAPTIVE_ACCEPTANCE=pass"
+          echo "PRODUCTION_DEPLOY=disabled"
+          echo "FRONTEND_PRESERVED=yes"
+          echo "LIBRARY_REINDEX=disabled"
