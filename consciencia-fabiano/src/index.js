@@ -2436,6 +2436,58 @@ async function massiveReduceGroup(_env,question,group,groupIndex) {
   };
 }
 
+async function massiveMasterSynthesis(env,question,reducers,history,sources,cognitiveContract=null) {
+  const reducerText=Array.from(reducers || [])
+    .filter(x=>String(x?.text || "").trim())
+    .map(x=>"GRUPO "+x.group+":\n"+String(x.text || "").trim())
+    .join("\n\n");
+  const contract=cognitiveContract || buildCognitiveContract(question);
+  const historyText=contract.use_history
+    ? slidingHistory(history,4,650).map(x=>x.role.toUpperCase()+": "+x.content).join("\n")
+    : "";
+  const ledger=crossLibraryLedger(sources);
+  const contractRules=cognitiveContractPrompt(contract);
+  const messages=[
+    {
+      role:"system",
+      content:
+        "Você é o MASTER FINAL da Consciência Fabiano. Gere o primeiro bloco de um ESTUDO ENCICLOPÉDICO MULTISSEÇÃO; continuações adicionais poderão ser executadas automaticamente se houver limite de tokens ou cobertura incompleta. " +
+        "Trabalhe somente com as evidências documentais fornecidas e cumpra rigorosamente o CONTRATO COGNITIVO DO TURNO. " +
+        "A pergunta atual tem prioridade sobre memória, contexto anterior e tópicos relacionados. Não amplie o escopo por iniciativa própria. " +
+        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. Produza texto longo, denso, fluido e aprofundado, dividido em seções substantivas; é proibido condensar tudo em um único parágrafo de síntese. " +
+        "É proibido inventar fatos, autores, páginas, capítulos, citações, causalidade, consenso ou certeza ausentes das evidências. " +
+        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. Integre explicitamente todas as obras e evidências independentes presentes no conjunto recuperado, inclusive Bíblia/escrituras quando recuperadas. Fonte relevante sem discussão textual é proibida. " +
+        "Não escreva seção final de referências: o servidor fará isso deterministicamente. Temperatura obrigatória: 0.\n\n" +
+        contractRules
+    },
+    {
+      role:"user",
+      content:
+        "PERGUNTA ATUAL — ESCOPO SOBERANO:\n"+trimToTokenBudget(question,700)+
+        (historyText?"\n\nMEMÓRIA RECENTE — USE SOMENTE PARA DESAMBIGUAÇÃO; NÃO EXPANDA O ESCOPO:\n"+trimToTokenBudget(historyText,650):"")+
+        "\n\nMAPA DE DOCUMENTOS:\n"+trimToTokenBudget(ledger,1300)+
+        "\n\nEVIDÊNCIAS EXTRATIVAS DETERMINÍSTICAS:\n"+trimToTokenBudget(reducerText,7200)+
+        "\n\nRESPONDA AGORA EXATAMENTE NO FORMATO E NO ESCOPO DO CONTRATO COGNITIVO."
+    }
+  ];
+  const groqStarted=Date.now();
+  try{
+    const res=await groqCompletion(env,messages,false,{
+      input_budget:9200,
+      max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
+      temperature:0.0,
+      max_retries:MASSIVE_GROQ_MAX_RETRIES
+    });
+    const data=await res.json().catch(()=>({}));
+    const text=String(data?.choices?.[0]?.message?.content || "").trim();
+    const finish_reason=String(data?.choices?.[0]?.finish_reason || "stop");
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,finish_reason,groq_ms:Date.now()-groqStarted};
+  }catch(error){
+    return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
+  }
+  return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output",groq_ms:Date.now()-groqStarted};
+}
+
 const EXHAUSTIVE_CONTINUATION_MAX_PARTS=6;
 const EXHAUSTIVE_GROUP_BATCH_SIZE=10;
 const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=1900;
@@ -2585,58 +2637,6 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
     continuation_cursor:coverage.missing_groups.length?String(parts.length):null,
     complete:coverage.missing_groups.length===0
   };
-}
-
-async function massiveMasterSynthesis(env,question,reducers,history,sources,cognitiveContract=null) {
-  const reducerText=Array.from(reducers || [])
-    .filter(x=>String(x?.text || "").trim())
-    .map(x=>"GRUPO "+x.group+":\n"+String(x.text || "").trim())
-    .join("\n\n");
-  const contract=cognitiveContract || buildCognitiveContract(question);
-  const historyText=contract.use_history
-    ? slidingHistory(history,4,650).map(x=>x.role.toUpperCase()+": "+x.content).join("\n")
-    : "";
-  const ledger=crossLibraryLedger(sources);
-  const contractRules=cognitiveContractPrompt(contract);
-  const messages=[
-    {
-      role:"system",
-      content:
-        "Você é o MASTER FINAL da Consciência Fabiano. Gere o primeiro bloco de um ESTUDO ENCICLOPÉDICO MULTISSEÇÃO; continuações adicionais poderão ser executadas automaticamente se houver limite de tokens ou cobertura incompleta. " +
-        "Trabalhe somente com as evidências documentais fornecidas e cumpra rigorosamente o CONTRATO COGNITIVO DO TURNO. " +
-        "A pergunta atual tem prioridade sobre memória, contexto anterior e tópicos relacionados. Não amplie o escopo por iniciativa própria. " +
-        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. Produza texto longo, denso, fluido e aprofundado, dividido em seções substantivas; é proibido condensar tudo em um único parágrafo de síntese. " +
-        "É proibido inventar fatos, autores, páginas, capítulos, citações, causalidade, consenso ou certeza ausentes das evidências. " +
-        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. Integre explicitamente todas as obras e evidências independentes presentes no conjunto recuperado, inclusive Bíblia/escrituras quando recuperadas. Fonte relevante sem discussão textual é proibida. " +
-        "Não escreva seção final de referências: o servidor fará isso deterministicamente. Temperatura obrigatória: 0.\n\n" +
-        contractRules
-    },
-    {
-      role:"user",
-      content:
-        "PERGUNTA ATUAL — ESCOPO SOBERANO:\n"+trimToTokenBudget(question,700)+
-        (historyText?"\n\nMEMÓRIA RECENTE — USE SOMENTE PARA DESAMBIGUAÇÃO; NÃO EXPANDA O ESCOPO:\n"+trimToTokenBudget(historyText,650):"")+
-        "\n\nMAPA DE DOCUMENTOS:\n"+trimToTokenBudget(ledger,1300)+
-        "\n\nEVIDÊNCIAS EXTRATIVAS DETERMINÍSTICAS:\n"+trimToTokenBudget(reducerText,7200)+
-        "\n\nRESPONDA AGORA EXATAMENTE NO FORMATO E NO ESCOPO DO CONTRATO COGNITIVO."
-    }
-  ];
-  const groqStarted=Date.now();
-  try{
-    const res=await groqCompletion(env,messages,false,{
-      input_budget:9200,
-      max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
-      temperature:0.0,
-      max_retries:MASSIVE_GROQ_MAX_RETRIES
-    });
-    const data=await res.json().catch(()=>({}));
-    const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    const finish_reason=String(data?.choices?.[0]?.finish_reason || "stop");
-    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,finish_reason,groq_ms:Date.now()-groqStarted};
-  }catch(error){
-    return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
-  }
-  return {ok:false,text:deterministicSynthesisFromSources(sources),error:"empty-master-output",groq_ms:Date.now()-groqStarted};
 }
 
 async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null,cognitiveContract=null) {
