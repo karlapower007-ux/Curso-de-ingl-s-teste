@@ -382,21 +382,12 @@ jobs:
             echo "### GH_API $ENDPOINT"
             if gh api "$ENDPOINT" > "probe/github-integration/$SAFE.json" 2> "probe/github-integration/$SAFE.err"; then
               echo "GH_API_OK"
-              node - "probe/github-integration/$SAFE.json" <<'NODE'
-            const fs=require('fs');
-            const p=process.argv[2], j=JSON.parse(fs.readFileSync(p,'utf8'));
-            function compact(x){
-              if(Array.isArray(x)) return x.slice(0,100).map(compact);
-              if(x&&typeof x==='object'){
-                const keep=['id','name','path','state','status','environment','ref','sha','task','created_at','updated_at','url','html_url','active','config','events','workflow_id','head_branch','head_sha','conclusion','source','build_type','cname'];
-                const o={}; for(const k of keep) if(k in x) o[k]=x[k];
-                if(Object.keys(o).length) return o;
-                if('total_count' in x) return {total_count:x.total_count};
-              }
-              return x;
-            }
-            console.log(JSON.stringify(compact(j),null,2).slice(0,12000));
-            NODE
+              if command -v jq >/dev/null 2>&1; then
+                jq 'if type=="array" then .[0:100] else . end' "probe/github-integration/$SAFE.json" | head -c 12000
+              else
+                head -c 12000 "probe/github-integration/$SAFE.json"
+              fi
+              echo
             else
               echo "GH_API_DENIED"
               cat "probe/github-integration/$SAFE.err"
