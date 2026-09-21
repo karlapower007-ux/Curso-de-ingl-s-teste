@@ -1,7 +1,8 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
-import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured} from "./stateful-rag-v75.js";
-const VERSION = "7.5.0-stateful-resilience";
+import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
+import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
+const VERSION = "8.0.0-adaptive-20x20x20";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -3679,7 +3680,18 @@ async function chat(request, env) {
 
   const routerStarted=Date.now();
   const cognitiveContract=buildCognitiveContract(question);
-  const cognitivePlan=buildV74ExecutionPlan(question,cognitiveContract);
+  const secondaryLoad=secondaryCircuitState();
+  const adaptiveLoadLevel=
+    exactSupabaseCircuit.degraded===true && secondaryLoad.open===true ? "critical" :
+    (exactSupabaseCircuit.degraded===true || secondaryLoad.open===true || Number(secondaryLoad.failures||0)>=2 ? "high" : "normal");
+  const v80Plan=buildAdaptiveV80Plan(question,cognitiveContract,{
+    deepResearch:body?.deep_research===true,
+    loadLevel:adaptiveLoadLevel
+  });
+  const cognitivePlan=buildV74ExecutionPlan(question,cognitiveContract,{
+    deepResearch:v80Plan.mode==="DEEP",
+    activeLimit:v80Plan.cognitive_active_limit
+  });
   const routerMs=Date.now()-routerStarted;
   const cognitiveRuntime={
     ...cognitiveContract,
@@ -3697,6 +3709,21 @@ async function chat(request, env) {
       })),
       output:cognitivePlan.output,
       intents:cognitivePlan.intents
+    },
+    v80_plan:{
+      version:v80Plan.version,
+      mode:v80Plan.mode,
+      memory_perspectives:v80Plan.memory_perspectives.map(x=>x.id),
+      search_perspectives:v80Plan.search_perspectives,
+      query_limit:v80Plan.query_limit,
+      search_limit:v80Plan.search_limit,
+      context_limit:v80Plan.context_limit,
+      evidence_limit:v80Plan.evidence_limit,
+      cognitive_active_limit:v80Plan.cognitive_active_limit,
+      early_exit:v80Plan.early_exit,
+      load_level:adaptiveLoadLevel,
+      llm_calls_before_final:0,
+      preserve_legacy_pipeline:true
     }
   };
   const exactIntent=detectExactRetrievalIntent(question);
@@ -3779,6 +3806,7 @@ async function chat(request, env) {
   // Não chama LLM, não muda a memória persistente e mantém a pergunta atual soberana.
   const statefulResolution=resolveStatefulQuery(question,historySource,cognitiveContract);
   const retrievalQuestion=String(statefulResolution?.query || question);
+  const v80QueryVariants=buildQueryVariantsV80(question,retrievalQuestion,v80Plan);
   const retrievalEmbedding=statefulResolution?.used_history
     ? null
     : (Array.isArray(body?.query_embedding) ? body.query_embedding.map(Number) : null);
@@ -3816,15 +3844,22 @@ async function chat(request, env) {
 
   context=(Array.isArray(context)?context:[])
     .filter(row=>groundedHybridCandidate(row,retrievalQuestion));
+  const legacyRankedContext=context
+    .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,retrievalQuestion)}))
+    .sort((a,b)=>Number(b.__hybrid_rank||0)-Number(a.__hybrid_rank||0))
+    .map(({__hybrid_rank,...row})=>row);
+  const v80RankedContext=adaptiveFuseAndRerankV80(
+    legacyRankedContext,
+    retrievalQuestion,
+    v80QueryVariants,
+    v80Plan
+  );
   const mappedContext = diversifyContextAcrossDocuments(
-    context
-      .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,retrievalQuestion)}))
-      .sort((a,b)=>Number(b.__hybrid_rank||0)-Number(a.__hybrid_rank||0))
-      .map(({__hybrid_rank,...row})=>row),
-    HYBRID_CONTEXT_LIMIT
+    v80RankedContext,
+    Math.min(HYBRID_CONTEXT_LIMIT,v80Plan.context_limit)
   );
   const crossLibrary = crossLibraryStats(mappedContext);
-  const sources = uniqueSources(mappedContext).slice(0,MASSIVE_NODE_COUNT);
+  const sources = uniqueSources(mappedContext).slice(0,Math.min(MASSIVE_NODE_COUNT,v80Plan.evidence_limit));
   const ragMs=Date.now()-ragStarted;
   const turbinesStarted=Date.now();
   const microExecution=await runCognitivePlan(cognitivePlan,{sources,contract:cognitiveRuntime});
@@ -3837,7 +3872,10 @@ async function chat(request, env) {
     execution_contract:x.execution_contract
   }));
   const validatorStarted=Date.now();
-  const evidenceGate=evidenceGateV74(cognitivePlan,sources,microExecution);
+  const legacyEvidenceGate=evidenceGateV74(cognitivePlan,sources,microExecution);
+  const evidenceGate=adaptiveEvidenceGateV80(v80Plan,sources,legacyEvidenceGate);
+  cognitiveRuntime.v80_plan.runtime=v80RuntimeSummary(v80Plan,v80QueryVariants,mappedContext);
+  cognitiveRuntime.v80_plan.legacy_evidence_gate=legacyEvidenceGate;
   let validatorMs=Date.now()-validatorStarted;
   const fallback = sources.length === 0 || evidenceGate.canAnswer===false;
   const wantsStream =
