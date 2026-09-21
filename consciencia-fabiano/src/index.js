@@ -783,6 +783,30 @@ function lexicalTerms(question) {
   return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 18);
 }
 
+function secondaryLexicalRescueQueries(question) {
+  const raw=String(question || "").replace(/\s+/g," ").trim();
+  if(!raw) return [];
+  const out=[];
+  const push=value=>{
+    const q=String(value || "").replace(/^[\s"'“”‘’]+|[\s"'“”‘’?.!,;:]+$/g,"").trim();
+    if(q.length>=3 && !out.some(x=>foldSearchText(x)===foldSearchText(q))) out.push(q);
+  };
+
+  // Prefer the explicit subject after "sobre/about" when present.
+  const subject=raw.match(/\b(?:sobre|about)\s+(.{3,120}?)(?:[?.!]|$)/iu)?.[1];
+  if(subject) push(subject);
+
+  // Hyphenated named entities are highly discriminative (e.g. Adam-Ondi-Ahman).
+  for(const match of raw.matchAll(/\b[\p{L}\p{M}]+(?:[-–—][\p{L}\p{M}]+){1,}\b/gu)) push(match[0]);
+
+  const terms=lexicalTerms(raw);
+  if(terms.length>=3) push(terms.slice(-3).join(" "));
+  if(terms.length>=2) push(terms.slice(-2).join(" "));
+  if(terms.length) push(terms[terms.length-1]);
+
+  return out.slice(0,4);
+}
+
 async function retrieveLexicalContext(env, question) {
   const terms = lexicalTerms(question);
   if (!terms.length) return [];
@@ -1588,6 +1612,27 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
       if(Array.isArray(secondary?.matches) && secondary.matches.length){
         groups.push(secondary.matches);
         readableSearches++;
+      } else if(!Array.isArray(suppliedEmbedding) || suppliedEmbedding.length<64) {
+        // Deterministic lexical rescue for verbose natural-language questions.
+        // No LLM and no fuzzy OR expansion: narrow the query to the explicit subject
+        // or the most distinctive trailing terms only after the full query returned zero.
+        for(const rescueQuery of secondaryLexicalRescueQueries(question)){
+          const rescued=await retrieveSecondaryHybridContext(
+            env,
+            rescueQuery,
+            null,
+            {perDocumentK:50,globalLimit:150}
+          );
+          if(Array.isArray(rescued?.matches) && rescued.matches.length){
+            groups.push(rescued.matches.map(row=>({
+              ...row,
+              retrieval_mode:String(row?.retrieval_mode || "supabase-secondary-hybrid")+"-lexical-rescue",
+              rescue_query:rescueQuery
+            })));
+            readableSearches++;
+            break;
+          }
+        }
       }
     } catch {}
   }
