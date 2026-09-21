@@ -1,0 +1,188 @@
+name: V8 Postrelease Desktop Mobile QA
+
+on:
+  push:
+    branches:
+      - "ops-v80-postrelease-mobile-qa-20260921"
+    paths:
+      - ".github/workflows/v80-postrelease-mobile-qa.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  production-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        working-directory: consciencia-fabiano
+        run: |
+          npm install
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Production API and responsive browser acceptance
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          cat > /tmp/v80-postrelease-qa.mjs <<'EOF'
+          import { chromium } from "playwright";
+
+          const BASE=process.env.BASE_URL;
+          const owner=String(process.env.FNS_OWNER_TOKEN||"");
+          if(!owner) throw new Error("FNS_OWNER_TOKEN missing");
+
+          const asJson=async(res)=> {
+            const text=await res.text();
+            try{return JSON.parse(text)}catch{return {raw:text.slice(0,600)}}
+          };
+
+          const healthRes=await fetch(BASE+"/api/health");
+          const health=await asJson(healthRes);
+          if(healthRes.status!==200 || health?.version!=="8.0.0-adaptive-20x20x20"){
+            throw new Error("health failed "+healthRes.status+" "+JSON.stringify(health));
+          }
+
+          const appRes=await fetch(BASE+"/app.js?qa="+Date.now());
+          const appText=await appRes.text();
+          if(appRes.status!==200) throw new Error("app.js HTTP "+appRes.status);
+          if(appText.includes("raw_meta: meta")) throw new Error("raw_meta leak still present in production app.js");
+          if(!appText.includes('["ok","fontes","fallback","retrieval_unavailable","memory_persisted","provider","code"]')){
+            throw new Error("public SSE metadata whitelist missing from production app.js");
+          }
+
+          const memoryRes=await fetch(BASE+"/api/memory",{
+            headers:{"X-FNS-Memory-Key":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+          });
+          const memory=await asJson(memoryRes);
+          if(memoryRes.status>=500) throw new Error("/api/memory still returns "+memoryRes.status);
+
+          const adminHeaders={"X-FNS-Owner-Token":owner};
+          const stateRes=await fetch(BASE+"/api/admin/r2-reconcile-state",{headers:adminHeaders});
+          const state=await asJson(stateRes);
+          if(stateRes.status>=500) throw new Error("/api/admin/r2-reconcile-state still returns "+stateRes.status);
+          if(stateRes.status!==200) throw new Error("/api/admin/r2-reconcile-state HTTP "+stateRes.status);
+
+          const manifestRes=await fetch(BASE+"/api/v1/r2/library-manifest",{headers:adminHeaders});
+          const manifest=await asJson(manifestRes);
+          if(manifestRes.status!==200) throw new Error("manifest HTTP "+manifestRes.status);
+          if(Number(manifest.total_chunks)!==28636 || Number(manifest.vector_count)!==28636){
+            throw new Error("manifest counts changed "+JSON.stringify({chunks:manifest.total_chunks,vectors:manifest.vector_count}));
+          }
+          if(!Array.isArray(manifest.metadata) || manifest.metadata.length<8){
+            throw new Error("manifest document catalog incomplete: "+String(manifest.metadata?.length));
+          }
+
+          const browser=await chromium.launch({headless:true});
+          const results=[];
+
+          async function runViewport(name,viewport,question,expectDeveloped){
+            const context=await browser.newContext({viewport});
+            const page=await context.newPage();
+            const api500=[];
+            const pageErrors=[];
+            page.on("pageerror",e=>pageErrors.push(String(e.message||e)));
+            page.on("response",res=>{
+              if(res.status()>=500 && new URL(res.url()).pathname.startsWith("/api/")){
+                api500.push({status:res.status(),url:res.url()});
+              }
+            });
+
+            await page.goto(BASE+"/?qa="+name+"-"+Date.now(),{waitUntil:"domcontentloaded",timeout:60000});
+            await page.locator("#questionInput").waitFor({state:"visible",timeout:30000});
+            await page.locator("#sendBtn").waitFor({state:"visible",timeout:30000});
+            await page.locator("#libraryTab").waitFor({state:"visible",timeout:30000});
+
+            const layout=await page.evaluate(()=>({
+              width:innerWidth,
+              scrollWidth:document.documentElement.scrollWidth,
+              questionVisible:!!document.querySelector("#questionInput")?.getBoundingClientRect().width,
+              sendVisible:!!document.querySelector("#sendBtn")?.getBoundingClientRect().width,
+              libraryVisible:!!document.querySelector("#libraryTab")?.getBoundingClientRect().width
+            }));
+            if(!layout.questionVisible || !layout.sendVisible || !layout.libraryVisible) throw new Error(name+" key controls not visible");
+            if(layout.scrollWidth>layout.width+8) throw new Error(name+" horizontal overflow "+JSON.stringify(layout));
+
+            const before=await page.locator(".msg.assistant").count();
+            await page.locator("#questionInput").fill(question);
+            await page.locator("#sendBtn").click();
+            await page.waitForFunction(
+              ({before})=>{
+                const btn=document.querySelector("#sendBtn");
+                const msgs=document.querySelectorAll(".msg.assistant");
+                return !!btn && !btn.disabled && msgs.length>before;
+              },
+              {before},
+              {timeout:180000}
+            );
+            const text=await page.locator(".msg.assistant").last().innerText();
+            if(!text || text.length<40) throw new Error(name+" answer too short: "+text);
+            if(/S[ÍI]NTESE\s+PRINCIPAL/i.test(text)) throw new Error(name+" leaked SÍNTESE PRINCIPAL label");
+            if(/turbine_selected_count|evidence_gate|continuation_cursor|continuation_last_error|micro_nodes_executed|cognitive_catalog_size/i.test(text)){
+              throw new Error(name+" leaked internal pipeline metadata into UI");
+            }
+            if(expectDeveloped && text.length<180) throw new Error(name+" developed answer unexpectedly short: "+text.length);
+            if(api500.length) throw new Error(name+" observed API 500s "+JSON.stringify(api500));
+
+            await page.screenshot({path:"qa-"+name+".png",fullPage:true});
+            results.push({
+              name,
+              viewport,
+              answer_chars:text.length,
+              synthesis_principal:false,
+              internal_metadata_visible:false,
+              api_500_count:api500.length,
+              page_error_count:pageErrors.length,
+              horizontal_overflow_px:Math.max(0,layout.scrollWidth-layout.width)
+            });
+            await context.close();
+          }
+
+          await runViewport(
+            "desktop",
+            {width:1440,height:900},
+            "Mostre somente a referência documental para a frase temos mais amigos atrás do véu do que deste lado.",
+            false
+          );
+
+          await runViewport(
+            "mobile",
+            {width:390,height:844},
+            "Explique em texto desenvolvido a frase temos mais amigos atrás do véu do que deste lado usando apenas a biblioteca.",
+            true
+          );
+
+          await browser.close();
+
+          const report={
+            ok:true,
+            production_version:health.version,
+            memory_http:memoryRes.status,
+            r2_reconcile_http:stateRes.status,
+            r2_degraded:state?.degraded===true,
+            manifest_http:manifestRes.status,
+            total_books:manifest.total_books,
+            total_chunks:manifest.total_chunks,
+            vector_count:manifest.vector_count,
+            metadata_documents:manifest.metadata.length,
+            raw_meta_exposed:false,
+            viewports:results
+          };
+          console.log("V80_POSTRELEASE_QA="+JSON.stringify(report));
+          EOF
+          node /tmp/v80-postrelease-qa.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v80-postrelease-desktop-mobile-screenshots
+          path: |
+            consciencia-fabiano/qa-desktop.png
+            consciencia-fabiano/qa-mobile.png
+          if-no-files-found: ignore
