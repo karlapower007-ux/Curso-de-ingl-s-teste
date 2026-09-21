@@ -7,12 +7,14 @@ on:
     paths:
       - "consciencia-fabiano/**"
       - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+      - ".github/workflows/v80-production-deploy.yml"
   pull_request:
     branches:
       - consciencia-cloudflare-native-v1
     paths:
       - "consciencia-fabiano/**"
       - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+      - ".github/workflows/v80-production-deploy.yml"
   workflow_dispatch:
 
 permissions:
