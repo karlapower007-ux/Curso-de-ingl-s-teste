@@ -1,1 +1,1 @@
-inspect-v8-release-post-fix-2026-09-21
+inspect-v8-release-after-catalog-gate-fix-2026-09-21
