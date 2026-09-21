@@ -1982,7 +1982,7 @@ const SCRIPTURE_BOOK_THEN_CHAPTER_RE=new RegExp(
 );
 const SCRIPTURE_BOOK_INLINE_CHAPTER_RE=new RegExp(
   "(?:^|[\\s—–])("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(?:(?:CAPÍTULO|Capítulo|CHAPTER|Chapter)\\s+)?(\\d{1,3})\\b",
-  "u"
+  "iu"
 );
 const SCRIPTURE_BOOK_LINE_ONLY_RE=new RegExp(
   "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:$|\\n)",
@@ -2012,6 +2012,13 @@ function scriptureCollectionChapterSeed(kind) {
   return null;
 }
 
+function looksLikeStrongHeadingText(value) {
+  const letters=[...String(value||"")].filter(ch=>/\p{L}/u.test(ch));
+  if(!letters.length) return false;
+  const uppercase=letters.filter(ch=>ch===ch.toLocaleUpperCase("pt-BR") && ch!==ch.toLocaleLowerCase("pt-BR")).length;
+  return uppercase/letters.length>=0.72;
+}
+
 function extractScriptureHeading(text,currentBook="") {
   const raw=String(text || "").replace(/\r/g,"\n");
 
@@ -2028,7 +2035,7 @@ function extractScriptureHeading(text,currentBook="") {
   }
 
   const inlineBookMatch=raw.match(SCRIPTURE_BOOK_INLINE_CHAPTER_RE);
-  if(inlineBookMatch){
+  if(inlineBookMatch && looksLikeStrongHeadingText(inlineBookMatch[1])){
     const book=canonicalScriptureBook(inlineBookMatch[1]);
     return {book,chapter:Number(inlineBookMatch[2]),work:scriptureWorkForBook(book)};
   }
@@ -2050,7 +2057,7 @@ function extractScriptureHeading(text,currentBook="") {
   return null;
 }
 
-const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\s.;!?—–-])(\d{1,3})\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
+const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\s.;!?—–-])(\d{1,3})\s+(?=(?:[a-zà-ÿ]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
 
 function extractScriptureVerseRange(text,page=0,{inferVerseOne=false}={}) {
   const raw=String(text || "").replace(/\r/g," ").replace(/\s+/g," ").trim();
@@ -5582,6 +5589,11 @@ async function status(env) {
     citation_dictionary_ultrasafe_one_shard: true,
     citation_dictionary_crossrefs_deferred: true,
     citation_dictionary_heading_probe_chars: 900,
+    citation_dictionary_inline_chapter_headings: true,
+    citation_dictionary_inline_verse_markers: true,
+    citation_dictionary_multi_chapter_chunk_locations: true,
+    citation_dictionary_scripture_initial_chapter_seed: true,
+    citation_dictionary_footnote_aware_verse_markers: true,
     citation_dictionary_scripture_location_not_crossref: true,
     citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_chapter_word_numbers: true,
