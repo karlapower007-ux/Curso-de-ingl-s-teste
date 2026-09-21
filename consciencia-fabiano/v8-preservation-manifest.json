@@ -1,0 +1,60 @@
+{
+  "version": "8.0.0-adaptive-20x20x20",
+  "baseline_branch": "consciencia-cloudflare-native-v1",
+  "staging_branch": "consciencia-v8-production-head-staging-20260921",
+  "policy": "additive-only",
+  "library": {
+    "expected_verified_chunks": 25199,
+    "expected_verified_vectors": 25199,
+    "reindex_required": false,
+    "destructive_sync_allowed": false,
+    "empty_replica_may_overwrite_populated_source": false
+  },
+  "frontend_must_remain_unchanged": [
+    "consciencia-fabiano/public/index.html",
+    "consciencia-fabiano/public/app.js",
+    "consciencia-fabiano/public/style.css",
+    "consciencia-fabiano/public/failover-v3.js",
+    "consciencia-fabiano/public/sw-v3.js",
+    "consciencia-fabiano/public/biblioteca_backup.json",
+    "consciencia-fabiano/public/biblioteca_backup/"
+  ],
+  "critical_features_to_preserve": [
+    "chat",
+    "microphone",
+    "library-tab",
+    "pdf-library",
+    "upload-first-pdf-guard",
+    "reindex-button",
+    "admin",
+    "persistent-memory",
+    "R2-library",
+    "Durable-Object-library",
+    "Supabase-secondary-fallback",
+    "exact-retrieval",
+    "hybrid-retrieval",
+    "1000-cognitive-microcompetencies",
+    "single-final-Groq-call",
+    "mobile-layout",
+    "offline-fallback"
+  ],
+  "v8_additions": [
+    "adaptive-complexity-router",
+    "20-logical-memory-perspectives",
+    "20-logical-query-perspectives",
+    "20-logical-search-perspectives",
+    "bounded-RRF-style-fusion",
+    "load-governor-downgrade",
+    "adaptive-evidence-gate-wrapper",
+    "early-exit-policy"
+  ],
+  "hard_guards": {
+    "paid_dependency_required": false,
+    "pre_final_llm_calls": 0,
+    "max_logical_perspectives_per_layer": 20,
+    "legacy_evidence_gate_may_be_bypassed": false,
+    "production_auto_promotion": false,
+    "frontend_replacement_allowed": false,
+    "library_reset_allowed": false
+  }
+}
