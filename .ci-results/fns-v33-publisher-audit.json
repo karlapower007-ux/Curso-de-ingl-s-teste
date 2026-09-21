@@ -1,0 +1,157 @@
+{
+  "audited_at": "2026-09-21T00:28:00Z",
+  "target": {
+    "name": "Estudos Profundos FNS",
+    "live_url": "https://estudos-profundos-fns.karlapower007.chatgpt.site",
+    "observed_version": "v33",
+    "stable_identifier": "estudos-profundos-fns.karlapower007.chatgpt.site",
+    "native_project_id": null,
+    "native_project_id_status": "not exposed by public build, Files Library, Git history, or available publisher tools",
+    "oauth_client_id": "oaiapp_85H9kifX63GYNvAG3ohm4nOT",
+    "oauth_client_id_note": "Sign in with ChatGPT OAuth client; not asserted to be the ChatGPT Sites project ID"
+  },
+  "source_linkage_audit": {
+    "github_repository": "karlapower007-ux/Curso-de-ingl-s-teste",
+    "github_deployments": 0,
+    "github_environments": 0,
+    "github_pages": "404_not_configured",
+    "git_hosting_link_files_in_any_ref": 0,
+    "git_history_hosting_link_commits": 0,
+    "exact_domain_in_git_before_audit": "only integration/probe references; no native Sites source linkage",
+    "historical_discovery_workflow": {
+      "name": "Discover ChatGPT Site linkage",
+      "run_id": 35296210001,
+      "head_sha": "39b60c9e620e27e9a676b28f43d24720d08d5de8",
+      "conclusion": "success",
+      "metadata_hits": 0
+    },
+    "repository_webhooks": {
+      "state": "not_listable_with_available GitHub Actions token",
+      "error": "HTTP 403 Resource not accessible by integration",
+      "connector_fetch_error": "GitHub Fetch URL is not an allowed public GitHub repository or search endpoint"
+    },
+    "conclusion": "No repository-linked deployment path to the ChatGPT Site was discovered."
+  },
+  "live_publisher_audit": {
+    "candidate_metadata_endpoints": {
+      "/api/site": 404,
+      "/api/site/meta": 404,
+      "/api/deployment": 404,
+      "/api/version": 404,
+      "/api/health": 404,
+      "/health": 404,
+      "/__meta": 404,
+      "/__deployment": 404,
+      "/.well-known/openai-site": 404,
+      "/.well-known/chatgpt-site": 404
+    },
+    "public_build_project_metadata": {
+      "appgprj": false,
+      "project_id": false,
+      "source_version": false,
+      "projection_revision": false,
+      "deployment_id_value": false
+    },
+    "runtime_deployment_contract": "x-deployment-id header helper exists, but no deployment ID value is exposed in the public response/build",
+    "site_controls_publish_action": false,
+    "plugin_directory_chatgpt_sites_publisher": false,
+    "chatgpt_sites_write_connector_available": false
+  },
+  "auth_write_attempts": {
+    "POST /api/admin/chatgpt-login {}": {
+      "http_status": 401,
+      "response": "Entre primeiro com uma conta autorizada do ChatGPT.",
+      "signin_url": "/signin-with-chatgpt?return_to=%2Fadmin"
+    },
+    "POST /api/admin/login {}": {
+      "http_status": 401,
+      "response": "Senha incorreta."
+    },
+    "GET /api/fabiano/admin/documents": {
+      "http_status": 401,
+      "response": "Não autorizado"
+    },
+    "GET /api/fabiano/admin/export": {
+      "http_status": 401
+    },
+    "GET /api/fabiano/admin/index-job": {
+      "http_status": 401
+    }
+  },
+  "library_rag_contract": {
+    "pdf_upload": {
+      "endpoint": "/api/fabiano/admin/uploads",
+      "methods": [
+        "POST",
+        "PUT",
+        "PATCH"
+      ],
+      "multipart_resume": true,
+      "fingerprint": "SHA-256",
+      "server_document_id": true
+    },
+    "client_extraction": {
+      "library": "pdf.js",
+      "page_by_page": true,
+      "chunk_target_chars": 1400,
+      "chunk_batch_size": 10,
+      "payload_fields": [
+        "documentId",
+        "pageCount",
+        "chunks[].page",
+        "chunks[].position",
+        "chunks[].content",
+        "chunks[].checksum",
+        "completedPage"
+      ]
+    },
+    "chunk_ingest": {
+      "endpoint": "/api/fabiano/admin/chunks",
+      "method": "POST",
+      "server_checkpoint_field": "indexedPages",
+      "local_checkpoint": "IndexedDB fns-public-fabiano-checkpoints"
+    },
+    "documents": {
+      "endpoint": "/api/fabiano/admin/documents",
+      "methods": [
+        "GET",
+        "POST",
+        "PATCH",
+        "DELETE"
+      ],
+      "visible_fields": [
+        "id",
+        "title",
+        "indexedPages",
+        "pageCount",
+        "chunkCount",
+        "published",
+        "extractionComplete"
+      ]
+    },
+    "export_endpoint": "/api/fabiano/admin/export",
+    "index_job_endpoint": "/api/fabiano/admin/index-job",
+    "physical_server_storage_for_pdf_chunks_embeddings_metadata_lexical_vector_index": "not exposed by public client bundle; requires authenticated server/admin inspection or editable Sites source",
+    "live_public_rag": {
+      "endpoint": "/api/fabiano/ask",
+      "tested_questions": 4,
+      "http_status": 200,
+      "real_source_count": 0,
+      "response": "A biblioteca pública ainda não contém evidência suficiente para responder a essa pergunta."
+    }
+  },
+  "new_code": {
+    "branch": "estudos-profundos-fns-v33-golden-20260920",
+    "core": "estudos-profundos-fns-v33/core/golden-rag.mjs",
+    "test": "estudos-profundos-fns-v33/tests/golden-rag.test.mjs",
+    "core_test_run_id": 35547059264,
+    "core_test_conclusion": "success",
+    "live_acceptance": "blocked because source_count == 0"
+  },
+  "production_action": {
+    "published": false,
+    "hydrated": false,
+    "reason": "No authenticated/native ChatGPT Sites write surface or repository-linked deploy path is available to the current tools. Admin hydration routes reject unauthenticated writes.",
+    "safety": "No other tenant, database, bucket, or project was used."
+  }
+}
