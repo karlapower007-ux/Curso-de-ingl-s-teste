@@ -13,7 +13,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">SISTEMA V7.1 FABIANO R2 CROSS DEVICE</span>
+      <span class="header-kicker">SISTEMA V7.5 STATEFUL RESILIENCE</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -70,14 +70,15 @@
           <button id="reindexBtn" class="secondary" type="button">Retomar vetores</button>
         </div>
 
-        <div id="uploadControls" class="hidden">
-          <label class="dropzone" for="pdfInput">
-            <strong>Adicionar primeiro PDF</strong>
-            <span>Este bloco só aparece quando IndexedDB, R2 e biblioteca ativa estão confirmadamente vazios.</span>
+        <div id="uploadControls" class="upload-controls">
+          <label id="pdfDropzone" class="dropzone" for="pdfInput" tabindex="0" role="button" aria-label="Adicionar Livro ou fazer Upload de PDF">
+            <strong>Adicionar Livro / Upload de PDF</strong>
+            <span>Toque para escolher um arquivo ou arraste e solte um PDF aqui. Novos livros podem ser adicionados a qualquer momento.</span>
             <input id="pdfInput" type="file" accept="application/pdf,.pdf">
+            <small id="selectedPdfName" class="selected-pdf-name">Nenhum arquivo selecionado.</small>
           </label>
-          <button id="uploadBtn" class="primary full" type="button">Extrair localmente e indexar</button>
-          <p class="client-extract-note">⚡ Livros já conhecidos são recuperados automaticamente do R2, sem novo upload e sem novo processamento.</p>
+          <button id="uploadBtn" class="primary full" type="button">Adicionar Livro / Processar PDF</button>
+          <p class="client-extract-note">⚡ O PDF é extraído localmente, fica pesquisável no navegador e entra na fila de sincronização da nuvem sem apagar os livros existentes.</p>
         </div>
         <p id="adminStatus" class="status"></p>
         <div id="omniSyncProgress" class="omni-sync-progress hidden" aria-live="polite">
