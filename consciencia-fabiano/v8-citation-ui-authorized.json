@@ -34,8 +34,12 @@
       "verse"
     ],
     "backend_preference": "r2-authoritative",
-    "r2_full_scan_fallback": true,
-    "r2_authoritative_snapshot_required": true
+    "r2_full_scan_fallback": false,
+    "r2_authoritative_snapshot_required": true,
+    "r2_batched_scan": true,
+    "batch_shards": 4,
+    "exhaustive_cursor_scan": true,
+    "render_page_size": 50
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
