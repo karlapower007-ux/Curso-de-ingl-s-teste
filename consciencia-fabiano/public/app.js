@@ -12,7 +12,21 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v7.5.0-stateful-resilience";
+  let CURRENT_SYSTEM_VERSION = "v8.0.0-adaptive-20x20x20";
+
+  function normalizeSystemVersion(value){
+    const raw=String(value || "").trim();
+    if(!raw) return CURRENT_SYSTEM_VERSION;
+    return /^v/i.test(raw) ? raw : "v"+raw;
+  }
+
+  function applyRuntimeSystemVersion(value){
+    CURRENT_SYSTEM_VERSION=normalizeSystemVersion(value);
+    const label=$("systemVersionLabel");
+    if(label) label.textContent=CURRENT_SYSTEM_VERSION;
+    document.title="Consciência do Fabiano - "+CURRENT_SYSTEM_VERSION;
+    return CURRENT_SYSTEM_VERSION;
+  }
 
   function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
     return {
@@ -1677,7 +1691,7 @@
           const swarmResult=await engine.omniAgentSearch(q,{
             onProgress:progress=>{
               if($("backendText")){
-                $("backendText").textContent="V6.0 • agente "+Number(progress?.agent||0)+"/20 • "+String(progress?.name||"analisando");
+                $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • agente "+Number(progress?.agent||0)+"/20 • "+String(progress?.name||"analisando");
               }
             }
           });
@@ -1858,7 +1872,7 @@
               role:"assistant",content:silence,sources:[],fallback:false,
               failover_plan:"C",strict_empty:true,zero_noise:true,ts:Date.now()
             });
-            if($("backendText")) $("backendText").textContent="Plano C V6.0 • zero-noise • nenhuma correspondência válida";
+            if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • Plano C • zero-noise • nenhuma correspondência válida";
           }else if(recovered.plan==="C" && Array.isArray(recovered.cards) && recovered.cards.length){
             const rendered=appendOfflineTurbineResults(recovered);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:recovered.cards;
@@ -1874,7 +1888,7 @@
               failover_plan:"C",offline_turbines:true,ts:Date.now()
             });
             if($("backendText")){
-              $("backendText").textContent="Plano C V6.0 • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
+              $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • Plano C • "+Number(recovered.physical_workers||0)+" workers físicos • até 1000 tarefas lógicas";
             }
           }else{
             appendMessage("assistant",resposta,recovered.sources || [],false);
@@ -1937,6 +1951,7 @@
       const res=await fetch("/health/deploy",{cache:"no-store"});
       const data=await res.json();
       const up=data?.ok===true;
+      if(data?.version) applyRuntimeSystemVersion(data.version);
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
         ? renderSystemBadge().text
