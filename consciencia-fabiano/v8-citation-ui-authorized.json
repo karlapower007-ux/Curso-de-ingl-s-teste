@@ -37,7 +37,7 @@
     "r2_full_scan_fallback": false,
     "r2_authoritative_snapshot_required": true,
     "segmented_r2_scan": true,
-    "shards_per_request": 4,
+    "shards_per_request": 8,
     "cpu_bounded": true,
     "client_progressive_scan": true,
     "max_library_capacity": 50000,
@@ -45,10 +45,16 @@
     "chapter_word_number_resolution": true,
     "segment_shards": 4,
     "concurrent_desktop_mobile_cpu_guard": true,
-    "named_section_fallback": true,
-    "scripture_segment_carry": true,
-    "scripture_verse_range_inference": true,
-    "strict_scripture_source_identity": true
+    "canonical_scripture_filename_matching": true,
+    "scripture_reference_carry": true,
+    "scripture_carry_fields": [
+      "work",
+      "book",
+      "chapter",
+      "verse_start",
+      "verse_end",
+      "reference"
+    ]
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
