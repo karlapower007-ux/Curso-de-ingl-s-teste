@@ -2823,7 +2823,8 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
     {
       role:"system",
       content:
-        "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
+        "Há uma ou mais referências bibliográficas exatas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
+        "É PROIBIDO escrever nome de arquivo/PDF/documento técnico. Use apenas livro canônico + capítulo:versículo nas Escrituras, ou título do livro + capítulo + página nos demais livros. " +
         "Produza texto desenvolvido, em múltiplas seções quando houver material, usando exclusivamente as evidências fornecidas. " +
         "Cruze as fontes independentes diretamente relevantes em prosa coesa, com densidade enciclopédica, sem despejar trechos ou nomes em sequência. " +
         "Depois de cada afirmação factual, mantenha os identificadores [F#] das evidências que realmente a sustentam. " +
@@ -2869,7 +2870,8 @@ async function repairSparseCitationCoverage(env,question,answer,sources) {
     {
       role:"system",
       content:
-        "Reescreva o rascunho no MODO DICIONÁRIO DENSO: um verbete enciclopédico profundo, coeso e articulado, usando EXCLUSIVAMENTE as evidências fornecidas. " +
+        "Reescreva o rascunho no MODO DICIONÁRIO DENSO: um verbete enciclopédico profundo, coeso e articulado, usando EXCLUSIVAMENTE as evidências fornecidas e SOMENTE o assunto exato pedido. " +
+        "É PROIBIDO mostrar nome de arquivo/PDF/documento técnico; referências devem aparecer apenas como livro canônico + capítulo:versículo, ou título do livro + capítulo + página. " +
         "É proibido produzir frases soltas, notas telegráficas, enumeração de livros sem explicação, colagem de citações ou parágrafos de uma única frase. " +
         "Organize prosa contínua em parágrafos sólidos: definição/núcleo, desenvolvimento histórico ou conceitual, convergências entre autores, complementos, nuances ou diferenças sustentadas e uma conclusão integradora. " +
         "Cada parágrafo deve conectar ideias de mais de uma evidência sempre que isso for documentalmente possível. " +
@@ -4628,7 +4630,11 @@ function cognitiveContractPrompt(contract) {
     "; idioma="+String(c.language || "pt")+
     "; memória="+(c.use_history?"somente para desambiguação":"não usar para ampliar resposta")+
     "; máximo aproximado="+Number(c.max_words || 700)+" palavras. " +
-    "Responda SOMENTE ao que foi pedido, mas desenvolva a matéria com profundidade, prosa fluida e parágrafos substanciais. Evite respostas telegráficas, superficiais ou excessivamente resumidas, salvo quando o usuário pedir explicitamente brevidade. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. ";
+    "Responda SOMENTE ao que foi pedido, mas desenvolva a matéria com profundidade, prosa fluida e parágrafos substanciais. Evite respostas telegráficas, superficiais ou excessivamente resumidas, salvo quando o usuário pedir explicitamente brevidade. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. " +
+    "ESCOPO EXATO: use somente evidências que contenham todos os termos temáticos específicos do pedido atual; não acrescente pessoas, doutrinas ou assuntos apenas relacionados. " +
+    "PADRÃO BIBLIOGRÁFICO OBRIGATÓRIO: é PROIBIDO mostrar nome de arquivo, nome de PDF, nome de documento técnico, ID, chunk ou rótulo interno. " +
+    "Para Escrituras/Obras Padrão, cite SOMENTE o livro canônico e a localização, por exemplo '2 Néfi 2:4' ou 'Levítico 1:3'. " +
+    "Para livros comuns, cite o título real do livro, número do capítulo, título do capítulo quando conhecido e página. Se a localização bibliográfica não estiver confirmada, omita a referência em vez de adivinhar. ";
 
   const rules={
     factual:
@@ -4644,7 +4650,7 @@ function cognitiveContractPrompt(contract) {
     hypothesis:
       "MODO HIPÓTESE: use duas partes claramente rotuladas no idioma da pergunta: 'BASE DOCUMENTAL'/'DOCUMENTARY BASIS' e 'HIPÓTESE'/'HYPOTHESIS'. A hipótese deve ser apresentada como possibilidade condicional, nunca como fato estabelecido. Não invente dados ausentes.",
     reference_only:
-      "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência documental."
+      "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência bibliográfica exata no padrão: Escrituras = livro capítulo:versículo; livro comum = título do livro, capítulo e página."
   };
   const plan=c?.v74_plan || null;
   const semanticContracts=Array.from(plan?.executed_contracts || plan?.semantic_contracts || []).slice(0,24)
