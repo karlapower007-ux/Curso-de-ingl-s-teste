@@ -1800,7 +1800,8 @@ function chapterWordToNumber(value) {
 const CHAPTER_HEADING_TOKEN="[0-9]{1,4}|[IVXLCDM]{1,12}|[A-Za-zÀ-ÿ]+(?:[-\\s](?:e|and|[A-Za-zÀ-ÿ]+)){0,2}";
 const CHAPTER_HEADING_PATTERNS=[
   new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
-  new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu")
+  new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
+  new RegExp("(?:^|[\\s—–])(?:CAPÍTULO|Capítulo|CHAPTER|Chapter)\\s+("+CHAPTER_HEADING_TOKEN+")\\b","u")
 ];
 
 function extractChapterHeading(text) {
@@ -1970,7 +1971,7 @@ function extractNamedSectionHeading(text,documentTitle="") {
   return "";
 }
 
-const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria)";
+const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria|Doutrina\\s+e\\s+Conv[eê]nios|D\\s*&\\s*C)";
 const SCRIPTURE_HEADING_LINE_RE=new RegExp(
   "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
   "imu"
@@ -1978,6 +1979,18 @@ const SCRIPTURE_HEADING_LINE_RE=new RegExp(
 const SCRIPTURE_BOOK_THEN_CHAPTER_RE=new RegExp(
   "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
   "imu"
+);
+const SCRIPTURE_BOOK_INLINE_CHAPTER_RE=new RegExp(
+  "(?:^|[\\s—–])("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(?:(?:CAPÍTULO|Capítulo|CHAPTER|Chapter)\\s+)?(\\d{1,3})\\b",
+  "u"
+);
+const SCRIPTURE_BOOK_LINE_ONLY_RE=new RegExp(
+  "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:$|\\n)",
+  "imu"
+);
+const SCRIPTURE_STRONG_CHAPTER_RE=new RegExp(
+  "(?:^|[\\s—–])(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|SEÇÃO|Seção|SECTION|Section)\\s+("+CHAPTER_HEADING_TOKEN+")\\b",
+  "gu"
 );
 
 
@@ -1988,6 +2001,15 @@ function scriptureCollectionSeed(kind) {
   if(kind==="pearl-of-great-price") return "Moisés";
   if(kind==="bible") return "Gênesis";
   return "";
+}
+
+function scriptureCollectionChapterSeed(kind) {
+  if(kind==="standard-works") return 1;
+  if(kind==="book-of-mormon") return 1;
+  if(kind==="doctrine-and-covenants") return 1;
+  if(kind==="pearl-of-great-price") return 1;
+  if(kind==="bible") return 1;
+  return null;
 }
 
 function extractScriptureHeading(text,currentBook="") {
@@ -2005,8 +2027,21 @@ function extractScriptureHeading(text,currentBook="") {
     return {book,chapter:Number(bookMatch[2]),work:scriptureWorkForBook(book)};
   }
 
+  const inlineBookMatch=raw.match(SCRIPTURE_BOOK_INLINE_CHAPTER_RE);
+  if(inlineBookMatch){
+    const book=canonicalScriptureBook(inlineBookMatch[1]);
+    return {book,chapter:Number(inlineBookMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  const bookOnlyMatch=raw.slice(0,420).match(SCRIPTURE_BOOK_LINE_ONLY_RE);
+  if(bookOnlyMatch){
+    const book=canonicalScriptureBook(bookOnlyMatch[1]);
+    return {book,chapter:1,work:scriptureWorkForBook(book)};
+  }
+
   if(currentBook){
-    const chapterMatch=raw.match(/(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+([0-9]{1,4}|[IVXLCDM]{1,12}|[\p{L}]+(?:\s+e\s+[\p{L}]+)?)\b/imu);
+    SCRIPTURE_STRONG_CHAPTER_RE.lastIndex=0;
+    const chapterMatch=SCRIPTURE_STRONG_CHAPTER_RE.exec(raw);
     if(chapterMatch){
       const chapter=chapterWordToNumber(chapterMatch[1]);
       if(chapter) return {book:currentBook,chapter,work:scriptureWorkForBook(currentBook)};
@@ -2015,27 +2050,98 @@ function extractScriptureHeading(text,currentBook="") {
   return null;
 }
 
-function extractScriptureVerseRange(text,page=0) {
-  const lines=String(text || "").replace(/\r/g,"\n").split("\n");
+const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\\s.;!?—–-])(\\d{1,3})\\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
+
+function extractScriptureVerseRange(text,page=0,{inferVerseOne=false}={}) {
+  const raw=String(text || "").replace(/\r/g," ").replace(/\s+/g," ").trim();
+  if(!raw) return null;
+
   const markers=[];
-  for(const line of lines){
-    const match=String(line||"").match(/^\s*(\d{1,3})\s+([\p{L}“"'(].{2,})$/u);
-    if(!match) continue;
+  SCRIPTURE_INLINE_VERSE_MARKER_RE.lastIndex=0;
+  let match;
+  while((match=SCRIPTURE_INLINE_VERSE_MARKER_RE.exec(raw))!==null && markers.length<96){
     const verse=Number(match[1]);
     if(!verse || verse>176) continue;
-    const rest=String(match[2]||"").trim();
-    if(!/\p{L}/u.test(rest)) continue;
-    if(verse===Number(page||0) && rest.length<18) continue;
-    markers.push(verse);
+    const position=Math.max(0,Number(match.index||0));
+    if(verse===Number(page||0) && position<16) continue;
+    markers.push({verse,position});
   }
   if(!markers.length) return null;
-  if(markers.length===1 && markers[0]>60) return null;
-  let endIndex=0;
-  for(let i=1;i<markers.length;i++){
-    if(markers[i]>=markers[i-1]) endIndex=i;
-    else break;
+
+  const runs=[];
+  let current=[];
+  for(const marker of markers){
+    if(!current.length){
+      current=[marker];
+      continue;
+    }
+    const previous=current[current.length-1].verse;
+    const delta=marker.verse-previous;
+    if(delta>=0 && delta<=4){
+      if(delta!==0) current.push(marker);
+      continue;
+    }
+    runs.push(current);
+    current=[marker];
   }
-  return {verse_start:markers[0],verse_end:Math.max(markers[0],markers[endIndex])};
+  if(current.length) runs.push(current);
+
+  runs.sort((a,b)=>{
+    if(b.length!==a.length) return b.length-a.length;
+    const spanA=(a[a.length-1]?.verse||0)-(a[0]?.verse||0);
+    const spanB=(b[b.length-1]?.verse||0)-(b[0]?.verse||0);
+    if(spanB!==spanA) return spanB-spanA;
+    return (a[0]?.position||0)-(b[0]?.position||0);
+  });
+  const best=runs[0] || [];
+  if(!best.length) return null;
+
+  let verseStart=Number(best[0].verse||0);
+  let verseEnd=Number(best[best.length-1].verse||verseStart);
+  if(!verseStart || verseStart>176) return null;
+  if(best.length===1 && verseStart>60) return null;
+
+  if(inferVerseOne && verseStart===2){
+    const prefix=raw.slice(0,Math.max(0,best[0].position));
+    if(/[A-Za-zÀ-ÿ]{4}/u.test(prefix)) verseStart=1;
+  }
+  return {verse_start:verseStart,verse_end:Math.max(verseStart,verseEnd)};
+}
+
+function extractScriptureLocationReferences(text,book,currentChapter,page=0) {
+  const raw=String(text || "").slice(0,2400).replace(/\r/g,"\n");
+  if(!raw || !book) return {references:[],final_chapter:currentChapter||null};
+
+  const boundaries=[];
+  SCRIPTURE_STRONG_CHAPTER_RE.lastIndex=0;
+  let match;
+  while((match=SCRIPTURE_STRONG_CHAPTER_RE.exec(raw))!==null && boundaries.length<8){
+    const number=chapterWordToNumber(match[1]);
+    if(!number) continue;
+    boundaries.push({index:Math.max(0,Number(match.index||0)),chapter:number,end:SCRIPTURE_STRONG_CHAPTER_RE.lastIndex});
+  }
+
+  const references=[];
+  let chapter=Math.max(0,Number(currentChapter||0)) || null;
+  let cursor=0;
+
+  const addRange=(segment,segmentChapter,inferVerseOne=false)=>{
+    if(!segmentChapter) return;
+    const range=extractScriptureVerseRange(segment,page,{inferVerseOne});
+    const ref=syntheticScriptureReference(book,segmentChapter,range);
+    if(ref && !references.some(item=>item.reference===ref.reference)) references.push(ref);
+  };
+
+  for(const boundary of boundaries){
+    const before=raw.slice(cursor,boundary.index);
+    addRange(before,chapter,false);
+    chapter=boundary.chapter;
+    cursor=boundary.end;
+  }
+
+  const tail=raw.slice(cursor);
+  addRange(tail,chapter,boundaries.length>0);
+  return {references:references.slice(0,6),final_chapter:chapter};
 }
 
 function syntheticScriptureReference(book,chapter,verseRange) {
@@ -2215,9 +2321,10 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
 
       if(scriptureKind){
         if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
+        if(!currentScriptureChapter) currentScriptureChapter=scriptureCollectionChapterSeed(scriptureKind);
         const shouldProbeScriptureHeading=
           firstChunkOfPage ||
-          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+/imu.test(headingProbe);
+          /(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|SEÇÃO|Seção|SECTION|Section)\s+/u.test(headingProbe);
         if(shouldProbeScriptureHeading){
           const scriptureHeading=extractScriptureHeading(headingProbe,currentScriptureBook);
           if(scriptureHeading){
@@ -2228,7 +2335,7 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       }else{
         const shouldProbeBookHeading=
           firstChunkOfPage ||
-          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|cap\.?)\s+/imu.test(headingProbe);
+          /(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|cap\.)\s+/u.test(headingProbe);
         if(shouldProbeBookHeading){
           const heading=extractChapterHeading(String(row?.title||"")+"\n"+headingProbe);
           if(heading){
@@ -2246,9 +2353,14 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
 
       let scriptureLocationRefs=[];
       if(scriptureKind){
-        const verseRange=extractScriptureVerseRange(rowText.slice(0,2400),Number(row?.page||0));
-        const synthetic=syntheticScriptureReference(currentScriptureBook,currentScriptureChapter,verseRange);
-        if(synthetic) scriptureLocationRefs=[synthetic];
+        const located=extractScriptureLocationReferences(
+          rowText,
+          currentScriptureBook,
+          currentScriptureChapter,
+          Number(row?.page||0)
+        );
+        scriptureLocationRefs=located.references;
+        if(located.final_chapter) currentScriptureChapter=located.final_chapter;
       }
 
       const inlineHeading=(!scriptureKind && firstChunkOfPage)
