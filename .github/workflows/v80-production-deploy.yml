@@ -1,0 +1,124 @@
+name: Deploy Consciência Fabiano V8 Production Safely
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - "consciencia-fabiano/src/index.js"
+      - "consciencia-fabiano/src/adaptive-rag-v80.js"
+      - "consciencia-fabiano/package.json"
+      - "consciencia-fabiano/scripts/adaptive-v80-acceptance.mjs"
+      - "consciencia-fabiano/v8-preservation-manifest.json"
+      - ".github/workflows/qa-cloudflare-native-rag.yml"
+      - ".github/workflows/v80-production-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-cloudflare-native-production
+  cancel-in-progress: false
+
+jobs:
+  preflight-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout promoted production commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Refuse frontend, library backup or migration changes
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          test -n "$BEFORE_SHA"
+          git diff --exit-code "$BEFORE_SHA"...HEAD -- \
+            consciencia-fabiano/public/index.html \
+            consciencia-fabiano/public/app.js \
+            consciencia-fabiano/public/style.css \
+            consciencia-fabiano/public/failover-v3.js \
+            consciencia-fabiano/public/sw-v3.js \
+            consciencia-fabiano/public/biblioteca_backup.json \
+            consciencia-fabiano/public/biblioteca_backup
+          CHANGED="$(git diff --name-only "$BEFORE_SHA"...HEAD)"
+          if printf '%s\n' "$CHANGED" | grep -Eq '^consciencia-fabiano/supabase/migrations/'; then
+            echo "Protected Supabase migration path changed; refusing V8 deploy."
+            exit 1
+          fi
+          echo "V8_PRODUCTION_PRESERVATION_GATE=pass"
+
+      - name: Install existing development dependency set
+        working-directory: consciencia-fabiano
+        run: npm install --ignore-scripts
+
+      - name: Run complete legacy plus V8 acceptance suite
+        working-directory: consciencia-fabiano
+        run: |
+          npm run check
+          npm run test:adaptive-v80
+
+      - name: Verify no paid dependency was introduced
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r '.hard_guards.paid_dependency_required' v8-preservation-manifest.json)" = "false"
+          test "$(jq -r '.library.reindex_required' v8-preservation-manifest.json)" = "false"
+          test "$(jq -r '.hard_guards.pre_final_llm_calls' v8-preservation-manifest.json)" = "0"
+          echo "V8_FREE_TIER_AND_LOAD_GUARD=pass"
+
+      - name: Deploy official Worker
+        working-directory: consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler deploy
+
+      - name: Verify V8 production endpoint
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          OK=false
+          for attempt in 1 2 3 4 5 6; do
+            BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
+            VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
+            HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.0.0-adaptive-20x20x20" ]; then
+              OK=true
+              break
+            fi
+            sleep 3
+          done
+          test "$OK" = "true"
+          echo "V8_PRODUCTION_ENDPOINT=healthy"
+
+      - name: Roll back Worker to previous production commit on failure
+        if: failure()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+          ROLLBACK_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ROLLBACK_SHA"
+          git checkout --force "$ROLLBACK_SHA"
+          cd consciencia-fabiano
+          npm install --ignore-scripts
+          npx wrangler deploy
+          echo "V8_AUTOMATIC_WORKER_ROLLBACK=executed"
