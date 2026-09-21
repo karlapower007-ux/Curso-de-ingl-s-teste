@@ -36,6 +36,7 @@ jobs:
           scripture_ref_missing=0
           sample_book_missing=0
           sample_scripture_missing=0
+          sample_standard_works=0
           : > /tmp/citation-audit.ndjson
           guard=0
 
@@ -107,6 +108,15 @@ jobs:
               done < <(echo "$body" | jq -c '.citations[] | select(.bibliographic_type=="book" and ((.chapter // 0)==0)) | {book,author,page,chunk_index,technical_document}' || true)
             fi
 
+            if [ "$sample_standard_works" -lt 20 ]; then
+              while IFS= read -r sample; do
+                [ -n "$sample" ] || continue
+                echo "STANDARD_WORKS_SAMPLE=$sample"
+                sample_standard_works=$((sample_standard_works+1))
+                [ "$sample_standard_works" -ge 20 ] && break
+              done < <(echo "$body" | jq -c '.citations[] | select((.technical_document // "")=="standard-works-83806-por.pdf") | {page,chunk_index,excerpt,primary_reference,chapter,book}' || true)
+            fi
+
             if [ "$sample_scripture_missing" -lt 30 ]; then
               while IFS= read -r sample; do
                 [ -n "$sample" ] || continue
@@ -169,3 +179,5 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
 # rerun-after-metadata-hardening-deploy
+
+# rerun-standard-works-excerpts
