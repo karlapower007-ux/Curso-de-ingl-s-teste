@@ -80,6 +80,13 @@ jobs:
                 continue;
               }
               await page.waitForTimeout(8000);
+              const directManifest=await page.evaluate(async()=>{
+                try{
+                  const r=await fetch('/api/v1/r2/library-manifest',{headers:{'X-FNS-Owner-Token':'gadu'}});
+                  const j=await r.json().catch(()=>({}));
+                  return {ok:r.ok,status:r.status,total_books:Number(j?.total_books||0),total_chunks:Number(j?.total_chunks||0),vector_count:Number(j?.vector_count||0),generation:String(j?.generation||''),source:String(j?.source||'')};
+                }catch(e){return {ok:false,status:0,error:String(e?.message||e)}}
+              });
               const rows=await page.locator('#booksList .book').evaluateAll(nodes=>nodes.map(n=>({
                 title:n.querySelector('strong')?.textContent?.trim()||'',
                 detail:n.querySelector('small')?.textContent?.trim()||''
@@ -89,7 +96,8 @@ jobs:
               const tabActive=await page.locator('#libraryTab').evaluate(el=>el.classList.contains('active'));
               const meaningful=rows.filter(x=>x.title && !/Nenhum PDF encontrado/i.test(x.title));
               const seriousErrors=errors.filter(x=>!/favicon|Failed to load resource.*404/i.test(x));
-              const ok=panelVisible && tabActive && meaningful.length>=8 && directManifest.ok===true && directManifest.total_books>=8 && !/vazia|não foi possível|erro/i.test(String(status||''));
+              const listReady=meaningful.length>=8;
+              const ok=panelVisible && tabActive && listReady && directManifest.ok===true && directManifest.total_books>=8 && !/vazia|não foi possível|erro/i.test(String(status||''));
               report.profiles.push({
                 name:p.name,viewport:p.viewport,ok,panel_visible:panelVisible,tab_active:tabActive,
                 visible_documents:meaningful.length,status:String(status||''),
