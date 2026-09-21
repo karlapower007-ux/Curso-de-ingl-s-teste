@@ -373,91 +373,94 @@ async function main(){
   const activeGeneration=String(sm?.generation||"");
   if(!activeGeneration)return fail("active secondary generation missing");
 
-  // Inspect only target IDs in the active secondary generation.
-  let targetSecondary=(await exportGeneration(activeGeneration,targetSet)).rows;
-
-  const absent=[];
-  for(const id of targets) if(!targetSecondary.has(id)) absent.push(id);
-  for(let i=0;i<absent.length;i+=200){
-    const ids=absent.slice(i,i+200);
-    const recs=ids.map(id=>normalizedMirrorRow(rowRefs.get(id).row,null,activeGeneration));
-    const out=await secondary("mirror_chunks",{generation:activeGeneration,records:recs});
-    if(Number(out?.records||0)!==recs.length)return fail("secondary text staging mismatch");
-    report.staged_new_rows+=recs.length;
-  }
-
+  // Resume from the database's authoritative missing-vector set.
+  // This avoids re-exporting all 28,636 rows on every retry.
   let stats=await secondary("generation_stats",{generation:activeGeneration});
   if(Number(stats?.total_chunks||0)!==EXPECTED_TOTAL){
-    return fail("secondary chunk total after staging is "+Number(stats?.total_chunks||0));
+    return fail("secondary chunk total must already be 28636 before vector-only resume; got "+Number(stats?.total_chunks||0));
   }
 
-  // Refresh target rows so resume/idempotency can reuse already-persisted vectors.
-  targetSecondary=(await exportGeneration(activeGeneration,targetSet)).rows;
-  const vectorMap=new Map();
-  for(const id of targets){
-    const v=vectorOf(targetSecondary.get(id));
-    if(v)vectorMap.set(id,v);
-  }
+  // Always materialize the deterministic target list in the audit artifact, including resumed runs.
+  const deterministicRows=targets.map(id=>{
+    const r=rowRefs.get(id).row;
+    return {
+      chunk_id:id,document_id:docId(r),filename:String(r?.filename||""),
+      page:Number(r?.page||0),chunk_index:Number(r?.chunk_index||0),
+      content_hash:contentHash(r),fingerprint:fingerprint(r)
+    };
+  });
+  await fs.mkdir(path.dirname(IDS_PATH),{recursive:true});
+  await fs.writeFile(IDS_PATH,JSON.stringify({
+    version:1,generation,created_at:checkpoint?.created_at||iso(),
+    invariant:"current_only && originally_has_vector=false",
+    count:deterministicRows.length,
+    rows:deterministicRows
+  },null,2)+"\n");
 
-  const needGenerate=targets.filter(id=>!vectorMap.has(id));
-  report.missing_before_generation=needGenerate.length;
-
-  for(let i=0;i<needGenerate.length;i+=EMBEDDING_BATCH){
-    const ids=needGenerate.slice(i,i+EMBEDDING_BATCH);
-    const rows=ids.map(id=>rowRefs.get(id).row);
-    const texts=rows.map(r=>String(r.text||"").replace(/\s+/g," ").trim().slice(0,2400));
-    const vectors=await embedTexts(texts);
-
-    const payload=rows.map((r,j)=>normalizedMirrorRow(r,vectors[j],activeGeneration));
-    const out=await secondary("mirror_embeddings",{generation:activeGeneration,records:payload});
-    if(Number(out?.embeddings||0)!==payload.length)return fail("secondary embedding batch mismatch");
-
-    for(let j=0;j<ids.length;j++)vectorMap.set(ids[j],vectors[j]);
-    report.generated_new_embeddings+=ids.length;
-
-    const after=await secondary("generation_stats",{generation:activeGeneration});
-    const expectedMin=EXPECTED_BASELINE+vectorMap.size;
-    if(Number(after?.vector_count||0)<expectedMin){
-      return fail("secondary vector persistence did not advance after batch");
+  const missingSecondary=new Map();
+  let afterMissing="";
+  while(true){
+    const page=await secondary("missing_embeddings",{
+      generation:activeGeneration,after_id:afterMissing,limit:64
+    });
+    const records=Array.isArray(page?.records)?page.records:[];
+    for(const r of records){
+      const id=chunkId(r);
+      if(!targetSet.has(id)) return fail("secondary missing-vector row is outside frozen current_only set: "+id);
+      const rr=rowRefs.get(id)?.row;
+      if(!rr) return fail("secondary missing-vector row absent from R2: "+id);
+      if(docId(rr)!==docId(r) || Number(rr?.page||0)!==Number(r?.page||0) ||
+         Number(rr?.chunk_index||0)!==Number(r?.chunk_index||0) ||
+         String(rr?.text||"")!==String(r?.text||"")){
+        return fail("secondary/R2 identity mismatch for "+id);
+      }
+      missingSecondary.set(id,r);
     }
-
-    checkpoint.generated_new_embeddings=Number(checkpoint.generated_new_embeddings||0)+ids.length;
-    checkpoint.last_embedding_id=ids[ids.length-1];
-    checkpoint.last_update=iso();
-    checkpoint.state="embedding";
-    await putJson(checkpointKey,checkpoint,{kind:"vector-backfill-checkpoint",generation});
+    if(records.length<64)break;
+    const next=String(records[records.length-1]?.id||"");
+    if(!next || next===afterMissing)return fail("missing_embeddings cursor stalled");
+    afterMissing=next;
   }
 
-  if(vectorMap.size!==EXPECTED_MISSING)return fail("not all target vectors available after embedding phase");
-
-  stats=await secondary("generation_stats",{generation:activeGeneration});
-  if(Number(stats?.total_chunks||0)!==EXPECTED_TOTAL || Number(stats?.vector_count||0)!==EXPECTED_TOTAL){
-    return fail("secondary must be 28636/28636 before R2 patch");
+  const expectedMissingFromStats=EXPECTED_TOTAL-Number(stats?.vector_count||0);
+  if(missingSecondary.size!==expectedMissingFromStats){
+    return fail("missing-vector count mismatch: endpoint="+missingSecondary.size+" stats="+expectedMissingFromStats);
   }
+  report.missing_before_generation=missingSecondary.size;
+  report.notes.push("Vector resume uses missing_embeddings only; no full-generation re-export.");
 
-  // Patch only shards containing target IDs whose R2 row still lacks a vector.
-  const affectedKeys=new Set();
-  for(const id of targets){
-    const ref=rowRefs.get(id);
-    if(!vectorOf(ref.row))affectedKeys.add(ref.key);
+  // Process shard-by-shard. R2 is persisted first, then the same vectors are mirrored
+  // to Supabase. If interrupted between stores, the next run reuses the R2 vector.
+  const shardsNeedingWork=[];
+  for(const [key,shard] of shardMap.entries()){
+    const rows=shard.rows.filter(r=>targetSet.has(chunkId(r)) && missingSecondary.has(chunkId(r)));
+    if(rows.length)shardsNeedingWork.push({key,shard,rows});
   }
+  shardsNeedingWork.sort((a,b)=>a.key.localeCompare(b.key));
 
-  for(const key of [...affectedKeys].sort()){
-    const shard=shardMap.get(key);
+  let persistedThisRun=0;
+  for(const item of shardsNeedingWork){
+    const {key,shard,rows}=item;
     const before=shard.rows.map(r=>({
       id:chunkId(r),document_id:docId(r),content_hash:contentHash(r),text_hash:sha256(r?.text||"")
     }));
-    let changed=0;
-    for(const r of shard.rows){
-      const id=chunkId(r);
-      if(!targetSet.has(id) || vectorOf(r))continue;
-      const v=vectorMap.get(id);
-      if(!v)return fail("missing vector for R2 patch "+id);
-      r.vector=v;
-      r.embedding_model=EMBEDDING_MODEL;
-      changed++;
+
+    const needCompute=rows.filter(r=>!vectorOf(r));
+    for(let i=0;i<needCompute.length;i+=EMBEDDING_BATCH){
+      const batch=needCompute.slice(i,i+EMBEDDING_BATCH);
+      const texts=batch.map(r=>String(r?.text||"").replace(/\s+/g," ").trim().slice(0,2400));
+      const vectors=await embedTexts(texts);
+      for(let j=0;j<batch.length;j++){
+        batch[j].vector=vectors[j];
+        batch[j].embedding_model=EMBEDDING_MODEL;
+      }
+      report.generated_new_embeddings+=batch.length;
     }
-    if(!changed)continue;
+
+    // Every secondary-missing row in this shard must now have a reusable 384d vector.
+    for(const r of rows){
+      if(!vectorOf(r))return fail("vector generation/reuse failed for "+chunkId(r));
+    }
 
     const afterInvariant=shard.rows.map(r=>({
       id:chunkId(r),document_id:docId(r),content_hash:contentHash(r),text_hash:sha256(r?.text||"")
@@ -466,29 +469,60 @@ async function main(){
       return fail("chunk identity/content mutation detected in "+key);
     }
 
-    shard.payload.rows=shard.rows;
-    shard.payload.count=shard.rows.length;
-    shard.payload.updated_at=iso();
+    // Only write the shard when at least one R2 vector was previously absent.
+    if(needCompute.length){
+      shard.payload.rows=shard.rows;
+      shard.payload.count=shard.rows.length;
+      shard.payload.updated_at=iso();
+      await putJson(key,shard.payload);
 
-    await putJson(key,shard.payload);
-
-    const verify=await getJson(key);
-    const verifiedRows=Array.isArray(verify.json?.rows)?verify.json.rows:[];
-    if(verifiedRows.length!==shard.rows.length)return fail("R2 shard length changed "+key);
-    for(let i=0;i<verifiedRows.length;i++){
-      const a=before[i],r=verifiedRows[i];
-      if(chunkId(r)!==a.id || docId(r)!==a.document_id ||
-         contentHash(r)!==a.content_hash || sha256(r?.text||"")!==a.text_hash){
-        return fail("R2 shard identity/hash verification failed "+key);
+      const verify=await getJson(key);
+      const verifiedRows=Array.isArray(verify.json?.rows)?verify.json.rows:[];
+      if(verifiedRows.length!==shard.rows.length)return fail("R2 shard length changed "+key);
+      for(let i=0;i<verifiedRows.length;i++){
+        const a=before[i],r=verifiedRows[i];
+        if(chunkId(r)!==a.id || docId(r)!==a.document_id ||
+           contentHash(r)!==a.content_hash || sha256(r?.text||"")!==a.text_hash){
+          return fail("R2 shard identity/hash verification failed "+key);
+        }
       }
-      if(targetSet.has(a.id) && !vectorOf(r))return fail("R2 vector not persisted "+a.id);
+      for(const r of rows){
+        const vr=verifiedRows.find(x=>chunkId(x)===chunkId(r));
+        if(!vectorOf(vr))return fail("R2 vector not persisted "+chunkId(r));
+      }
+      report.patched_shards++;
     }
 
-    report.patched_shards++;
+    // Mirror the exact same R2 vectors to the active secondary index, max 64 per call.
+    for(let i=0;i<rows.length;i+=64){
+      const batch=rows.slice(i,i+64);
+      const payload=batch.map(r=>normalizedMirrorRow(r,vectorOf(r),activeGeneration));
+      const out=await secondary("mirror_embeddings",{generation:activeGeneration,records:payload});
+      if(Number(out?.embeddings||0)!==payload.length)return fail("secondary embedding batch mismatch");
+      persistedThisRun+=payload.length;
+    }
+
+    const after=await secondary("generation_stats",{generation:activeGeneration});
+    if(Number(after?.vector_count||0)<EXPECTED_BASELINE+persistedThisRun){
+      return fail("secondary vector persistence did not advance after shard "+key);
+    }
+
+    checkpoint.generated_new_embeddings=Number(checkpoint.generated_new_embeddings||0)+needCompute.length;
     checkpoint.completed_shards=[...new Set([...(checkpoint.completed_shards||[]),key])].sort();
+    checkpoint.last_embedding_id=chunkId(rows[rows.length-1]);
     checkpoint.last_update=iso();
-    checkpoint.state="r2-patching";
+    checkpoint.state="embedding";
     await putJson(checkpointKey,checkpoint,{kind:"vector-backfill-checkpoint",generation});
+  }
+
+  stats=await secondary("generation_stats",{generation:activeGeneration});
+  if(Number(stats?.total_chunks||0)!==EXPECTED_TOTAL || Number(stats?.vector_count||0)!==EXPECTED_TOTAL){
+    return fail("secondary must be 28636/28636 after vector completion");
+  }
+
+  // Hard gate: no target may remain vectorless in R2.
+  for(const id of targets){
+    if(!vectorOf(rowRefs.get(id)?.row))return fail("target remains vectorless in R2: "+id);
   }
 
   // Full R2 audit after patching.
