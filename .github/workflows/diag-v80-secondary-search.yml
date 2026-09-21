@@ -1,0 +1,51 @@
+name: Diagnose V8 Secondary Search
+
+on:
+  push:
+    branches:
+      - diag-v80-secondary-search-20260921
+    paths:
+      - ".github/workflows/diag-v80-secondary-search.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+      SECONDARY_URL: https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary
+      WORKER_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+    steps:
+      - name: Probe secondary manifest and search
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FNS_OWNER_TOKEN"
+          UA='Mozilla/5.0 FNS-Recovery-Diagnostic/1.0'
+          curl -fsS --max-time 20 -X POST "$SECONDARY_URL?action=manifest" \
+            -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN" \
+            -H "Content-Type: application/json" -H "User-Agent: $UA" \
+            --data '{}' | tee /tmp/manifest.json
+          jq -e '.ok==true and .total_chunks==25199 and .vector_count==25199' /tmp/manifest.json >/dev/null
+          curl -fsS --max-time 30 -X POST "$SECONDARY_URL?action=search" \
+            -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN" \
+            -H "Content-Type: application/json" -H "User-Agent: $UA" \
+            --data '{"query":"Jesus Cristo convênio","query_embedding":null,"per_document_k":20,"global_limit":20}' | tee /tmp/edge-search.json
+          jq -e '.ok==true and (.matches|type)=="array" and (.matches|length)>0' /tmp/edge-search.json >/dev/null
+          echo "EDGE_SECONDARY_SEARCH_PASS=yes"
+      - name: Probe production worker RAG
+        shell: bash
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 FNS-Recovery-Diagnostic/1.0'
+          code="$(curl -sS --max-time 30 -o /tmp/worker-rag.json -w '%{http_code}' -X POST "$WORKER_URL/api/rag/search" \
+            -H "Content-Type: application/json" -H "User-Agent: $UA" \
+            --data '{"question":"Jesus Cristo convênio"}' || true)"
+          cat /tmp/worker-rag.json
+          echo "WORKER_RAG_HTTP=$code"
+          jq -e '.ok==true and (.matches|type)=="array" and (.matches|length)>0' /tmp/worker-rag.json >/dev/null
+          test "$code" = "200"
+          echo "WORKER_RAG_SEARCH_PASS=yes"
