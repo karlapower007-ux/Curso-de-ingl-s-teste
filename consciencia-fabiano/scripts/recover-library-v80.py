@@ -45,6 +45,7 @@ def log(stage,**data):
 
 def request_json(method,url,headers=None,payload=None,timeout=45,retries=HTTP_RETRIES,accepted=(200,)):
     headers=dict(headers or {})
+    headers.setdefault("User-Agent","curl/8.5.0")
     body=None
     if payload is not None:
         body=json.dumps(payload,ensure_ascii=False,separators=(",",":")).encode("utf-8")
