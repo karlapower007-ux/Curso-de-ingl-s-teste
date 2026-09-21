@@ -22,6 +22,10 @@ must(worker.includes("async function citationSearchR2Segment"),"segmented author
 must(worker.includes("CITATION_R2_SHARDS_PER_REQUEST"),"bounded R2 shard segment missing");
 must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 4;"),"citation segments must stay at four shards to avoid CPU 1102 under concurrent PC/mobile scans");
 must(worker.includes("function chapterWordToNumber"),"written chapter number resolver missing");
+must(worker.includes("function extractNamedSectionHeading"),"named book section resolver missing");
+must(worker.includes("function extractScriptureHeading"),"scripture heading resolver missing");
+must(worker.includes("function extractScriptureVerseRange"),"scripture verse range resolver missing");
+must(worker.includes("function syntheticScriptureReference"),"scripture canonical reference builder missing");
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
 must(!worker.includes('if(/\\b(?:doutrina e convenios|doctrine and covenants)\\b/.test(value)) return "doctrine-and-covenants";'),"broad scripture filename classifier must not return");
 
@@ -51,6 +55,8 @@ must(app.includes("CITATION_UI_PAGE_SIZE=50"),"browser pagination must be 50");
 must(app.includes("scan_cursor"),"browser must continue segmented citation scans");
 must(app.includes("continueBackgroundScan"),"browser must continue citation scanning without blocking the first page");
 must(app.includes("libraryTotal"),"browser must report scanned library progress");
+must(app.includes("carry_scripture_book"),"desktop/mobile client must carry scripture book");
+must(app.includes("carry_scripture_chapter"),"desktop/mobile client must carry scripture chapter");
 must(app.includes('citation_query:q'),"citation query must be preserved with chat history");
 must(app.includes("500 nós lógicos"),"500-node label must not masquerade as 500 retrieved citations");
 
