@@ -1797,14 +1797,15 @@ function chapterWordToNumber(value) {
   return null;
 }
 
+const CHAPTER_HEADING_TOKEN="[0-9]{1,4}|[IVXLCDM]{1,12}|[A-Za-zÀ-ÿ]+(?:[-\\s](?:e|and|[A-Za-zÀ-ÿ]+)){0,2}";
+const CHAPTER_HEADING_PATTERNS=[
+  new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
+  new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu")
+];
+
 function extractChapterHeading(text) {
   const raw=String(text || "").replace(/\r/g,"\n");
-  const token="[0-9]{1,4}|[IVXLCDM]{1,12}|[A-Za-zÀ-ÿ]+(?:[-\\s](?:e|and|[A-Za-zÀ-ÿ]+)){0,2}";
-  const patterns=[
-    new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+token+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
-    new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+token+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu")
-  ];
-  for(const re of patterns){
+  for(const re of CHAPTER_HEADING_PATTERNS){
     const match=raw.match(re);
     if(!match) continue;
     const number=chapterWordToNumber(match[1]);
@@ -1819,7 +1820,19 @@ function extractChapterHeading(text) {
   return null;
 }
 
+const SCRIPTURE_SOURCE_SUFFIX="(?:lds|sud|edicao|edition|portugues|portuguese|english|por|pt|eng|en|spa|es|\\d{2,8})";
+const SCRIPTURE_SOURCE_PATTERNS=[
+  ["standard-works",new RegExp("^(?:obras padrao|standard works|scriptures|escrituras)(?:\\s+"+SCRIPTURE_SOURCE_SUFFIX+")*$")],
+  ["book-of-mormon",new RegExp("^(?:(?:o|the)\\s+)?(?:livro de mormon|book of mormon)(?:\\s+"+SCRIPTURE_SOURCE_SUFFIX+")*$")],
+  ["doctrine-and-covenants",new RegExp("^(?:doutrina e convenios|doctrine and covenants)(?:\\s+"+SCRIPTURE_SOURCE_SUFFIX+")*$")],
+  ["pearl-of-great-price",new RegExp("^(?:perola de grande valor|pearl of great price)(?:\\s+"+SCRIPTURE_SOURCE_SUFFIX+")*$")],
+  ["bible",new RegExp("^(?:(?:a|the)\\s+)?(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)(?:\\s+"+SCRIPTURE_SOURCE_SUFFIX+")*$")]
+];
+const scriptureSourceKindCache=new Map();
+
 function scriptureSourceKind(filename,title) {
+  const cacheKey=String(filename||"")+"\n"+String(title||"");
+  if(scriptureSourceKindCache.has(cacheKey)) return scriptureSourceKindCache.get(cacheKey);
   const normalize=value=>foldSearchText(
     String(value || "")
       .replace(/\.(?:pdf|txt|epub|docx?)$/i,"")
@@ -1828,20 +1841,18 @@ function scriptureSourceKind(filename,title) {
       .trim()
   );
   const candidates=[filename,title].map(normalize).filter(Boolean);
-  const suffix="(?:lds|sud|edicao|edition|portugues|portuguese|english|por|pt|eng|en|spa|es|\\d{2,8})";
-  const exactPatterns=[
-    ["standard-works",new RegExp("^(?:obras padrao|standard works|scriptures|escrituras)(?:\\s+"+suffix+")*$")],
-    ["book-of-mormon",new RegExp("^(?:(?:o|the)\\s+)?(?:livro de mormon|book of mormon)(?:\\s+"+suffix+")*$")],
-    ["doctrine-and-covenants",new RegExp("^(?:doutrina e convenios|doctrine and covenants)(?:\\s+"+suffix+")*$")],
-    ["pearl-of-great-price",new RegExp("^(?:perola de grande valor|pearl of great price)(?:\\s+"+suffix+")*$")],
-    ["bible",new RegExp("^(?:(?:a|the)\\s+)?(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)(?:\\s+"+suffix+")*$")]
-  ];
-  for(const value of candidates){
-    for(const [kind,re] of exactPatterns){
-      if(re.test(value)) return kind;
+  let result="";
+  outer: for(const value of candidates){
+    for(const [kind,re] of SCRIPTURE_SOURCE_PATTERNS){
+      if(re.test(value)){
+        result=kind;
+        break outer;
+      }
     }
   }
-  return "";
+  if(scriptureSourceKindCache.size>=128) scriptureSourceKindCache.clear();
+  scriptureSourceKindCache.set(cacheKey,result);
+  return result;
 }
 
 function canonicalScriptureBook(raw) {
@@ -1896,14 +1907,15 @@ function scriptureWorkForBook(book) {
   return "Bíblia";
 }
 
+const SCRIPTURE_REFERENCE_BOOK_PATTERN="(?:[1-4]\\s*(?:N[eé]fi|Nephi)|Palavras\\s+de\\s+M[oó]rmon|Words\\s+of\\s+Mormon|Jac[oó]|Jacob|Enos|Jarom|[ÔO]mni|Mosias|Mosiah|Alma|Helam[aã]|Helaman|M[oó]rmon|Mormon|[EÉ]ter|[EÉ]t\\.?|Ether|Mor[oô]ni|Moroni|Doutrina\\s+e\\s+Conv[eê]nios|Doctrine\\s+and\\s+Covenants|D\\s*&\\s*C|Mois[eé]s|Moses|Abra[aã]o|Abraham|Joseph\\s+Smith[—\\- ]Hist[oó]ria|Joseph\\s+Smith[—\\- ]History|G[eê]nesis|Gen\\.?|Genesis|[EÊ]xodo|Ex\\.?|Exodus|Lev[ií]tico|Lev\\.?|N[uú]meros|N[uú]m\\.?|Deuteron[oô]mio|Deut\\.?|Josu[eé]|Ju[ií]zes|Rute|Ruth|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?(?:Reis|Kings)|(?:[12]\\s*)?(?:Cr[oô]nicas|Chronicles)|Esdras|Ezra|Neemias|Nehemiah|Ester|Esther|J[oó]|Job|Salmos?|Psalms?|Prov[eé]rbios|Prov\\.?|Eclesiastes|Ecclesiastes|Cantares|Isa[ií]as|Isa\\.?|Isaiah|Jeremias|Jer\\.?|Jeremiah|Lamenta[cç][oõ]es|Ezequiel|Ezekiel|Daniel|Oseias|Hosea|Joel|Am[oó]s|Obadias|Obadiah|Jonas|Jonah|Miqueias|Micah|Naum|Nahum|Habacuque|Habakkuk|Sofonias|Zephaniah|Ageu|Haggai|Zacarias|Zechariah|Malaquias|Malachi|Mateus|Mat\\.?|Mt\\.?|Matthew|Marcos|Mc\\.?|Mark|Lucas|Lc\\.?|Luke|Jo[aã]o|John|Atos|At\\.?|Acts|Romanos|Rom\\.?|(?:[12]\\s*)?(?:Cor[ií]ntios|Corinthians)|G[aá]atas|Galatians|Ef[eé]sios|Ephesians|Filipenses|Philippians|Colossenses|Colossians|(?:[12]\\s*)?(?:Tessalonicenses|Thessalonians)|(?:[12]\\s*)?(?:Tim[oó]teo|Timothy)|Tito|Titus|Filemom|Philemon|Hebreus|Hebrews|Tiago|James|(?:[12]\\s*)?(?:Pedro|Peter)|(?:[123]\\s*)?(?:Jo[aã]o|John)|Judas|Jude|Apocalipse|Revelation)";
+const SCRIPTURE_REFERENCE_RE=new RegExp("(?<![\\p{L}\\p{N}])("+SCRIPTURE_REFERENCE_BOOK_PATTERN+")\\s*\\.?\\s*(\\d{1,3})\\s*:\\s*(\\d{1,3})(?:\\s*[–—-]\\s*(\\d{1,3}))?","giu");
+
 function extractScriptureReferences(text) {
   const raw=String(text || "");
   if(!raw) return [];
-  const bookPattern="(?:[1-4]\\s*(?:N[eé]fi|Nephi)|Palavras\\s+de\\s+M[oó]rmon|Words\\s+of\\s+Mormon|Jac[oó]|Jacob|Enos|Jarom|[ÔO]mni|Mosias|Mosiah|Alma|Helam[aã]|Helaman|M[oó]rmon|Mormon|[EÉ]ter|[EÉ]t\\.?|Ether|Mor[oô]ni|Moroni|Doutrina\\s+e\\s+Conv[eê]nios|Doctrine\\s+and\\s+Covenants|D\\s*&\\s*C|Mois[eé]s|Moses|Abra[aã]o|Abraham|Joseph\\s+Smith[—\\- ]Hist[oó]ria|Joseph\\s+Smith[—\\- ]History|G[eê]nesis|Gen\\.?|Genesis|[EÊ]xodo|Ex\\.?|Exodus|Lev[ií]tico|Lev\\.?|N[uú]meros|N[uú]m\\.?|Deuteron[oô]mio|Deut\\.?|Josu[eé]|Ju[ií]zes|Rute|Ruth|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?(?:Reis|Kings)|(?:[12]\\s*)?(?:Cr[oô]nicas|Chronicles)|Esdras|Ezra|Neemias|Nehemiah|Ester|Esther|J[oó]|Job|Salmos?|Psalms?|Prov[eé]rbios|Prov\\.?|Eclesiastes|Ecclesiastes|Cantares|Isa[ií]as|Isa\\.?|Isaiah|Jeremias|Jer\\.?|Jeremiah|Lamenta[cç][oõ]es|Ezequiel|Ezekiel|Daniel|Oseias|Hosea|Joel|Am[oó]s|Obadias|Obadiah|Jonas|Jonah|Miqueias|Micah|Naum|Nahum|Habacuque|Habakkuk|Sofonias|Zephaniah|Ageu|Haggai|Zacarias|Zechariah|Malaquias|Malachi|Mateus|Mat\\.?|Mt\\.?|Matthew|Marcos|Mc\\.?|Mark|Lucas|Lc\\.?|Luke|Jo[aã]o|John|Atos|At\\.?|Acts|Romanos|Rom\\.?|(?:[12]\\s*)?(?:Cor[ií]ntios|Corinthians)|G[aá]atas|Galatians|Ef[eé]sios|Ephesians|Filipenses|Philippians|Colossenses|Colossians|(?:[12]\\s*)?(?:Tessalonicenses|Thessalonians)|(?:[12]\\s*)?(?:Tim[oó]teo|Timothy)|Tito|Titus|Filemom|Philemon|Hebreus|Hebrews|Tiago|James|(?:[12]\\s*)?(?:Pedro|Peter)|(?:[123]\\s*)?(?:Jo[aã]o|John)|Judas|Jude|Apocalipse|Revelation)";
-  const re=new RegExp("(?<![\\p{L}\\p{N}])("+bookPattern+")\\s*\\.?\\s*(\\d{1,3})\\s*:\\s*(\\d{1,3})(?:\\s*[–—-]\\s*(\\d{1,3}))?","giu");
   const out=[],seen=new Set();
   let match;
-  while((match=re.exec(raw))!==null && out.length<24){
+  SCRIPTURE_REFERENCE_RE.lastIndex=0;\n  while((match=SCRIPTURE_REFERENCE_RE.exec(raw))!==null && out.length<24){
     const book=canonicalScriptureBook(match[1]);
     const chapter=Number(match[2]);
     const verseStart=Number(match[3]);
@@ -1925,19 +1937,20 @@ function extractScriptureReferences(text) {
 }
 
 
+const NAMED_SECTION_BLOCKED=new Set([
+  "conteudo","conteudos","sumario","indice","prefacio","sobre o autor","introducao",
+  "contents","table of contents","preface","about the author","introduction"
+]);
+
 function extractNamedSectionHeading(text,documentTitle="") {
   const raw=String(text || "").replace(/\r/g,"\n");
   const doc=foldSearchText(documentTitle);
-  const blocked=new Set([
-    "conteudo","conteudos","sumario","indice","prefacio","sobre o autor","introducao",
-    "contents","table of contents","preface","about the author","introduction"
-  ]);
   const lines=raw.split("\n").slice(0,28);
   for(const source of lines){
     const line=String(source||"").replace(/\s+/g," ").trim();
     if(line.length<3 || line.length>140) continue;
     const folded=foldSearchText(line.replace(/^\d+\s+|\s+\d+$/g,""));
-    if(!folded || blocked.has(folded)) continue;
+    if(!folded || NAMED_SECTION_BLOCKED.has(folded)) continue;
     if(doc && (folded===doc || (folded.length>12 && doc.includes(folded)))) continue;
 
     const explicit=line.match(/^(?:se[cç][aã]o|section|parte|part)\s+(?:[0-9IVXLCDM]+[-.:]?\s*)?(.{2,120})$/iu);
@@ -1957,37 +1970,35 @@ function extractNamedSectionHeading(text,documentTitle="") {
 }
 
 const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria)";
+const SCRIPTURE_HEADING_LINE_RE=new RegExp(
+  "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
+  "imu"
+);
+const SCRIPTURE_BOOK_THEN_CHAPTER_RE=new RegExp(
+  "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
+  "imu"
+);
+
 
 function scriptureCollectionSeed(kind) {
+  if(kind==="standard-works") return "Gênesis";
+  if(kind==="book-of-mormon") return "1 Néfi";
   if(kind==="doctrine-and-covenants") return "Doutrina e Convênios";
+  if(kind==="pearl-of-great-price") return "Moisés";
+  if(kind==="bible") return "Gênesis";
   return "";
 }
 
-function extractScriptureHeading(text,currentBook="",precomputedDirect=null) {
+function extractScriptureHeading(text,currentBook="") {
   const raw=String(text || "").replace(/\r/g,"\n");
-  const direct=Array.isArray(precomputedDirect)
-    ? precomputedDirect
-    : (/\d{1,3}\s*:\s*\d{1,3}/.test(raw) ? extractScriptureReferences(raw) : []);
-  if(direct.length){
-    const last=direct[direct.length-1];
-    return {book:last.book,chapter:last.chapter,work:last.work};
-  }
 
-  const lineRef=new RegExp(
-    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
-    "imu"
-  );
-  const lineMatch=raw.match(lineRef);
+  const lineMatch=raw.match(SCRIPTURE_HEADING_LINE_RE);
   if(lineMatch){
     const book=canonicalScriptureBook(lineMatch[1]);
     return {book,chapter:Number(lineMatch[2]),work:scriptureWorkForBook(book)};
   }
 
-  const bookThenChapter=new RegExp(
-    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
-    "imu"
-  );
-  const bookMatch=raw.match(bookThenChapter);
+  const bookMatch=raw.match(SCRIPTURE_BOOK_THEN_CHAPTER_RE);
   if(bookMatch){
     const book=canonicalScriptureBook(bookMatch[1]);
     return {book,chapter:Number(bookMatch[2]),work:scriptureWorkForBook(book)};
@@ -2065,6 +2076,7 @@ function citationPublicView(row,index=0) {
     page_display:page ? "Página "+page : "Página: não localizada",
     primary_reference:primaryScripture?.reference || "",
     scripture_references:scriptureRefs,
+    cross_references:Array.isArray(row.cross_references)?row.cross_references:[],
     excerpt:cleanNarrativeText(row.text || "").slice(0,720),
     technical_document:String(row.filename || "").replace(/[\r\n]+/g," ").trim(),
     document_id:String(row.document_id || ""),
@@ -2196,11 +2208,9 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       }
 
       const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
-      const explicitScriptureReferenceLikely=Boolean(scriptureKind && /\d{1,3}\s*:\s*\d{1,3}/.test(rowText));
-      const parsedScriptureRefs=explicitScriptureReferenceLikely ? extractScriptureReferences(rowText) : [];
       if(scriptureKind){
         if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
-        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook,parsedScriptureRefs);
+        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
         if(scriptureHeading){
           currentScriptureBook=scriptureHeading.book || currentScriptureBook;
           currentScriptureChapter=scriptureHeading.chapter || currentScriptureChapter;
@@ -2219,19 +2229,17 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       const lexical=citationLexicalScore(rowText,query,terms);
       if(!lexical) continue;
 
-      let directScriptureRefs=scriptureKind ? parsedScriptureRefs : [];
-      if(scriptureKind && !directScriptureRefs.length){
-        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook,[]);
-        const book=scriptureHeading?.book || currentScriptureBook;
-        const chapter=scriptureHeading?.chapter || currentScriptureChapter;
+      let scriptureLocationRefs=[];
+      let scriptureCrossRefs=[];
+      if(scriptureKind){
         const verseRange=extractScriptureVerseRange(rowText,Number(row?.page||0));
-        const synthetic=syntheticScriptureReference(book,chapter,verseRange);
-        if(synthetic) directScriptureRefs=[synthetic];
-      }
-      if(directScriptureRefs.length){
-        const lastRef=directScriptureRefs[directScriptureRefs.length-1];
-        currentScriptureBook=lastRef.book || currentScriptureBook;
-        currentScriptureChapter=lastRef.chapter || currentScriptureChapter;
+        const synthetic=syntheticScriptureReference(currentScriptureBook,currentScriptureChapter,verseRange);
+        if(synthetic) scriptureLocationRefs=[synthetic];
+        if(/\d{1,3}\s*:\s*\d{1,3}/.test(rowText)){
+          scriptureCrossRefs=extractScriptureReferences(rowText)
+            .filter(ref=>!synthetic || ref.reference!==synthetic.reference)
+            .slice(0,12);
+        }
       }
 
       const inlineHeading=!scriptureKind ? extractChapterHeading(String(row?.title||"")+"\n"+rowText) : null;
@@ -2252,7 +2260,8 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
         coverage:lexical.coverage,
         matched_terms:lexical.matched_terms,
         scripture_source_kind:scriptureKind,
-        scripture_references:directScriptureRefs,
+        scripture_references:scriptureLocationRefs,
+        cross_references:scriptureCrossRefs,
         chapter_number:chapterNumber,
         chapter_title:chapterTitle
       });
@@ -5446,6 +5455,8 @@ async function status(env) {
     citation_dictionary_strict_scripture_source_classification: true,
     citation_dictionary_canonical_filename_suffixes: true,
     citation_dictionary_scripture_direct_ref_gate: true,
+    citation_dictionary_regex_precompiled: true,
+    citation_dictionary_scripture_location_not_crossref: true,
     citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_chapter_word_numbers: true,
     cross_document_citation_mode: "mandatory",
