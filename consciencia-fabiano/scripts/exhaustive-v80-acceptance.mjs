@@ -20,6 +20,10 @@ assert(index.includes("function stripSynthesisPrincipalLabel"),"robust-synthesis
 assert(index.includes("function publicSourceView"),"public-source-sanitizer");
 assert(index.includes("fontes:publicSourceViews(usedSources)") || index.includes("fontes: publicSourceViews(usedSources)"),"public-source-payload-sanitized");
 assert(index.includes("sources: publicSourceViews(sources)"),"persistent-memory-source-sanitized");
+assert(index.includes("function secondaryLexicalRescueQueries"),"secondary-lexical-rescue-present");
+assert(index.includes("semanticAnchorCoverage(rowText,rescueQuery)"),"secondary-rescue-coverage-uses-focused-query");
+assert(index.includes("rescueSuccesses>=3"),"secondary-rescue-multi-group-bounded");
+assert(index.includes("return out.slice(0,6)"),"secondary-rescue-probe-cap");
 assert(preservation?.library?.expected_verified_chunks===28636,"preservation-chunks-28636");
 assert(preservation?.library?.expected_verified_vectors===28636,"preservation-vectors-28636");
 assert(preservation?.library?.historical_verified_fallback_chunks===25199,"historical-fallback-preserved");
@@ -36,6 +40,9 @@ console.log(JSON.stringify({
   information_preservation_gate:true,
   endpoint_degraded_guards:true,
   public_source_metadata_sanitized:true,
+  broad_query_subject_rescue:true,
+  broad_query_rescue_probe_cap:6,
+  broad_query_rescue_group_cap:3,
   preservation_floor_chunks:28636,
   preservation_floor_vectors:28636,
   degraded_do_release_gate:true

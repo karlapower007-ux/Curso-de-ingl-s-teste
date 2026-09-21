@@ -788,23 +788,49 @@ function secondaryLexicalRescueQueries(question) {
   if(!raw) return [];
   const out=[];
   const push=value=>{
-    const q=String(value || "").replace(/^[\s"'“”‘’]+|[\s"'“”‘’?.!,;:]+$/g,"").trim();
+    const q=String(value || "")
+      .replace(/^[\s"'“”‘’]+|[\s"'“”‘’?.!,;:]+$/g,"")
+      .replace(/\s+/g," ")
+      .trim();
     if(q.length>=3 && !out.some(x=>foldSearchText(x)===foldSearchText(q))) out.push(q);
   };
+  const trimClause=value=>String(value || "")
+    .replace(/^\s*(?:o|a|os|as|um|uma|uns|umas|seu|seus|sua|suas|the|a|an|his|her|their|its)\s+/iu,"")
+    .trim();
 
-  // Prefer the explicit subject after "sobre/about" when present.
-  const subject=raw.match(/\b(?:sobre|about)\s+(.{3,120}?)(?:[?.!]|$)/iu)?.[1];
-  if(subject) push(subject);
+  // For broad natural-language instructions, probe the SUBJECT rather than
+  // trailing instruction words such as "síntese", "desenvolva" or "relevantes".
+  const subject=raw.match(/\b(?:sobre|about)\s+(.{3,180}?)(?:[?.!]|$)/iu)?.[1] || "";
+  if(subject){
+    const subjectTerms=lexicalTerms(subject)
+      .filter(term=>!/^(?:seu|seus|sua|suas|his|her|their|its)$/i.test(term));
+    if(subjectTerms.length) push(subjectTerms[0]);
+
+    for(const clause of subject.split(/\s*(?:,|;|\be\b|\band\b)\s*/iu)){
+      const focused=trimClause(clause);
+      if(focused) push(focused);
+    }
+
+    if(subjectTerms.length>=2) push(subjectTerms.slice(-2).join(" "));
+    push(subject);
+  }
 
   // Hyphenated named entities are highly discriminative (e.g. Adam-Ondi-Ahman).
   for(const match of raw.matchAll(/\b[\p{L}\p{M}]+(?:[-–—][\p{L}\p{M}]+){1,}\b/gu)) push(match[0]);
 
-  const terms=lexicalTerms(raw);
-  if(terms.length>=3) push(terms.slice(-3).join(" "));
-  if(terms.length>=2) push(terms.slice(-2).join(" "));
-  if(terms.length) push(terms[terms.length-1]);
+  if(!out.length){
+    const instructionNoise=new Set([
+      "faca","faça","estudo","profundo","desenvolvido","usando","biblioteca","resuma","resumo",
+      "sintese","síntese","desenvolva","desenvolver","pontos","documentais","relevantes","resposta",
+      "explain","analyze","analyse","study","deep","developed","library","summary","summarize","relevant"
+    ]);
+    const terms=lexicalTerms(raw).filter(term=>!instructionNoise.has(term));
+    if(terms.length) push(terms[0]);
+    if(terms.length>=2) push(terms.slice(0,2).join(" "));
+    if(terms.length>=2) push(terms.slice(-2).join(" "));
+  }
 
-  return out.slice(0,4);
+  return out.slice(0,6);
 }
 
 async function retrieveLexicalContext(env, question) {
@@ -1614,8 +1640,9 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
         readableSearches++;
       } else if(!Array.isArray(suppliedEmbedding) || suppliedEmbedding.length<64) {
         // Deterministic lexical rescue for verbose natural-language questions.
-        // No LLM and no fuzzy OR expansion: narrow the query to the explicit subject
-        // or the most distinctive trailing terms only after the full query returned zero.
+        // Probe a bounded set of subject-focused queries and preserve up to three
+        // successful evidence groups so broad questions do not collapse to one concept.
+        let rescueSuccesses=0;
         for(const rescueQuery of secondaryLexicalRescueQueries(question)){
           const rescued=await retrieveSecondaryHybridContext(
             env,
@@ -1624,13 +1651,21 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
             {perDocumentK:50,globalLimit:150}
           );
           if(Array.isArray(rescued?.matches) && rescued.matches.length){
-            groups.push(rescued.matches.map(row=>({
-              ...row,
-              retrieval_mode:String(row?.retrieval_mode || "supabase-secondary-hybrid")+"-lexical-rescue",
-              rescue_query:rescueQuery
-            })));
+            groups.push(rescued.matches.map(row=>{
+              const rowText=String(row?.text || row?.trecho || "");
+              return {
+                ...row,
+                coverage:Math.max(
+                  Number(row?.coverage || 0),
+                  semanticAnchorCoverage(rowText,rescueQuery)
+                ),
+                retrieval_mode:String(row?.retrieval_mode || "supabase-secondary-hybrid")+"-lexical-rescue",
+                rescue_query:rescueQuery
+              };
+            }));
             readableSearches++;
-            break;
+            rescueSuccesses++;
+            if(rescueSuccesses>=3) break;
           }
         }
       }
