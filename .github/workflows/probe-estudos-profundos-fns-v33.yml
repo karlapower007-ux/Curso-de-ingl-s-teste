@@ -255,6 +255,41 @@ jobs:
           }
           NODE
 
+      - name: Inspect lazy FNS PDF admin panel bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          FILE="probe/assets/fabiano-admin-panel-DAzPOv0O.js"
+          curl -L --compressed --fail --silent --show-error --max-time 30             "$BASE/_next/static/chunks/fabiano-admin-panel-DAzPOv0O.js" -o "$FILE"
+
+          echo "--- FNS ADMIN PANEL API AND STORAGE CONTRACT ---"
+          node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2], src=fs.readFileSync(p,'utf8');
+          const needles=[
+            '/api/fabiano/admin/documents',
+            '/api/fabiano/admin/chunks',
+            '/api/fabiano/admin/export',
+            '/api/fabiano/admin/index-job',
+            '/api/fabiano/admin/uploads',
+            'pdf.js','pdfjs','PDF','embedding','vector','chunk',
+            'indexedDB','navigator.storage','FileReader','crypto.subtle',
+            'reindex','delete','DELETE','POST','PUT'
+          ];
+          console.log('BYTES='+src.length);
+          for(const n of needles){
+            let from=0,count=0;
+            while(count<3){
+              const i=src.indexOf(n,from);
+              if(i<0) break;
+              console.log('\n### '+n+' #'+(count+1));
+              console.log(src.slice(Math.max(0,i-2200),Math.min(src.length,i+5200)));
+              from=i+n.length; count++;
+            }
+          }
+          NODE
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
