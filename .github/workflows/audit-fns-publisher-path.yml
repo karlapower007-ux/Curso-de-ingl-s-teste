@@ -24,6 +24,10 @@ jobs:
         shell: bash
         run: |
           set -u
+          echo "=== WORKFLOWS MATCHING SITE/CHATGPT/PUBLISH ==="
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows?per_page=100" \
+            --jq '[.workflows[]|select(((.name+" "+.path)|ascii_downcase|test("chatgpt|site|publish|deploy.*fns|fns.*deploy")))|{id,name,path,state,created_at,updated_at,html_url}]' || true
+
           echo "=== WORKFLOW 360999688 RUNS ==="
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/360999688/runs?per_page=100"             --jq '{total_count,workflow_runs:[.workflow_runs[]|{id,name,event,status,conclusion,head_branch,head_sha,path,run_number,created_at,updated_at,html_url}]}' || true
 
