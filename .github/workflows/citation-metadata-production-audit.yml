@@ -36,6 +36,7 @@ jobs:
           scripture_ref_missing=0
           sample_book_missing=0
           sample_scripture_missing=0
+          : > /tmp/citation-audit.ndjson
           guard=0
 
           while [ "$guard" -lt 200 ]; do
@@ -73,6 +74,8 @@ jobs:
               .backend == "r2-authoritative" and
               (.citations|type) == "array"
             ' >/dev/null
+
+            echo "$body" | jq -c '.citations[] | {technical_document,bibliographic_type,metadata_complete,chapter,page,primary_reference}' >> /tmp/citation-audit.ndjson
 
             batch_scanned="$(echo "$body" | jq -r '(.scanned_batch // .scanned // 0) | tonumber')"
             batch_found="$(echo "$body" | jq -r '(.returned // (.citations|length) // 0) | tonumber')"
@@ -138,6 +141,20 @@ jobs:
           echo "AUDIT_SCRIPTURE_TOTAL=$scripture_total"
           echo "AUDIT_SCRIPTURE_COMPLETE=$scripture_complete"
           echo "AUDIT_SCRIPTURE_REFERENCE_MISSING=$scripture_ref_missing"
+          echo "AUDIT_DOCUMENT_BREAKDOWN_BEGIN"
+          jq -s '
+            group_by(.technical_document) |
+            map({
+              document: .[0].technical_document,
+              total:length,
+              books:([.[]|select(.bibliographic_type=="book")]|length),
+              scriptures:([.[]|select(.bibliographic_type=="scripture")]|length),
+              complete:([.[]|select(.metadata_complete==true)]|length),
+              chapter_missing:([.[]|select(.bibliographic_type=="book" and ((.chapter//0)==0))]|length),
+              scripture_ref_missing:([.[]|select(.bibliographic_type=="scripture" and ((.primary_reference//"")==""))]|length)
+            })
+          ' /tmp/citation-audit.ndjson
+          echo "AUDIT_DOCUMENT_BREAKDOWN_END"
 
           {
             echo "### Citation metadata production audit"
