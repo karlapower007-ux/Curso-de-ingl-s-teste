@@ -79,8 +79,7 @@ jobs:
                 await context.close();
                 continue;
               }
-              await page.waitForFunction(()=>document.querySelectorAll('#booksList .book').length>0,{timeout:30000});
-              await page.waitForTimeout(1500);
+              await page.waitForTimeout(8000);
               const rows=await page.locator('#booksList .book').evaluateAll(nodes=>nodes.map(n=>({
                 title:n.querySelector('strong')?.textContent?.trim()||'',
                 detail:n.querySelector('small')?.textContent?.trim()||''
