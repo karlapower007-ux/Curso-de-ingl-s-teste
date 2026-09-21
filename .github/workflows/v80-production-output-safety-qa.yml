@@ -1,0 +1,55 @@
+name: V8 Production Output Safety QA
+
+on:
+  push:
+    branches:
+      - "ops-v80-output-production-qa-20260921"
+    paths:
+      - ".github/workflows/v80-production-output-safety-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Memory endpoint must not leak DO failure as HTTP 500
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://consciencia-fabiano.focoeepoder2.workers.dev"
+          code=$(curl -sS --max-time 30 -o /tmp/memory.json -w "%{http_code}" \
+            -H "User-Agent: curl/8.5.0" \
+            -H "X-FNS-Memory-Key: qa-memory-key-0123456789abcdef0123456789abcdef" \
+            "$BASE/api/memory")
+          cat /tmp/memory.json
+          test "$code" = "200"
+          jq -e '.ok == true and ((.persistent == true) or (.degraded == true))' /tmp/memory.json >/dev/null
+          echo "MEMORY_NO_HTTP_500=pass"
+
+      - name: Full answer must be exhaustive and public metadata sanitized
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://consciencia-fabiano.focoeepoder2.workers.dev"
+          jq -nc '{pergunta:"Explique em profundidade, usando todas as evidências recuperadas, o que os documentos dizem sobre Adam-Ondi-Ahman.",stream:false}' >/tmp/chat-body.json
+          code=$(curl -sS --max-time 180 -o /tmp/chat.json -w "%{http_code}" \
+            -H "User-Agent: curl/8.5.0" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/chat-body.json "$BASE/api/chat")
+          echo "CHAT_HTTP=$code"
+          jq '{ok,resposta_chars:(.resposta|length),full_text_chars:(.full_text|length),fontes_count:(.fontes|length),provider,information_preservation_gate,continuation_parts}' /tmp/chat.json
+          test "$code" = "200"
+          jq -e '.ok == true and (.resposta|type)=="string" and (.resposta|length)>200 and .full_text == .resposta' /tmp/chat.json >/dev/null
+          if jq -r '.resposta' /tmp/chat.json | grep -Eqi '(^|[[:space:]#*0-9.])S[ÍI]NTESE[[:space:]]+PRINCIPAL'; then
+            echo "SYNTHESIS_PRINCIPAL_LEAK=fail"
+            exit 1
+          fi
+          jq -e 'all(.fontes[]?; ((keys_unsorted - ["ref_id","arquivo","titulo","autor","idioma","pagina"])|length)==0)' /tmp/chat.json >/dev/null
+          jq -e 'all(.fontes[]?; (has("document_id")|not) and (has("trecho")|not) and (has("score")|not) and (has("retrieval_mode")|not))' /tmp/chat.json >/dev/null
+          echo "SYNTHESIS_PRINCIPAL_DISABLED=pass"
+          echo "PUBLIC_SOURCE_METADATA_SANITIZED=pass"
+          echo "FULL_TEXT_ALIAS=pass"
