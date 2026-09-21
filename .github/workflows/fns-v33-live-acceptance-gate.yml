@@ -1,0 +1,62 @@
+name: FNS v33 Live Acceptance Gate
+
+on:
+  push:
+    branches:
+      - estudos-profundos-fns-v33-golden-20260920
+    paths:
+      - ".github/workflows/fns-v33-live-acceptance-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate public route, assets, RAG and admin boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+
+          code="$(curl -L --compressed -sS -o /tmp/fale.html -w '%{http_code}' "$BASE/fale-com-o-fabiano")"
+          test "$code" = "200"
+          grep -q "Fale com o Fabiano" /tmp/fale.html
+
+          for asset in fabiano-sw.js avatar_idle.png avatar_listening.png avatar_speaking.png; do
+            code="$(curl -L --compressed -sS -o /dev/null -w '%{http_code}' "$BASE/$asset")"
+            test "$code" = "200"
+          done
+
+          admin_code="$(curl --compressed -sS -o /tmp/admin.json -w '%{http_code}' "$BASE/api/fabiano/admin/documents")"
+          test "$admin_code" = "401"
+
+          node - <<'NODE'
+          const base="https://estudos-profundos-fns.karlapower007.chatgpt.site";
+          const qs=[
+            "O que a biblioteca contém sobre Joseph Smith?",
+            "Explique Doutrina e Convênios 129 com base nos documentos da biblioteca.",
+            "Quais fontes da biblioteca tratam da Restauração?"
+          ];
+          let totalSources=0;
+          for(const question of qs){
+            const r=await fetch(base+"/api/fabiano/ask",{
+              method:"POST",
+              headers:{"content-type":"application/json"},
+              body:JSON.stringify({question,history:[]})
+            });
+            if(!r.ok) throw new Error("ask HTTP "+r.status);
+            const j=await r.json();
+            if(!Array.isArray(j.sources)) throw new Error("sources contract missing");
+            totalSources+=j.sources.length;
+            for(const src of j.sources){
+              if(!src || typeof src.title!=="string" || !src.title.trim()) throw new Error("invalid source title");
+              if(!Number.isFinite(Number(src.page)) || Number(src.page)<0) throw new Error("invalid source page");
+            }
+          }
+          console.log("TOTAL_REAL_SOURCES="+totalSources);
+          if(totalSources<=0) throw new Error("RAG acceptance blocked: no real retrievable sources");
+          NODE
