@@ -14,25 +14,79 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Inspect production citation metadata
         shell: bash
         run: |
           set -euo pipefail
           BASE="https://consciencia-fabiano.focoeepoder2.workers.dev"
-          tmp="$(mktemp)"
-          code="$(curl -sS --max-time 30 -G -o "$tmp" -w '%{http_code}'             --data-urlencode 'q=Deus'             --data-urlencode 'limit=50'             "$BASE/api/citations")"
-          echo "HTTP=$code"
-          cat "$tmp" | jq '{
-            ok,backend,library_total_chunks,scanned,returned,scan_done,
-            types:(.citations|group_by(.bibliographic_type)|map({type:.[0].bibliographic_type,count:length})),
-            ordinary_books:(.citations|map(select(.bibliographic_type=="book"))|length),
-            ordinary_books_complete:(.citations|map(select(.bibliographic_type=="book" and (.chapter!=null) and (.page!=null)))|length),
-            ordinary_books_incomplete:(.citations|map(select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null))))|length),
-            scriptures:(.citations|map(select(.bibliographic_type=="scripture"))|length),
-            scriptures_complete:(.citations|map(select(.bibliographic_type=="scripture" and (.primary_reference|length>0)))|length),
-            incomplete_book_samples:(.citations|map(select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null))))|.[0:8]|map({book,chapter,page,chapter_display,page_display,excerpt})),
-            scripture_samples:(.citations|map(select(.bibliographic_type=="scripture"))|.[0:8]|map({work,book,primary_reference,page}))
-          }'
-          test "$code" = "200"
+          cursor=""
+          carry_doc=""
+          carry_chapter=""
+          carry_title=""
+          guard=0
+          scanned=0
+          found=0
+          books=0
+          books_complete=0
+          books_incomplete=0
+          scriptures=0
+          scriptures_complete=0
+          scriptures_incomplete=0
+          : >/tmp/incomplete-books.ndjson
+          : >/tmp/incomplete-scriptures.ndjson
+
+          while [ "$guard" -lt 200 ]; do
+            guard=$((guard+1))
+            tmp="$(mktemp)"
+            args=(-sS --max-time 30 -G -o "$tmp" -w '%{http_code}'
+              --data-urlencode 'q=Deus'
+              --data-urlencode 'limit=50')
+            [ -n "$cursor" ] && args+=(--data-urlencode "scan_cursor=$cursor")
+            [ -n "$carry_doc" ] && args+=(--data-urlencode "carry_doc=$carry_doc")
+            [ -n "$carry_chapter" ] && args+=(--data-urlencode "carry_chapter=$carry_chapter")
+            [ -n "$carry_title" ] && args+=(--data-urlencode "carry_title=$carry_title")
+            code="$(curl "${args[@]}" "$BASE/api/citations")"
+            test "$code" = "200"
+            jq -e '.ok==true and .backend=="r2-authoritative"' "$tmp" >/dev/null
+
+            scanned=$((scanned + $(jq -r '(.scanned_batch // .scanned // 0)|tonumber' "$tmp")))
+            batch_found=$(jq -r '(.returned // 0)|tonumber' "$tmp")
+            found=$((found + batch_found))
+
+            b=$(jq '[.citations[]|select(.bibliographic_type=="book")]|length' "$tmp")
+            bc=$(jq '[.citations[]|select(.bibliographic_type=="book" and (.chapter!=null) and (.page!=null))]|length' "$tmp")
+            bi=$((b-bc))
+            s=$(jq '[.citations[]|select(.bibliographic_type=="scripture")]|length' "$tmp")
+            sc=$(jq '[.citations[]|select(.bibliographic_type=="scripture" and (.primary_reference|length>0))]|length' "$tmp")
+            si=$((s-sc))
+            books=$((books+b))
+            books_complete=$((books_complete+bc))
+            books_incomplete=$((books_incomplete+bi))
+            scriptures=$((scriptures+s))
+            scriptures_complete=$((scriptures_complete+sc))
+            scriptures_incomplete=$((scriptures_incomplete+si))
+
+            jq -c '.citations[]|select(.bibliographic_type=="book" and ((.chapter==null) or (.page==null)))|{book,chapter,page,chapter_display,page_display,excerpt}' "$tmp" >>/tmp/incomplete-books.ndjson
+            jq -c '.citations[]|select(.bibliographic_type=="scripture" and ((.primary_reference|length)==0))|{work,book,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/incomplete-scriptures.ndjson
+
+            done_flag="$(jq -r '(.scan_done // false)|tostring' "$tmp")"
+            cursor="$(jq -r '.next_scan_cursor // ""' "$tmp")"
+            carry_doc="$(jq -r '.carry.document_id // ""' "$tmp")"
+            carry_chapter="$(jq -r '.carry.chapter_number // ""' "$tmp")"
+            carry_title="$(jq -r '.carry.chapter_title // ""' "$tmp")"
+            library_total="$(jq -r '.library_total_chunks // 0' "$tmp")"
+            rm -f "$tmp"
+
+            echo "SEGMENT=$guard scanned=$scanned/$library_total found=$found books=$books incomplete_books=$books_incomplete scriptures=$scriptures incomplete_scriptures=$scriptures_incomplete done=$done_flag"
+            [ "$done_flag" = "true" ] && break
+            test -n "$cursor"
+          done
+
+          echo "FINAL scanned=$scanned found=$found books=$books books_complete=$books_complete books_incomplete=$books_incomplete scriptures=$scriptures scriptures_complete=$scriptures_complete scriptures_incomplete=$scriptures_incomplete"
+          echo "INCOMPLETE_BOOK_SAMPLES"
+          head -n 12 /tmp/incomplete-books.ndjson || true
+          echo "INCOMPLETE_SCRIPTURE_SAMPLES"
+          head -n 12 /tmp/incomplete-scriptures.ndjson || true
+          test "$scanned" -ge 28636
