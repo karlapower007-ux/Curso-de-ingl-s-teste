@@ -1,0 +1,129 @@
+name: V8 Complete Only 3437 Missing Vectors
+
+on:
+  push:
+    branches:
+      - "ops-v80-missing-vector-backfill-*"
+    paths:
+      - "ops/run-v80-missing-vector-backfill.txt"
+      - "consciencia-fabiano/scripts/backfill-current-only-vectors-v80.mjs"
+      - ".github/workflows/v80-missing-vector-backfill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-cloudflare-native-production
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      R2_ACCESS_KEY_ID: ${{ secrets.FABIANO_R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.FABIANO_R2_SECRET_ACCESS_KEY }}
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+    steps:
+      - name: Checkout operational branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Discover authoritative Cloudflare account
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" >/tmp/accounts.json
+          DISCOVERED=""
+          while IFS= read -r candidate; do
+            [ -n "$candidate" ] || continue
+            code=$(curl -sS -o /tmp/service.json -w '%{http_code}' \
+              "https://api.cloudflare.com/client/v4/accounts/$candidate/workers/services/consciencia-fabiano" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" || true)
+            if [ "$code" = "200" ]; then DISCOVERED="$candidate"; break; fi
+          done < <(jq -r '.result[].id // empty' /tmp/accounts.json)
+          test -n "$DISCOVERED"
+          echo "CLOUDFLARE_ACCOUNT_ID=$DISCOVERED" >> "$GITHUB_ENV"
+          echo "AUTHORITATIVE_ACCOUNT_DISCOVERED=yes"
+
+      - name: Zero-cost preflight before any vector write
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT="$CLOUDFLARE_ACCOUNT_ID"
+          curl -fsS "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/r2/metrics" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" >/tmp/r2metrics.json
+          START="$(date -u +%Y-%m-01T00:00:00Z)"
+          END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg account "$ACCOUNT" --arg start "$START" --arg end "$END" '{
+            query:"query R2Ops($accountTag: string!, $startDate: Time, $endDate: Time) { viewer { accounts(filter: { accountTag: $accountTag }) { r2OperationsAdaptiveGroups(limit: 10000, filter: { datetime_geq: $startDate, datetime_leq: $endDate, bucketName: \"consciencia-fabiano-pdfs\" }) { sum { requests } dimensions { actionType } } } } }",
+            variables:{accountTag:$account,startDate:$start,endDate:$end}
+          }' >/tmp/gql.json
+          curl -fsS "https://api.cloudflare.com/client/v4/graphql" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" --data @/tmp/gql.json >/tmp/ops.json
+          jq -r '.data.viewer.accounts[0].r2OperationsAdaptiveGroups[]? | [.dimensions.actionType,(.sum.requests|tostring)] | @tsv' /tmp/ops.json | sort >/tmp/ops.tsv
+          A=$(awk -F '\t' '$1 ~ /^(ListBuckets|PutBucket|ListObjects|PutObject|CopyObject|CompleteMultipartUpload|CreateMultipartUpload|LifecycleStorageTierTransition|ListMultipartUploads|UploadPart|UploadPartCopy|ListParts|PutBucketEncryption|PutBucketCors|PutBucketLifecycleConfiguration)$/ {s+=$2} END{print s+0}' /tmp/ops.tsv)
+          B=$(awk -F '\t' '$1 ~ /^(HeadBucket|HeadObject|GetObject|UsageSummary|GetBucketEncryption|GetBucketLocation|GetBucketCors|GetBucketLifecycleConfiguration)$/ {s+=$2} END{print s+0}' /tmp/ops.tsv)
+          STD=$(jq -r '((.result.standard.published.payloadSize // 0)+(.result.standard.published.metadataSize // 0)+(.result.standard.uploaded.payloadSize // 0)+(.result.standard.uploaded.metadataSize // 0))|floor' /tmp/r2metrics.json)
+          IA=$(jq -r '((.result.infrequentAccess.published.payloadSize // 0)+(.result.infrequentAccess.uploaded.payloadSize // 0))|floor' /tmp/r2metrics.json)
+          echo "CLASS_A_MONTH=$A"
+          echo "CLASS_B_MONTH=$B"
+          echo "STANDARD_BYTES=$STD"
+          echo "INFREQUENT_ACCESS_BYTES=$IA"
+          test $((A+500)) -lt 1000000
+          test $((B+2000)) -lt 10000000
+          test "$STD" -lt 9663676416
+          test "$IA" -eq 0
+          echo "ZERO_COST_PREFLIGHT=pass"
+
+      - name: Install ephemeral free local embedding tooling
+        working-directory: consciencia-fabiano
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts @xenova/transformers@2.17.2 @aws-sdk/client-s3@3.888.0
+          node --check scripts/backfill-current-only-vectors-v80.mjs
+          echo "NO_PAID_EMBEDDING_API=yes"
+
+      - name: Complete only missing vectors
+        working-directory: consciencia-fabiano
+        run: node scripts/backfill-current-only-vectors-v80.mjs
+
+      - name: Verify backfill report
+        if: always()
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .ci-results/v80-missing-vector-backfill.json
+          cat .ci-results/v80-missing-vector-backfill.json
+          STATE=$(jq -r '.state' .ci-results/v80-missing-vector-backfill.json)
+          if [ "$STATE" = "waiting-quota" ]; then
+            echo "BACKFILL_CHECKPOINTED_WAITING_QUOTA=yes"
+            exit 0
+          fi
+          jq -e '.ok==true and .result=="28636-chunks-28636-vectors" and .r2_after.chunks==28636 and .r2_after.vectors==28636 and .secondary_after.chunks==28636 and .secondary_after.vectors==28636 and .directed_rag_successes>=3' .ci-results/v80-missing-vector-backfill.json >/dev/null
+          echo "BACKFILL_ACCEPTANCE=success"
+
+      - name: Upload deterministic target list and audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v80-missing-vector-backfill-audit
+          path: |
+            consciencia-fabiano/.ci-results/v80-missing-vector-backfill.json
+            consciencia-fabiano/.ci-results/v80-current-only-missing-ids.json
+          retention-days: 30
+          if-no-files-found: warn
