@@ -377,17 +377,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p probe/github-integration
-          for ENDPOINT in             "repos/$GITHUB_REPOSITORY/actions/workflows?per_page=100"             "repos/$GITHUB_REPOSITORY/deployments?per_page=100"             "repos/$GITHUB_REPOSITORY/environments?per_page=100"             "repos/$GITHUB_REPOSITORY/hooks?per_page=100"             "repos/$GITHUB_REPOSITORY/pages"             "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100"; do
+          endpoints=(
+            "repos/$GITHUB_REPOSITORY/actions/workflows?per_page=100"
+            "repos/$GITHUB_REPOSITORY/actions/workflows/360999688/runs?per_page=100"
+            "repos/$GITHUB_REPOSITORY/deployments?per_page=100"
+            "repos/$GITHUB_REPOSITORY/environments?per_page=100"
+            "repos/$GITHUB_REPOSITORY/hooks?per_page=100"
+            "repos/$GITHUB_REPOSITORY/pages"
+            "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100"
+          )
+          for ENDPOINT in "${endpoints[@]}"; do
             SAFE="$(echo "$ENDPOINT" | sed 's#[/?&=]#-#g')"
             echo "### GH_API $ENDPOINT"
             if gh api "$ENDPOINT" > "probe/github-integration/$SAFE.json" 2> "probe/github-integration/$SAFE.err"; then
               echo "GH_API_OK"
-              if command -v jq >/dev/null 2>&1; then
-                jq 'if type=="array" then .[0:100] else . end' "probe/github-integration/$SAFE.json" | head -c 12000
-              else
-                head -c 12000 "probe/github-integration/$SAFE.json"
-              fi
-              echo
+              jq 'if type=="array" then .[0:100] else . end' "probe/github-integration/$SAFE.json" > "probe/github-integration/$SAFE.pretty.json" || true
+              cat "probe/github-integration/$SAFE.pretty.json"
             else
               echo "GH_API_DENIED"
               cat "probe/github-integration/$SAFE.err"
