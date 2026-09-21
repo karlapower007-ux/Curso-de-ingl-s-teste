@@ -1333,7 +1333,6 @@
     const decoder = new TextDecoder();
     let pending = "";
     let answer = "";
-    let sectionPreview = [];
     let meta = { fontes: [], fallback: false, memory_persisted: false };
     try {
       while (true) {
@@ -1357,13 +1356,6 @@
             answer += delta;
             scheduleAssistantMarkdown(live.text,answer);
             $("messages").scrollTop = $("messages").scrollHeight;
-          } else if (event === "section") {
-            const section=String(data.text || "").trim();
-            if(section){
-              sectionPreview.push(section);
-              if(!answer) scheduleAssistantMarkdown(live.text,sectionPreview.join("\n\n"));
-              $("messages").scrollTop = $("messages").scrollHeight;
-            }
           } else if (event === "node") {
             live.virtual?.upsert(data);
           } else if (event === "reduce") {
@@ -1374,8 +1366,7 @@
             meta = { ...meta, ...data };
             if (event === "done") {
               live.virtual?.complete();
-              if (data.full_text) answer = String(data.full_text);
-              else if (data.resposta) answer = String(data.resposta);
+              if (data.resposta) answer = String(data.resposta);
             }
           } else if (event === "error") {
             throw new Error(data.message || "Falha no streaming.");
@@ -1389,7 +1380,6 @@
     return {
       ok: meta.ok !== false,
       resposta: answer || "Não encontrei uma referência direta a este tema neste trecho específico. Quer que eu faça uma busca mais ampla no documento?",
-      full_text: answer || "",
       fontes: meta.fontes || [],
       fallback: meta.fallback === true,
       retrieval_unavailable: meta.retrieval_unavailable === true,
@@ -1908,8 +1898,8 @@
           setAvatar("closed");
           return;
         }
-        if(data?.full_text || data?.resposta){
-          const resposta=String(data.full_text || data.resposta);
+        if(data?.resposta){
+          const resposta=String(data.resposta);
           appendMessage("assistant",resposta,data.fontes||[],true);
           history.push({role:"assistant",content:resposta,sources:data.fontes||[],fallback:true,ts:Date.now()});
           saveHistory();
@@ -1919,15 +1909,9 @@
         throw primaryError || new Error("Todos os níveis automáticos A-E ficaram indisponíveis. O Plano F exige acesso humano ao raw-vault.");
       }
 
-      const resposta=String(data.full_text || data.resposta || "");
+      const resposta=String(data.resposta || "");
       appendMessage("assistant",resposta,data.fontes || [],false);
-      history.push({
-        role:"assistant",content:resposta,full_text:true,
-        sources:data.fontes || [],fallback:false,
-        continuation_parts:Number(data?.raw_meta?.continuation_parts || data?.continuation_parts || 0),
-        evidence_coverage_percent:Number(data?.raw_meta?.evidence_coverage_percent || data?.evidence_coverage_percent || 0),
-        ts:Date.now()
-      });
+      history.push({role:"assistant",content:resposta,sources:data.fontes || [],fallback:false,ts:Date.now()});
       saveHistory();
       await playAudio(data.audio_url,resposta);
     } catch (error) {
