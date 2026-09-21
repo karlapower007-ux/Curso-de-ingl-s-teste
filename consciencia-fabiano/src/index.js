@@ -3142,6 +3142,10 @@ function sanitizeAssistantHistoryForLLM(rawText) {
     /^\s*[-*•]?\s*\**Obras\s+Padr[aã]o\**\s*(?:—|-|:)?\s*p[aá]ginas?\s*[\d,\s–-]+(?:—|-)?\s*evid[eê]ncias?\s*(?:\[[^\]]+\]\s*)+\.?\s*$/gim,
     ""
   );
+  text=text.replace(
+    /([—;]\s*)P[aá]ginas?\s+\d+(?:\s*,\s*\d+){4,}(\s*;\s*evid[eê]ncias?)/gi,
+    "$1$2"
+  );
   return text.replace(/\n{3,}/g,"\n\n").trim();
 }
 
