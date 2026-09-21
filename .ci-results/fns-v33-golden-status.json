@@ -1,0 +1,37 @@
+{
+  "project": "Estudos Profundos FNS",
+  "site": "https://estudos-profundos-fns.karlapower007.chatgpt.site",
+  "base": "v33",
+  "branch": "estudos-profundos-fns-v33-golden-20260920",
+  "generated_at": "2026-09-21T00:15:00Z",
+  "live": {
+    "fale_route_http": 200,
+    "admin_page_http": 200,
+    "ask_http": 200,
+    "avatar_idle_http": 200,
+    "avatar_listening_http": 200,
+    "avatar_speaking_http": 200,
+    "service_worker_http": 200,
+    "rag_source_count": 0,
+    "rag_state": "empty"
+  },
+  "golden_core": {
+    "implemented": true,
+    "hybrid_lexical_vector": true,
+    "source_validation": true,
+    "map_reduce_plan": true,
+    "circuit_breaker": true,
+    "partial_snapshot_guard": true,
+    "promotion_gate": true,
+    "workflow_run": 35547059264,
+    "workflow_conclusion": "success"
+  },
+  "publisher": {
+    "github_write_available": true,
+    "chatgpt_sites_write_connector_available": false,
+    "owner_authenticated_admin_session_available_to_tools": false,
+    "project_id_discovered": false,
+    "deploy_operation": "blocked"
+  },
+  "critical_blocker": "Live ChatGPT Sites source/database cannot be mutated from the available connector set; admin API requires owner-authenticated Sites session and the account exposes no ChatGPT Sites editor/publisher write action."
+}
