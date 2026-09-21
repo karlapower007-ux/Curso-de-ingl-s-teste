@@ -1,0 +1,69 @@
+{
+  "target": "https://estudos-profundos-fns.karlapower007.chatgpt.site",
+  "scope": "Estudos Profundos FNS only",
+  "observed_at": "2026-09-21T00:13:21Z",
+  "production_base": "v33",
+  "live": {
+    "public_fabiano_route": {
+      "path": "/fale-com-o-fabiano",
+      "http": 200,
+      "title": "Estudos Profundos FNS"
+    },
+    "admin_fabiano_route": {
+      "path": "/admin/fabiano",
+      "redirect": "/admin"
+    },
+    "public_ask_api": {
+      "path": "/api/fabiano/ask",
+      "http": 200
+    },
+    "admin_security": {
+      "documents_get": 401,
+      "export_get": 401,
+      "index_job_get": 401,
+      "chunks_get": 405,
+      "uploads_get": 405
+    },
+    "assets": {
+      "service_worker": 200,
+      "avatar_idle": 200,
+      "avatar_listening": 200,
+      "avatar_speaking": 200
+    },
+    "client_features": {
+      "conversation_window": 10,
+      "conversation_persistence": [
+        "IndexedDB",
+        "OPFS"
+      ],
+      "service_worker": true,
+      "browser_speech_recognition": true,
+      "browser_tts": true,
+      "pdf_client_extraction": "pdf.js range transport",
+      "pdf_resume_checkpoint": "IndexedDB + server indexedPages",
+      "upload_resumable_parts": true,
+      "chunk_size_chars": 1400,
+      "chunk_batch_size": 10,
+      "sha256_fingerprints": true
+    }
+  },
+  "rag_acceptance": {
+    "questions_tested": 4,
+    "answers_with_real_sources": 0,
+    "source_count": 0,
+    "current_public_response": "A biblioteca pública ainda não contém evidência suficiente para responder a essa pergunta.",
+    "state": "BLOCKED",
+    "reason": "No retrievable published evidence was returned by the live FNS RAG."
+  },
+  "publisher_access_audit": {
+    "native_project_id_found": false,
+    "appgprj_found": false,
+    "source_version_found": false,
+    "projection_revision_found": false,
+    "exact_site_library_projection_found": false,
+    "github_contains_site_source": false,
+    "authenticated_site_admin_session_available_to_tools": false,
+    "state": "NO_WRITABLE_PUBLISHER_PATH_EXPOSED"
+  },
+  "promotion_gate": "BLOCKED"
+}
