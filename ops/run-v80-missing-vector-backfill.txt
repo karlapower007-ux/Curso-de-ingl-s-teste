@@ -1,10 +1,9 @@
 run=missing-vectors-3437
-attempt=idempotence-proof-after-rag-index-repair
+attempt=idempotence-final
 strict_incremental=true
-missing_only=true
 expected_new_embeddings=0
 expected_chunks=28636
 expected_vectors=28636
-directed_rag=true
+run_directed_production_rag=true
 no_reindex=true
 no_frontend_changes=true
