@@ -36,5 +36,8 @@
       "binding": "PDFS",
       "bucket_name": "consciencia-fabiano-pdfs"
     }
-  ]
+  ],
+  "vars": {
+    "FNS_SECONDARY_URL": "https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary"
+  }
 }
