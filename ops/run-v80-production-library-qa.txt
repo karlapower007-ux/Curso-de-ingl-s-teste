@@ -3,3 +3,4 @@ production_read_only=true
 post_vector_completion=true
 expected_chunks=28636
 expected_vectors=28636
+rerun after f568592 library
