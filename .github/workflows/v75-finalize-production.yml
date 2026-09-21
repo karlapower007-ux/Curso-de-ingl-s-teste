@@ -1,0 +1,63 @@
+name: Finalize V7.5 Production Tag
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - '.github/workflows/v75-finalize-production.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: consciencia-cloudflare-native-v1
+          fetch-depth: 0
+
+      - name: Verify V7.5 production endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY="$(curl -fsS --retry 5 --retry-delay 3 --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy)"
+          printf '%s\n' "$BODY"
+          VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""')"
+          OK="$(printf '%s' "$BODY" | jq -r '.ok // false')"
+          if [ "$OK" != "true" ] || [ "$VERSION" != "7.5.0-stateful-resilience" ]; then
+            echo "Production endpoint is not serving the approved V7.5 release."
+            exit 1
+          fi
+          echo "V75_PRODUCTION_ENDPOINT_PASS=yes"
+
+      - name: Create immutable V7.5 release tag
+        shell: bash
+        env:
+          TAG: v7.5.0-stateful-resilience
+          TARGET_SHA: 0d0197d422c9981fe7d6777dc4e654253f859d57
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            EXISTING="$(git rev-list -n 1 "$TAG")"
+            if [ "$EXISTING" != "$TARGET_SHA" ]; then
+              echo "Tag $TAG already exists at a different commit: $EXISTING"
+              exit 1
+            fi
+            echo "V75_TAG_ALREADY_CORRECT=yes"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" "$TARGET_SHA" -m "Consciência Fabiano V7.5.0 Stateful Resilience"
+            git push origin "refs/tags/$TAG"
+            echo "V75_TAG_CREATED=yes"
+          fi
+
+      - name: Final release evidence
+        run: |
+          echo "V75_FINAL_RELEASE=success"
+          echo "MERGE_SHA=0d0197d422c9981fe7d6777dc4e654253f859d57"
+          echo "PRODUCTION_VERSION=7.5.0-stateful-resilience"
