@@ -4990,6 +4990,115 @@ async function durableExactDocumentChunks(env,documentId,startChunk,limit) {
   };
 }
 
+function directBibliographicSources(rows,question="") {
+  const ordered=sortSequentialChunks(rows);
+  const anchors=strictRequestAnchors(question);
+  const out=[];
+  const seen=new Set();
+
+  let currentDocument="";
+  let currentBookChapter=null;
+  let currentBookChapterTitle="";
+  let currentScriptureBook="";
+  let currentScriptureChapter=null;
+
+  for(let index=0;index<ordered.length;index++){
+    const row=ordered[index];
+    const text=String(row?.text||"");
+    if(!text) continue;
+    const documentId=String(row?.document_id||"");
+    if(documentId!==currentDocument){
+      currentDocument=documentId;
+      currentBookChapter=null;
+      currentBookChapterTitle="";
+      currentScriptureBook="";
+      currentScriptureChapter=null;
+    }
+
+    const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+    const probe=text.slice(0,1200);
+    if(scriptureKind){
+      if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
+      if(!currentScriptureChapter) currentScriptureChapter=scriptureCollectionChapterSeed(scriptureKind);
+      const heading=extractScriptureHeading(probe,currentScriptureBook);
+      if(heading){
+        currentScriptureBook=heading.book || currentScriptureBook;
+        currentScriptureChapter=heading.chapter || currentScriptureChapter;
+      }
+    }else{
+      const heading=extractChapterHeading(String(row?.title||"")+"\n"+probe);
+      if(heading){
+        currentBookChapter=heading.number || currentBookChapter;
+        currentBookChapterTitle=heading.title || currentBookChapterTitle || "";
+      }else if(!currentBookChapterTitle){
+        const named=extractNamedSectionHeading(probe,row?.title||row?.filename||"");
+        if(named) currentBookChapterTitle=named;
+      }
+    }
+
+    if(anchors.length && !exactWholeAnchorMatch(text,anchors)) continue;
+
+    if(scriptureKind){
+      const located=extractScriptureLocationReferences(
+        text,
+        currentScriptureBook,
+        currentScriptureChapter,
+        Number(row?.page||0)
+      );
+      if(located.final_chapter) currentScriptureChapter=located.final_chapter;
+      for(const ref of (located.references||[])){
+        if(!ref?.book || !ref?.chapter || !ref?.verse_start) continue;
+        const key="s:"+String(ref.reference||"");
+        if(seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          ref_id:"F"+(out.length+1),
+          document_id:documentId,
+          bibliographic_type:"scripture",
+          book:String(ref.book),
+          work:String(ref.work||""),
+          chapter:Number(ref.chapter),
+          verse_start:Number(ref.verse_start),
+          verse_end:Number(ref.verse_end||ref.verse_start),
+          primary_reference:String(ref.reference||""),
+          autor:"",
+          pagina:null,
+          chapter_title:"",
+          trecho:cleanNarrativeText(text).slice(0,520),
+          score:1000,
+          retrieval_mode:"direct-exact-bibliographic",
+          bibliographic_complete:true
+        });
+      }
+    }else{
+      const title=humanDocumentName(row?.filename,row?.title);
+      const page=Number(row?.page||0)||null;
+      if(!title || !currentBookChapter || !page) continue;
+      const key="b:"+foldSearchText(title)+"|"+currentBookChapter+"|"+page;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        ref_id:"F"+(out.length+1),
+        document_id:documentId,
+        bibliographic_type:"book",
+        book:title,
+        work:"",
+        chapter:Number(currentBookChapter),
+        chapter_title:String(currentBookChapterTitle||""),
+        autor:String(row?.author||"").replace(/[\r\n]+/g," ").trim(),
+        pagina:page,
+        primary_reference:"",
+        trecho:cleanNarrativeText(text).slice(0,520),
+        score:1000,
+        retrieval_mode:"direct-exact-bibliographic",
+        bibliographic_complete:true
+      });
+    }
+    if(out.length>=TOP_K) break;
+  }
+  return out;
+}
+
 async function directRetrievalPayload(env,body) {
   const question=String(body?.question || body?.pergunta || "").trim();
   const intent=detectExactRetrievalIntent(question);
@@ -5058,6 +5167,7 @@ async function directRetrievalPayload(env,body) {
     return {ok:false,direct:true,bypass_llm:true,code:"DIRECT_TEXT_EMPTY",intent,provider};
   }
 
+  const bibliographicSources=directBibliographicSources(ordered,question);
   return {
     ok:true,
     direct:true,
@@ -5066,11 +5176,8 @@ async function directRetrievalPayload(env,body) {
     scope:assembled.scope,
     intent,
     provider,
-    document_id:String(anchor?.document_id || ""),
-    filename:String(anchor?.filename || anchor?.title || "Documento"),
-    title:String(anchor?.title || anchor?.filename || "Documento"),
-    author:String(anchor?.author || ""),
-    page:Number(anchor?.page || 0) || null,
+    bibliographic_sources:bibliographicSources,
+    public_references:publicSourceViews(bibliographicSources),
     anchor_chunk_index:Number(anchor?.chunk_index || 0),
     logical_swarm_size:EXACT_SWARM_NODE_COUNT,
     logical_nodes_used:ordered.length,
@@ -5078,6 +5185,7 @@ async function directRetrievalPayload(env,body) {
     ordered_buffer:true,
     chunks_reassembled:assembled.chunks,
     llm_calls:0,
+    document_names_exposed:false,
     circuit_breaker:{
       failure_threshold:EXACT_CIRCUIT_FAILURE_THRESHOLD,
       slow_ms:EXACT_CIRCUIT_SLOW_MS,
@@ -5152,20 +5260,16 @@ async function chat(request, env) {
   const exactIntent=detectExactRetrievalIntent(question);
   if(exactIntent.triggered){
     const direct=await directRetrievalPayload(env,body);
+    const directSources=direct.ok && Array.isArray(direct?.bibliographic_sources)
+      ? direct.bibliographic_sources.filter(source=>source?.bibliographic_complete)
+      : [];
+    const directRefs=groundedReferencesMarkdown(directSources);
     const answer=direct.ok
-      ? String(direct.text || "")
-      : "Não foi possível recuperar o texto documental exato neste momento. O modo de leitura direta não acionou o LLM.";
+      ? (String(direct.text || "").trim()+(directRefs?"\n\n"+directRefs:""))
+      : "Não foi possível confirmar uma localização bibliográfica exata para esta busca.";
     const wantsStream=
       String(request.headers.get("Accept") || "").includes("text/event-stream") ||
       body?.stream === true;
-    const directSources=direct.ok ? [{
-      document_id:direct.document_id,
-      arquivo:direct.filename,
-      titulo:direct.title,
-      autor:direct.author,
-      pagina:direct.page,
-      ref_id:"RAW1"
-    }] : [];
     const directExecution=await runCognitivePlan(cognitivePlan,{sources:directSources,contract:cognitiveRuntime});
     const payload={
       ok:direct.ok,
@@ -5196,7 +5300,7 @@ async function chat(request, env) {
     if(wantsStream){
       const frames=
         sseFrame("meta",{...payload,resposta:undefined})+
-        sseFrame("delta",{text:answer,raw_document:true})+
+        sseFrame("delta",{text:answer,raw_document:false,bibliographic_only:true})+
         sseFrame("done",payload);
       return new Response(frames,{status:direct.ok?200:503,headers:securityHeaders(new Headers({
         "Content-Type":"text/event-stream; charset=utf-8",
