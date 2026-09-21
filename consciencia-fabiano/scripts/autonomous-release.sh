@@ -431,6 +431,15 @@ if [ "$reconcile_deferred" -eq 0 ]; then
   do_chunks=$(jq -r '(.do_chunks // 0) | tonumber' /tmp/r2-reconcile-state.json)
   do_signature=$(jq -r '.source_signature // ""' /tmp/r2-reconcile-state.json)
   in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
+  preservation_floor=$(jq -r '(.library.expected_verified_chunks // 0) | tonumber' v8-preservation-manifest.json 2>/dev/null || echo 0)
+
+  # V8 preservation invariant: a smaller/partial runtime snapshot must never
+  # replace the previously verified library generation. Under quota pressure
+  # we keep the richer static/secondary evidence intact and defer reconciliation.
+  if [ "$preservation_floor" -gt 0 ] && [ "$do_chunks" -lt "$preservation_floor" ]; then
+    log "R2_RECONCILIATION_DEFERRED_PRESERVATION_FLOOR=yes do_chunks:$do_chunks floor:$preservation_floor"
+    in_sync=true
+  fi
 
   if [ "$in_sync" != "true" ]; then
     generation="do-$(date +%s)-$(printf '%s' "$do_signature" | cut -c1-16)"
@@ -520,12 +529,18 @@ if [ "$server_http" = "200" ]; then
   server_total=$(jq -r '(.total // 0) | tonumber' /tmp/server-library-state.json 2>/dev/null || echo 0)
 fi
 log "LIBRARY_RECOVERY_STATE=durable_chunks:$server_total,r2_chunks:$r2_total,r2_documents:$r2_documents,r2_shards:$r2_shards"
+preservation_floor=$(jq -r '(.library.expected_verified_chunks // 0) | tonumber' v8-preservation-manifest.json 2>/dev/null || echo 0)
+r2_recovery_eligible=1
+if [ "$preservation_floor" -gt 0 ] && [ "$r2_total" -lt "$preservation_floor" ]; then
+  r2_recovery_eligible=0
+  log "R2_PARTIAL_SNAPSHOT_PROTECTED=yes r2_chunks:$r2_total floor:$preservation_floor"
+fi
 
 if [ "$server_http" != "200" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=DEFERRED_SERVER_HTTP_$server_http"
 fi
 
-if [ "$server_http" = "200" ] && [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ -n "$r2_generation" ]; then
+if [ "$server_http" = "200" ] && [ "$server_total" -eq 0 ] && [ "$r2_total" -gt 0 ] && [ "$r2_recovery_eligible" -eq 1 ] && [ -n "$r2_generation" ]; then
   log "LIBRARY_RECOVERY_FROM_R2=START"
   rm -f /tmp/r2-library-rows.ndjson
   recovery_offset=0
@@ -707,7 +722,7 @@ fi
 log "6.25/7 V7.4 cognitive catalog and router probes"
 catalog_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74" || echo 000)
 [ "$catalog_http" = "200" ] || die "COGNITIVE_V74_ADMIN_HTTP_$catalog_http"
-jq -e '.ok == true and .version == "7.5.0-stateful-resilience" and .audit.valid == true and .audit.total == 1000 and .audit.unique_ids == 1000 and .audit.family_count == 20 and ([.audit.families[]] | all(. == 50)) and .performance.workerConcurrency == 8 and .performance.executeAll1000 == false and .performance.allowTurbineToCallGroq == false' /tmp/cognitive-v74.json >/dev/null || die "COGNITIVE_V74_CATALOG_BAD"
+jq -e '.ok == true and .version == "8.0.0-adaptive-20x20x20" and .audit.valid == true and .audit.total == 1000 and .audit.unique_ids == 1000 and .audit.family_count == 20 and ([.audit.families[]] | all(. == 50)) and .performance.workerConcurrency == 8 and .performance.executeAll1000 == false and .performance.allowTurbineToCallGroq == false' /tmp/cognitive-v74.json >/dev/null || die "COGNITIVE_V74_CATALOG_BAD"
 log "COGNITIVE_V74_CATALOG_PASS=yes"
 
 router_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74-router.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74?q=Compare%20os%20autores%20e%20depois%20fa%C3%A7a%20uma%20reflex%C3%A3o" || echo 000)
