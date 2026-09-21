@@ -1207,7 +1207,7 @@
 
     const status=document.createElement("div");
     status.className="citation-dictionary-status";
-    status.textContent="As citações são carregadas separadamente da IA para permitir milhares de referências.";
+    status.textContent="As citações são varridas diretamente da biblioteca em lotes seguros para permitir milhares de referências no PC e no celular.";
 
     const list=document.createElement("div");
     list.className="citation-dictionary-list";
@@ -1231,58 +1231,132 @@
     shell.append(toggle,panel);
     messageWrap.appendChild(shell);
 
-    const state={offset:0,total:0,loaded:false,loading:false,open:false};
+    const state={
+      offset:0,total:0,loaded:false,loading:false,open:false,
+      results:[],seen:new Set(),scanCursor:0,scanDone:false,
+      scannedChunks:0,libraryTotal:0,scanState:{chapters:{},scriptures:{}}
+    };
 
-    const loadPage=async(offset)=>{
-      if(state.loading) return;
+    const renderPage=(offset=0)=>{
+      const total=state.results.length;
+      const safeOffset=Math.max(0,Math.min(Number(offset||0),Math.max(0,total-1)));
+      state.offset=total ? Math.floor(safeOffset/CITATION_UI_PAGE_SIZE)*CITATION_UI_PAGE_SIZE : 0;
+      const page=state.results.slice(state.offset,state.offset+CITATION_UI_PAGE_SIZE);
+      list.replaceChildren();
+
+      for(let i=0;i<page.length;i++){
+        const item={...page[i],rank:state.offset+i+1};
+        list.appendChild(renderCitationCard(item));
+      }
+
+      if(!page.length && state.scanDone){
+        const empty=document.createElement("div");
+        empty.className="citation-empty";
+        empty.textContent="Nenhuma referência bibliográfica foi localizada para esta consulta.";
+        list.appendChild(empty);
+      }
+
+      const start=page.length ? state.offset+1 : 0;
+      const end=state.offset+page.length;
+      pageInfo.textContent=start+"–"+end+" de "+total.toLocaleString("pt-BR");
+      prev.disabled=state.offset<=0;
+      next.disabled=end>=total;
+    };
+
+    const retryFetch=async(url,attempts=3)=>{
+      let lastError=null;
+      for(let attempt=1;attempt<=attempts;attempt++){
+        try{
+          const res=await fetch(url,{cache:"no-store"});
+          const data=await res.json().catch(()=>({}));
+          if(!res.ok || data?.ok===false) throw new Error(data?.message || "Dicionário de citações indisponível.");
+          return data;
+        }catch(error){
+          lastError=error;
+          if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,450*attempt));
+        }
+      }
+      throw lastError || new Error("Falha ao carregar citações.");
+    };
+
+    const scanAll=async()=>{
+      if(state.loading || state.scanDone) return;
       state.loading=true;
-      const safeOffset=Math.max(0,Number(offset||0));
-      status.textContent="Buscando referências bibliográficas na biblioteca…";
       prev.disabled=true;
       next.disabled=true;
       try{
-        const endpoint="/api/citations?q="+encodeURIComponent(query)+
-          "&offset="+safeOffset+"&limit="+CITATION_UI_PAGE_SIZE;
-        const res=await fetch(endpoint,{cache:"no-store"});
-        const data=await res.json().catch(()=>({}));
-        if(!res.ok || data?.ok===false) throw new Error(data?.message || "Dicionário de citações indisponível.");
-        state.offset=Math.max(0,Number(data.offset||safeOffset));
-        state.total=Math.max(0,Number(data.total_found||0));
-        state.loaded=true;
+        let guard=0;
+        while(!state.scanDone && guard<1000){
+          guard++;
+          const stateParam=encodeURIComponent(JSON.stringify(state.scanState||{}));
+          const endpoint="/api/citations?q="+encodeURIComponent(query)+
+            "&scan_cursor="+encodeURIComponent(String(state.scanCursor||0))+
+            "&state="+stateParam;
 
-        list.replaceChildren();
-        const citations=Array.isArray(data?.citations)?data.citations:[];
-        for(const item of citations) list.appendChild(renderCitationCard(item));
+          const data=await retryFetch(endpoint,3);
+          state.libraryTotal=Math.max(state.libraryTotal,Number(data?.library_total_chunks||0));
+          state.scannedChunks+=Math.max(0,Number(data?.scanned_batch||0));
+          state.scanState=data?.state && typeof data.state==="object" ? data.state : state.scanState;
 
-        if(!citations.length){
-          const empty=document.createElement("div");
-          empty.className="citation-empty";
-          empty.textContent="Nenhuma referência bibliográfica adicional foi localizada para esta consulta.";
-          list.appendChild(empty);
+          const batch=Array.isArray(data?.citations)?data.citations:[];
+          for(const item of batch){
+            const key=String(item?.citation_id || item?.chunk_id || [item?.document_id,item?.chunk_index].join(":"));
+            if(!key || state.seen.has(key)) continue;
+            state.seen.add(key);
+            state.results.push(item);
+          }
+
+          state.scanDone=Boolean(data?.scan_done);
+          state.scanCursor=data?.next_scan_cursor===null ? state.scanCursor : Math.max(state.scanCursor,Number(data?.next_scan_cursor||0));
+          state.total=state.results.length;
+
+          if(!state.loaded && state.results.length){
+            state.loaded=true;
+            renderPage(0);
+          }
+
+          const scannedLabel=Math.min(state.scannedChunks,state.libraryTotal||state.scannedChunks).toLocaleString("pt-BR");
+          const totalLabel=(state.libraryTotal||0).toLocaleString("pt-BR");
+          status.textContent=
+            "Varrendo biblioteca: "+scannedLabel+" de "+totalLabel+
+            " chunks examinados • "+state.results.length.toLocaleString("pt-BR")+
+            " referências encontradas até agora.";
+          toggle.textContent="📚 Dicionário de Citações — "+state.results.length.toLocaleString("pt-BR")+" encontradas";
+
+          if(!state.scanDone) await new Promise(resolve=>setTimeout(resolve,20));
         }
 
-        const start=state.total && citations.length ? state.offset+1 : 0;
-        const end=state.offset+citations.length;
-        status.textContent=state.total.toLocaleString("pt-BR")+
-          " referências/trechos bibliográficos encontrados • mostrando "+start+"–"+end+
-          " • sem limite de saída da IA.";
-        pageInfo.textContent=start+"–"+end+" de "+state.total.toLocaleString("pt-BR");
-        toggle.textContent="📚 Dicionário de Citações — "+state.total.toLocaleString("pt-BR")+" encontrados";
-        prev.disabled=state.offset<=0;
-        next.disabled=end>=state.total;
-        panel.scrollIntoView({block:"nearest",behavior:"smooth"});
+        state.results.sort((a,b)=>
+          Number(b?.score||0)-Number(a?.score||0) ||
+          String(a?.book||"").localeCompare(String(b?.book||""),"pt-BR") ||
+          Number(a?.page||0)-Number(b?.page||0) ||
+          Number(a?.chunk_index||0)-Number(b?.chunk_index||0)
+        );
+        state.total=state.results.length;
+        state.loaded=true;
+        renderPage(Math.min(state.offset,Math.max(0,state.total-CITATION_UI_PAGE_SIZE)));
+
+        const complete=state.results.filter(x=>x?.metadata_complete===true).length;
+        const incomplete=state.total-complete;
+        status.textContent=
+          state.total.toLocaleString("pt-BR")+" referências/trechos encontrados em "+
+          Math.min(state.scannedChunks,state.libraryTotal||state.scannedChunks).toLocaleString("pt-BR")+
+          " chunks examinados • "+complete.toLocaleString("pt-BR")+" com localização bibliográfica completa"+
+          (incomplete>0 ? " • "+incomplete.toLocaleString("pt-BR")+" aguardando resolução de capítulo/versículo" : "")+
+          " • resultado independente do limite de saída da IA.";
+        toggle.textContent="📚 Dicionário de Citações — "+state.total.toLocaleString("pt-BR")+" encontradas";
       }catch(error){
-        list.replaceChildren();
         const failure=document.createElement("div");
         failure.className="citation-empty";
-        failure.textContent="Não foi possível carregar o Dicionário agora: "+String(error?.message||error);
-        list.appendChild(failure);
-        status.textContent="A resposta principal foi preservada. Você pode tentar abrir o Dicionário novamente.";
-        pageInfo.textContent="Falha temporária";
-        prev.disabled=state.offset<=0;
-        next.disabled=false;
+        failure.textContent="A varredura foi interrompida: "+String(error?.message||error)+". Toque no botão novamente para continuar do ponto salvo.";
+        list.replaceChildren(failure);
+        status.textContent=
+          "Varredura parcial preservada: "+state.results.length.toLocaleString("pt-BR")+
+          " referências já encontradas em "+state.scannedChunks.toLocaleString("pt-BR")+" chunks.";
+        state.loaded=state.results.length>0;
       }finally{
         state.loading=false;
+        renderPage(state.offset);
       }
     };
 
@@ -1290,10 +1364,10 @@
       state.open=!state.open;
       panel.classList.toggle("hidden",!state.open);
       toggle.setAttribute("aria-expanded",String(state.open));
-      if(state.open && !state.loaded) loadPage(0);
+      if(state.open && !state.scanDone) scanAll();
     });
-    prev.addEventListener("click",()=>loadPage(Math.max(0,state.offset-CITATION_UI_PAGE_SIZE)));
-    next.addEventListener("click",()=>loadPage(state.offset+CITATION_UI_PAGE_SIZE));
+    prev.addEventListener("click",()=>renderPage(Math.max(0,state.offset-CITATION_UI_PAGE_SIZE)));
+    next.addEventListener("click",()=>renderPage(state.offset+CITATION_UI_PAGE_SIZE));
     toggle.setAttribute("aria-expanded","false");
     return shell;
   }
