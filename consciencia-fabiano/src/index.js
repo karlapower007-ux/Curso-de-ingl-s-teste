@@ -6830,60 +6830,45 @@ export class LibraryDO {
         const body=await request.json().catch(()=>({}));
         const rawQuery=String(body?.query || body?.question || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
         const query=foldSearchText(rawQuery);
-        const terms=lexicalTerms(rawQuery).slice(0,18);
+        const terms=strictRequestAnchors(rawQuery);
         const offset=Math.max(0,Number(body?.offset || 0));
         const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(body?.limit || CITATION_PAGE_SIZE)));
         const scanLimit=Math.max(200,Math.min(CITATION_SCAN_LIMIT,Number(body?.scan_limit || CITATION_SCAN_LIMIT)));
-        if(!terms.length) return json({ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,mode:"citation-dictionary-bm25"});
+        if(!terms.length) return json({
+          ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
+          mode:"citation-dictionary-exact-and",or_disabled:true,fuzzy_disabled:true
+        });
 
         this.citationCache=this.citationCache || new Map();
-        const cacheKey=query+"|"+scanLimit;
+        const cacheKey="exact|"+query+"|"+terms.join("+")+"|"+scanLimit;
         let cached=this.citationCache.get(cacheKey);
         if(!cached || (Date.now()-Number(cached.created_at||0))>10*60*1000){
           const rows=[...this.sql.exec(
             "SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,d.filename,d.title,d.author,d.language "+
             "FROM chunks c JOIN documents d ON d.id=c.document_id "+
             "WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local') "+
-            "ORDER BY c.created_at DESC LIMIT ?",
+            "ORDER BY d.id ASC,c.chunk_index ASC LIMIT ?",
             scanLimit
           )];
 
-          const docs=rows.map(row=>{
-            const tokens=lexicalTokens(row.text);
-            const tf=new Map();
-            for(const token of tokens) tf.set(token,(tf.get(token)||0)+1);
-            return {row,tokens,tf,dl:Math.max(1,tokens.length)};
-          });
-          const N=Math.max(1,docs.length);
-          const avgdl=docs.reduce((sum,d)=>sum+d.dl,0)/N || 1;
-          const df=new Map();
-          for(const term of terms){
-            let count=0;
-            for(const d of docs) if(d.tf.has(term)) count++;
-            df.set(term,count);
-          }
           const ranked=[];
-          for(const d of docs){
-            let score=0,matchedTerms=0,hits=0;
-            for(const term of terms){
-              const freq=d.tf.get(term)||0;
-              if(!freq) continue;
-              matchedTerms++;
-              hits+=freq;
-              const termDf=df.get(term)||0;
-              const idf=Math.log(1+((N-termDf+0.5)/(termDf+0.5)));
-              const denom=freq+BM25_K1*(1-BM25_B+BM25_B*(d.dl/avgdl));
-              score+=idf*((freq*(BM25_K1+1))/Math.max(0.0001,denom));
-            }
-            if(!matchedTerms) continue;
-            const coverage=matchedTerms/terms.length;
-            const folded=foldSearchText(d.row.text);
-            const exactPhrase=query.length>=5 && folded.includes(query);
-            if(exactPhrase) score+=3.5;
-            score+=coverage*2.0+Math.min(1.5,hits*0.12);
-            ranked.push({...d.row,score,coverage});
+          for(const row of rows){
+            const lexical=exactWholeAnchorMatch(row?.text||"",terms);
+            if(!lexical) continue;
+            ranked.push({
+              ...row,
+              score:Number(lexical.score||1000),
+              coverage:1,
+              matched_terms:terms.length,
+              retrieval_mode:"exact-and-durable-citation"
+            });
           }
-          ranked.sort((a,b)=>Number(b.score||0)-Number(a.score||0) || Number(a.page||0)-Number(b.page||0) || Number(a.chunk_index||0)-Number(b.chunk_index||0));
+          ranked.sort((a,b)=>
+            Number(b.score||0)-Number(a.score||0) ||
+            String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
+            Number(a.page||0)-Number(b.page||0) ||
+            Number(a.chunk_index||0)-Number(b.chunk_index||0)
+          );
           cached={created_at:Date.now(),scanned:rows.length,matches:ranked};
           this.citationCache.clear();
           this.citationCache.set(cacheKey,cached);
@@ -6892,7 +6877,7 @@ export class LibraryDO {
         const all=Array.isArray(cached.matches)?cached.matches:[];
         const pageRows=all.slice(offset,offset+limit);
         const chapterCandidates=new Map();
-        const previousContext=new Map();
+        const scriptureStateCache=new Map();
 
         const chapterFor=(documentId,chunkIndex,currentText)=>{
           const direct=extractChapterHeading(currentText);
@@ -6921,32 +6906,52 @@ export class LibraryDO {
         };
 
         const scriptureRefsFor=(row)=>{
-          let refs=extractScriptureReferences(row.text);
-          if(refs.length || !scriptureSourceKind(row.filename,row.title)) return refs;
-          const key=String(row.document_id||"")+"|"+String(row.chunk_index||0);
-          if(!previousContext.has(key)){
-            previousContext.set(key,[...this.sql.exec(
-              "SELECT chunk_index,text FROM chunks WHERE document_id=? AND chunk_index<=? "+
-              "ORDER BY chunk_index DESC LIMIT 16",
-              String(row.document_id||""),Number(row.chunk_index||0)
-            )]);
+          const kind=scriptureSourceKind(row.filename,row.title);
+          if(!kind) return [];
+          const documentId=String(row.document_id||"");
+          const chunkIndex=Number(row.chunk_index||0);
+          const stateKey=documentId+"|"+chunkIndex;
+          if(scriptureStateCache.has(stateKey)) return scriptureStateCache.get(stateKey);
+
+          let book=scriptureCollectionSeed(kind);
+          let chapter=scriptureCollectionChapterSeed(kind);
+          const preceding=[...this.sql.exec(
+            "SELECT chunk_index,page,text FROM chunks WHERE document_id=? AND chunk_index<=? "+
+            "ORDER BY chunk_index DESC LIMIT 32",
+            documentId,chunkIndex
+          )].reverse();
+
+          for(const prior of preceding){
+            const probe=String(prior?.text||"").slice(0,900);
+            const heading=extractScriptureHeading(probe,book);
+            if(heading){
+              book=heading.book || book;
+              chapter=heading.chapter || chapter;
+            }
+            if(Number(prior.chunk_index||0)===chunkIndex) break;
           }
-          for(const prior of previousContext.get(key)||[]){
-            refs=extractScriptureReferences(prior.text);
-            if(refs.length) break;
-          }
+
+          const located=extractScriptureLocationReferences(
+            String(row.text||""),
+            book,
+            chapter,
+            Number(row.page||0)
+          );
+          const refs=Array.isArray(located?.references)?located.references:[];
+          scriptureStateCache.set(stateKey,refs);
           return refs;
         };
 
         const enriched=pageRows.map((row,index)=>{
           const scriptureKind=scriptureSourceKind(row.filename,row.title);
-          const scriptureRefs=scriptureRefsFor(row);
+          const scriptureRefs=scriptureKind ? scriptureRefsFor(row) : [];
           const chapter=scriptureKind ? null : chapterFor(String(row.document_id||""),Number(row.chunk_index||0),row.text);
           return {
             ...row,
             rank:offset+index+1,
             scripture_source_kind:scriptureKind,
             scripture_references:scriptureRefs,
+            cross_references:[],
             chapter_number:chapter?.number || null,
             chapter_title:chapter?.title || ""
           };
@@ -6961,8 +6966,12 @@ export class LibraryDO {
           limit,
           has_more:offset+enriched.length<all.length,
           next_offset:offset+enriched.length<all.length ? offset+enriched.length : null,
-          mode:"citation-dictionary-bm25",
-          cache_ttl_ms:600000
+          mode:"citation-dictionary-exact-and",
+          cache_ttl_ms:600000,
+          all_anchor_terms_required:true,
+          or_disabled:true,
+          fuzzy_disabled:true,
+          document_names_exposed:false
         });
       }
 
