@@ -1,12 +1,12 @@
 {
-  "audited_at": "2026-09-21T00:28:00Z",
+  "audited_at": "2026-09-21T00:36:00Z",
   "target": {
     "name": "Estudos Profundos FNS",
     "live_url": "https://estudos-profundos-fns.karlapower007.chatgpt.site",
     "observed_version": "v33",
     "stable_identifier": "estudos-profundos-fns.karlapower007.chatgpt.site",
     "native_project_id": null,
-    "native_project_id_status": "not exposed by public build, Files Library, Git history, or available publisher tools",
+    "native_project_id_status": "not exposed by public build, Library, Git history, route manifest, GitHub deployments, or available Sites publisher tools",
     "oauth_client_id": "oaiapp_85H9kifX63GYNvAG3ohm4nOT",
     "oauth_client_id_note": "Sign in with ChatGPT OAuth client; not asserted to be the ChatGPT Sites project ID"
   },
@@ -30,7 +30,18 @@
       "error": "HTTP 403 Resource not accessible by integration",
       "connector_fetch_error": "GitHub Fetch URL is not an allowed public GitHub repository or search endpoint"
     },
-    "conclusion": "No repository-linked deployment path to the ChatGPT Site was discovered."
+    "conclusion": "No repository-linked deployment path to the ChatGPT Site was discovered.",
+    "hosting_manifest": {
+      "required_for_local_source_linkage": ".openai/hosting.json",
+      "present_in_any_git_ref": false,
+      "present_in_git_history": false
+    },
+    "existing_site_workflows": {
+      "Discover ChatGPT Site linkage": "read-only probe; no publish operation",
+      "Probe Main FNS ChatGPT Site": "read-only probe; no publish operation",
+      "Deploy Avatar Fabiano Public Site": "deploys separate Cloudflare Worker, not the main ChatGPT Site",
+      "Deploy FNS Worker / V6": "deploys FNS Digital Human/Idiomas worker; excluded by tenant isolation"
+    }
   },
   "live_publisher_audit": {
     "candidate_metadata_endpoints": {
@@ -55,7 +66,39 @@
     "runtime_deployment_contract": "x-deployment-id header helper exists, but no deployment ID value is exposed in the public response/build",
     "site_controls_publish_action": false,
     "plugin_directory_chatgpt_sites_publisher": false,
-    "chatgpt_sites_write_connector_available": false
+    "chatgpt_sites_write_connector_available": false,
+    "oauth_signin": {
+      "route": "/signin-with-chatgpt?return_to=%2Fadmin",
+      "http_status": 302,
+      "provider": "https://auth.openai.com/oauth/authorize",
+      "oauth_client_id": "oaiapp_85H9kifX63GYNvAG3ohm4nOT",
+      "callback": "https://estudos-profundos-fns.karlapower007.chatgpt.site/callback",
+      "note": "OAuth client ID is not the native ChatGPT Sites project_id."
+    },
+    "rsc_deployment_header": {
+      "header_name": "x-deployment-id",
+      "runtime_helper_present": true,
+      "value_exposed_on_live_responses": false
+    },
+    "route_manifest": {
+      "route_count": 25,
+      "publish_deploy_version_hosting_project_candidates": [],
+      "fabiano_routes": [
+        "/admin/fabiano",
+        "/api/fabiano/admin/chunks",
+        "/api/fabiano/admin/documents",
+        "/api/fabiano/admin/export",
+        "/api/fabiano/admin/index-job",
+        "/api/fabiano/admin/uploads",
+        "/api/fabiano/ask",
+        "/fale-com-o-fabiano"
+      ]
+    },
+    "historical_secret_or_publish_command_scan": {
+      "publisher_secret_names_found": false,
+      "chatgpt_sites_publish_commands_found": false,
+      "only_audit_probe_references_found": true
+    }
   },
   "auth_write_attempts": {
     "POST /api/admin/chatgpt-login {}": {
@@ -146,12 +189,53 @@
     "test": "estudos-profundos-fns-v33/tests/golden-rag.test.mjs",
     "core_test_run_id": 35547059264,
     "core_test_conclusion": "success",
-    "live_acceptance": "blocked because source_count == 0"
+    "live_acceptance": "blocked because source_count == 0",
+    "latest_probe_run_id": 35548170826,
+    "latest_probe_conclusion": "success"
   },
   "production_action": {
     "published": false,
     "hydrated": false,
-    "reason": "No authenticated/native ChatGPT Sites write surface or repository-linked deploy path is available to the current tools. Admin hydration routes reject unauthenticated writes.",
-    "safety": "No other tenant, database, bucket, or project was used."
+    "publication_attempts": [
+      {
+        "operation": "Discover repository-linked deployment path",
+        "result": "none",
+        "evidence": "GitHub deployments=[], environments=0, Pages=404, no .openai/hosting.json in any ref/history"
+      },
+      {
+        "operation": "Discover live publish/deploy/version/hosting route in v33 server manifest",
+        "result": "none",
+        "evidence": "25 live routes enumerated; publish candidate routes=[]"
+      },
+      {
+        "operation": "Discover public Sites project/deployment identifiers",
+        "result": "not exposed",
+        "evidence": "no appgprj/project_id/source_version/projection_revision; x-deployment-id has no live value"
+      },
+      {
+        "operation": "Authenticate through /api/admin/chatgpt-login without owner session",
+        "result": "HTTP 401",
+        "error": "Entre primeiro com uma conta autorizada do ChatGPT."
+      },
+      {
+        "operation": "Authenticate through /api/admin/login without site admin credential",
+        "result": "HTTP 401",
+        "error": "Senha incorreta."
+      },
+      {
+        "operation": "Read FNS admin documents/export/index-job without authenticated site session",
+        "result": "HTTP 401",
+        "error": "Não autorizado"
+      },
+      {
+        "operation": "Locate ChatGPT Sites publisher connector/plugin in current toolset",
+        "result": "none"
+      }
+    ],
+    "exact_missing_capabilities": [
+      "A writable ChatGPT Sites project handle for this exact site (native project_id/version deployment operation), or equivalent Sites editor/publisher action exposed to this session.",
+      "For library hydration, an authenticated Estudos Profundos FNS admin session accepted by the site's own admin API."
+    ],
+    "safety": "No other tenant, database, bucket, Worker, or Site project was used or modified."
   }
 }
