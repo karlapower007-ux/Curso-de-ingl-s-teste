@@ -285,6 +285,19 @@ for i in $(seq 1 15); do
 done
 jq -e '.r2_direct_ready == true and .cross_device_storage == "r2-native-binding"' /tmp/health.json >/dev/null || die "R2_NATIVE_BINDING_NOT_READY"
 
+log "5.1/7 Citation dictionary authoritative R2 smoke"
+citation_body="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -fsS "$BASE/api/citations?q=Deus&offset=0&limit=1")" || die "CITATION_DICTIONARY_HTTP_FAILED"
+echo "$citation_body" | jq -e '
+  .ok == true
+  and .backend == "r2-authoritative"
+  and .authoritative_r2_preferred == true
+  and .library_total_chunks >= 25199
+  and .scanned >= 25199
+  and .returned >= 1
+  and (.citations | type) == "array"
+' >/dev/null || { echo "$citation_body"; die "CITATION_DICTIONARY_R2_FAILED"; }
+log "CITATION_DICTIONARY_R2_PASS=yes"
+
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
 jq -e '.version == "7.1.0"
