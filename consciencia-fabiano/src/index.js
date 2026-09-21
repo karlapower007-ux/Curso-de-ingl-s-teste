@@ -1417,7 +1417,22 @@ async function r2ReconcileStep(request,env){
   const limit=Math.max(1,Math.min(200,Number(body?.limit||200)));
   if(!generation)return json({ok:false,code:"R2_RECONCILE_BAD_REQUEST",message:"generation ausente."},400);
 
-  const page=await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit);
+  let page;
+  try{
+    page=await libraryCall(env,"/export-page?offset="+offset+"&limit="+limit);
+  }catch(error){
+    const failure=durableFailureInfo(error);
+    if(failure.recoverable){
+      return json({
+        ok:true,degraded:true,skipped:true,
+        code:"R2_RECONCILE_DURABLE_DEGRADED",
+        message:"Durable Object temporariamente indisponível; R2 preservado sem reconciliação destrutiva.",
+        durable_error:{code:failure.code,status:failure.status,message:failure.message,recoverable:true},
+        generation,offset,next_offset:offset,records:0,vectors:0,shards_written:0,done:false
+      });
+    }
+    throw error;
+  }
   const records=normalizeLibraryChunkRecords(page?.records);
   const groups=new Map();
   let vectors=0;
@@ -1453,6 +1468,17 @@ async function r2ReconcileFinalize(request,env){
   if(!generation)return json({ok:false,code:"R2_RECONCILE_BAD_REQUEST",message:"generation ausente."},400);
 
   const state=await r2AuthoritativeState(env);
+  if(state?.degraded===true || state?.durable_available===false){
+    return json({
+      ok:true,degraded:true,skipped:true,
+      code:"R2_RECONCILE_DURABLE_DEGRADED",
+      message:"Finalização adiada: Durable Object indisponível; geração R2 atual preservada.",
+      r2_generation:String(state?.r2_generation||""),
+      r2_documents:Number(state?.r2_documents||0),
+      r2_chunks:Number(state?.r2_chunks||0),
+      r2_vectors:Number(state?.r2_vectors||0)
+    });
+  }
   const currentPointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
   if(String(currentPointer?.source||"")==="recovery-merge-v8" &&
      Number(currentPointer?.chunks||0)>Number(state?.do_chunks||0)){
