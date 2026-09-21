@@ -376,13 +376,20 @@
       const data = await api("/api/memory", { method: "GET" });
       const remote = Array.isArray(data?.messages) ? data.messages : [];
       if (remote.length) {
-        history = remote.slice(-MAX_HISTORY).map(x => ({
-          role: x.role === "assistant" ? "assistant" : "user",
-          content: String(x.content || ""),
-          sources: Array.isArray(x.sources) ? x.sources : [],
-          fallback: x.fallback === true,
-          ts: x.ts || Date.now()
-        }));
+        let lastUserQuery="";
+        history = remote.slice(-MAX_HISTORY).map(x => {
+          const role=x.role === "assistant" ? "assistant" : "user";
+          const content=String(x.content || "");
+          if(role==="user") lastUserQuery=content;
+          return {
+            role,
+            content,
+            sources: Array.isArray(x.sources) ? x.sources : [],
+            fallback: x.fallback === true,
+            citation_query: role==="assistant" ? lastUserQuery : "",
+            ts: x.ts || Date.now()
+          };
+        });
         saveHistory();
         renderHistory();
       }
@@ -843,7 +850,7 @@
   function createNodeProgressVirtualizer(host) {
     const header=document.createElement("div");
     header.className="node-progress-header";
-    header.textContent=CURRENT_SYSTEM_VERSION+" • preparando 500 nós assíncronos";
+    header.textContent=CURRENT_SYSTEM_VERSION+" • 500 nós lógicos • citações são contadas separadamente";
     const viewport=document.createElement("div");
     viewport.className="node-progress-viewport";
     viewport.setAttribute("aria-label","Progresso dos nós RAG");
@@ -927,13 +934,13 @@
       reduce(data){
         reduceTotal=Math.max(reduceTotal,Number(data?.total_groups || 0));
         reduceDone=Math.min(reduceTotal || Number.MAX_SAFE_INTEGER,reduceDone+1);
-        header.textContent="RAG V4.0 • 500 nós • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
+        header.textContent="RAG V8 • 500 nós lógicos • síntese "+reduceDone+"/"+Math.max(reduceTotal,reduceDone);
       },
       keepalive(){
         header.dataset.live=String(Date.now());
       },
       complete(){
-        header.textContent="RAG V4.0 • fusão enciclopédica concluída";
+        header.textContent="RAG V8 • fusão concluída • abra o Dicionário para todas as citações";
       },
       destroy(){
         if(raf) cancelAnimationFrame(raf);
@@ -1055,7 +1062,7 @@
     }
   }
 
-  function appendMessage(role, content, sources = [], fallback = false) {
+  function appendMessage(role, content, sources = [], fallback = false, citationQuery = "") {
     const wrap = document.createElement("div");
     wrap.className = "msg " + role;
     const text = document.createElement("div");
@@ -1102,7 +1109,193 @@
     }
 
     $("messages").appendChild(wrap);
+    if(role === "assistant" && String(citationQuery || "").trim()){
+      attachCitationDictionary(wrap,String(citationQuery || "").trim());
+    }
     $("messages").scrollTop = $("messages").scrollHeight;
+    return wrap;
+  }
+
+  const CITATION_UI_PAGE_SIZE=50;
+
+  function citationLocationText(item){
+    if(item?.bibliographic_type==="scripture"){
+      if(item?.primary_reference) return String(item.primary_reference);
+      const book=String(item?.book || item?.work || "Escritura");
+      const chapter=Number(item?.chapter || 0);
+      return chapter ? book+" "+chapter : book;
+    }
+    const chapter=String(item?.chapter_display || "Capítulo: não localizado no texto extraído");
+    const page=String(item?.page_display || "Página: não localizada");
+    return chapter+" • "+page;
+  }
+
+  function renderCitationCard(item){
+    const card=document.createElement("article");
+    card.className="citation-card";
+
+    const rank=document.createElement("div");
+    rank.className="citation-rank";
+    rank.textContent="Citação "+Number(item?.rank || 0);
+
+    const title=document.createElement("strong");
+    title.className="citation-primary";
+    if(item?.bibliographic_type==="scripture"){
+      const prefix=String(item?.work || "").trim();
+      const ref=String(item?.primary_reference || item?.book || "Escritura").trim();
+      title.textContent=[prefix,ref].filter(Boolean).join(" — ");
+    }else{
+      title.textContent=String(item?.book || "Livro");
+    }
+
+    const location=document.createElement("div");
+    location.className="citation-location";
+    location.textContent=citationLocationText(item);
+
+    const meta=document.createElement("div");
+    meta.className="citation-meta";
+    const metaBits=[];
+    if(item?.author) metaBits.push("Autor: "+item.author);
+    if(item?.bibliographic_type==="scripture" && item?.page_display) metaBits.push(item.page_display+" (localização auxiliar)");
+    if(item?.metadata_complete===false) metaBits.push("Metadados bibliográficos incompletos neste trecho");
+    meta.textContent=metaBits.join(" • ");
+
+    const refs=Array.isArray(item?.scripture_references)?item.scripture_references:[];
+    let refsNode=null;
+    if(item?.bibliographic_type==="scripture" && refs.length>1){
+      refsNode=document.createElement("div");
+      refsNode.className="citation-scripture-refs";
+      refsNode.textContent="Referências no trecho: "+refs.map(x=>x.reference).filter(Boolean).join(" • ");
+    }
+
+    const excerpt=document.createElement("div");
+    excerpt.className="citation-excerpt";
+    excerpt.textContent=String(item?.excerpt || "Trecho não disponível.");
+
+    const technical=document.createElement("details");
+    technical.className="citation-technical";
+    const summary=document.createElement("summary");
+    summary.textContent="Detalhes técnicos";
+    const technicalText=document.createElement("div");
+    technicalText.textContent=[
+      item?.technical_document ? "Documento interno: "+item.technical_document : "",
+      item?.chunk_index!==undefined ? "Chunk: "+item.chunk_index : "",
+      item?.chunk_id ? "ID: "+item.chunk_id : ""
+    ].filter(Boolean).join(" • ");
+    technical.append(summary,technicalText);
+
+    card.append(rank,title,location);
+    if(metaBits.length) card.appendChild(meta);
+    if(refsNode) card.appendChild(refsNode);
+    card.append(excerpt,technical);
+    return card;
+  }
+
+  function attachCitationDictionary(messageWrap,query){
+    if(!messageWrap || !query) return null;
+    const shell=document.createElement("section");
+    shell.className="citation-dictionary";
+    shell.dataset.query=query;
+
+    const toggle=document.createElement("button");
+    toggle.type="button";
+    toggle.className="citation-dictionary-toggle";
+    toggle.textContent="📚 Dicionário de Citações — abrir livro, capítulo e página";
+
+    const panel=document.createElement("div");
+    panel.className="citation-dictionary-panel hidden";
+
+    const status=document.createElement("div");
+    status.className="citation-dictionary-status";
+    status.textContent="As citações são carregadas separadamente da IA para permitir milhares de referências.";
+
+    const list=document.createElement("div");
+    list.className="citation-dictionary-list";
+
+    const nav=document.createElement("div");
+    nav.className="citation-dictionary-nav";
+    const prev=document.createElement("button");
+    prev.type="button";
+    prev.className="ghost citation-page-btn";
+    prev.textContent="← 50 anteriores";
+    const pageInfo=document.createElement("span");
+    pageInfo.className="citation-page-info";
+    pageInfo.textContent="Ainda não carregado";
+    const next=document.createElement("button");
+    next.type="button";
+    next.className="ghost citation-page-btn";
+    next.textContent="Próximas 50 →";
+    nav.append(prev,pageInfo,next);
+
+    panel.append(status,list,nav);
+    shell.append(toggle,panel);
+    messageWrap.appendChild(shell);
+
+    const state={offset:0,total:0,loaded:false,loading:false,open:false};
+
+    const loadPage=async(offset)=>{
+      if(state.loading) return;
+      state.loading=true;
+      const safeOffset=Math.max(0,Number(offset||0));
+      status.textContent="Buscando referências bibliográficas na biblioteca…";
+      prev.disabled=true;
+      next.disabled=true;
+      try{
+        const endpoint="/api/citations?q="+encodeURIComponent(query)+
+          "&offset="+safeOffset+"&limit="+CITATION_UI_PAGE_SIZE;
+        const res=await fetch(endpoint,{cache:"no-store"});
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok || data?.ok===false) throw new Error(data?.message || "Dicionário de citações indisponível.");
+        state.offset=Math.max(0,Number(data.offset||safeOffset));
+        state.total=Math.max(0,Number(data.total_found||0));
+        state.loaded=true;
+
+        list.replaceChildren();
+        const citations=Array.isArray(data?.citations)?data.citations:[];
+        for(const item of citations) list.appendChild(renderCitationCard(item));
+
+        if(!citations.length){
+          const empty=document.createElement("div");
+          empty.className="citation-empty";
+          empty.textContent="Nenhuma referência bibliográfica adicional foi localizada para esta consulta.";
+          list.appendChild(empty);
+        }
+
+        const start=state.total && citations.length ? state.offset+1 : 0;
+        const end=state.offset+citations.length;
+        status.textContent=state.total.toLocaleString("pt-BR")+
+          " referências/trechos bibliográficos encontrados • mostrando "+start+"–"+end+
+          " • sem limite de saída da IA.";
+        pageInfo.textContent=start+"–"+end+" de "+state.total.toLocaleString("pt-BR");
+        toggle.textContent="📚 Dicionário de Citações — "+state.total.toLocaleString("pt-BR")+" encontrados";
+        prev.disabled=state.offset<=0;
+        next.disabled=end>=state.total;
+        panel.scrollIntoView({block:"nearest",behavior:"smooth"});
+      }catch(error){
+        list.replaceChildren();
+        const failure=document.createElement("div");
+        failure.className="citation-empty";
+        failure.textContent="Não foi possível carregar o Dicionário agora: "+String(error?.message||error);
+        list.appendChild(failure);
+        status.textContent="A resposta principal foi preservada. Você pode tentar abrir o Dicionário novamente.";
+        pageInfo.textContent="Falha temporária";
+        prev.disabled=state.offset<=0;
+        next.disabled=false;
+      }finally{
+        state.loading=false;
+      }
+    };
+
+    toggle.addEventListener("click",()=>{
+      state.open=!state.open;
+      panel.classList.toggle("hidden",!state.open);
+      toggle.setAttribute("aria-expanded",String(state.open));
+      if(state.open && !state.loaded) loadPage(0);
+    });
+    prev.addEventListener("click",()=>loadPage(Math.max(0,state.offset-CITATION_UI_PAGE_SIZE)));
+    next.addEventListener("click",()=>loadPage(state.offset+CITATION_UI_PAGE_SIZE));
+    toggle.setAttribute("aria-expanded","false");
+    return shell;
   }
 
 
@@ -1427,7 +1620,7 @@
     $("messages").innerHTML = "";
     history.forEach(x => {
       if(x.role==="assistant" && x.raw_document===true) appendRawDocumentMessage(x.content,x.direct_meta || {});
-      else appendMessage(x.role, x.content, x.sources || [], x.fallback);
+      else appendMessage(x.role, x.content, x.sources || [], x.fallback, x.citation_query || "");
     });
     if (!history.length) {
       appendMessage("assistant",
@@ -1933,8 +2126,8 @@
         }
         if(data?.resposta){
           const resposta=String(data.resposta);
-          appendMessage("assistant",resposta,data.fontes||[],true);
-          history.push({role:"assistant",content:resposta,sources:data.fontes||[],fallback:true,ts:Date.now()});
+          appendMessage("assistant",resposta,data.fontes||[],true,q);
+          history.push({role:"assistant",content:resposta,sources:data.fontes||[],fallback:true,citation_query:q,ts:Date.now()});
           saveHistory();
           setAvatar("closed");
           return;
@@ -1943,8 +2136,8 @@
       }
 
       const resposta=String(data.resposta || "");
-      appendMessage("assistant",resposta,data.fontes || [],false);
-      history.push({role:"assistant",content:resposta,sources:data.fontes || [],fallback:false,ts:Date.now()});
+      appendMessage("assistant",resposta,data.fontes || [],false,q);
+      history.push({role:"assistant",content:resposta,sources:data.fontes || [],fallback:false,citation_query:q,ts:Date.now()});
       saveHistory();
       await playAudio(data.audio_url,resposta);
     } catch (error) {
