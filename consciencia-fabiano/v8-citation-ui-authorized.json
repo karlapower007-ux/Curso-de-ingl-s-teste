@@ -34,8 +34,13 @@
       "verse"
     ],
     "backend_preference": "r2-authoritative",
-    "r2_full_scan_fallback": true,
-    "r2_authoritative_snapshot_required": true
+    "r2_full_scan_fallback": false,
+    "r2_authoritative_snapshot_required": true,
+    "segmented_r2_scan": true,
+    "shards_per_request": 8,
+    "cpu_bounded": true,
+    "client_progressive_scan": true,
+    "max_library_capacity": 50000
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }

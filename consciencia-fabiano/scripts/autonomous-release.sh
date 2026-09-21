@@ -285,26 +285,79 @@ for i in $(seq 1 15); do
 done
 jq -e '.r2_direct_ready == true and .cross_device_storage == "r2-native-binding"' /tmp/health.json >/dev/null || die "R2_NATIVE_BINDING_NOT_READY"
 
-log "5.1/7 Citation dictionary authoritative R2 smoke"
-citation_tmp="$(mktemp)"
-citation_http="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -sS -o "$citation_tmp" -w '%{http_code}' "$BASE/api/citations?q=Deus&offset=0&limit=1" || true)"
-citation_body="$(cat "$citation_tmp" 2>/dev/null || true)"
-rm -f "$citation_tmp"
-if [ "$citation_http" != "200" ]; then
-  echo "CITATION_DICTIONARY_HTTP_STATUS=$citation_http"
-  echo "$citation_body"
-  die "CITATION_DICTIONARY_HTTP_FAILED"
-fi
-echo "$citation_body" | jq -e '
-  .ok == true
-  and .backend == "r2-authoritative"
-  and .authoritative_r2_preferred == true
-  and .library_total_chunks >= 25199
-  and .scanned >= 25199
-  and .returned >= 1
-  and (.citations | type) == "array"
-' >/dev/null || { echo "$citation_body"; die "CITATION_DICTIONARY_R2_FAILED"; }
-log "CITATION_DICTIONARY_R2_PASS=yes"
+log "5.1/7 Citation dictionary authoritative R2 segmented smoke"
+citation_cursor=""
+citation_carry_doc=""
+citation_carry_chapter=""
+citation_carry_title=""
+citation_scanned_total=0
+citation_found_total=0
+citation_library_total=0
+citation_scan_guard=0
+
+while [ "$citation_scan_guard" -lt 200 ]; do
+  citation_scan_guard=$((citation_scan_guard+1))
+  citation_tmp="$(mktemp)"
+  citation_args=(
+    --max-time 45
+    --retry 2
+    --retry-delay 2
+    --retry-all-errors
+    -sS
+    -G
+    -o "$citation_tmp"
+    -w '%{http_code}'
+    --data-urlencode "q=Deus"
+    --data-urlencode "limit=50"
+  )
+  [ -n "$citation_cursor" ] && citation_args+=(--data-urlencode "scan_cursor=$citation_cursor")
+  [ -n "$citation_carry_doc" ] && citation_args+=(--data-urlencode "carry_doc=$citation_carry_doc")
+  [ -n "$citation_carry_chapter" ] && citation_args+=(--data-urlencode "carry_chapter=$citation_carry_chapter")
+  [ -n "$citation_carry_title" ] && citation_args+=(--data-urlencode "carry_title=$citation_carry_title")
+
+  citation_http="$(curl "${citation_args[@]}" "$BASE/api/citations" || true)"
+  citation_body="$(cat "$citation_tmp" 2>/dev/null || true)"
+  rm -f "$citation_tmp"
+
+  if [ "$citation_http" != "200" ]; then
+    echo "CITATION_DICTIONARY_HTTP_STATUS=$citation_http"
+    echo "$citation_body"
+    die "CITATION_DICTIONARY_HTTP_FAILED"
+  fi
+
+  echo "$citation_body" | jq -e '
+    .ok == true
+    and .backend == "r2-authoritative"
+    and .authoritative_r2_preferred == true
+    and .cpu_bounded_segment == true
+    and .library_total_chunks >= 25199
+    and (.citations | type) == "array"
+  ' >/dev/null || { echo "$citation_body"; die "CITATION_DICTIONARY_R2_SEGMENT_BAD"; }
+
+  citation_batch_scanned="$(echo "$citation_body" | jq -r '(.scanned_batch // .scanned // 0) | tonumber')"
+  citation_batch_found="$(echo "$citation_body" | jq -r '(.returned // 0) | tonumber')"
+  citation_library_total="$(echo "$citation_body" | jq -r '(.library_total_chunks // 0) | tonumber')"
+  citation_scanned_total=$((citation_scanned_total + citation_batch_scanned))
+  citation_found_total=$((citation_found_total + citation_batch_found))
+
+  citation_done="$(echo "$citation_body" | jq -r '(.scan_done // false) | tostring')"
+  citation_cursor="$(echo "$citation_body" | jq -r '.next_scan_cursor // ""')"
+  citation_carry_doc="$(echo "$citation_body" | jq -r '.carry.document_id // ""')"
+  citation_carry_chapter="$(echo "$citation_body" | jq -r '.carry.chapter_number // ""')"
+  citation_carry_title="$(echo "$citation_body" | jq -r '.carry.chapter_title // ""')"
+
+  log "CITATION_DICTIONARY_SEGMENT=$citation_scan_guard scanned:$citation_scanned_total/$citation_library_total found:$citation_found_total done:$citation_done"
+
+  if [ "$citation_done" = "true" ]; then
+    break
+  fi
+  [ -n "$citation_cursor" ] || die "CITATION_DICTIONARY_CURSOR_MISSING"
+done
+
+[ "$citation_scan_guard" -lt 200 ] || die "CITATION_DICTIONARY_SCAN_GUARD_EXCEEDED"
+[ "$citation_scanned_total" -ge 25199 ] || die "CITATION_DICTIONARY_SCAN_INCOMPLETE"
+[ "$citation_found_total" -ge 1 ] || die "CITATION_DICTIONARY_NO_MATCHES"
+log "CITATION_DICTIONARY_R2_PASS=yes scanned:$citation_scanned_total found:$citation_found_total"
 
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
