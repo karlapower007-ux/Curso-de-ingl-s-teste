@@ -52,7 +52,7 @@
     "canonical_scripture_filename_suffixes": true,
     "known_production_standard_works_filename": "standard-works-83806-por.pdf",
     "false_positive_example_must_remain_book": "Doutrina e Convênios e o Futuro (Roy W. Doxey) sudbr.org.pdf",
-    "scripture_direct_reference_parser_gate": true,
+    "scripture_direct_reference_parser_gate": false,
     "max_matches_per_segment": 500,
     "cpu_1102_hotfix": "one-shard-bounded-metadata-parsing",
     "regex_precompiled": true,
