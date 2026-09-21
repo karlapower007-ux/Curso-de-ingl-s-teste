@@ -290,6 +290,32 @@ jobs:
           }
           NODE
 
+      - name: Inspect ChatGPT Sites control surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          FILE="probe/assets/site-controls-CPf82N9q.js"
+          curl -L --compressed --fail --silent --show-error --max-time 30             "$BASE/_next/static/chunks/site-controls-CPf82N9q.js" -o "$FILE"
+          node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2], src=fs.readFileSync(p,'utf8');
+          console.log("SITE_CONTROLS_BYTES="+src.length);
+          const needles=[
+            'edit','publish','project','appgprj','chatgpt.com','openai.com',
+            'postMessage','window.parent','window.open','owner','site-controls',
+            '/api/','fetch(','deployment'
+          ];
+          for(const n of needles){
+            let i=src.indexOf(n), count=0;
+            while(i>=0 && count<5){
+              console.log('\n### '+n+' #'+(count+1));
+              console.log(src.slice(Math.max(0,i-1800),Math.min(src.length,i+4200)));
+              i=src.indexOf(n,i+n.length); count++;
+            }
+          }
+          NODE
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
