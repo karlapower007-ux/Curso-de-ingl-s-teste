@@ -1864,7 +1864,8 @@ function groundedReferencesMarkdown(sources) {
 
 function stripSynthesisPrincipalLabel(answer) {
   return String(answer || "")
-    .replace(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL(?:\*\*)?\s*:?\s*/i,"")
+    .replace(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL(?:\*\*)?\s*:?\s*/gim,"")
+    .replace(/\n{3,}/g,"\n\n")
     .trim();
 }
 
@@ -1912,8 +1913,8 @@ function deterministicSynthesisFromSources(sources) {
     const refs=doc.refs.map(ref=>"["+ref+"]").join("");
     if(evidence) parts.push(label+" sustenta este ponto documental: "+evidence+" "+refs);
   }
-  if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser sintetizada com segurança.";
-  return "Os documentos recuperados permitem construir uma síntese sustentada pelas evidências abaixo:\n\n"+parts.join("\n\n");
+  if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser desenvolvida com segurança.";
+  return "## Desenvolvimento documental\n\n"+parts.join("\n\n");
 }
 
 async function repairFalseNegativeSynthesis(env,question,sources) {
@@ -2600,8 +2601,26 @@ function citedRefsInText(text){
   return ids;
 }
 
+function developedRefsInText(text){
+  const body=stripModelReferenceSection(text);
+  const developed=new Set();
+  const blocks=body.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+  for(const block of blocks){
+    const prose=block
+      .replace(/^\s{0,3}#{1,6}\s+/gm,"")
+      .replace(/^\s*[-*•]\s+/gm,"")
+      .replace(/\[[Ff]\d{1,3}\]/g,"")
+      .replace(/\s+/g," ")
+      .trim();
+    if(prose.length<140) continue;
+    const refs=citedRefsInText(block);
+    for(const ref of refs) developed.add(ref);
+  }
+  return developed;
+}
+
 function exhaustiveCoverage(text,groups){
-  const cited=citedRefsInText(text);
+  const cited=developedRefsInText(text);
   const rows=Array.isArray(groups)?groups:[];
   let covered=0;
   const missing=[];
@@ -2648,20 +2667,25 @@ function deterministicPreservationText(groups){
       return (
         "Esta evidência acrescenta um ponto documental próprio ao estudo. "+refs+page+
         " o material recuperado registra que "+evidence+
-        " O conteúdo é preservado integralmente no desenvolvimento porque não foi tratado como duplicata semântica; nenhuma conclusão além do que a evidência sustenta é acrescentada."
+        " Este ponto documental permanece visível no desenvolvimento e não é descartado como simples referência; nenhuma conclusão além do que a evidência sustenta é acrescentada."
       );
     });
     sections.push(heading+"\n\n"+paragraphs.join("\n\n"));
   }
-  return "## Evidências complementares preservadas\n\n"+sections.join("\n\n");
+  return "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n");
 }
 
 function needsExhaustiveContinuation(contract,coverage,finishReason){
-  const v80Mode=String(contract?.v80_plan?.mode || contract?.v80_plan?.runtime?.mode || "").toUpperCase();
   const cognitive=String(contract?.mode || "").toLowerCase();
-  const deep=v80Mode==="DEEP" || ["analysis","comparison","reflection","hypothesis"].includes(cognitive);
+  const explicitCompact=
+    cognitive==="summary" ||
+    cognitive==="reference_only" ||
+    String(contract?.v74_plan?.output || "")==="one_sentence";
   if(finishReason==="length") return true;
-  if(!deep) return coverage.coverage_percent<75;
+  if(explicitCompact) return coverage.coverage_percent<75;
+  // Fora de pedidos explicitamente curtos, nenhuma evidência recuperada pode virar
+  // apenas metadado/referência. O texto continua até todos os grupos aparecerem
+  // em parágrafos desenvolvidos; o fallback determinístico preserva o restante.
   return coverage.groups_developed<coverage.groups_total;
 }
 
