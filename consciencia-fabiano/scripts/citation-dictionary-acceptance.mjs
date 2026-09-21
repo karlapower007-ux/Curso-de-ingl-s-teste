@@ -20,7 +20,7 @@ must(worker.includes('chapter_display'),"chapter must be exposed in citation res
 must(worker.includes('page_display'),"page must be exposed in citation response");
 must(worker.includes("async function citationSearchR2Segment"),"segmented authoritative R2 citation search missing");
 must(worker.includes("CITATION_R2_SHARDS_PER_REQUEST"),"bounded R2 shard segment missing");
-must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 4;"),"citation segments must stay at four shards to avoid CPU 1102 under concurrent PC/mobile scans");
+must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 2;"),"citation segments must stay at two shards after scripture CPU 1102");
 must(worker.includes("function chapterWordToNumber"),"written chapter number resolver missing");
 must(worker.includes("function extractNamedSectionHeading"),"named book section resolver missing");
 must(worker.includes("function extractScriptureHeading"),"scripture heading resolver missing");
@@ -28,6 +28,10 @@ must(worker.includes("function extractScriptureVerseRange"),"scripture verse ran
 must(worker.includes("function syntheticScriptureReference"),"scripture canonical reference builder missing");
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
 must(worker.includes("citation_dictionary_canonical_filename_suffixes: true"),"canonical scripture filename suffix flag missing");
+must(worker.includes("citation_dictionary_scripture_direct_ref_gate: true"),"scripture direct reference CPU gate missing");
+must(worker.includes("extractScriptureHeading(text,currentBook=\"\",precomputedDirect=null)"),"precomputed scripture heading reference path missing");
+must(worker.includes("explicitScriptureReferenceLikely"),"scripture direct reference parser must be gated by chapter:verse syntax");
+
 must(worker.includes('.replace(/[-_]+/g," ")'),"scripture filename slug normalization missing");
 must(worker.includes('portugues|portuguese|english|por|pt|eng|en|spa|es'),"canonical scripture language suffixes missing");
 
