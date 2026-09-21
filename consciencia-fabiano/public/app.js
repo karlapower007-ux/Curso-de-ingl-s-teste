@@ -1663,7 +1663,10 @@
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
-      const recentHistory=history.slice(-20).map(x=>({role:x.role,content:x.content}));
+      const recentHistory=history.slice(-20).map(x=>({
+        role:x.role,
+        content:x.role==="assistant" ? sanitizeResponseForUI(x.content) : String(x.content || "")
+      }));
 
       // V7.2: a malha local fica como fallback/offline. Online, a pergunta segue
       // primeiro para o RAG híbrido do servidor para produzir síntese inteligente.
@@ -1717,7 +1720,7 @@
               omni_agent_swarm:true,strict_empty:true,zero_noise:true,ts:Date.now()
             });
             saveHistory();
-            if($("backendText")) $("backendText").textContent="V6.0 • Agent 10 • zero evidências aprovadas";
+            if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • Agent 10 • zero evidências aprovadas";
             setAvatar("closed");
             return;
           }
