@@ -1,0 +1,32 @@
+name: Probe V8 Supabase Fallback
+on:
+  push:
+    branches: [ops-v80-secondary-probe-20260921]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+      SECONDARY: https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary
+      BASE: https://consciencia-fabiano.focoeepoder2.workers.dev
+    steps:
+      - name: Probe manifest search and Worker RAG
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FNS_OWNER_TOKEN"
+          MANIFEST=$(curl -fsS --max-time 20 -X POST "$SECONDARY?action=manifest"             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN" -H 'Content-Type: application/json' -d '{}')
+          echo "$MANIFEST" | jq '{ok,generation,total_chunks,vector_count,total_books}'
+          echo "$MANIFEST" | jq -e '.ok==true and .generation=="v75-static-eeadaf861443" and .total_chunks==25199 and .vector_count==25199' >/dev/null
+          SEARCH=$(curl -fsS --max-time 20 -X POST "$SECONDARY?action=search"             -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN" -H 'Content-Type: application/json'             -d '{"query":"Jesus Cristo","per_document_k":10,"global_limit":20}')
+          echo "$SEARCH" | jq '{ok,provider,matches_count:(.matches|length),first_mode:(.matches[0].retrieval_mode // "")}'
+          echo "$SEARCH" | jq -e '.ok==true and (.matches|length)>0' >/dev/null
+          code=$(curl -sS --max-time 30 -o /tmp/rag.json -w '%{http_code}' "$BASE/api/rag/search"             -H 'Content-Type: application/json' -d '{"question":"Jesus Cristo"}')
+          echo "WORKER_RAG_HTTP=$code"
+          cat /tmp/rag.json | jq '{ok,code,matches_count:((.matches // [])|length),first_mode:((.matches // [])[0].retrieval_mode // "")}'
+          test "$code" = "200"
+          jq -e '.ok==true and (.matches|length)>0' /tmp/rag.json >/dev/null
+          echo "V80_SUPABASE_FALLBACK_PROBE=success"
