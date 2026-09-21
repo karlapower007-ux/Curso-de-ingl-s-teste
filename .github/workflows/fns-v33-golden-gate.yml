@@ -1,0 +1,41 @@
+name: FNS v33 Golden Gate
+
+on:
+  push:
+    branches:
+      - estudos-profundos-fns-v33-golden-20260920
+    paths:
+      - "estudos-profundos-fns-v33/**"
+      - ".github/workflows/fns-v33-golden-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  golden-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Core Golden tests
+        run: node estudos-profundos-fns-v33/tests/golden-rag.test.mjs
+      - name: Live FNS v33 public safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          F=$(curl --compressed -sS --max-time 30 -o /tmp/fale.html -w '%{http_code}' "$BASE/fale-com-o-fabiano")
+          A=$(curl --compressed -sS --max-time 30 -o /tmp/ask.json -w '%{http_code}' -H 'content-type: application/json' -d '{"question":"Quais fontes reais existem na biblioteca?","history":[]}' "$BASE/api/fabiano/ask")
+          test "$F" = "200"
+          test "$A" = "200"
+          grep -q 'Fale com o Fabiano' /tmp/fale.html
+          node - <<'NODE'
+          const j=JSON.parse(require('fs').readFileSync('/tmp/ask.json','utf8'));
+          if(!Array.isArray(j.sources)) throw new Error('sources contract missing');
+          if(j.sources.some(s=>!s||(!s.document_id&&!s.title&&!s.filename))) throw new Error('invalid source contract');
+          console.log('LIVE_FNS_PUBLIC_GATE=success source_count='+j.sources.length);
+          NODE
