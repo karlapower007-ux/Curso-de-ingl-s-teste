@@ -1,4 +1,4 @@
-export const GOLDEN_VERSION="fns-v33-golden-1";
+export const GOLDEN_VERSION="fns-v33-golden-2";
 
 export function assertCompleteLibrary(stats={}){
   const chunks=Number(stats.chunks||0);
@@ -88,6 +88,72 @@ export function sourceContract(records=[]){
   const sources=validateRecoveredSources(records);
   if(!sources.length)return {answerAllowed:false,sources:[],reason:"NO_REAL_EVIDENCE"};
   return {answerAllowed:true,sources,reason:""};
+}
+
+export function buildCitationCatalog(records=[]){
+  return validateRecoveredSources(records).map((source,index)=>({
+    ref:"F"+(index+1),
+    ...source
+  }));
+}
+
+export function buildEncyclopedicContract(records=[],opts={}){
+  const sources=buildCitationCatalog(records);
+  if(!sources.length)return {
+    answerAllowed:false,
+    mode:"no-evidence",
+    sources:[],
+    rules:["Do not answer from model memory when the library has no recovered evidence."]
+  };
+  const plan=buildMapReducePlan(records,opts);
+  return {
+    answerAllowed:true,
+    mode:plan.mode,
+    batches:plan.batches,
+    sources,
+    rules:[
+      "Synthesize connected explanatory paragraphs; do not dump isolated quotations.",
+      "Every factual library claim must be traceable to a recovered source.",
+      "Never invent a title, page, document, excerpt or citation.",
+      "Deduplicate overlapping chunks before final synthesis.",
+      "When evidence conflicts, describe the conflict instead of silently choosing one source."
+    ]
+  };
+}
+
+export async function runFailoverChain({providers=[],query,accept}={}){
+  const errors=[];
+  for(const provider of providers){
+    if(!provider||typeof provider.run!=="function")continue;
+    if(provider.circuit && !provider.circuit.canTry())continue;
+    try{
+      const value=await provider.run(query);
+      const ok=typeof accept==="function"?await accept(value,provider):Boolean(value);
+      if(!ok)throw new Error("FNS_FAILOVER_REJECTED_RESULT");
+      provider.circuit?.success();
+      return {provider:String(provider.name||"unnamed"),value};
+    }catch(error){
+      provider.circuit?.failure();
+      errors.push({provider:String(provider?.name||"unnamed"),error:String(error?.message||error)});
+    }
+  }
+  const failure=new Error("FNS_FAILOVER_EXHAUSTED");
+  failure.causes=errors;
+  throw failure;
+}
+
+export function validateCitationCatalog(catalog=[]){
+  if(!Array.isArray(catalog)||!catalog.length)throw new Error("FNS_CITATIONS_EMPTY");
+  const refs=new Set();
+  for(const item of catalog){
+    if(!item||!String(item.ref||"").trim())throw new Error("FNS_CITATION_REF_MISSING");
+    if(refs.has(item.ref))throw new Error("FNS_CITATION_REF_DUPLICATE");
+    refs.add(item.ref);
+    if(!String(item.document_id||"").trim())throw new Error("FNS_CITATION_DOCUMENT_MISSING");
+    if(!String(item.title||"").trim())throw new Error("FNS_CITATION_TITLE_MISSING");
+    if(!String(item.excerpt||"").trim())throw new Error("FNS_CITATION_EXCERPT_MISSING");
+  }
+  return {valid:true,count:catalog.length};
 }
 
 export class CircuitBreaker{
