@@ -53,3 +53,5 @@ jobs:
           echo "SYNTHESIS_PRINCIPAL_DISABLED=pass"
           echo "PUBLIC_SOURCE_METADATA_SANITIZED=pass"
           echo "FULL_TEXT_ALIAS=pass"
+
+# rerun-after-secondary-rescue
