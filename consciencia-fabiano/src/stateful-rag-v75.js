@@ -85,10 +85,20 @@ export function resolveStatefulQuery(question, history, contract = {}) {
   };
 }
 
-export function secondarySupabaseConfigured(env) {
+function secondaryDirectConfigured(env) {
   const base = String(env?.SUPABASE_URL || "").trim();
   const key = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   return Boolean(base && key);
+}
+
+function secondaryEdgeConfigured(env) {
+  const base = String(env?.FNS_SECONDARY_URL || "").trim();
+  const token = String(env?.FNS_OWNER_TOKEN || "").trim();
+  return Boolean(base && token);
+}
+
+export function secondarySupabaseConfigured(env) {
+  return secondaryDirectConfigured(env) || secondaryEdgeConfigured(env);
 }
 
 function secondaryHeaders(env) {
@@ -96,6 +106,15 @@ function secondaryHeaders(env) {
   return {
     "Authorization": "Bearer " + key,
     "apikey": key,
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+}
+
+function secondaryEdgeHeaders(env) {
+  const token = String(env?.FNS_OWNER_TOKEN || "").trim();
+  return {
+    "X-FNS-Owner-Token": token,
     "Content-Type": "application/json",
     "Accept": "application/json"
   };
@@ -135,18 +154,50 @@ async function secondaryFetch(env, path, body = {}) {
     throw error;
   }
 
-  const base = String(env.SUPABASE_URL || "").replace(/\/$/, "");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SECONDARY_TIMEOUT_MS);
   try {
-    const res = await fetch(base + path, {
-      method: "POST",
-      headers: secondaryHeaders(env),
-      body: JSON.stringify(body || {}),
-      signal: controller.signal
-    });
+    let res;
+    let mode = "direct";
+
+    if (secondaryDirectConfigured(env)) {
+      const base = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+      res = await fetch(base + path, {
+        method: "POST",
+        headers: secondaryHeaders(env),
+        body: JSON.stringify(body || {}),
+        signal: controller.signal
+      });
+    } else {
+      mode = "edge-owner-token";
+      const base = String(env.FNS_SECONDARY_URL || "").replace(/\/$/, "");
+      const action =
+        path.includes("fns_secondary_manifest") ? "manifest" :
+        path.includes("fns_secondary_hybrid_search") ? "search" :
+        "";
+      if (!action) {
+        const error = new Error("Secondary edge action is not mapped.");
+        error.code = "SECONDARY_EDGE_ACTION_UNMAPPED";
+        throw error;
+      }
+      const edgeBody = action === "search"
+        ? {
+            query: String(body?.query_text || ""),
+            query_embedding: body?.query_embedding_text || null,
+            per_document_k: body?.per_document_k,
+            global_limit: body?.global_limit
+          }
+        : body;
+      res = await fetch(base + "?action=" + encodeURIComponent(action), {
+        method: "POST",
+        headers: secondaryEdgeHeaders(env),
+        body: JSON.stringify(edgeBody || {}),
+        signal: controller.signal
+      });
+    }
+
     if (res.status === 429 || res.status >= 500) {
-      circuitTrip("http-" + res.status, res.status === 429);
+      circuitTrip(mode + "-http-" + res.status, res.status === 429);
       const error = new Error("Secondary HTTP " + res.status);
       error.code = res.status === 429 ? "SECONDARY_QUOTA_OR_RATE_LIMIT" : "SECONDARY_UNAVAILABLE";
       error.status = res.status;
@@ -158,8 +209,12 @@ async function secondaryFetch(env, path, body = {}) {
       error.status = res.status;
       throw error;
     }
+
     const data = await res.json().catch(() => null);
     circuitRecover();
+    if (mode === "edge-owner-token" && path.includes("fns_secondary_hybrid_search")) {
+      return Array.isArray(data?.matches) ? data.matches : [];
+    }
     return data;
   } catch (error) {
     if (error?.name === "AbortError") {
