@@ -1,0 +1,55 @@
+name: V8 Production Current-Only RAG Proof
+
+on:
+  push:
+    branches:
+      - "ops-v80-final-ui-qa-*"
+    paths:
+      - ".github/workflows/v80-production-rag-proof.yml"
+      - "ops/run-v80-production-rag-proof.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rag-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install local query embedding model
+        run: npm install --no-save @xenova/transformers@2.17.2
+      - name: Run production RAG proof
+        shell: bash
+        run: |
+          cat > ./rag-proof.mjs <<'EOF'
+          import { pipeline, env } from '@xenova/transformers';
+          env.allowLocalModels=false;
+          env.allowRemoteModels=true;
+          const extractor=await pipeline('feature-extraction','Xenova/paraphrase-multilingual-MiniLM-L12-v2',{quantized:true});
+          const tests=[
+            {query:'o financista é aquele que traz a madeira dos cânions',id:'535daecef71e41a29a010c60decad4b6',doc:'0ee8a89e0c00499ca31829ce4c9c2485',origin:'current_only'},
+            {query:'aqueles que não ouvirem a voz do Senhor nem a de seus servos',id:'70a2f828728a47318753d512a658c649',doc:'11df9803ae084a38b558bfa92c26055d',origin:'current_only'},
+            {query:'temos mais amigos atrás do véu do que deste lado',id:'fe639974452546918f43f24d09c0a81e',doc:'5b806646ded04373ba03d3476cb848ea',origin:'current_only'},
+            {query:'a mensagem dos três anjos evangelho eterno 144.000',id:'9cc3ee19ae89407d89f4a6b036c2a654',doc:'c9bb7b3535ec4fa08951b667f04c9b9c',origin:'current_only'}
+          ];
+          const out=[];
+          for(const t of tests){
+            const emb=await extractor(t.query,{pooling:'mean',normalize:true});
+            const vector=emb.tolist();
+            const qv=Array.isArray(vector[0])?vector[0]:vector;
+            const res=await fetch('https://consciencia-fabiano.focoeepoder2.workers.dev/api/rag/search',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'curl/8.5.0'},body:JSON.stringify({question:t.query,query_embedding:qv})});
+            const data=await res.json().catch(()=>({}));
+            const matches=Array.isArray(data?.matches)?data.matches:[];
+            const idx=matches.findIndex(m=>String(m?.id||m?.chunk_id||'')===t.id);
+            const hit=idx>=0?matches[idx]:null;
+            out.push({query:t.query,http_status:res.status,api_ok:data?.ok===true,chunk_id:t.id,document_id:t.doc,origin:t.origin,returned:idx>=0,rank:idx>=0?idx+1:null,score:hit?Number(hit.score||0):null,lexical_score:hit?Number(hit.lexical_score||0):null,semantic_score:hit?Number(hit.semantic_score||0):null,retrieval_mode:hit?String(hit.retrieval_mode||''):null,total_matches:matches.length,code:String(data?.code||'')});
+          }
+          console.log('PRODUCTION_RAG_PROOF='+JSON.stringify(out));
+          if(!out.every(x=>x.http_status===200&&x.api_ok&&x.returned)) process.exit(1);
+          EOF
+          node ./rag-proof.mjs
