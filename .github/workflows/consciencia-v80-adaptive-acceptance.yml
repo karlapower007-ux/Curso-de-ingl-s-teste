@@ -7,6 +7,12 @@ on:
     paths:
       - "consciencia-fabiano/**"
       - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+  pull_request:
+    branches:
+      - consciencia-v7-5-stateful-resilience-staging-20260920
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
   workflow_dispatch:
 
 permissions:
