@@ -61,11 +61,6 @@ jobs:
                 if(d.type()==="prompt") await d.accept(owner);
                 else await d.dismiss();
               });
-              await page.addInitScript(({key,value})=>sessionStorage.setItem(key,value),{
-                key:"consciencia_fabiano_owner_token_session_v2",
-                value:owner
-              });
-
               const nav=await page.goto(BASE+"/?library-qa="+Date.now(),{
                 waitUntil:"domcontentloaded",timeout:60000
               });
@@ -76,6 +71,11 @@ jobs:
                 ()=>typeof document.querySelector("#libraryTab")?.onclick==="function",
                 {timeout:30000}
               );
+              // Authenticate only after the production shell is fully bound so the
+              // diagnostic itself cannot perturb app startup.
+              await page.evaluate(token=>{
+                sessionStorage.setItem("consciencia_fabiano_owner_token_session_v2",token);
+              },owner);
 
               const before=await page.evaluate(()=>({
                 panelHidden:document.querySelector("#libraryPanel")?.classList.contains("hidden"),
