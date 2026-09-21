@@ -1915,7 +1915,8 @@ function extractScriptureReferences(text) {
   if(!raw) return [];
   const out=[],seen=new Set();
   let match;
-  SCRIPTURE_REFERENCE_RE.lastIndex=0;\n  while((match=SCRIPTURE_REFERENCE_RE.exec(raw))!==null && out.length<24){
+  SCRIPTURE_REFERENCE_RE.lastIndex=0;
+  while((match=SCRIPTURE_REFERENCE_RE.exec(raw))!==null && out.length<24){
     const book=canonicalScriptureBook(match[1]);
     const chapter=Number(match[2]);
     const verseStart=Number(match[3]);
