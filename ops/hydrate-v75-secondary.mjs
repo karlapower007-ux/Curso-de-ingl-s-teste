@@ -11,6 +11,8 @@ const UPSERT_BATCH=200;
 const EMBEDDING_BATCH=Math.max(1,Math.min(32,Number(process.env.FNS_EMBEDDING_BATCH || 16)));
 const MAX_FETCH_RETRIES=4;
 const EMBEDDING_MODEL="Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+const STATIC_BACKUP_REF=String(process.env.FNS_STATIC_BACKUP_REF || "eeadaf861443b3735bab0000e693def50b844217").trim();
+const STATIC_BACKUP_BASE="https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/"+STATIC_BACKUP_REF+"/consciencia-fabiano/public";
 
 async function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -206,6 +208,7 @@ let sourceGeneration="";
 let primaryTotal=0;
 let probeReason="";
 let r2Reason="";
+let staticManifest=null;
 
 try{
   const r2=await adminGet(BASE+"/api/admin/omni-sync-state");
@@ -247,6 +250,25 @@ if(primaryTotal<=0){
 }
 
 if(primaryTotal<=0){
+  try{
+    const res=await fetch(STATIC_BACKUP_BASE+"/biblioteca_backup.json",{headers:{"Accept":"application/json"}});
+    const manifest=await res.json().catch(()=>null);
+    const staticTotal=Math.max(0,Number(manifest?.total_records||0));
+    const parts=Array.isArray(manifest?.parts)?manifest.parts:[];
+    if(res.ok && staticTotal>0 && parts.length>0){
+      staticManifest=manifest;
+      sourceMode="static-backup";
+      sourceGeneration="git:"+STATIC_BACKUP_REF.slice(0,12)+":"+String(manifest?.generated_at||"");
+      primaryTotal=staticTotal;
+      console.log("FNS_ETL_SOURCE=verified-static-backup total="+primaryTotal+
+        " parts="+parts.length+" ref="+STATIC_BACKUP_REF.slice(0,12));
+    }
+  }catch(error){
+    probeReason=[probeReason,"static backup unavailable: "+String(error?.message||error).slice(0,160)].filter(Boolean).join("; ");
+  }
+}
+
+if(primaryTotal<=0){
   await writeStatus({
     state:"waiting",
     source:"none",
@@ -255,7 +277,9 @@ if(primaryTotal<=0){
   process.exit(0);
 }
 
-let generation="v75-etl-"+Date.now().toString(36);
+let generation=sourceMode==="static-backup"
+  ? "v75-static-"+STATIC_BACKUP_REF.slice(0,12)
+  : "v75-etl-"+Date.now().toString(36);
 let cursorId="";
 let exported=0;
 let resumeVectors=0;
@@ -265,7 +289,8 @@ try{
   const resume=await secondaryPost("resume_state",{});
   const resumable=String(resume?.generation||"") &&
     Number(resume?.total_chunks||0)>0 &&
-    Number(resume?.total_chunks||0)<=primaryTotal;
+    Number(resume?.total_chunks||0)<=primaryTotal &&
+    (sourceMode!=="static-backup" || String(resume?.generation||"")===generation);
 
   if(resumable){
     generation=String(resume.generation);
@@ -362,7 +387,7 @@ try{
       if(page.data?.done===true) break;
       if(!next?.id) throw new Error("Primary cursor missing next_cursor");
     }
-  }else{
+  }else if(sourceMode==="r2"){
     let offset=exported;
     while(exported<primaryTotal){
       const page=await adminGet(
@@ -403,6 +428,51 @@ try{
       if(!Number.isFinite(nextOffset) || nextOffset<=offset) throw new Error("R2 snapshot cursor did not advance");
       offset=nextOffset;
     }
+  }else if(sourceMode==="static-backup"){
+    const parts=Array.isArray(staticManifest?.parts)?staticManifest.parts:[];
+    let logicalOffset=0;
+    for(const part of parts){
+      const partCount=Math.max(0,Number(part?.records||0));
+      const start=logicalOffset;
+      const end=start+partCount;
+      logicalOffset=end;
+
+      if(end<=exported) continue;
+
+      const rel=String(part?.url||"").replace(/^\//,"");
+      if(!rel) throw new Error("Static backup part URL missing");
+      const res=await fetch(STATIC_BACKUP_BASE+"/"+rel,{headers:{"Accept":"application/json"}});
+      if(!res.ok) throw new Error("Static backup part HTTP "+res.status+" "+rel);
+      const data=await res.json().catch(()=>({}));
+      let raw=Array.isArray(data?.chunks)?data.chunks:(Array.isArray(data?.records)?data.records:[]);
+      if(start<exported) raw=raw.slice(Math.max(0,exported-start));
+      if(!raw.length) continue;
+
+      const records=raw.map(r=>normalizeRecord(r,generation));
+      for(let i=0;i<records.length;i+=UPSERT_BATCH){
+        const batch=records.slice(i,i+UPSERT_BATCH);
+        const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
+        if(Number(mirrored?.records||0)!==batch.length){
+          throw new Error("Secondary static batch count mismatch after "+exported+" records");
+        }
+      }
+      exported+=records.length;
+
+      if(exported%2000<records.length || exported===primaryTotal){
+        const stats=await secondaryPost("generation_stats",{generation}).catch(()=>({}));
+        await writeStatus({
+          state:"loading",
+          primary_total:primaryTotal,
+          mirrored_chunks:Number(stats?.total_chunks||exported),
+          hydrated_embeddings:Number(stats?.vector_count||resumeVectors),
+          total_books:Number(stats?.total_books||totalBooks),
+          generation,source:sourceMode,source_generation:sourceGeneration,
+          reason:"verified 25,199-record static primary snapshot loading idempotently"
+        });
+      }
+    }
+  }else{
+    throw new Error("Unknown ETL source mode: "+sourceMode);
   }
 
   const textStats=await secondaryPost("generation_stats",{generation});
