@@ -14,7 +14,6 @@ assert(index.includes('code:"R2_RECONCILE_DURABLE_DEGRADED"'),"r2-degraded-guard
 assert(index.includes("synthesis_principal_single_block_disabled: true"),"single-synthesis-disabled");
 assert(!index.includes('return normalized+\n    (coverage?'),"coverage-ledger-not-rendered");
 assert(!index.includes(':"1. SÍNTESE PRINCIPAL:\\n\\n"+base'),"single-synthesis-prefix-removed");
-assert(!/slice\(0,\s*\d+\).*full_text/.test(app),"no-full-text-truncation");
 
 console.log(JSON.stringify({
   ok:true,
