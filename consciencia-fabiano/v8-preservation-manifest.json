@@ -4,12 +4,18 @@
   "staging_branch": "consciencia-v8-adaptive-production-baseline-staging-20260921",
   "policy": "additive-only",
   "library": {
-    "verified_manifest_generation": "v75-static-eeadaf861443",
-    "expected_verified_chunks": 25199,
-    "expected_verified_vectors": 25199,
+    "verified_manifest_generation": "v80-recovery-32bdd6cdcf1b0db3a730",
+    "expected_verified_chunks": 28636,
+    "expected_verified_vectors": 28636,
     "reindex_required": false,
     "destructive_sync_allowed": false,
-    "empty_replica_may_overwrite_populated_source": false
+    "empty_replica_may_overwrite_populated_source": false,
+    "historical_verified_fallback_generation": "v75-static-eeadaf861443",
+    "historical_verified_fallback_chunks": 25199,
+    "historical_verified_fallback_vectors": 25199,
+    "current_only_incremental_chunks": 3437,
+    "current_only_incremental_vectors": 3437,
+    "missing_vectors": 0
   },
   "frontend_must_remain_unchanged": [
     "consciencia-fabiano/public/index.html",

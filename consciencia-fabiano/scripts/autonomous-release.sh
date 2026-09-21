@@ -20,6 +20,7 @@ node scripts/build-cognitive-v74-manifest.mjs
 test -f public/cognitive-v74-manifest.json || die "COGNITIVE_V74_MANIFEST_MISSING"
 node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8"));if(!m.audit.valid||m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20)process.exit(1)'
 node scripts/adaptive-v80-acceptance.mjs | tee /tmp/adaptive-v80-acceptance.json
+node scripts/exhaustive-v80-acceptance.mjs | tee /tmp/exhaustive-v80-acceptance.json
 log "COGNITIVE_V74_LOCAL_ACCEPTANCE_PASS=yes"
 log "ADAPTIVE_V80_LOCAL_ACCEPTANCE_PASS=yes"
 node --check scripts/browser-voice-smoke.mjs
@@ -439,10 +440,12 @@ if [ "$reconcile_deferred" -eq 0 ]; then
   in_sync=$(jq -r '(.in_sync // false) | tostring' /tmp/r2-reconcile-state.json)
   preservation_floor=$(jq -r '(.library.expected_verified_chunks // 0) | tonumber' v8-preservation-manifest.json 2>/dev/null || echo 0)
 
-  # V8 preservation invariant: a smaller/partial runtime snapshot must never
-  # replace the previously verified library generation. Under quota pressure
-  # we keep the richer static/secondary evidence intact and defer reconciliation.
+  # V8 preservation invariant: a smaller/partial Durable Object snapshot must never
+  # replace the verified R2 generation. When DO is degraded, validate the preserved
+  # R2 manifest itself instead of comparing it against zero/partial DO counters.
+  preserved_runtime_fallback=0
   if [ "$preservation_floor" -gt 0 ] && [ "$do_chunks" -lt "$preservation_floor" ]; then
+    preserved_runtime_fallback=1
     log "R2_RECONCILIATION_DEFERRED_PRESERVATION_FLOOR=yes do_chunks:$do_chunks floor:$preservation_floor"
     in_sync=true
   fi
@@ -479,22 +482,48 @@ if [ "$reconcile_deferred" -eq 0 ]; then
 
   manifest_http=$(curl -sS --max-time 30 -o /tmp/r2-library-manifest.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/v1/r2/library-manifest" || echo 000)
   [ "$manifest_http" = "200" ] || { cat /tmp/r2-library-manifest.json 2>/dev/null || true; die "R2_LIBRARY_MANIFEST_HTTP_$manifest_http"; }
-  jq -e --argjson docs "$do_documents" --argjson chunks "$do_chunks" '
-    .ok == true and .authoritative == true and
-    .total_books == $docs and .total_chunks == $chunks and
-    ((.metadata | length) == $docs)
-  ' /tmp/r2-library-manifest.json >/dev/null || {
-    cat /tmp/r2-library-manifest.json
-    die "R2_LIBRARY_MANIFEST_MISMATCH"
-  }
+
+  if [ "$preserved_runtime_fallback" -eq 1 ]; then
+    jq -e --argjson floor "$preservation_floor" '
+      .ok == true and .authoritative == true and .empty == false and
+      (.total_books | tonumber) >= 1 and
+      (.total_chunks | tonumber) >= $floor and
+      (.vector_count | tonumber) >= $floor and
+      ((.metadata | length) == (.total_books | tonumber))
+    ' /tmp/r2-library-manifest.json >/dev/null || {
+      cat /tmp/r2-library-manifest.json
+      die "R2_PRESERVED_MANIFEST_BELOW_VERIFIED_FLOOR"
+    }
+    log "R2_PRESERVED_MANIFEST_PASS=yes"
+  else
+    jq -e --argjson docs "$do_documents" --argjson chunks "$do_chunks" '
+      .ok == true and .authoritative == true and
+      .total_books == $docs and .total_chunks == $chunks and
+      ((.metadata | length) == $docs)
+    ' /tmp/r2-library-manifest.json >/dev/null || {
+      cat /tmp/r2-library-manifest.json
+      die "R2_LIBRARY_MANIFEST_MISMATCH"
+    }
+  fi
 
   reconcile_verify_http=$(curl -sS --max-time 30 -o /tmp/r2-reconcile-verify.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/r2-reconcile-state" || echo 000)
   [ "$reconcile_verify_http" = "200" ] || die "R2_RECONCILE_VERIFY_HTTP_$reconcile_verify_http"
-  jq -e '.ok == true and .in_sync == true' /tmp/r2-reconcile-verify.json >/dev/null || {
-    cat /tmp/r2-reconcile-verify.json
-    die "R2_RECONCILIATION_NOT_IN_SYNC"
-  }
-  log "R2_RECONCILIATION_PASS=yes"
+  if [ "$preserved_runtime_fallback" -eq 1 ]; then
+    jq -e --argjson floor "$preservation_floor" '
+      .ok == true and .degraded == true and .safe_read_only_fallback == true and
+      (.r2_chunks | tonumber) >= $floor and (.r2_vectors | tonumber) >= $floor
+    ' /tmp/r2-reconcile-verify.json >/dev/null || {
+      cat /tmp/r2-reconcile-verify.json
+      die "R2_PRESERVED_RECONCILIATION_GUARD_FAILED"
+    }
+    log "R2_RECONCILIATION_PASS=preserved-r2-degraded-do"
+  else
+    jq -e '.ok == true and .in_sync == true' /tmp/r2-reconcile-verify.json >/dev/null || {
+      cat /tmp/r2-reconcile-verify.json
+      die "R2_RECONCILIATION_NOT_IN_SYNC"
+    }
+    log "R2_RECONCILIATION_PASS=yes"
+  fi
   log "R2_HYDRATION_PASS=yes"
 
   first_hash=$(jq -r '[.metadata[] | select((.content_sha256 // "") | test("^[0-9a-f]{64}$"))][0].content_sha256 // ""' /tmp/r2-library-manifest.json)
