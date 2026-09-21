@@ -2105,7 +2105,9 @@ function citationCarryFromUrl(url) {
   return {
     document_id:String(url.searchParams.get("carry_doc")||"").slice(0,180),
     chapter_number:chapterNumber,
-    chapter_title:chapterTitle
+    chapter_title:chapterTitle,
+    scripture_book:String(url.searchParams.get("carry_scripture_book")||"").replace(/[\r\n]+/g," ").trim().slice(0,120),
+    scripture_chapter:Math.max(0,Number(url.searchParams.get("carry_scripture_chapter")||0)) || null
   };
 }
 
@@ -2113,7 +2115,9 @@ function citationCarryPublic(carry) {
   return {
     document_id:String(carry?.document_id||"").slice(0,180),
     chapter_number:Math.max(0,Number(carry?.chapter_number||0)) || null,
-    chapter_title:String(carry?.chapter_title||"").replace(/[\r\n]+/g," ").trim().slice(0,180)
+    chapter_title:String(carry?.chapter_title||"").replace(/[\r\n]+/g," ").trim().slice(0,180),
+    scripture_book:String(carry?.scripture_book||"").replace(/[\r\n]+/g," ").trim().slice(0,120),
+    scripture_chapter:Math.max(0,Number(carry?.scripture_chapter||0)) || null
   };
 }
 
@@ -2166,6 +2170,8 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
   let currentDocument=String(carryInput?.document_id||"");
   let currentChapterNumber=Math.max(0,Number(carryInput?.chapter_number||0)) || null;
   let currentChapterTitle=String(carryInput?.chapter_title||"").replace(/[\r\n]+/g," ").trim().slice(0,180);
+  let currentScriptureBook=String(carryInput?.scripture_book||"").replace(/[\r\n]+/g," ").trim().slice(0,120);
+  let currentScriptureChapter=Math.max(0,Number(carryInput?.scripture_chapter||0)) || null;
 
   for(const shard of shards){
     const rows=Array.isArray(shard?.rows)?shard.rows:[];
@@ -2181,21 +2187,47 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
         currentDocument=documentId;
         currentChapterNumber=null;
         currentChapterTitle="";
+        currentScriptureBook="";
+        currentScriptureChapter=null;
       }
 
       const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
-      if(!scriptureKind && /(?:^|\n)\s*(?:cap[ií]tulo|chapter|cap\.?)\s+/imu.test(rowText)){
-        const heading=extractChapterHeading(rowText);
+      if(scriptureKind){
+        if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
+        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
+        if(scriptureHeading){
+          currentScriptureBook=scriptureHeading.book || currentScriptureBook;
+          currentScriptureChapter=scriptureHeading.chapter || currentScriptureChapter;
+        }
+      }else{
+        const heading=extractChapterHeading(String(row?.title||"")+"\n"+rowText);
         if(heading){
           currentChapterNumber=heading.number || currentChapterNumber;
-          currentChapterTitle=heading.title || "";
+          currentChapterTitle=heading.title || currentChapterTitle || "";
+        }else{
+          const named=extractNamedSectionHeading(rowText,row?.title||row?.filename||"");
+          if(named) currentChapterTitle=named;
         }
       }
 
       const lexical=citationLexicalScore(rowText,query,terms);
       if(!lexical) continue;
 
-      const directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
+      let directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
+      if(scriptureKind && !directScriptureRefs.length){
+        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
+        const book=scriptureHeading?.book || currentScriptureBook;
+        const chapter=scriptureHeading?.chapter || currentScriptureChapter;
+        const verseRange=extractScriptureVerseRange(rowText,Number(row?.page||0));
+        const synthetic=syntheticScriptureReference(book,chapter,verseRange);
+        if(synthetic) directScriptureRefs=[synthetic];
+      }
+      if(directScriptureRefs.length){
+        const lastRef=directScriptureRefs[directScriptureRefs.length-1];
+        currentScriptureBook=lastRef.book || currentScriptureBook;
+        currentScriptureChapter=lastRef.chapter || currentScriptureChapter;
+      }
+
       const inlineHeading=!scriptureKind ? extractChapterHeading(String(row?.title||"")+"\n"+rowText) : null;
       const chapterNumber=inlineHeading?.number || currentChapterNumber || null;
       const chapterTitle=inlineHeading?.title || currentChapterTitle || "";
@@ -2245,7 +2277,9 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
     carry:citationCarryPublic({
       document_id:currentDocument,
       chapter_number:currentChapterNumber,
-      chapter_title:currentChapterTitle
+      chapter_title:currentChapterTitle,
+      scripture_book:currentScriptureBook,
+      scripture_chapter:currentScriptureChapter
     }),
     cpu_bounded_segment:true,
     shards_per_request:CITATION_R2_SHARDS_PER_REQUEST
