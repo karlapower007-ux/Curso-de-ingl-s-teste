@@ -27,6 +27,10 @@ must(worker.includes("function extractScriptureHeading"),"scripture heading reso
 must(worker.includes("function extractScriptureVerseRange"),"scripture verse range resolver missing");
 must(worker.includes("function syntheticScriptureReference"),"scripture canonical reference builder missing");
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
+must(worker.includes("citation_dictionary_canonical_filename_suffixes: true"),"canonical scripture filename suffix flag missing");
+must(worker.includes('.replace(/[-_]+/g," ")'),"scripture filename slug normalization missing");
+must(worker.includes('portugues|portuguese|english|por|pt|eng|en|spa|es'),"canonical scripture language suffixes missing");
+
 must(!worker.includes('if(/\\b(?:doutrina e convenios|doctrine and covenants)\\b/.test(value)) return "doctrine-and-covenants";'),"broad scripture filename classifier must not return");
 
 must(worker.includes('backend:"r2-authoritative"'),"citation backend must identify authoritative R2");
