@@ -2060,7 +2060,7 @@ function citationPublicView(row,index=0) {
     chapter_title:chapterTitle,
     chapter_display:chapterNumber
       ? "Capítulo "+chapterNumber+(chapterTitle?" — "+chapterTitle:"")
-      : "Capítulo: não localizado no texto extraído",
+      : (chapterTitle ? "Capítulo/Seção — "+chapterTitle : "Capítulo: não localizado no texto extraído"),
     page,
     page_display:page ? "Página "+page : "Página: não localizada",
     primary_reference:primaryScripture?.reference || "",
@@ -2073,7 +2073,7 @@ function citationPublicView(row,index=0) {
     score:Math.round(Number(row.score || 0)*10000)/10000,
     metadata_complete:scriptureSource
       ? Boolean(primaryScripture?.chapter && primaryScripture?.verse_start)
-      : Boolean(chapterNumber && page)
+      : Boolean((chapterNumber || chapterTitle) && page)
   };
 }
 
