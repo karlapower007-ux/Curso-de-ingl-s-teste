@@ -83,7 +83,7 @@ jobs:
               'X-FNS-Memory-Key':memoryKey,
               'User-Agent':'curl/8.5.0'
             },
-            body:JSON.stringify({question,memory_key:memoryKey,stream:false}),
+            body:JSON.stringify({pergunta:question,memory_key:memoryKey,stream:false,deep_research:true}),
             signal:AbortSignal.timeout(900000)
           });
           const data=await response.json().catch(()=>({}));
