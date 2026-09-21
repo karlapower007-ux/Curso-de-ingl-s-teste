@@ -316,6 +316,58 @@ jobs:
           }
           NODE
 
+      - name: Audit publisher metadata and auth routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          mkdir -p probe/publisher
+
+          echo "--- DEPLOYMENT-ID RUNTIME CHUNK ---"
+          curl -L --compressed --silent --show-error --fail             "$BASE/_next/static/chunks/deployment-id-DFhHa9wO.js"             -o probe/publisher/deployment-id.js
+          cat probe/publisher/deployment-id.js
+
+          echo "--- SITE-CONTROLS FULL CHUNK ---"
+          curl -L --compressed --silent --show-error --fail             "$BASE/_next/static/chunks/site-controls-CPf82N9q.js"             -o probe/publisher/site-controls.js
+          cat probe/publisher/site-controls.js
+
+          echo "--- RESPONSE HEADERS ---"
+          for ROUTE in "/fale-com-o-fabiano" "/api/fabiano/ask" "/admin" "/api/admin/chatgpt-login" "/api/admin/login"; do
+            SAFE="$(echo "$ROUTE" | sed 's#^/##; s#/#-#g')"
+            [ -n "$SAFE" ] || SAFE=root
+            curl --compressed --silent --show-error --max-time 20               -D "probe/publisher/$SAFE.headers" -o /dev/null "$BASE$ROUTE" || true
+            echo "### $ROUTE"
+            cat "probe/publisher/$SAFE.headers" || true
+          done
+
+          echo "--- OPTIONS / METHOD DISCOVERY ---"
+          for ROUTE in             "/api/fabiano/admin/documents"             "/api/fabiano/admin/chunks"             "/api/fabiano/admin/export"             "/api/fabiano/admin/uploads"             "/api/fabiano/admin/index-job"             "/api/admin/chatgpt-login"             "/api/admin/login"; do
+            SAFE="$(echo "$ROUTE" | sed 's#^/##; s#/#-#g')"
+            CODE="$(curl --compressed --silent --show-error --max-time 20               -X OPTIONS -D "probe/publisher/$SAFE.options.headers"               -o "probe/publisher/$SAFE.options.body" -w '%{http_code}' "$BASE$ROUTE" || true)"
+            echo "OPTIONS $ROUTE HTTP=$CODE"
+            grep -Ei '^(allow|access-control-allow-|location|x-|server|content-type):'               "probe/publisher/$SAFE.options.headers" || true
+            head -c 600 "probe/publisher/$SAFE.options.body" 2>/dev/null || true
+            echo
+          done
+
+          echo "--- AUTH ENDPOINT VALIDATION (NO CREDENTIALS) ---"
+          for ROUTE in "/api/admin/chatgpt-login" "/api/admin/login"; do
+            SAFE="$(echo "$ROUTE" | sed 's#^/##; s#/#-#g')"
+            CODE="$(curl --compressed --silent --show-error --max-time 20               -H 'content-type: application/json' -d '{}'               -D "probe/publisher/$SAFE.post.headers"               -o "probe/publisher/$SAFE.post.body" -w '%{http_code}' "$BASE$ROUTE" || true)"
+            echo "POST $ROUTE HTTP=$CODE BODY=$(head -c 1000 "probe/publisher/$SAFE.post.body" 2>/dev/null | tr '\n' ' ')"
+          done
+
+          echo "--- CANDIDATE SITE META ENDPOINTS ---"
+          for ROUTE in             "/manifest.json" "/site.webmanifest" "/_next/static/build-manifest.json"             "/_next/build-manifest.json" "/.well-known/openai-site"             "/.well-known/chatgpt-site" "/api/site" "/api/site/meta" "/api/deployment"             "/api/version" "/api/health" "/health" "/__meta" "/__deployment"; do
+            SAFE="$(echo "$ROUTE" | sed 's#^/##; s#/#-#g')"
+            CODE="$(curl --compressed --silent --show-error --max-time 15               -o "probe/publisher/meta-$SAFE.body" -w '%{http_code}' "$BASE$ROUTE" || true)"
+            echo "META $ROUTE HTTP=$CODE BODY=$(head -c 400 "probe/publisher/meta-$SAFE.body" 2>/dev/null | tr '\n' ' ')"
+          done
+
+          echo "--- ADMIN PAGE AUTH CONTRACT ---"
+          curl -L --compressed --silent --show-error --max-time 20 "$BASE/admin"             -o probe/publisher/admin.html || true
+          grep -Eio 'ChatGPT|entrar|login|senha|PIN|autor|/api/admin/[A-Za-z0-9_?&=./:-]+'             probe/publisher/admin.html | sort -u | head -n 200 || true
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
