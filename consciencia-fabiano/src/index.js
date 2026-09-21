@@ -52,9 +52,8 @@ const MICRO_NODE_BATCH_SIZE = 5;
 const CITATION_PAGE_SIZE = 50;
 const CITATION_SCAN_LIMIT = 50000;
 const CITATION_MAX_QUERY_CHARS = 4000;
-const CITATION_R2_CACHE_TTL_MS = 5 * 60 * 1000;
-const CITATION_R2_CACHE_MAX_QUERIES = 2;
-const citationR2SearchCache = new Map();
+const CITATION_R2_BATCH_SHARDS = 4;
+const CITATION_R2_MAX_STATE_DOCS = 64;
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
 // V7.3: nós e reducers são 100% determinísticos; somente o MASTER FINAL pode chamar Groq.
@@ -1911,7 +1910,7 @@ function citationPublicView(row,index=0) {
     page_display:page ? "Página "+page : "Página: não localizada",
     primary_reference:primaryScripture?.reference || "",
     scripture_references:scriptureRefs,
-    excerpt:cleanNarrativeText(row.text || "").slice(0,720),
+    excerpt:cleanNarrativeText(row.text || "").slice(0,420),
     technical_document:String(row.filename || "").replace(/[\r\n]+/g," ").trim(),
     document_id:String(row.document_id || ""),
     chunk_id:String(row.id || ""),
@@ -1930,7 +1929,7 @@ function citationLexicalScore(text,query,terms) {
   for(const term of terms){
     if(!term) continue;
     let from=0,count=0;
-    while(count<24){
+    while(count<16){
       const at=folded.indexOf(term,from);
       if(at<0) break;
       count++;
@@ -1964,16 +1963,52 @@ async function listR2CitationShards(env,generation) {
   return objects;
 }
 
-function trimCitationR2Cache() {
-  while(citationR2SearchCache.size>CITATION_R2_CACHE_MAX_QUERIES){
-    const oldest=[...citationR2SearchCache.entries()]
-      .sort((a,b)=>Number(a[1]?.created_at||0)-Number(b[1]?.created_at||0))[0]?.[0];
-    if(!oldest) break;
-    citationR2SearchCache.delete(oldest);
+function cleanCitationScanState(raw) {
+  const source=raw && typeof raw==="object" ? raw : {};
+  const chapters={};
+  const scriptures={};
+  let count=0;
+  for(const [documentId,value] of Object.entries(source.chapters||{})){
+    if(count>=CITATION_R2_MAX_STATE_DOCS) break;
+    const id=String(documentId||"").slice(0,180);
+    const number=Math.max(0,Number(value?.number||0)) || null;
+    if(!id || !number) continue;
+    chapters[id]={
+      number,
+      title:String(value?.title||"").replace(/[\r\n]+/g," ").trim().slice(0,140)
+    };
+    count++;
+  }
+  count=0;
+  for(const [documentId,value] of Object.entries(source.scriptures||{})){
+    if(count>=CITATION_R2_MAX_STATE_DOCS) break;
+    const id=String(documentId||"").slice(0,180);
+    const reference=String(value?.reference||"").replace(/[\r\n]+/g," ").trim().slice(0,180);
+    if(!id || !reference) continue;
+    scriptures[id]={
+      work:String(value?.work||"").slice(0,120),
+      book:String(value?.book||"").slice(0,120),
+      chapter:Math.max(0,Number(value?.chapter||0)) || null,
+      verse_start:Math.max(0,Number(value?.verse_start||0)) || null,
+      verse_end:Math.max(0,Number(value?.verse_end||0)) || null,
+      reference
+    };
+    count++;
+  }
+  return {chapters,scriptures};
+}
+
+function decodeCitationScanState(url) {
+  const encoded=String(url.searchParams.get("state")||"").trim();
+  if(!encoded) return {chapters:{},scriptures:{}};
+  try{
+    return cleanCitationScanState(JSON.parse(encoded));
+  }catch{
+    return {chapters:{},scriptures:{}};
   }
 }
 
-async function citationSearchR2(env,query,offset,limit) {
+async function citationSearchR2Batch(env,query,shardCursor,scanState) {
   if(!env.PDFS) {
     const err=new Error("Binding R2 PDFS ausente.");
     err.code="R2_LIBRARY_BINDING_MISSING";
@@ -1984,188 +2019,150 @@ async function citationSearchR2(env,query,offset,limit) {
   const libraryTotal=Math.max(0,Number(pointer?.chunks||0));
   if(!generation || !libraryTotal){
     return {
-      ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
-      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,cache_hit:false
+      ok:true,matches:[],backend:"r2-authoritative",generation,
+      library_total_chunks:libraryTotal,scanned_batch:0,scan_done:true,
+      scan_cursor:0,next_scan_cursor:null,shards_total:0,shards_scanned:0,
+      state:cleanCitationScanState(scanState)
     };
   }
 
-  const foldedQuery=foldSearchText(query);
   const terms=lexicalTerms(query);
   if(!terms.length){
     return {
-      ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
-      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,cache_hit:false
+      ok:true,matches:[],backend:"r2-authoritative",generation,
+      library_total_chunks:libraryTotal,scanned_batch:0,scan_done:true,
+      scan_cursor:0,next_scan_cursor:null,shards_total:0,shards_scanned:0,
+      state:cleanCitationScanState(scanState)
     };
   }
 
-  const cacheKey=generation+"|"+foldedQuery;
-  let cached=citationR2SearchCache.get(cacheKey);
-  if(cached && (Date.now()-Number(cached.created_at||0))>CITATION_R2_CACHE_TTL_MS){
-    citationR2SearchCache.delete(cacheKey);
-    cached=null;
-  }
+  const objects=await listR2CitationShards(env,generation);
+  const cursor=Math.max(0,Math.min(objects.length,Number(shardCursor||0)));
+  const selected=objects.slice(cursor,cursor+CITATION_R2_BATCH_SHARDS);
+  const state=cleanCitationScanState(scanState);
+  const matches=[];
+  let scannedBatch=0;
 
-  if(!cached){
-    const objects=await listR2CitationShards(env,generation);
-    const matches=[];
-    const chapterByDocument=new Map();
-    const scriptureByDocument=new Map();
-    let scanned=0;
+  for(const object of selected){
+    const shard=await r2JsonGet(env.PDFS,object.key).catch(()=>null);
+    const rows=Array.isArray(shard?.rows)?shard.rows:[];
+    for(const row of rows){
+      scannedBatch++;
+      const documentId=String(row?.document_id || shard?.document_id || "").slice(0,180);
+      const rowText=String(row?.text || "");
+      if(!documentId || !rowText) continue;
 
-    for(let start=0;start<objects.length;start+=8){
-      const batch=objects.slice(start,start+8);
-      const shards=await Promise.all(batch.map(object=>r2JsonGet(env.PDFS,object.key).catch(()=>null)));
-      for(let shardIndex=0;shardIndex<shards.length;shardIndex++){
-        const shard=shards[shardIndex];
-        const rows=Array.isArray(shard?.rows)?shard.rows:[];
-        for(const row of rows){
-          if(scanned>=CITATION_SCAN_LIMIT) break;
-          scanned++;
-          const documentId=String(row?.document_id || shard?.document_id || "");
-          const rowText=String(row?.text || "");
-          if(!rowText) continue;
-
-          const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
-          const heading=scriptureKind ? null : extractChapterHeading(rowText);
-          if(heading && documentId) chapterByDocument.set(documentId,heading);
-
-          const directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
-          if(directScriptureRefs.length && documentId) scriptureByDocument.set(documentId,directScriptureRefs);
-
-          const lexical=citationLexicalScore(rowText,query,terms);
-          if(!lexical) continue;
-
-          const chapter=scriptureKind ? null : chapterByDocument.get(documentId);
-          const scriptureRefs=scriptureKind
-            ? (directScriptureRefs.length ? directScriptureRefs : (scriptureByDocument.get(documentId)||[]))
-            : [];
-
-          matches.push({
-            id:String(row?.id || (documentId+"-"+String(row?.chunk_index||scanned))).slice(0,220),
-            document_id:documentId,
-            filename:String(row?.filename || row?.title || "Documento").slice(0,300),
-            title:String(row?.title || row?.filename || "Documento").slice(0,500),
-            author:String(row?.author || "").slice(0,300),
-            language:String(row?.language || "pt").slice(0,40),
-            page:Number(row?.page || 0) || 0,
-            chunk_index:Number(row?.chunk_index || 0) || 0,
-            text:rowText.slice(0,1400),
-            score:lexical.score,
-            coverage:lexical.coverage,
-            matched_terms:lexical.matched_terms,
-            scripture_source_kind:scriptureKind,
-            scripture_references:scriptureRefs,
-            chapter_number:chapter?.number || null,
-            chapter_title:chapter?.title || ""
-          });
-        }
-        rows.length=0;
-        if(scanned>=CITATION_SCAN_LIMIT) break;
+      const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+      if(!scriptureKind && /\b(?:cap[ií]tulo|chapter|cap\.)\b/iu.test(rowText.slice(0,900))){
+        const heading=extractChapterHeading(rowText);
+        if(heading) state.chapters[documentId]={
+          number:heading.number,
+          title:String(heading.title||"").slice(0,140)
+        };
       }
-      if(scanned>=CITATION_SCAN_LIMIT) break;
+
+      if(scriptureKind && /\d{1,3}\s*:\s*\d{1,3}/u.test(rowText)){
+        const directRefs=extractScriptureReferences(rowText);
+        if(directRefs.length) state.scriptures[documentId]=directRefs[directRefs.length-1];
+      }
+
+      const lexical=citationLexicalScore(rowText,query,terms);
+      if(!lexical) continue;
+
+      const directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
+      const carriedScripture=state.scriptures[documentId] ? [state.scriptures[documentId]] : [];
+      const scriptureRefs=scriptureKind
+        ? (directScriptureRefs.length ? directScriptureRefs : carriedScripture)
+        : [];
+      const chapter=scriptureKind ? null : state.chapters[documentId];
+
+      matches.push({
+        id:String(row?.id || (documentId+"-"+String(row?.chunk_index||scannedBatch))).slice(0,220),
+        document_id:documentId,
+        filename:String(row?.filename || row?.title || "Documento").slice(0,300),
+        title:String(row?.title || row?.filename || "Documento").slice(0,500),
+        author:String(row?.author || "").slice(0,300),
+        language:String(row?.language || "pt").slice(0,40),
+        page:Number(row?.page || 0) || 0,
+        chunk_index:Number(row?.chunk_index || 0) || 0,
+        text:rowText.slice(0,900),
+        score:lexical.score,
+        coverage:lexical.coverage,
+        matched_terms:lexical.matched_terms,
+        scripture_source_kind:scriptureKind,
+        scripture_references:scriptureRefs,
+        chapter_number:chapter?.number || null,
+        chapter_title:chapter?.title || ""
+      });
     }
-
-    matches.sort((a,b)=>
-      Number(b.score||0)-Number(a.score||0) ||
-      Number(b.coverage||0)-Number(a.coverage||0) ||
-      String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
-      Number(a.page||0)-Number(b.page||0) ||
-      Number(a.chunk_index||0)-Number(b.chunk_index||0)
-    );
-
-    cached={
-      created_at:Date.now(),
-      scanned,
-      generation,
-      library_total_chunks:libraryTotal,
-      matches
-    };
-    citationR2SearchCache.set(cacheKey,cached);
-    trimCitationR2Cache();
+    rows.length=0;
   }
 
-  const all=Array.isArray(cached.matches)?cached.matches:[];
-  const pageRows=all.slice(offset,offset+limit).map((row,index)=>({...row,rank:offset+index+1}));
+  matches.sort((a,b)=>
+    Number(b.score||0)-Number(a.score||0) ||
+    Number(b.coverage||0)-Number(a.coverage||0) ||
+    String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
+    Number(a.page||0)-Number(b.page||0) ||
+    Number(a.chunk_index||0)-Number(b.chunk_index||0)
+  );
+
+  const nextCursor=cursor+selected.length;
   return {
     ok:true,
-    matches:pageRows,
-    total_found:all.length,
-    scanned:Number(cached.scanned||0),
-    offset,
-    limit,
-    has_more:offset+pageRows.length<all.length,
-    next_offset:offset+pageRows.length<all.length ? offset+pageRows.length : null,
+    matches,
     backend:"r2-authoritative",
-    generation:String(cached.generation||generation),
-    library_total_chunks:Number(cached.library_total_chunks||libraryTotal),
-    cache_hit:Boolean(citationR2SearchCache.get(cacheKey)===cached)
+    generation,
+    library_total_chunks:libraryTotal,
+    scanned_batch:scannedBatch,
+    scan_done:nextCursor>=objects.length,
+    scan_cursor:cursor,
+    next_scan_cursor:nextCursor>=objects.length ? null : nextCursor,
+    shards_total:objects.length,
+    shards_scanned:selected.length,
+    state
   };
 }
 
 async function citationDictionaryResponse(env,url) {
   const query=String(url.searchParams.get("q") || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
   if(query.length<2) return json({ok:false,code:"CITATION_QUERY_REQUIRED",citations:[]},400);
-  const offset=Math.max(0,Number(url.searchParams.get("offset") || 0));
-  const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(url.searchParams.get("limit") || CITATION_PAGE_SIZE)));
+  const scanCursor=Math.max(0,Number(url.searchParams.get("scan_cursor") || 0));
+  const scanState=decodeCitationScanState(url);
 
-  let data=null;
-  let r2Error=null;
-  if(env.PDFS){
-    try{
-      const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
-      if(pointer?.generation && Number(pointer?.chunks||0)>0){
-        data=await citationSearchR2(env,query,offset,limit);
-      }
-    }catch(error){
-      r2Error=error;
-    }
-  }
-
-  if(!data && env.LIBRARY){
-    try{
-      data=await libraryCall(env,"/citation-search",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({query,offset,limit,scan_limit:CITATION_SCAN_LIMIT})
-      });
-      data={...data,backend:"durable-object",library_total_chunks:Number(data?.scanned||0)};
-    }catch(error){
-      if(!r2Error) r2Error=error;
-    }
-  }
-
-  if(!data){
+  try{
+    const data=await citationSearchR2Batch(env,query,scanCursor,scanState);
+    const citations=(Array.isArray(data?.matches)?data.matches:[])
+      .map((row,index)=>citationPublicView(row,index))
+      .filter(Boolean);
+    return json({
+      ok:true,
+      query,
+      backend:"r2-authoritative",
+      generation:String(data?.generation || ""),
+      library_total_chunks:Math.max(0,Number(data?.library_total_chunks || 0)),
+      scanned_batch:Math.max(0,Number(data?.scanned_batch || 0)),
+      scan_cursor:Math.max(0,Number(data?.scan_cursor || 0)),
+      next_scan_cursor:data?.next_scan_cursor===null ? null : Math.max(0,Number(data?.next_scan_cursor || 0)),
+      scan_done:Boolean(data?.scan_done),
+      shards_total:Math.max(0,Number(data?.shards_total || 0)),
+      shards_scanned:Math.max(0,Number(data?.shards_scanned || 0)),
+      batch_found:citations.length,
+      state:data?.state || {chapters:{},scriptures:{}},
+      citations,
+      dictionary_mode:"bibliographic-r2-batched-v8.0.1",
+      llm_independent:true,
+      desktop_mobile_parity:true,
+      authoritative_r2_preferred:true,
+      exhaustive_scan_requires_cursor:true
+    });
+  }catch(error){
     return json({
       ok:false,
-      code:r2Error?.code || "CITATION_DICTIONARY_UNAVAILABLE",
-      message:String(r2Error?.message || "Dicionário bibliográfico temporariamente indisponível."),
+      code:error?.code || "CITATION_DICTIONARY_UNAVAILABLE",
+      message:String(error?.message || error),
       citations:[]
     },503);
   }
-
-  const citations=(Array.isArray(data?.matches)?data.matches:[])
-    .map((row,index)=>citationPublicView(row,offset+index))
-    .filter(Boolean);
-  return json({
-    ok:true,
-    query,
-    total_found:Math.max(0,Number(data?.total_found || 0)),
-    scanned:Math.max(0,Number(data?.scanned || 0)),
-    library_total_chunks:Math.max(0,Number(data?.library_total_chunks || 0)),
-    backend:String(data?.backend || "unknown"),
-    generation:String(data?.generation || ""),
-    cache_hit:Boolean(data?.cache_hit),
-    offset,
-    limit,
-    returned:citations.length,
-    has_more:Boolean(data?.has_more),
-    next_offset:data?.has_more ? Math.max(0,Number(data?.next_offset || offset+citations.length)) : null,
-    citations,
-    dictionary_mode:"bibliographic-cursor-v8.0.1",
-    llm_independent:true,
-    desktop_mobile_parity:true,
-    authoritative_r2_preferred:true
-  });
 }
 
 function uniqueSources(context) {
@@ -5215,8 +5212,8 @@ async function status(env) {
     citation_dictionary_llm_independent: true,
     citation_dictionary_mobile_desktop_parity: true,
     citation_dictionary_backend_preference: "r2-authoritative",
-    citation_dictionary_r2_full_scan_fallback: true,
-    citation_dictionary_r2_cache_ttl_ms: CITATION_R2_CACHE_TTL_MS,
+    citation_dictionary_r2_batched_scan: true,
+    citation_dictionary_r2_batch_shards: CITATION_R2_BATCH_SHARDS,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
@@ -6698,8 +6695,8 @@ export default {
         citation_dictionary_llm_independent: true,
         citation_dictionary_mobile_desktop_parity: true,
         citation_dictionary_backend_preference: "r2-authoritative",
-        citation_dictionary_r2_full_scan_fallback: true,
-        citation_dictionary_r2_cache_ttl_ms: CITATION_R2_CACHE_TTL_MS,
+        citation_dictionary_r2_batched_scan: true,
+        citation_dictionary_r2_batch_shards: CITATION_R2_BATCH_SHARDS,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
         cognitive_1000_microturbines: true,
