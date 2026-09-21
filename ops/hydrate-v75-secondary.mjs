@@ -269,14 +269,36 @@ try{
 
   if(resumable){
     generation=String(resume.generation);
-    exported=Number(resume.total_chunks||0);
+    const existingChunks=Number(resume.total_chunks||0);
     resumeVectors=Number(resume.vector_count||0);
     totalBooks=Number(resume.total_books||0);
-    cursorId=String(resume.last_id||"");
-    console.log("FNS_ETL_RESUME=yes generation="+generation+
-      " mirrored="+exported+
-      " vectors="+resumeVectors+
-      " after_id="+cursorId);
+
+    if(existingChunks===primaryTotal){
+      exported=primaryTotal;
+      cursorId=String(resume.last_id||"");
+      console.log("FNS_ETL_RESUME=complete-text generation="+generation+
+        " mirrored="+existingChunks+
+        " vectors="+resumeVectors);
+    }else if(sourceMode==="durable-object"){
+      // The existing 2,200-row generation was produced from an older R2 snapshot.
+      // A DO keyset cursor cannot safely continue from the R2 offset ordering.
+      // Re-scan the authoritative DO cursor from the beginning, but keep the
+      // same generation and idempotently upsert by chunk id. Existing rows are
+      // reused rather than deleted/recreated; this prevents gaps/duplication.
+      exported=0;
+      cursorId="";
+      console.log("FNS_ETL_RESUME=cross-source-idempotent-revalidation generation="+generation+
+        " existing="+existingChunks+
+        " primary="+primaryTotal+
+        " vectors="+resumeVectors);
+    }else{
+      exported=existingChunks;
+      cursorId=String(resume.last_id||"");
+      console.log("FNS_ETL_RESUME=yes generation="+generation+
+        " mirrored="+exported+
+        " vectors="+resumeVectors+
+        " after_id="+cursorId);
+    }
   }else{
     console.log("FNS_ETL_RESUME=no generation="+generation);
   }
