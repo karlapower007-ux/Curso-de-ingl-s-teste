@@ -7,6 +7,7 @@ die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
+: "${FNS_OWNER_TOKEN:?FNS_OWNER_TOKEN is required for the verified secondary library fallback}"
 
 GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
 
@@ -109,6 +110,8 @@ log "DEPLOY_COMMAND=success"
 log "4/7 Install runtime secrets"
 printf '%s' "$GROQ_API_KEY_CLEAN" | npx wrangler secret put GROQ_API_KEY >/dev/null
 log "GROQ_SECRET_INSTALLED=yes"
+printf '%s' "$FNS_OWNER_TOKEN" | npx wrangler secret put FNS_OWNER_TOKEN >/dev/null
+log "FNS_OWNER_TOKEN_INSTALLED=yes"
 
 put_optional_secret(){
   local name="$1"
@@ -159,6 +162,35 @@ for i in $(seq 1 30); do
   sleep 2
 done
 sleep 3
+
+log "4.5/7 Verify complete secondary library fallback"
+secondary_ready=false
+for i in $(seq 1 8); do
+  curl -fsS --max-time 20 "$BASE/health/deploy" >/tmp/secondary-health.json || true
+  transport=$(jq -r '.supabase_transport // ""' /tmp/secondary-health.json 2>/dev/null || true)
+  if [ "$transport" = "secondary-hybrid-fallback" ]; then
+    secondary_ready=true
+    break
+  fi
+  sleep 2
+done
+[ "$secondary_ready" = "true" ] || { cat /tmp/secondary-health.json 2>/dev/null || true; die "SECONDARY_LIBRARY_FALLBACK_NOT_ACTIVE"; }
+log "SECONDARY_LIBRARY_FALLBACK_ACTIVE=yes"
+
+rag_ready=false
+for i in $(seq 1 6); do
+  rag_http=$(curl -sS --max-time 25 -o /tmp/secondary-rag-probe.json -w '%{http_code}' "$BASE/api/rag/search" \
+    -H 'Content-Type: application/json' \
+    --data '{"question":"Jesus Cristo convênio"}' || echo 000)
+  matches=$(jq -r 'if (.matches|type)=="array" then (.matches|length) else 0 end' /tmp/secondary-rag-probe.json 2>/dev/null || echo 0)
+  if [ "$rag_http" = "200" ] && [ "$matches" -gt 0 ]; then
+    rag_ready=true
+    break
+  fi
+  sleep 2
+done
+[ "$rag_ready" = "true" ] || { cat /tmp/secondary-rag-probe.json 2>/dev/null || true; die "SECONDARY_LIBRARY_RAG_SEARCH_FAILED"; }
+log "SECONDARY_LIBRARY_RAG_SEARCH_PASS=yes"
 
 log "5/7 Production health"
 for i in $(seq 1 15); do
