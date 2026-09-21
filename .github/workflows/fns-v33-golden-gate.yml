@@ -36,6 +36,7 @@ jobs:
           node - <<'NODE'
           const j=JSON.parse(require('fs').readFileSync('/tmp/ask.json','utf8'));
           if(!Array.isArray(j.sources)) throw new Error('sources contract missing');
+          if(j.sources.length<=0) throw new Error('FNS_RAG_EMPTY_REAL_SOURCES');
           if(j.sources.some(s=>!s||(!s.document_id&&!s.title&&!s.filename))) throw new Error('invalid source contract');
           console.log('LIVE_FNS_PUBLIC_GATE=success source_count='+j.sources.length);
           NODE
