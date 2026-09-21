@@ -90,6 +90,68 @@ jobs:
           NODE
           done
 
+      - name: Test live FNS v33 API behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          mkdir -p probe/api
+
+          echo "--- PUBLIC ASK ---"
+          ASK_CODE="$(curl --compressed --silent --show-error --max-time 45             -o probe/api/ask.json -w '%{http_code}'             -H 'Content-Type: application/json'             -d '{"question":"Qual é o propósito desta biblioteca? Responda apenas com base nas fontes disponíveis.","history":[]}'             "$BASE/api/fabiano/ask" || true)"
+          echo "ASK_HTTP=$ASK_CODE BYTES=$(wc -c < probe/api/ask.json 2>/dev/null || echo 0)"
+          node - <<'NODE'
+          const fs=require('fs');
+          const p='probe/api/ask.json';
+          if(!fs.existsSync(p)) process.exit(0);
+          const raw=fs.readFileSync(p,'utf8');
+          try{
+            const j=JSON.parse(raw);
+            console.log(JSON.stringify({
+              ok:j.ok,
+              keys:Object.keys(j),
+              answer:typeof j.answer==='string'?j.answer.slice(0,1800):j.answer,
+              source_count:Array.isArray(j.sources)?j.sources.length:null,
+              sources:Array.isArray(j.sources)?j.sources.slice(0,12):j.sources,
+              diagnostics:j.diagnostics||j.meta||null,
+              error:j.error||j.message||null
+            },null,2));
+          }catch{ console.log(raw.slice(0,2200)); }
+          NODE
+
+          echo "--- ADMIN AUTH BOUNDARIES ---"
+          for ROUTE in documents chunks export uploads index-job; do
+            CODE="$(curl --compressed --silent --show-error --max-time 20               -o "probe/api/$ROUTE.json" -w '%{http_code}'               "$BASE/api/fabiano/admin/$ROUTE" || true)"
+            echo "ADMIN_ROUTE=$ROUTE HTTP=$CODE BODY=$(head -c 500 "probe/api/$ROUTE.json" 2>/dev/null | tr '\n' ' ')"
+          done
+
+          echo "--- STATIC FALLBACK ASSETS ---"
+          for ROUTE in /fabiano-sw.js /avatar_idle.png /avatar_listening.png /avatar_speaking.png; do
+            CODE="$(curl -L --compressed --silent --show-error --max-time 20               -o /dev/null -w '%{http_code}' "$BASE$ROUTE" || true)"
+            echo "ASSET=$ROUTE HTTP=$CODE"
+          done
+
+          echo "--- EXACT FNS ADMIN CLIENT CONTRACT ---"
+          for FILE in probe/assets/*admin-panel*.js; do
+            [ -f "$FILE" ] || continue
+            node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2], src=fs.readFileSync(p,'utf8');
+          const needles=[
+            '/api/fabiano/admin/documents',
+            '/api/fabiano/admin/chunks',
+            '/api/fabiano/admin/export',
+            '/api/fabiano/admin/index-job',
+            '/api/fabiano/admin/uploads'
+          ];
+          for(const n of needles){
+            const i=src.indexOf(n);
+            console.log('\n### '+n);
+            console.log(i<0?'NOT_FOUND':src.slice(Math.max(0,i-2600),Math.min(src.length,i+5200)));
+          }
+          NODE
+          done
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
