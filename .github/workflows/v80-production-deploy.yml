@@ -76,6 +76,10 @@ jobs:
           test "$(jq -r '.hard_guards.pre_final_llm_calls' v8-preservation-manifest.json)" = "0"
           echo "V8_FREE_TIER_AND_LOAD_GUARD=pass"
 
+      - name: Arm rollback after all preflight gates pass
+        shell: bash
+        run: echo "DEPLOY_ARMED=true" >> "$GITHUB_ENV"
+
       - name: Deploy official Worker
         working-directory: consciencia-fabiano
         env:
@@ -108,7 +112,7 @@ jobs:
           echo "V8_PRODUCTION_ENDPOINT=healthy"
 
       - name: Roll back Worker to previous production commit on failure
-        if: failure()
+        if: failure() && env.DEPLOY_ARMED == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
