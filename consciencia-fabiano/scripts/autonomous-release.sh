@@ -121,6 +121,10 @@ put_optional_secret(){
   fi
 }
 
+SUPABASE_SECONDARY_FUNCTION_URL="https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary"
+put_optional_secret SUPABASE_SECONDARY_FUNCTION_URL
+put_optional_secret FNS_OWNER_TOKEN
+
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
@@ -199,6 +203,8 @@ for i in $(seq 1 15); do
     and .groq_final_stage_only == true
     and .analytic_llm_calls_max == 1
     and .pre_master_llm_calls == 0
+    and .supabase_mirror_configured == true
+    and .supabase_transport == "secondary-hybrid-fallback"
     and .semantic_query_embedding_server_enabled == true
     and .semantic_multilingual_min_score == 0.62
     and .semantic_multilingual_strong_score == 0.72
