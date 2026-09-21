@@ -1,0 +1,48 @@
+name: Probe Estudos Profundos FNS v33
+
+on:
+  push:
+    branches:
+      - estudos-profundos-fns-v33-golden-20260920
+    paths:
+      - ".github/workflows/probe-estudos-profundos-fns-v33.yml"
+      - "estudos-profundos-fns-v33/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe live ChatGPT Site
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p probe
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+
+          for ROUTE in "/" "/fale-com-o-fabiano" "/admin/fabiano"; do
+            SAFE="$(printf '%s' "$ROUTE" | sed 's#^/$#home#; s#^/##; s#/#-#g')"
+            [ -n "$SAFE" ] || SAFE="home"
+            CODE="$(curl -L --compressed --silent --show-error --max-time 30               -D "probe/$SAFE.headers" -o "probe/$SAFE.html"               -w '%{http_code}' "$BASE$ROUTE" || true)"
+            echo "PROBE_ROUTE=$ROUTE HTTP=$CODE BYTES=$(wc -c < "probe/$SAFE.html" 2>/dev/null || echo 0)"
+            echo "--- TITLE/MARKERS $ROUTE ---"
+            grep -Eio '<title>[^<]*</title>|Fale com o Fabiano|Estudos Profundos FNS|__NEXT_DATA__|/_next/[^" ]+|/assets/[^" ]+' "probe/$SAFE.html" | head -n 80 || true
+            echo "--- HEADERS $ROUTE ---"
+            sed -n '1,40p' "probe/$SAFE.headers" || true
+          done
+
+          echo "--- HOME ASSET URLS ---"
+          grep -Eo '(src|href)="[^"]+"' probe/home.html | sed 's/^[^=]*="//; s/"$//' | head -n 120 || true
+
+      - name: Upload probe evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: estudos-profundos-fns-v33-probe
+          path: probe/
+          retention-days: 7
