@@ -190,3 +190,5 @@ jobs:
             consciencia-fabiano/qa-desktop.png
             consciencia-fabiano/qa-mobile.png
           if-no-files-found: ignore
+
+# rerun-after-output-render-fix-f568592
