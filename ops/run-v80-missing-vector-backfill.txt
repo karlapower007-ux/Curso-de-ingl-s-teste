@@ -1,9 +1,9 @@
 run=missing-vectors-3437
-attempt=idempotence-final
+attempt=fast-idempotence-production-rag
 strict_incremental=true
 expected_new_embeddings=0
 expected_chunks=28636
 expected_vectors=28636
-run_directed_production_rag=true
+production_rag_probes=4
 no_reindex=true
 no_frontend_changes=true
