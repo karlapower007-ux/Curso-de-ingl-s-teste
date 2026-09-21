@@ -1922,6 +1922,120 @@ function extractScriptureReferences(text) {
   return out;
 }
 
+
+function extractNamedSectionHeading(text,documentTitle="") {
+  const raw=String(text || "").replace(/\r/g,"\n");
+  const doc=foldSearchText(documentTitle);
+  const blocked=new Set([
+    "conteudo","conteudos","sumario","indice","prefacio","sobre o autor","introducao",
+    "contents","table of contents","preface","about the author","introduction"
+  ]);
+  const lines=raw.split("\n").slice(0,28);
+  for(const source of lines){
+    const line=String(source||"").replace(/\s+/g," ").trim();
+    if(line.length<3 || line.length>140) continue;
+    const folded=foldSearchText(line.replace(/^\d+\s+|\s+\d+$/g,""));
+    if(!folded || blocked.has(folded)) continue;
+    if(doc && (folded===doc || (folded.length>12 && doc.includes(folded)))) continue;
+
+    const explicit=line.match(/^(?:se[cç][aã]o|section|parte|part)\s+(?:[0-9IVXLCDM]+[-.:]?\s*)?(.{2,120})$/iu);
+    if(explicit){
+      return String(explicit[1]||"").replace(/\s+/g," ").trim().slice(0,180);
+    }
+
+    const letters=[...line].filter(ch=>/\p{L}/u.test(ch));
+    if(letters.length<3) continue;
+    const upper=letters.filter(ch=>ch===ch.toLocaleUpperCase("pt-BR") && ch!==ch.toLocaleLowerCase("pt-BR")).length;
+    const words=line.split(/\s+/).filter(Boolean);
+    if(words.length<=14 && upper/letters.length>=0.82 && !/[.!?]$/.test(line)){
+      return line.replace(/^\d+\s+|\s+\d+$/g,"").trim().slice(0,180);
+    }
+  }
+  return "";
+}
+
+const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria)";
+
+function scriptureCollectionSeed(kind) {
+  if(kind==="doctrine-and-covenants") return "Doutrina e Convênios";
+  return "";
+}
+
+function extractScriptureHeading(text,currentBook="") {
+  const raw=String(text || "").replace(/\r/g,"\n");
+  const direct=extractScriptureReferences(raw);
+  if(direct.length){
+    const last=direct[direct.length-1];
+    return {book:last.book,chapter:last.chapter,work:last.work};
+  }
+
+  const lineRef=new RegExp(
+    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
+    "imu"
+  );
+  const lineMatch=raw.match(lineRef);
+  if(lineMatch){
+    const book=canonicalScriptureBook(lineMatch[1]);
+    return {book,chapter:Number(lineMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  const bookThenChapter=new RegExp(
+    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
+    "imu"
+  );
+  const bookMatch=raw.match(bookThenChapter);
+  if(bookMatch){
+    const book=canonicalScriptureBook(bookMatch[1]);
+    return {book,chapter:Number(bookMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  if(currentBook){
+    const chapterMatch=raw.match(/(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+([0-9]{1,4}|[IVXLCDM]{1,12}|[\p{L}]+(?:\s+e\s+[\p{L}]+)?)\b/imu);
+    if(chapterMatch){
+      const chapter=chapterWordToNumber(chapterMatch[1]);
+      if(chapter) return {book:currentBook,chapter,work:scriptureWorkForBook(currentBook)};
+    }
+  }
+  return null;
+}
+
+function extractScriptureVerseRange(text,page=0) {
+  const lines=String(text || "").replace(/\r/g,"\n").split("\n");
+  const markers=[];
+  for(const line of lines){
+    const match=String(line||"").match(/^\s*(\d{1,3})\s+([\p{L}“"'(].{2,})$/u);
+    if(!match) continue;
+    const verse=Number(match[1]);
+    if(!verse || verse>176) continue;
+    const rest=String(match[2]||"").trim();
+    if(!/\p{L}/u.test(rest)) continue;
+    if(verse===Number(page||0) && rest.length<18) continue;
+    markers.push(verse);
+  }
+  if(!markers.length) return null;
+  if(markers.length===1 && markers[0]>60) return null;
+  let endIndex=0;
+  for(let i=1;i<markers.length;i++){
+    if(markers[i]>=markers[i-1]) endIndex=i;
+    else break;
+  }
+  return {verse_start:markers[0],verse_end:Math.max(markers[0],markers[endIndex])};
+}
+
+function syntheticScriptureReference(book,chapter,verseRange) {
+  if(!book || !chapter || !verseRange?.verse_start) return null;
+  const verseStart=Number(verseRange.verse_start);
+  const verseEnd=Number(verseRange.verse_end || verseStart);
+  return {
+    work:scriptureWorkForBook(book),
+    book,
+    chapter:Number(chapter),
+    verse_start:verseStart,
+    verse_end:verseEnd,
+    reference:book+" "+Number(chapter)+":"+verseStart+(verseEnd!==verseStart?"–"+verseEnd:"")
+  };
+}
+
 function citationPublicView(row,index=0) {
   if(!row) return null;
   const bookTitle=humanDocumentName(row.filename,row.title);
@@ -1942,7 +2056,7 @@ function citationPublicView(row,index=0) {
     chapter_title:chapterTitle,
     chapter_display:chapterNumber
       ? "Capítulo "+chapterNumber+(chapterTitle?" — "+chapterTitle:"")
-      : "Capítulo: não localizado no texto extraído",
+      : (chapterTitle ? "Capítulo/Seção — "+chapterTitle : "Capítulo: não localizado no texto extraído"),
     page,
     page_display:page ? "Página "+page : "Página: não localizada",
     primary_reference:primaryScripture?.reference || "",
@@ -1955,7 +2069,7 @@ function citationPublicView(row,index=0) {
     score:Math.round(Number(row.score || 0)*10000)/10000,
     metadata_complete:scriptureSource
       ? Boolean(primaryScripture?.chapter && primaryScripture?.verse_start)
-      : Boolean(chapterNumber && page)
+      : Boolean((chapterNumber || chapterTitle) && page)
   };
 }
 
