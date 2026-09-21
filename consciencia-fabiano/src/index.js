@@ -54,8 +54,8 @@ const CITATION_SCAN_LIMIT = 50000;
 const CITATION_MAX_QUERY_CHARS = 4000;
 const CITATION_R2_CACHE_TTL_MS = 5 * 60 * 1000;
 const CITATION_R2_CACHE_MAX_QUERIES = 2;
-const CITATION_R2_SHARDS_PER_REQUEST = 4;
-const CITATION_R2_MAX_MATCHES_PER_REQUEST = 2000;
+const CITATION_R2_SHARDS_PER_REQUEST = 2;
+const CITATION_R2_MAX_MATCHES_PER_REQUEST = 1000;
 const citationR2SearchCache = new Map();
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
@@ -1963,9 +1963,11 @@ function scriptureCollectionSeed(kind) {
   return "";
 }
 
-function extractScriptureHeading(text,currentBook="") {
+function extractScriptureHeading(text,currentBook="",precomputedDirect=null) {
   const raw=String(text || "").replace(/\r/g,"\n");
-  const direct=extractScriptureReferences(raw);
+  const direct=Array.isArray(precomputedDirect)
+    ? precomputedDirect
+    : (/\d{1,3}\s*:\s*\d{1,3}/.test(raw) ? extractScriptureReferences(raw) : []);
   if(direct.length){
     const last=direct[direct.length-1];
     return {book:last.book,chapter:last.chapter,work:last.work};
@@ -2194,9 +2196,11 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       }
 
       const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+      const explicitScriptureReferenceLikely=Boolean(scriptureKind && /\d{1,3}\s*:\s*\d{1,3}/.test(rowText));
+      const parsedScriptureRefs=explicitScriptureReferenceLikely ? extractScriptureReferences(rowText) : [];
       if(scriptureKind){
         if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
-        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
+        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook,parsedScriptureRefs);
         if(scriptureHeading){
           currentScriptureBook=scriptureHeading.book || currentScriptureBook;
           currentScriptureChapter=scriptureHeading.chapter || currentScriptureChapter;
@@ -2215,9 +2219,9 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       const lexical=citationLexicalScore(rowText,query,terms);
       if(!lexical) continue;
 
-      let directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
+      let directScriptureRefs=scriptureKind ? parsedScriptureRefs : [];
       if(scriptureKind && !directScriptureRefs.length){
-        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
+        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook,[]);
         const book=scriptureHeading?.book || currentScriptureBook;
         const chapter=scriptureHeading?.chapter || currentScriptureChapter;
         const verseRange=extractScriptureVerseRange(rowText,Number(row?.page||0));
@@ -5441,6 +5445,8 @@ async function status(env) {
     citation_dictionary_cpu_bounded: true,
     citation_dictionary_strict_scripture_source_classification: true,
     citation_dictionary_canonical_filename_suffixes: true,
+    citation_dictionary_scripture_direct_ref_gate: true,
+    citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_chapter_word_numbers: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
@@ -6930,6 +6936,8 @@ export default {
         citation_dictionary_cpu_bounded: true,
         citation_dictionary_strict_scripture_source_classification: true,
         citation_dictionary_canonical_filename_suffixes: true,
+        citation_dictionary_scripture_direct_ref_gate: true,
+        citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
         citation_dictionary_chapter_word_numbers: true,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
