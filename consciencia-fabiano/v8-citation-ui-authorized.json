@@ -67,7 +67,20 @@
     ],
     "heading_probe_chars": 900,
     "verse_probe_chars": 2400,
-    "cross_references_deferred": true
+    "cross_references_deferred": true,
+    "inline_chapter_headings": true,
+    "inline_verse_markers": true,
+    "multi_chapter_chunk_locations": true,
+    "scripture_initial_chapter_seed": true,
+    "footnote_aware_verse_markers": true,
+    "book_inline_heading_guard": "strong-heading-case-only",
+    "primary_scripture_location": [
+      "work",
+      "book",
+      "chapter",
+      "verse_start",
+      "verse_end"
+    ]
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
