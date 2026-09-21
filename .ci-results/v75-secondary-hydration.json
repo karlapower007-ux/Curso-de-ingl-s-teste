@@ -8,5 +8,7 @@
   "source_signature": "",
   "source": "none",
   "source_generation": "",
+  "cursor_id": "",
+  "embedding_cursor_id": "",
   "reason": "primary Cloudflare Worker 1101; R2 snapshot is non-authoritative or has zero vectors"
 }
