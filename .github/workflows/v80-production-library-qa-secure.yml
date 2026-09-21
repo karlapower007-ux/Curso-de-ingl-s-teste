@@ -1,0 +1,149 @@
+name: V8 Production Library Secure Desktop Mobile QA
+
+on:
+  push:
+    branches:
+      - "ops-v80-final-ui-qa-*"
+    paths:
+      - ".github/workflows/v80-production-library-qa-secure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  library-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install chromium --with-deps
+      - name: Validate Biblioteca after real app handler is bound
+        shell: bash
+        run: |
+          cat > ./library-secure-qa.mjs <<'EOF'
+          import { chromium } from "playwright";
+
+          const BASE=process.env.BASE_URL;
+          const owner=String(process.env.FNS_OWNER_TOKEN||"");
+          if(!owner) throw new Error("owner secret unavailable");
+
+          const browser=await chromium.launch({headless:true});
+          const profiles=[
+            {name:"desktop",viewport:{width:1440,height:900},isMobile:false},
+            {name:"mobile",viewport:{width:390,height:844},isMobile:true}
+          ];
+          const results=[];
+          try{
+            for(const p of profiles){
+              const context=await browser.newContext({
+                viewport:p.viewport,
+                isMobile:p.isMobile,
+                userAgent:p.isMobile
+                  ? "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 Chrome/153 Mobile Safari/537.36"
+                  : undefined
+              });
+              const page=await context.newPage();
+              const errors=[];
+              page.on("pageerror",e=>errors.push("pageerror:"+String(e.message||e)));
+              page.on("console",m=>{if(m.type()==="error") errors.push("console:"+m.text())});
+              page.on("response",r=>{if(r.status()>=500) errors.push("http:"+r.status()+":"+new URL(r.url()).pathname)});
+              page.on("dialog",async d=>{
+                if(d.type()==="prompt") await d.accept(owner);
+                else await d.dismiss();
+              });
+              await page.addInitScript(({key,value})=>sessionStorage.setItem(key,value),{
+                key:"consciencia_fabiano_owner_token_session_v2",
+                value:owner
+              });
+
+              const nav=await page.goto(BASE+"/?library-qa="+Date.now(),{
+                waitUntil:"domcontentloaded",timeout:60000
+              });
+              if(!nav?.ok()) throw new Error(p.name+" homepage HTTP "+nav?.status());
+
+              await page.locator("#libraryTab").waitFor({state:"visible",timeout:20000});
+              await page.waitForFunction(
+                ()=>typeof document.querySelector("#libraryTab")?.onclick==="function",
+                {timeout:30000}
+              );
+
+              const before=await page.evaluate(()=>({
+                panelHidden:document.querySelector("#libraryPanel")?.classList.contains("hidden"),
+                handler:typeof document.querySelector("#libraryTab")?.onclick==="function",
+                sessionPresent:Boolean(sessionStorage.getItem("consciencia_fabiano_owner_token_session_v2"))
+              }));
+
+              await page.locator("#libraryTab").click({timeout:15000});
+              await page.locator("#libraryPanel").waitFor({state:"visible",timeout:20000});
+
+              await page.waitForFunction(
+                ()=>[...document.querySelectorAll("#booksList .book strong")]
+                  .filter(x=>!/Nenhum PDF encontrado/i.test(x.textContent||"")).length>=8,
+                {timeout:60000}
+              );
+
+              const manifest=await page.evaluate(async token=>{
+                const r=await fetch("/api/v1/r2/library-manifest",{
+                  headers:{"X-FNS-Owner-Token":token},
+                  cache:"no-store"
+                });
+                const j=await r.json().catch(()=>({}));
+                return {
+                  status:r.status,ok:r.ok,
+                  total_books:Number(j.total_books||0),
+                  total_chunks:Number(j.total_chunks||0),
+                  vector_count:Number(j.vector_count||0),
+                  metadata_count:Array.isArray(j.metadata)?j.metadata.length:0
+                };
+              },owner);
+
+              const state=await page.evaluate(()=>({
+                panelVisible:!document.querySelector("#libraryPanel")?.classList.contains("hidden"),
+                tabActive:document.querySelector("#libraryTab")?.classList.contains("active")===true,
+                books:[...document.querySelectorAll("#booksList .book strong")]
+                  .map(x=>(x.textContent||"").trim())
+                  .filter(x=>x&&!/Nenhum PDF encontrado/i.test(x)),
+                status:(document.querySelector("#adminStatus")?.textContent||"").trim(),
+                overflow:Math.max(0,document.documentElement.scrollWidth-innerWidth)
+              }));
+
+              const api500=errors.filter(x=>/^http:500:/.test(x));
+              const ok=state.panelVisible&&state.tabActive&&state.books.length>=8&&
+                manifest.ok&&manifest.total_books>=8&&manifest.total_chunks===28636&&
+                manifest.vector_count===28636&&api500.length===0&&state.overflow<=8;
+
+              results.push({
+                name:p.name,viewport:p.viewport,ok,
+                handler_bound:before.handler,
+                session_present:before.sessionPresent,
+                panel_visible:state.panelVisible,
+                tab_active:state.tabActive,
+                visible_documents:state.books.length,
+                document_titles:state.books.slice(0,12),
+                status:state.status,
+                horizontal_overflow_px:state.overflow,
+                api_500_count:api500.length,
+                manifest,
+                errors:errors.slice(0,20)
+              });
+              await context.close();
+            }
+          }finally{
+            await browser.close();
+          }
+
+          const report={ok:results.every(x=>x.ok),profiles:results};
+          console.log("V80_LIBRARY_SECURE_QA="+JSON.stringify(report));
+          if(!report.ok) process.exit(1);
+          EOF
+          node ./library-secure-qa.mjs
