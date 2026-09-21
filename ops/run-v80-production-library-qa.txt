@@ -1,2 +1,4 @@
 run=desktop-mobile-library-qa
+auth=preseed-session
+wait_books_ms=45000
 production_read_only=true
