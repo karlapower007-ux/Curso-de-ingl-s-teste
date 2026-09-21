@@ -1,0 +1,55 @@
+name: V8 PR42 Functional Gate
+
+on:
+  push:
+    branches:
+      - "ops-v80-final-ui-qa-*"
+    paths:
+      - ".github/workflows/v80-pr42-functional-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  functional:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-v80-library-canonical-no500-20260921
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify preservation manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
+          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
+          test "$(jq -r '.library.historical_verified_fallback_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
+          echo "PRESERVATION_COUNTS=pass"
+      - name: Install existing dependencies
+        working-directory: consciencia-fabiano
+        run: npm install --ignore-scripts
+      - name: Run complete project checks
+        working-directory: consciencia-fabiano
+        run: npm run check
+      - name: Run explicit V8 overload test
+        working-directory: consciencia-fabiano
+        run: npm run test:adaptive-v80
+      - name: Syntax check modified files
+        working-directory: consciencia-fabiano
+        run: |
+          node --check public/app.js
+          node --check src/index.js
+      - name: Verify preservation logic in patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'authoritative?.degraded===true || authoritative?.durable_available===false' consciencia-fabiano/public/app.js
+          grep -Fq 'const canonicalBooks=r2Books.filter' consciencia-fabiano/public/app.js
+          grep -Fq 'R2_RECONCILE_DURABLE_DEGRADED' consciencia-fabiano/src/index.js
+          echo "LIBRARY_CANONICAL_AND_FAILSOFT=pass"
