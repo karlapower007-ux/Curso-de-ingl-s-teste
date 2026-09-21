@@ -12,6 +12,38 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
+  const CURRENT_SYSTEM_VERSION = "v7.5.0-stateful-resilience";
+
+  function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
+    return {
+      version: CURRENT_SYSTEM_VERSION,
+      status: String(status || ""),
+      badge_class: "v75-active-shield",
+      text: CURRENT_SYSTEM_VERSION+" • "+String(status || "")
+    };
+  }
+
+  function sanitizeResponseForUI(rawResponseText){
+    if(!rawResponseText) return "";
+    let cleanText=String(rawResponseText);
+
+    // UI-only sanitization: preserve the raw answer in history/telemetry, but never
+    // render the verbose internal coverage ledger in the conversation DOM.
+    cleanText=cleanText.replace(
+      /\n*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:📚\s*)?COBERTURA DOCUMENTAL INTEGRAL(?:\s+UTILIZADA NESTA RESPOSTA)?[\s\S]*?(?=\n\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\b|$)/gi,
+      "\n\n"
+    );
+
+    // Defensive cleanup for legacy/raw page-ledger rows that may already exist in history.
+    cleanText=cleanText.replace(
+      /^\s*[-*•]?\s*\**Obras\s+Padr[aã]o\**\s*(?:—|-|:)?\s*p[aá]ginas?\s*[\d,\s–-]+(?:—|-)?\s*evid[eê]ncias?\s*(?:\[[^\]]+\]\s*)+\.?\s*$/gim,
+      ""
+    );
+
+    cleanText=cleanText.replace(/\n{3,}/g,"\n\n").trim();
+    console.debug("[Telemetry Sanitized]: Metadados de páginas ocultados da interface visual.");
+    return cleanText;
+  }
 
   // V3.0 micro-kernel: heavy browser engines remain dormant until a failure,
   // an offline event, or an explicit Library/Admin action requires them.
@@ -752,9 +784,10 @@
   }
 
   function renderAssistantMarkdown(node,content) {
-    const clean=safeMarkdownHtml(content);
+    const uiContent=sanitizeResponseForUI(content);
+    const clean=safeMarkdownHtml(uiContent);
     if(clean===null){
-      node.textContent=String(content || "");
+      node.textContent=uiContent;
       return;
     }
     node.innerHTML=clean;
@@ -780,7 +813,7 @@
   function createNodeProgressVirtualizer(host) {
     const header=document.createElement("div");
     header.className="node-progress-header";
-    header.textContent="RAG V4.0 • preparando 500 nós assíncronos";
+    header.textContent=CURRENT_SYSTEM_VERSION+" • preparando 500 nós assíncronos";
     const viewport=document.createElement("div");
     viewport.className="node-progress-viewport";
     viewport.setAttribute("aria-label","Progresso dos nós RAG");
@@ -1000,7 +1033,8 @@
     else text.textContent = content;
     wrap.appendChild(text);
 
-    const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(String(content || ""));
+    const displayContent = role === "assistant" ? sanitizeResponseForUI(content) : String(content || "");
+    const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(displayContent);
     if (role === "assistant" && !hasDeterministicReferenceSection && (sources?.length || fallback)) {
       const src = document.createElement("div");
       src.className = "sources";
@@ -1175,7 +1209,7 @@
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
     status.textContent=agents
-      ? "V7.4 Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
+      ? CURRENT_SYSTEM_VERSION+" • Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
         (data?.semantic_expansion_used?" • literal + semântica em paralelo":data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal")+
         (mergedCount?" • "+mergedCount+" chunks costurados":"")
       : (navigator.onLine?"Contingência local":"Modo offline")+" • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
@@ -1648,7 +1682,7 @@
             const rendered=appendOfflineTurbineResults(swarmResult);
             const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
             const persisted=[
-              "V7.4 Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
+              CURRENT_SYSTEM_VERSION+" • Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
               ...renderedCards.slice(0,24).map((card,i)=>
                 "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
                 (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
@@ -1670,7 +1704,7 @@
             });
             saveHistory();
             if($("backendText")){
-              $("backendText").textContent="V7.4 • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
+              $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
             }
             setAvatar("closed");
             return;
@@ -1857,7 +1891,7 @@
           appendElegantSilence(silence);
           history.push({role:"assistant",content:silence,sources:[],fallback:false,strict_empty:true,zero_noise:true,ts:Date.now()});
           saveHistory();
-          if($("backendText")) $("backendText").textContent="V6.0 • biblioteca total • 0 correspondências válidas";
+          if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • biblioteca total • 0 correspondências válidas";
           setAvatar("closed");
           return;
         }
@@ -1902,7 +1936,7 @@
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? "V7.4 • nuvem online • RAG híbrido + biblioteca local"
+        ? renderSystemBadge().text
         : (navigator.onLine?"Nuvem indisponível • contingência local pronta":"Offline • biblioteca local ativa");
     } catch {
       $("backendDot").className="dot ok";
@@ -2728,16 +2762,16 @@
       const data=event.data||{};
       if(data.type==="omni-daemon-synced"){
         localStorage.setItem(OMNI_SYNC_STAMP_KEY,String(Date.now()));
-        if($("backendText")) $("backendText").textContent="V7.4 • R2 hidratou "+Number(data.written||0)+" chunks no IndexedDB";
+        if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • R2 hidratou "+Number(data.written||0)+" chunks no IndexedDB";
         if(!$("libraryPanel")?.classList.contains("hidden")) loadBooks().catch(()=>{});
         return;
       }
       if(data.type==="omni-daemon-idle"){
-        if($("backendText")) $("backendText").textContent="V7.4 • R2 + IndexedDB sincronizados";
+        if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • R2 + IndexedDB sincronizados";
         return;
       }
       if(data.type==="omni-daemon-error"){
-        if($("backendText")) $("backendText").textContent="V6.0 • daemon aguardando nuvem";
+        if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • daemon aguardando nuvem";
       }
     });
   }
