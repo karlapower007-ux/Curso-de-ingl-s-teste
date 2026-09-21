@@ -1,1 +1,1 @@
-inspect-rag-after-supabase-query-optimization-2026-09-21
+inspect-v8-release-after-edge-priority-fix-2026-09-21
