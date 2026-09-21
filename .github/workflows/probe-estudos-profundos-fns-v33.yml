@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  deployments: read
 
 jobs:
   probe:
@@ -367,6 +369,39 @@ jobs:
           echo "--- ADMIN PAGE AUTH CONTRACT ---"
           curl -L --compressed --silent --show-error --max-time 20 "$BASE/admin"             -o probe/publisher/admin.html || true
           grep -Eio 'ChatGPT|entrar|login|senha|PIN|autor|/api/admin/[A-Za-z0-9_?&=./:-]+'             probe/publisher/admin.html | sort -u | head -n 200 || true
+
+      - name: Audit repository deploy integrations with GitHub token
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p probe/github-integration
+          for ENDPOINT in             "repos/$GITHUB_REPOSITORY/actions/workflows?per_page=100"             "repos/$GITHUB_REPOSITORY/deployments?per_page=100"             "repos/$GITHUB_REPOSITORY/environments?per_page=100"             "repos/$GITHUB_REPOSITORY/hooks?per_page=100"             "repos/$GITHUB_REPOSITORY/pages"             "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100"; do
+            SAFE="$(echo "$ENDPOINT" | sed 's#[/?&=]#-#g')"
+            echo "### GH_API $ENDPOINT"
+            if gh api "$ENDPOINT" > "probe/github-integration/$SAFE.json" 2> "probe/github-integration/$SAFE.err"; then
+              echo "GH_API_OK"
+              node - "probe/github-integration/$SAFE.json" <<'NODE'
+            const fs=require('fs');
+            const p=process.argv[2], j=JSON.parse(fs.readFileSync(p,'utf8'));
+            function compact(x){
+              if(Array.isArray(x)) return x.slice(0,100).map(compact);
+              if(x&&typeof x==='object'){
+                const keep=['id','name','path','state','status','environment','ref','sha','task','created_at','updated_at','url','html_url','active','config','events','workflow_id','head_branch','head_sha','conclusion','source','build_type','cname'];
+                const o={}; for(const k of keep) if(k in x) o[k]=x[k];
+                if(Object.keys(o).length) return o;
+                if('total_count' in x) return {total_count:x.total_count};
+              }
+              return x;
+            }
+            console.log(JSON.stringify(compact(j),null,2).slice(0,12000));
+            NODE
+            else
+              echo "GH_API_DENIED"
+              cat "probe/github-integration/$SAFE.err"
+            fi
+          done
 
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
