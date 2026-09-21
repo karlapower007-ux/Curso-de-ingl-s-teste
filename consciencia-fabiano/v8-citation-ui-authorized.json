@@ -21,7 +21,7 @@
     "scan_limit": 50000,
     "llm_independent": true,
     "desktop_mobile_parity": true,
-    "technical_document_secondary": true,
+    "technical_document_secondary": false,
     "ordinary_book_primary_fields": [
       "book",
       "chapter",
@@ -101,7 +101,13 @@
     "query_scope_examples": {
       "Adão": "somente trechos que contêm Adão",
       "Miguel": "somente trechos que contêm Miguel"
-    }
+    },
+    "technical_document_exposure_forbidden": true,
+    "chat_technical_document_exposure_forbidden": true,
+    "exact_scope_policy": "all-specific-request-anchors-required",
+    "scripture_display_format": "canonical-book chapter:verse",
+    "ordinary_book_display_format": "book-title + chapter-number + optional-chapter-title + page",
+    "desktop_mobile_same_contract": true
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
