@@ -54,6 +54,12 @@
       ""
     );
 
+    // Keep source names/references visible while collapsing raw, very long page-number dumps.
+    cleanText=cleanText.replace(
+      /([—;]\s*)P[aá]ginas?\s+\d+(?:\s*,\s*\d+){4,}(\s*;\s*evid[eê]ncias?)/gi,
+      "$1$2"
+    );
+
     cleanText=cleanText.replace(/\n{3,}/g,"\n\n").trim();
     console.debug("[Telemetry Sanitized]: Metadados de páginas ocultados da interface visual.");
     return cleanText;
