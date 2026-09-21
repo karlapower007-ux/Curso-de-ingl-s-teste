@@ -89,7 +89,15 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          # Do not trust a stale Account ID secret. Discover the account that the authenticated
+          # Fabiano token can actually see, then deploy the existing Worker in that account.
+          ACCOUNTS="$(curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json")"
+          DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
+          test -n "$DISCOVERED_ACCOUNT_ID"
+          export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
+          echo "CLOUDFLARE_ACCOUNT_DISCOVERY=pass"
           npx wrangler deploy
 
       - name: Verify V8 production endpoint
@@ -126,5 +134,9 @@ jobs:
           git checkout --force "$ROLLBACK_SHA"
           cd consciencia-fabiano
           npm install --ignore-scripts
+          ACCOUNTS="$(curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")"
+          DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
+          test -n "$DISCOVERED_ACCOUNT_ID"
+          export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
           npx wrangler deploy
           echo "V8_AUTOMATIC_WORKER_ROLLBACK=executed"
