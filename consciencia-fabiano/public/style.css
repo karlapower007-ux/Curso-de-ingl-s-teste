@@ -140,7 +140,131 @@ button:active{transform:translateY(1px)}
 }
 .sources{margin-top:12px;border-top:1px solid rgba(255,255,255,.12);padding-top:10px;font-size:.85rem;color:#cbd5e1}
 .source{padding:6px 0}
+
 .source strong{color:#7dd3fc}
+
+/* V8.0.1 — Dicionário bibliográfico paginado, mesma informação no PC e celular */
+.citation-dictionary{
+  margin-top:16px;
+  padding-top:14px;
+  border-top:1px solid rgba(125,211,252,.28);
+  width:100%;
+}
+.citation-dictionary-toggle{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  text-align:left;
+  gap:8px;
+  padding:12px 14px;
+  border:1px solid rgba(56,189,248,.38);
+  border-radius:10px;
+  background:rgba(14,116,144,.12);
+  color:#e0f2fe;
+  font-weight:800;
+}
+.citation-dictionary-panel{
+  margin-top:10px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#0f172a;
+  overflow:hidden;
+}
+.citation-dictionary-status{
+  padding:10px 12px;
+  border-bottom:1px solid var(--line);
+  color:#bae6fd;
+  font-size:.8rem;
+  line-height:1.45;
+}
+.citation-dictionary-list{
+  max-height:68vh;
+  overflow:auto;
+  overscroll-behavior:contain;
+  padding:10px;
+  display:grid;
+  gap:10px;
+}
+.citation-card{
+  border:1px solid rgba(148,163,184,.24);
+  border-left:4px solid #0ea5e9;
+  border-radius:9px;
+  background:#141414;
+  padding:12px 14px;
+  min-width:0;
+}
+.citation-rank{
+  color:#7dd3fc;
+  font:700 .7rem/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  margin-bottom:6px;
+}
+.citation-primary{
+  display:block;
+  color:#f8fafc;
+  font-size:.96rem;
+  line-height:1.35;
+  overflow-wrap:anywhere;
+}
+.citation-location{
+  margin-top:6px;
+  color:#e0f2fe;
+  font-weight:750;
+  line-height:1.42;
+}
+.citation-meta,.citation-scripture-refs{
+  margin-top:5px;
+  color:#94a3b8;
+  font-size:.76rem;
+  line-height:1.45;
+  overflow-wrap:anywhere;
+}
+.citation-scripture-refs{color:#bae6fd}
+.citation-excerpt{
+  margin-top:10px;
+  color:#e2e8f0;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:.92rem;
+  line-height:1.58;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+.citation-technical{
+  margin-top:9px;
+  color:#64748b;
+  font-size:.7rem;
+  overflow-wrap:anywhere;
+}
+.citation-technical summary{
+  cursor:pointer;
+  color:#94a3b8;
+  user-select:none;
+}
+.citation-dictionary-nav{
+  position:sticky;
+  bottom:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  gap:8px;
+  align-items:center;
+  padding:10px;
+  border-top:1px solid var(--line);
+  background:#0f172a;
+}
+.citation-page-btn{min-width:0;padding:.6rem .7rem}
+.citation-page-btn:last-child{justify-self:stretch}
+.citation-page-info{
+  color:#cbd5e1;
+  font-size:.76rem;
+  text-align:center;
+  white-space:nowrap;
+}
+.citation-empty{
+  padding:18px 12px;
+  color:#94a3b8;
+  text-align:center;
+  line-height:1.5;
+}
 
 .composer{
   background:transparent;
@@ -226,6 +350,14 @@ textarea:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(
 }
 @media(max-width:560px){
   .app{padding:12px}
+  .citation-dictionary-toggle{padding:11px 12px;font-size:.86rem}
+  .citation-dictionary-list{max-height:62vh;padding:8px}
+  .citation-card{padding:11px 10px}
+  .citation-location{font-size:.88rem}
+  .citation-excerpt{font-size:.9rem}
+  .citation-dictionary-nav{grid-template-columns:1fr 1fr}
+  .citation-page-info{grid-column:1/-1;grid-row:1;white-space:normal}
+  .citation-page-btn{grid-row:2;width:100%}
   .site-header{padding:12px}
   .composer-options{align-items:flex-start;flex-direction:column}
   .input-area{display:grid;grid-template-columns:1fr 1fr}
