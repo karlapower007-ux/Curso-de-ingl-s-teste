@@ -2711,6 +2711,19 @@ function trimToTokenBudget(text, budget) {
   return value.slice(0, maxChars).replace(/\s+\S*$/, "").trim() + "…";
 }
 
+function sanitizeAssistantHistoryForLLM(rawText) {
+  let text=String(rawText || "");
+  text=text.replace(
+    /\n*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:📚\s*)?COBERTURA DOCUMENTAL INTEGRAL(?:\s+UTILIZADA NESTA RESPOSTA)?[\s\S]*?(?=\n\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:📚\s*)?FONTES\s+E\s+REFER[ÊE]NCIAS\b|$)/gi,
+    "\n\n"
+  );
+  text=text.replace(
+    /^\s*[-*•]?\s*\**Obras\s+Padr[aã]o\**\s*(?:—|-|:)?\s*p[aá]ginas?\s*[\d,\s–-]+(?:—|-)?\s*evid[eê]ncias?\s*(?:\[[^\]]+\]\s*)+\.?\s*$/gim,
+    ""
+  );
+  return text.replace(/\n{3,}/g,"\n\n").trim();
+}
+
 function slidingHistory(history, maxMessages = GROQ_HISTORY_MESSAGES, tokenBudget = GROQ_HISTORY_BUDGET_TOKENS) {
   const source = Array.from(history || []).slice(-Math.max(maxMessages * 2, maxMessages));
   const selected = [];
@@ -3751,9 +3764,15 @@ async function chat(request, env) {
   try {
     storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, 20));
   } catch {}
+  const normalizeHistoryTurn=x=>({
+    role:x?.role === "assistant" ? "assistant" : "user",
+    content:x?.role === "assistant"
+      ? sanitizeAssistantHistoryForLLM(x?.content)
+      : String(x?.content || "")
+  });
   const historySource = storedHistory.length
-    ? storedHistory.map(x => ({ role: x.role, content: x.content }))
-    : clientHistory;
+    ? storedHistory.map(normalizeHistoryTurn)
+    : clientHistory.map(normalizeHistoryTurn);
   const history = slidingHistory(historySource);
 
   // V7.5 staging: resolve apenas referências conversacionais necessárias.
