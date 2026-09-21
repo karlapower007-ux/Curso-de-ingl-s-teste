@@ -32,8 +32,18 @@ must(worker.includes("citation_dictionary_scripture_direct_ref_gate: false"),"sc
 must(worker.includes("citation_dictionary_regex_precompiled: true"),"precompiled citation regex flag missing");
 must(worker.includes("citation_dictionary_ultrasafe_one_shard: true"),"ultra-safe one-shard citation flag missing");
 must(worker.includes("citation_dictionary_crossrefs_deferred: true"),"cross-reference parser must be deferred from exhaustive scan");
+must(worker.includes("citation_dictionary_inline_chapter_headings: true"),"inline chapter heading resolver flag missing");
+must(worker.includes("citation_dictionary_inline_verse_markers: true"),"inline verse marker resolver flag missing");
+must(worker.includes("citation_dictionary_multi_chapter_chunk_locations: true"),"multi-chapter scripture chunk flag missing");
+must(worker.includes("citation_dictionary_scripture_initial_chapter_seed: true"),"initial scripture chapter seed flag missing");
+must(worker.includes("citation_dictionary_footnote_aware_verse_markers: true"),"footnote-aware verse marker flag missing");
+must(worker.includes("function scriptureCollectionChapterSeed"),"scripture chapter seed resolver missing");
+must(worker.includes("const SCRIPTURE_INLINE_VERSE_MARKER_RE="),"inline scripture verse regex missing");
+must(worker.includes("function looksLikeStrongHeadingText"),"strong inline book heading guard missing");
+
 must(worker.includes("headingProbe=rowText.slice(0,900)"),"citation heading parser must use bounded probe text");
-must(worker.includes("extractScriptureVerseRange(rowText.slice(0,2400)"),"scripture verse parser must use bounded text");
+must(worker.includes("function extractScriptureLocationReferences"),"multi-chapter scripture location resolver missing");
+must(worker.includes("String(text || \"\").slice(0,2400)"),"scripture location resolver must remain bounded to 2400 chars");
 must(worker.includes("cross_references:[]"),"exhaustive citation scan must not parse nonessential cross-references");
 
 must(worker.includes("citation_dictionary_scripture_location_not_crossref: true"),"scripture location must be separated from cross-references");
@@ -43,6 +53,9 @@ must(worker.includes("const CHAPTER_HEADING_PATTERNS=["),"precompiled chapter he
 must(worker.includes("const SCRIPTURE_HEADING_LINE_RE=new RegExp"),"precompiled scripture heading regex missing");
 
 must(worker.includes("scripture_references:scriptureLocationRefs"),"scripture primary location array missing");
+must(worker.includes("const located=extractScriptureLocationReferences("),"scan must use location-first multi-chapter scripture resolver");
+must(worker.includes("if(located.final_chapter) currentScriptureChapter=located.final_chapter;"),"scripture chapter carry must advance after inline chapter boundaries");
+
 must(worker.includes('if(kind==="standard-works") return "Gênesis";'),"standard works location seed missing");
 
 must(worker.includes("function extractScriptureHeading(text,currentBook=\"\")"),"scripture heading resolver must not use cross-references as location state");
