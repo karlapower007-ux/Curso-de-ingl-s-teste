@@ -12,7 +12,7 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v7.5.0-stateful-resilience";
+  const CURRENT_SYSTEM_VERSION = "v8.1-strict-focus-dictionary";
 
   function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
     return {
@@ -1949,18 +1949,62 @@
     }
   }
 
+  const dictionaryState={query:"",page:1,pageSize:25,total:0,hits:[]};
+  function publicSourceLabel(hit){
+    const title=String(hit?.title||hit?.titulo||hit?.filename||hit?.arquivo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+    const page=Number(hit?.page||hit?.pagina||0);
+    return (title || "Fonte")+(page?" • página "+page:"");
+  }
+  function renderDictionaryPage(){
+    const host=$("dictionaryResults"), pager=$("dictionaryPager");
+    if(!host||!pager)return;
+    host.replaceChildren();
+    const start=(dictionaryState.page-1)*dictionaryState.pageSize;
+    const rows=dictionaryState.hits.slice(start,start+dictionaryState.pageSize);
+    rows.forEach((hit,index)=>{
+      const card=document.createElement("article");card.className="dictionary-result";
+      const head=document.createElement("div");head.className="dictionary-result-head";
+      const title=document.createElement("strong");title.textContent=publicSourceLabel(hit);
+      const ref=document.createElement("span");ref.className="dictionary-result-ref";ref.textContent="Resultado "+(start+index+1);
+      const body=document.createElement("div");body.className="dictionary-result-text";body.textContent=String(hit?.text||hit?.trecho||"").trim();
+      head.append(title,ref);card.append(head,body);host.appendChild(card);
+    });
+    const pages=Math.max(1,Math.ceil(dictionaryState.hits.length/dictionaryState.pageSize));
+    $("dictionaryPageInfo").textContent="Página "+dictionaryState.page+" de "+pages+" • "+dictionaryState.total+" ocorrência(s) exata(s)";
+    $("dictionaryPrev").disabled=dictionaryState.page<=1;
+    $("dictionaryNext").disabled=dictionaryState.page>=pages;
+    pager.classList.toggle("hidden",dictionaryState.hits.length===0);
+  }
+  async function searchDictionary(){
+    const q=String($("dictionaryInput")?.value||"").trim();
+    if(!q)return;
+    dictionaryState.query=q;dictionaryState.page=1;dictionaryState.hits=[];
+    $("dictionaryStatus").textContent="Pesquisando toda a biblioteca com foco estrito…";
+    $("dictionarySearchBtn").disabled=true;
+    try{
+      const data=await api("/api/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,limit:1000})},false);
+      dictionaryState.hits=Array.isArray(data?.matches)?data.matches:[];
+      dictionaryState.total=Number(data?.total||dictionaryState.hits.length);
+      renderDictionaryPage();
+      $("dictionaryStatus").textContent=dictionaryState.total
+        ? "Busca concluída • "+Number(data.scanned||0)+" trechos examinados • somente correspondências do assunto solicitado."
+        : "Nenhuma correspondência exata encontrada para este assunto.";
+    }catch(error){
+      $("dictionaryStatus").textContent="Busca indisponível agora: "+String(error?.message||error);
+    }finally{$("dictionarySearchBtn").disabled=false;}
+  }
+
   function switchPanel(name) {
-    const lib = name === "library";
+    const lib=name==="library", dict=name==="dictionary", chat=!lib&&!dict;
     if(lib && !ensureLocalAdminAccess()) return;
-    $("chatPanel").classList.toggle("hidden", lib);
-    $("libraryPanel").classList.toggle("hidden", !lib);
-    $("chatTab").classList.toggle("active", !lib);
-    $("libraryTab").classList.toggle("active", lib);
-    if (lib) {
-      activateHeavyLocalSubsystems("library-admin");
-      loadBooks();
-      maybeAutoOmniSync();
-    }
+    $("chatPanel").classList.toggle("hidden",!chat);
+    $("dictionaryPanel")?.classList.toggle("hidden",!dict);
+    $("libraryPanel").classList.toggle("hidden",!lib);
+    $("chatTab").classList.toggle("active",chat);
+    $("dictionaryTab")?.classList.toggle("active",dict);
+    $("libraryTab").classList.toggle("active",lib);
+    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();maybeAutoOmniSync();}
+    if(dict) $("dictionaryInput")?.focus();
   }
 
   function setMicStatus(message = "", isError = false) {
@@ -2884,7 +2928,12 @@
   });
 
   $("chatTab").onclick = () => switchPanel("chat");
+  $("dictionaryTab").onclick = () => switchPanel("dictionary");
   $("libraryTab").onclick = () => switchPanel("library");
+  $("dictionarySearchBtn").onclick=searchDictionary;
+  $("dictionaryInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();searchDictionary();}});
+  $("dictionaryPrev").onclick=()=>{if(dictionaryState.page>1){dictionaryState.page--;renderDictionaryPage();$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
+  $("dictionaryNext").onclick=()=>{const pages=Math.ceil(dictionaryState.hits.length/dictionaryState.pageSize);if(dictionaryState.page<pages){dictionaryState.page++;renderDictionaryPage();$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
   $("sendBtn").onclick = sendQuestion;
   $("questionInput").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
