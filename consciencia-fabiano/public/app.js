@@ -1049,11 +1049,11 @@
     const wrap = document.createElement("div");
     wrap.className = "msg " + role;
     const text = document.createElement("div");
-    if(role === "assistant") renderAssistantMarkdown(text,content);
-    else text.textContent = content;
+    const displayContent = role === "assistant" ? sanitizeResponseForUI(content) : String(content || "");
+    if(role === "assistant") renderAssistantMarkdown(text,displayContent);
+    else text.textContent = displayContent;
     wrap.appendChild(text);
 
-    const displayContent = role === "assistant" ? sanitizeResponseForUI(content) : String(content || "");
     const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(displayContent);
     if (role === "assistant" && !hasDeterministicReferenceSection && (sources?.length || fallback)) {
       const src = document.createElement("div");
@@ -1374,7 +1374,7 @@
           if (event === "delta") {
             const delta = String(data.text || "");
             answer += delta;
-            scheduleAssistantMarkdown(live.text,answer);
+            scheduleAssistantMarkdown(live.text,sanitizeResponseForUI(answer));
             $("messages").scrollTop = $("messages").scrollHeight;
           } else if (event === "node") {
             live.virtual?.upsert(data);
