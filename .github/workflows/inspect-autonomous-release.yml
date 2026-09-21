@@ -32,4 +32,22 @@ jobs:
               echo "LATEST_RELEASE_LOG_TAIL"
               gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log | tail -n 220
             fi
+
+          echo "LATEST_LIBRARY_RECOVERY"
+          gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow "Recover Consciência Fabiano V8 Library Merge" \
+            --limit 10 \
+            --json databaseId,status,conclusion,headBranch,headSha,createdAt,updatedAt,url,displayTitle
+          RECOVERY_RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow "Recover Consciência Fabiano V8 Library Merge" \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          echo "LATEST_RECOVERY_RUN_ID=$RECOVERY_RUN_ID"
+          if [ -n "$RECOVERY_RUN_ID" ]; then
+            gh run view "$RECOVERY_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,url,jobs
+            RECOVERY_STATUS="$(gh run view "$RECOVERY_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
+            if [ "$RECOVERY_STATUS" = "completed" ]; then
+              echo "LATEST_RECOVERY_LOG_TAIL"
+              gh run view "$RECOVERY_RUN_ID" --repo "$GITHUB_REPOSITORY" --log | tail -n 320
+            fi
+          fi
           fi
