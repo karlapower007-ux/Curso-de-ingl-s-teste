@@ -1,5 +1,7 @@
 run=missing-vectors-3437
-attempt=1
+attempt=sharp-enabled-resume
 strict_incremental=true
+missing_only=true
+shard_checkpoint=true
 no_reindex=true
 no_frontend_changes=true
