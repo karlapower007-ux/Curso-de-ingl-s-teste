@@ -5,6 +5,9 @@ on:
     branches: [consciencia-cloudflare-native-v1]
     paths:
       - "consciencia-fabiano/src/index.js"
+      - "consciencia-fabiano/public/index.html"
+      - "consciencia-fabiano/public/app.js"
+      - "consciencia-fabiano/public/style.css"
       - "consciencia-fabiano/src/adaptive-rag-v80.js"
       - "consciencia-fabiano/package.json"
       - "consciencia-fabiano/scripts/adaptive-v80-acceptance.mjs"
@@ -34,7 +37,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Refuse frontend, library backup or migration changes
+      - name: Preserve library data and migration boundaries
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -42,19 +45,16 @@ jobs:
           set -euo pipefail
           test -n "$BEFORE_SHA"
           git diff --exit-code "$BEFORE_SHA"...HEAD -- \
-            consciencia-fabiano/public/index.html \
-            consciencia-fabiano/public/app.js \
-            consciencia-fabiano/public/style.css \
             consciencia-fabiano/public/failover-v3.js \
             consciencia-fabiano/public/sw-v3.js \
             consciencia-fabiano/public/biblioteca_backup.json \
             consciencia-fabiano/public/biblioteca_backup
           CHANGED="$(git diff --name-only "$BEFORE_SHA"...HEAD)"
           if printf '%s\n' "$CHANGED" | grep -Eq '^consciencia-fabiano/supabase/migrations/'; then
-            echo "Protected Supabase migration path changed; refusing V8 deploy."
+            echo "Protected Supabase migration path changed; refusing deploy."
             exit 1
           fi
-          echo "V8_PRODUCTION_PRESERVATION_GATE=pass"
+          echo "LIBRARY_PRESERVATION_GATE=pass"
 
       - name: Install existing development dependency set
         working-directory: consciencia-fabiano
@@ -102,14 +102,16 @@ jobs:
             BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
             VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
             HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
-            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.0.0-adaptive-20x20x20" ]; then
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.1.0-strict-focus-dictionary" ]; then
               OK=true
               break
             fi
             sleep 3
           done
           test "$OK" = "true"
-          echo "V8_PRODUCTION_ENDPOINT=healthy"
+          echo "V8_1_PRODUCTION_ENDPOINT=healthy"
+          curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ | grep -q 'Dicionário / Enciclopédia'
+          echo "V8_1_DICTIONARY_UI=visible"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'
