@@ -1,0 +1,32 @@
+name: V8 Output Release Hardening QA
+
+on:
+  push:
+    branches:
+      - "fix-v80-output-release-hardening-20260921"
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - name: Full architecture checks
+        run: npm run check
+      - name: Exhaustive output and preservation checks
+        run: node scripts/exhaustive-v80-acceptance.mjs
+      - name: Release shell syntax
+        run: bash -n scripts/autonomous-release.sh
+      - name: Frozen frontend guard
+        run: |
+          git diff --exit-code origin/consciencia-cloudflare-native-v1 -- public/index.html public/app.js public/style.css public/failover-v3.js public/sw-v3.js || exit 1
