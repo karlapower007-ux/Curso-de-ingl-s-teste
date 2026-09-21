@@ -96,10 +96,10 @@ async function getJson(key,allowMissing=false){
   return {...o,json:JSON.parse(o.text||"{}")};
 }
 async function putJson(key,data,metadata={}){
-  const form=new FormData();
-  form.append("body",new Blob([JSON.stringify(data)],{type:"application/json"}),path.basename(key)||"object.json");
   const res=await fetch(R2_API+"/objects/"+keyPath(key),{
-    method:"PUT",headers:authHeaders(),body:form
+    method:"PUT",
+    headers:authHeaders({"Content-Type":"application/json"}),
+    body:JSON.stringify(data)
   });
   const text=await res.text().catch(()=>"");
   let parsed={};try{parsed=JSON.parse(text||"{}");}catch{}
