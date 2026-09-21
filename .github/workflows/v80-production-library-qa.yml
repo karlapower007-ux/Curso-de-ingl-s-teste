@@ -59,8 +59,19 @@ jobs:
               const response=await page.goto(base,{waitUntil:'domcontentloaded',timeout:45000});
               if(!response?.ok())throw new Error(p.name+' homepage HTTP '+response?.status());
               await page.locator('#libraryTab').waitFor({state:'visible',timeout:20000});
-              await page.locator('#libraryTab').click();
-              await page.locator('#libraryPanel:not(.hidden)').waitFor({state:'visible',timeout:15000});
+              await page.locator('#libraryTab').click({timeout:15000});
+              await page.waitForTimeout(1200);
+              const debugState=await page.evaluate(()=>({
+                libraryButtonExists:!!document.querySelector('#libraryTab'),
+                libraryButtonClass:document.querySelector('#libraryTab')?.className||'',
+                libraryPanelClass:document.querySelector('#libraryPanel')?.className||'',
+                chatPanelClass:document.querySelector('#chatPanel')?.className||'',
+                ownerToken:sessionStorage.getItem('fns_owner_token')||sessionStorage.getItem('fns_owner_token_v1')||'',
+                appReady:document.readyState
+              }));
+              if(!await page.locator('#libraryPanel').isVisible()){
+                throw new Error(p.name+' library did not open; state='+JSON.stringify(debugState)+' errors='+JSON.stringify(errors.slice(0,10)));
+              }
               await page.waitForFunction(()=>document.querySelectorAll('#booksList .book').length>0,{timeout:30000});
               await page.waitForTimeout(1500);
               const rows=await page.locator('#booksList .book').evaluateAll(nodes=>nodes.map(n=>({
