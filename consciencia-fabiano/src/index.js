@@ -1,6 +1,6 @@
 import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
-import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured} from "./stateful-rag-v75.js";\nimport {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
+import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";\nimport {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
 const VERSION = "8.0.0-adaptive-20x20x20";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
@@ -3624,9 +3624,13 @@ async function chat(request, env) {
 
   const routerStarted=Date.now();
   const cognitiveContract=buildCognitiveContract(question);
+  const secondaryLoad=secondaryCircuitState();
+  const adaptiveLoadLevel=
+    exactSupabaseCircuit.degraded===true && secondaryLoad.open===true ? "critical" :
+    (exactSupabaseCircuit.degraded===true || secondaryLoad.open===true || Number(secondaryLoad.failures||0)>=2 ? "high" : "normal");
   const v80Plan=buildAdaptiveV80Plan(question,cognitiveContract,{
     deepResearch:body?.deep_research===true,
-    loadLevel:"normal"
+    loadLevel:adaptiveLoadLevel
   });
   const cognitivePlan=buildV74ExecutionPlan(question,cognitiveContract,{
     deepResearch:v80Plan.mode==="DEEP",
