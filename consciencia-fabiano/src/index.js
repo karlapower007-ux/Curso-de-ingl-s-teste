@@ -1776,16 +1776,48 @@ function romanToArabicCitation(value) {
   return total>0 ? total : null;
 }
 
+function spokenChapterNumber(value) {
+  const direct=romanToArabicCitation(value);
+  if(direct) return direct;
+  const tokens=foldSearchText(value)
+    .replace(/[-–—]/g," ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(token=>token!=="e" && token!=="and");
+  if(!tokens.length) return null;
+  const values={
+    um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,
+    dez:10,onze:11,doze:12,treze:13,catorze:14,quatorze:14,quinze:15,dezesseis:16,dezessete:17,dezoito:18,dezenove:19,
+    vinte:20,trinta:30,quarenta:40,cinquenta:50,sessenta:60,setenta:70,oitenta:80,noventa:90,
+    one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,
+    thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,
+    twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90
+  };
+  let total=0;
+  for(const token of tokens){
+    if(!(token in values)) return null;
+    total+=values[token];
+  }
+  return total>0 && total<=999 ? total : null;
+}
+
 function extractChapterHeading(text) {
   const raw=String(text || "").replace(/\r/g,"\n");
+  const numberWord=
+    "(?:[0-9]{1,4}|[IVXLCDM]{1,12}|"+
+    "um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|"+
+    "(?:vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa)(?:\\s+e\\s+(?:um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove))?|"+
+    "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"+
+    "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s]+(?:one|two|three|four|five|six|seven|eight|nine))?"+
+    ")";
   const patterns=[
-    /(?:^|\n)\s*(?:cap[ií]tulo|chapter)\s+([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu,
-    /(?:^|\n)\s*(?:cap\.?)\s*([0-9]{1,4}|[IVXLCDM]{1,12})\b(?:\s*[:.\-–—]\s*([^\n]{2,180}))?/imu
+    new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+numberWord+")\\b(?:\\s*[:.\\-–—]\\s*|\\s+)?([^\\n]{0,180})","imu"),
+    new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+numberWord+")\\b(?:\\s*[:.\\-–—]\\s*|\\s+)?([^\\n]{0,180})","imu")
   ];
   for(const re of patterns){
     const match=raw.match(re);
     if(!match) continue;
-    const number=romanToArabicCitation(match[1]);
+    const number=spokenChapterNumber(match[1]);
     if(!number) continue;
     const title=String(match[2] || "")
       .replace(/\s+/g," ")
@@ -1797,14 +1829,52 @@ function extractChapterHeading(text) {
   return null;
 }
 
+function extractNamedSectionHeading(text,documentTitle="") {
+  const raw=String(text || "").replace(/\r/g,"\n");
+  const doc=foldSearchText(documentTitle);
+  const blocked=new Set([
+    "conteudo","conteudos","sumario","indice","prefacio","sobre o autor","introducao",
+    "contents","table of contents","preface","about the author","introduction"
+  ]);
+  const lines=raw.split("\n").slice(0,28);
+  for(const source of lines){
+    const line=String(source||"").replace(/\s+/g," ").trim();
+    if(line.length<3 || line.length>140) continue;
+    const folded=foldSearchText(line.replace(/^\d+\s+|\s+\d+$/g,""));
+    if(!folded || blocked.has(folded)) continue;
+    if(doc && (folded===doc || (folded.length>12 && doc.includes(folded)))) continue;
+
+    const explicit=line.match(/^(?:se[cç][aã]o|section|parte|part)\s+(?:[0-9IVXLCDM]+[-.:]?\s*)?(.{2,120})$/iu);
+    if(explicit){
+      return String(explicit[1]||"").replace(/\s+/g," ").trim().slice(0,180);
+    }
+
+    const letters=[...line].filter(ch=>/\p{L}/u.test(ch));
+    if(letters.length<3) continue;
+    const upper=letters.filter(ch=>ch===ch.toLocaleUpperCase("pt-BR") && ch!==ch.toLocaleLowerCase("pt-BR")).length;
+    const words=line.split(/\s+/).filter(Boolean);
+    if(words.length<=14 && upper/letters.length>=0.82 && !/[.!?]$/.test(line)){
+      return line.replace(/^\d+\s+|\s+\d+$/g,"").trim().slice(0,180);
+    }
+  }
+  return "";
+}
+
 function scriptureSourceKind(filename,title) {
-  const value=foldSearchText([filename,title].filter(Boolean).join(" "));
-  if(!value) return "";
-  if(/\b(?:obras padrao|standard works|scriptures|escrituras)\b/.test(value)) return "standard-works";
-  if(/\b(?:livro de mormon|book of mormon)\b/.test(value)) return "book-of-mormon";
-  if(/\b(?:doutrina e convenios|doctrine and covenants)\b/.test(value)) return "doctrine-and-covenants";
-  if(/\b(?:perola de grande valor|pearl of great price)\b/.test(value)) return "pearl-of-great-price";
-  if(/\b(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)\b/.test(value)) return "bible";
+  const candidates=[filename,title]
+    .filter(Boolean)
+    .map(value=>foldSearchText(String(value).replace(/\.pdf$/i,"").trim())
+      .replace(/\s+\(\d+\)$/,"")
+      .replace(/\s+(?:copy|copia)$/,"")
+      .trim());
+  for(const value of candidates){
+    if(!value) continue;
+    if(/^(?:obras padrao|standard works)(?:\s+(?:lds|sud))?$/.test(value)) return "standard-works";
+    if(/^(?:o\s+)?(?:livro de mormon|book of mormon)$/.test(value)) return "book-of-mormon";
+    if(/^(?:doutrina e convenios|doctrine and covenants)$/.test(value)) return "doctrine-and-covenants";
+    if(/^(?:perola de grande valor|pearl of great price)$/.test(value)) return "pearl-of-great-price";
+    if(/^(?:biblia|biblia sagrada|holy bible|bible|old testament|new testament|velho testamento|novo testamento)$/.test(value)) return "bible";
+  }
   return "";
 }
 
