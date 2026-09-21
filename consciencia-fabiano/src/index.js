@@ -1429,7 +1429,7 @@ function humanDocumentName(filename, title = "") {
   const t=String(title || "").trim();
   if(t && !/\.pdf$/i.test(t) && !/^[\w-]+\.pdf$/i.test(t)) return t;
   const raw=String(filename || "").trim();
-  if(/standard[-_ ]?works/i.test(raw)) return "Obras Padrão";
+  if(/standard[-_ ]?works/i.test(raw)) return "";
   const base=raw.replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\b\d{4,}\b/g," ").replace(/\s+/g," ").trim();
   if(!base) return "Documento";
   return base.replace(/\b\p{L}/gu,m=>m.toUpperCase());
@@ -4375,7 +4375,7 @@ async function handleApi(request, env, url, ctx) {
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({query:question,limit})
       });
-      return json(data);
+      return json({...data,strict_focus_plan:"A",fallback_plans:["B-semantic-restricted","C-cross-language","D-context-controlled","E-local-contingency","F-final-audit"]});
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/cognitive-v74" && request.method === "GET") {
