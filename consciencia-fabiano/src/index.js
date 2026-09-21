@@ -77,7 +77,7 @@ const exactSupabaseCircuit = {
 };
 const MICRO_NODE_RELAY_BUDGET_TOKENS = 5600;
 const MICRO_NODE_MAX_COMPLETION_TOKENS = 520;
-const MASTER_NODE_MAX_COMPLETION_TOKENS = 3600;
+const MASTER_NODE_MAX_COMPLETION_TOKENS = 5200;
 const MAP_MAX_COMPLETION_TOKENS = 1000;
 const GROQ_AGGRESSIVE_INPUT_BUDGET_TOKENS = 3600;
 const OWNER_TOKEN_HASH = "62e5283fda284aaec71832ab0aafc8161168a01989c1e94764a3076fa4237aa0";
@@ -1543,6 +1543,35 @@ function selectCitedSources(answer,sources) {
   return selected;
 }
 
+function exhaustiveSourceRows(sources){
+  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  return rows.map((row,index)=>({...row,ref_id:sourceRefId(row,index)}));
+}
+
+function sourceCoverageMarkdown(sources){
+  const rows=exhaustiveSourceRows(sources);
+  if(!rows.length) return "";
+  const docs=new Map();
+  for(const row of rows){
+    const key=String(row?.document_id || row?.titulo || row?.arquivo || "documento");
+    if(!docs.has(key)) docs.set(key,{
+      name:String(row?.titulo || row?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim(),
+      author:String(row?.autor || "").replace(/[\r\n]+/g," ").trim(),
+      refs:[],
+      pages:new Set()
+    });
+    const doc=docs.get(key);
+    doc.refs.push(sourceRefId(row,0));
+    if(row?.pagina) doc.pages.add(Number(row.pagina));
+  }
+  const lines=[...docs.values()].map(doc=>{
+    const pages=[...doc.pages].sort((a,b)=>a-b);
+    const pageText=pages.length ? " páginas "+pages.join(", ") : "";
+    return "- **"+doc.name+"**"+(doc.author?" — "+doc.author:"")+pageText+" — evidências "+doc.refs.map(ref=>"["+ref+"]").join(" ");
+  });
+  return "COBERTURA DOCUMENTAL INTEGRAL UTILIZADA NESTA RESPOSTA\n\n"+lines.join("\n");
+}
+
 function compactCitationEvidence(sources) {
   return (Array.isArray(sources)?sources:[]).slice(0,TOP_K).map((s,index)=>{
     const ref=sourceRefId(s,index);
@@ -1555,16 +1584,27 @@ function compactCitationEvidence(sources) {
 }
 
 function groundedReferencesMarkdown(sources) {
-  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const rows=exhaustiveSourceRows(sources);
   if(!rows.length) return "";
-  const lines=rows.map((s,index)=>{
-    const ref=sourceRefId(s,index);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "Autor não informado").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "Página "+Number(s.pagina) : "Página não informada";
-    return "- **["+ref+"] "+name+"** — "+author+"; "+page+".";
+  const docs=new Map();
+  for(const row of rows){
+    const key=String(row?.document_id || row?.titulo || row?.arquivo || "documento");
+    if(!docs.has(key)) docs.set(key,{
+      name:String(row?.titulo || row?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim(),
+      author:String(row?.autor || "Autor não informado").replace(/[\r\n]+/g," ").trim(),
+      pages:new Set(),
+      refs:[]
+    });
+    const doc=docs.get(key);
+    if(row?.pagina) doc.pages.add(Number(row.pagina));
+    doc.refs.push(sourceRefId(row,0));
+  }
+  const lines=[...docs.values()].map(doc=>{
+    const pages=[...doc.pages].sort((a,b)=>a-b);
+    const pageText=pages.length ? "Páginas "+pages.join(", ") : "Página não informada";
+    return "- **"+doc.name+"** — "+doc.author+"; "+pageText+"; evidências "+doc.refs.map(ref=>"["+ref+"]").join(" ")+".";
   });
-  return "2. 📚 FONTES E REFERÊNCIAS\n\n"+lines.join("\n");
+  return "2. 📚 FONTES E REFERÊNCIAS — COBERTURA EXAUSTIVA\n\n"+lines.join("\n");
 }
 
 function stripModelReferenceSection(answer) {
@@ -1652,12 +1692,8 @@ function citationCoverageTarget(sources) {
   const independentDocs=new Set(
     rows.map(s=>String(s?.document_id || s?.titulo || s?.arquivo || "").trim()).filter(Boolean)
   ).size;
-  if(independentDocs>=2) return Math.min(rows.length,Math.max(independentDocs,Math.min(24,Math.ceil(rows.length*0.35))));
-  if(rows.length>=30) return 12;
-  if(rows.length>=15) return 8;
-  if(rows.length>=8) return 5;
-  if(rows.length>=3) return 3;
-  return 1;
+  // Every independent work that survived retrieval must be represented in the answer.
+  return Math.max(1,Math.min(rows.length,independentDocs || 1));
 }
 
 async function repairSparseCitationCoverage(env,question,answer,sources) {
@@ -1676,7 +1712,7 @@ async function repairSparseCitationCoverage(env,question,answer,sources) {
         "É proibido produzir frases soltas, notas telegráficas, enumeração de livros sem explicação, colagem de citações ou parágrafos de uma única frase. " +
         "Organize prosa contínua em parágrafos sólidos: definição/núcleo, desenvolvimento histórico ou conceitual, convergências entre autores, complementos, nuances ou diferenças sustentadas e uma conclusão integradora. " +
         "Cada parágrafo deve conectar ideias de mais de uma evidência sempre que isso for documentalmente possível. " +
-        "Use [F#] imediatamente após cada afirmação ou conjunto de afirmações sustentadas. Integre o maior número possível de documentos independentes DIRETAMENTE RELEVANTES e atinja a meta mínima de cobertura indicada pelo usuário, sem jamais citar fonte irrelevante só para aumentar quantidade. " +
+        "Use [F#] imediatamente após cada afirmação ou conjunto de afirmações sustentadas. Integre TODOS os documentos independentes presentes nas evidências recuperadas, inclusive obras escriturísticas/Bíblia quando estiverem entre os resultados, sem omitir uma obra recuperada. " +
         "Elimine afirmações que não possam ser sustentadas por pelo menos uma evidência [F#]. Não invente fatos, autores, páginas, capítulos ou citações. Não escreva a seção de referências."
     },
     {
@@ -1717,8 +1753,9 @@ function needsDenseEncyclopedicRewrite(answer,sources) {
   const words=body.split(/\s+/).filter(Boolean).length;
   const paragraphs=body.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
   const bulletLines=body.split("\n").filter(line=>/^\s*[-*•]\s+/.test(line)).length;
-  const minWords=rows.length>=20 ? 650 : rows.length>=10 ? 480 : 320;
-  const minParagraphs=rows.length>=20 ? 6 : rows.length>=10 ? 5 : 4;
+  const independentDocs=new Set(rows.map(s=>String(s?.document_id || s?.titulo || s?.arquivo || "")).filter(Boolean)).size;
+  const minWords=independentDocs>=4 ? 1100 : independentDocs>=2 ? 800 : 600;
+  const minParagraphs=independentDocs>=4 ? 8 : independentDocs>=2 ? 6 : 5;
   return words<minWords || paragraphs.length<minParagraphs || bulletLines>0;
 }
 
@@ -1736,7 +1773,7 @@ async function enforceDenseEncyclopedicMode(env,question,answer,sources) {
         "Produza parágrafos substanciais, coesos e articulados que expliquem o tema em profundidade e cruzem autores e livros dentro do mesmo raciocínio. " +
         "Estruture naturalmente: definição e tese central; desenvolvimento; relações entre conceitos; convergências; complementos; diferenças ou tensões quando existirem; síntese integradora. " +
         "Use identificadores [F#] junto das afirmações sustentadas. Preserve zero alucinação: não acrescente nenhum fato que não esteja nas evidências. " +
-        "A meta é amplitude máxima do acervo com qualidade argumentativa, não uma coleção de citações."
+        "A meta é amplitude máxima do acervo com qualidade argumentativa: cada obra recuperada deve aparecer de modo explícito e rastreável no corpo, e o servidor acrescentará a cobertura documental integral e o rodapé exaustivo."
     },
     {
       role:"user",
@@ -1791,8 +1828,12 @@ function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
   const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
     ? base
     : "1. SÍNTESE PRINCIPAL:\n\n"+base;
-  const references=groundedReferencesMarkdown(cited);
-  return normalized+(references?"\n\n"+references:"");
+  const allSources=exhaustiveSourceRows(rows);
+  const coverage=sourceCoverageMarkdown(allSources);
+  const references=groundedReferencesMarkdown(allSources);
+  return normalized+
+    (coverage?"\n\n"+coverage:"")+
+    (references?"\n\n"+references:"");
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
@@ -2225,9 +2266,9 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
         "Você é o MASTER FINAL da Consciência Fabiano. Esta é a ÚNICA etapa autorizada a usar LLM neste turno analítico. " +
         "Trabalhe somente com as evidências documentais fornecidas e cumpra rigorosamente o CONTRATO COGNITIVO DO TURNO. " +
         "A pergunta atual tem prioridade sobre memória, contexto anterior e tópicos relacionados. Não amplie o escopo por iniciativa própria. " +
-        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. " +
+        "Cada afirmação factual deve conservar o identificador [F#] que realmente a sustenta. Produza texto longo, denso, fluido e aprofundado, evitando síntese curta ou superficial. " +
         "É proibido inventar fatos, autores, páginas, capítulos, citações, causalidade, consenso ou certeza ausentes das evidências. " +
-        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. " +
+        "Se a evidência for insuficiente para algum ponto pedido, declare a insuficiência em vez de completar com conhecimento externo. Integre explicitamente todas as obras independentes presentes no conjunto recuperado, inclusive Bíblia/escrituras quando recuperadas, e não omita fonte documental utilizada. " +
         "Não escreva seção final de referências: o servidor fará isso deterministicamente. Temperatura obrigatória: 0.\n\n" +
         contractRules
     },
@@ -3097,15 +3138,16 @@ function buildCognitiveContract(question) {
 
   const language=questionLanguage(raw);
   const useHistory=questionNeedsMemory(raw);
+  const explicitBrief=/\b(?:em poucas palavras|resposta breve|brevemente|briefly|\d+\s+linhas|cinco linhas)\b/i.test(q);
   const maxWords={
     reference_only:0,
-    factual:260,
-    summary:320,
-    comparison:750,
-    analysis:1100,
-    reflection:900,
-    hypothesis:850
-  }[mode] || 700;
+    factual:1000,
+    summary:explicitBrief ? 320 : 900,
+    comparison:1500,
+    analysis:1800,
+    reflection:1400,
+    hypothesis:1300
+  }[mode] || 1200;
 
   return Object.freeze({
     version:"1.0",
@@ -3128,13 +3170,13 @@ function cognitiveContractPrompt(contract) {
     "; idioma="+String(c.language || "pt")+
     "; memória="+(c.use_history?"somente para desambiguação":"não usar para ampliar resposta")+
     "; máximo aproximado="+Number(c.max_words || 700)+" palavras. " +
-    "Responda SOMENTE ao que foi pedido. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. ";
+    "Responda SOMENTE ao que foi pedido, mas desenvolva a matéria com profundidade, prosa fluida e parágrafos substanciais. Evite respostas telegráficas, superficiais ou excessivamente resumidas, salvo quando o usuário pedir explicitamente brevidade. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. ";
 
   const rules={
     factual:
-      "MODO FATO: responda diretamente ao fato perguntado. Não acrescente hipótese, reflexão ou interpretação não solicitada. Toda afirmação factual deve estar sustentada por [F#].",
+      "MODO FATO: responda diretamente ao fato perguntado em desenvolvimento substancial e contextualizado. Não acrescente hipótese, reflexão ou interpretação não solicitada. Toda afirmação factual deve estar sustentada por [F#], e todas as obras recuperadas devem ser representadas quando sustentarem o tema.",
     summary:
-      "MODO RESUMO: sintetize apenas o material necessário para o pedido, sem ampliar o assunto. Preserve [F#] nos pontos factuais.",
+      "MODO RESUMO: sintetize sem superficialidade, preservando contexto, argumentos, relações e [F#] nos pontos factuais. Só seja curto quando a própria pergunta exigir brevidade ou limite de linhas.",
     comparison:
       "MODO COMPARAÇÃO: compare somente os critérios presentes no pedido. Distinga convergências e diferenças documentadas; não invente vencedor, hierarquia ou motivo.",
     analysis:
@@ -5501,6 +5543,11 @@ export default {
         static_backup_hydration: true,
         static_backup_expected_embeddings: 25199,
         static_backup_payload_status: "scheduled-export",
+        library_upload_always_available: true,
+        library_upload_drag_drop: true,
+        deep_answer_mode: true,
+        exhaustive_source_references: true,
+        exhaustive_source_footer: true,
         supabase_mirror_configured: secondarySupabaseConfigured(env),
         pinecone_mirror_configured: false,
         whisper_fallback_timeout_ms: 8000,
