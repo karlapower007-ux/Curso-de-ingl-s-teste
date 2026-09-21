@@ -404,8 +404,11 @@ try:
         len(first.get("rows") or [])!=1 or len(last.get("rows") or [])!=1):
         raise RuntimeError("post-promotion R2 verification failed")
 
-    sample_text=str(json.loads(conn.execute("select raw_json from baseline order by seq limit 1").fetchone()[0]).get("text") or "")
-    query=" ".join(sample_text.split()[4:12]) or "Jesus Cristo"
+    # Use a stable canonical query instead of arbitrary OCR tokens. The previous
+    # sample-derived query could contain OCR line-break hyphens (e.g. "-deis"),
+    # which websearch_to_tsquery interprets as a NOT operator and can yield a
+    # false zero-hit even when the recovered library is healthy.
+    query="Jesus Cristo convênio"
     _,rag=request_json("POST",BASE+"/api/rag/search",{"Content-Type":"application/json","User-Agent":HTTP_USER_AGENT},{"question":query},timeout=45,accepted=(200,))
     if not rag.get("ok") or not isinstance(rag.get("matches"),list) or len(rag.get("matches"))<1:
         raise RuntimeError("server RAG did not recover through validated fallback")
