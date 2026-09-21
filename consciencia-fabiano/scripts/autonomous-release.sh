@@ -285,9 +285,9 @@ for i in $(seq 1 15); do
 done
 jq -e '.r2_direct_ready == true and .cross_device_storage == "r2-native-binding"' /tmp/health.json >/dev/null || die "R2_NATIVE_BINDING_NOT_READY"
 
-log "5.1/7 Citation dictionary authoritative R2 smoke"
+log "5.1/7 Citation dictionary authoritative R2 batched smoke"
 citation_tmp="$(mktemp)"
-citation_http="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -sS -o "$citation_tmp" -w '%{http_code}' "$BASE/api/citations?q=Deus&offset=0&limit=1" || true)"
+citation_http="$(curl --max-time 45 --retry 2 --retry-delay 2 --retry-all-errors -sS -o "$citation_tmp" -w '%{http_code}' "$BASE/api/citations?q=Deus&scan_cursor=0" || true)"
 citation_body="$(cat "$citation_tmp" 2>/dev/null || true)"
 rm -f "$citation_tmp"
 if [ "$citation_http" != "200" ]; then
@@ -299,12 +299,14 @@ echo "$citation_body" | jq -e '
   .ok == true
   and .backend == "r2-authoritative"
   and .authoritative_r2_preferred == true
+  and .exhaustive_scan_requires_cursor == true
   and .library_total_chunks >= 25199
-  and .scanned >= 25199
-  and .returned >= 1
+  and .scanned_batch > 0
+  and .shards_scanned > 0
   and (.citations | type) == "array"
+  and ((.scan_done == true) or ((.next_scan_cursor|type) == "number"))
 ' >/dev/null || { echo "$citation_body"; die "CITATION_DICTIONARY_R2_FAILED"; }
-log "CITATION_DICTIONARY_R2_PASS=yes"
+log "CITATION_DICTIONARY_R2_BATCH_PASS=yes"
 
 log "5.5/7 V4 Omni Library asset probes"
 curl -fsS "$BASE/failover-manifest.json" | tee /tmp/failover-manifest.json >/dev/null
