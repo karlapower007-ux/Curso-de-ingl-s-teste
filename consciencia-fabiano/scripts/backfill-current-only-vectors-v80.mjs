@@ -494,8 +494,8 @@ async function main(){
     }
 
     // Mirror the exact same R2 vectors to the active secondary index, max 64 per call.
-    for(let i=0;i<rows.length;i+=64){
-      const batch=rows.slice(i,i+64);
+    for(let i=0;i<rows.length;i+=EMBEDDING_BATCH){
+      const batch=rows.slice(i,i+EMBEDDING_BATCH);
       const payload=batch.map(r=>normalizedMirrorRow(r,vectorOf(r),activeGeneration));
       const out=await secondary("mirror_embeddings",{generation:activeGeneration,records:payload});
       if(Number(out?.embeddings||0)!==payload.length)return fail("secondary embedding batch mismatch");
