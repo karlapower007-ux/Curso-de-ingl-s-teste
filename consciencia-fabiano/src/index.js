@@ -1958,6 +1958,88 @@ function extractScriptureReferences(text) {
   return out;
 }
 
+
+const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria)";
+
+function scriptureCollectionSeed(kind) {
+  if(kind==="doctrine-and-covenants") return "Doutrina e Convênios";
+  return "";
+}
+
+function extractScriptureHeading(text,currentBook="") {
+  const raw=String(text || "").replace(/\r/g,"\n");
+  const direct=extractScriptureReferences(raw);
+  if(direct.length){
+    const last=direct[direct.length-1];
+    return {book:last.book,chapter:last.chapter,work:last.work};
+  }
+
+  const lineRef=new RegExp(
+    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
+    "imu"
+  );
+  const lineMatch=raw.match(lineRef);
+  if(lineMatch){
+    const book=canonicalScriptureBook(lineMatch[1]);
+    return {book,chapter:Number(lineMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  const bookThenChapter=new RegExp(
+    "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
+    "imu"
+  );
+  const bookMatch=raw.match(bookThenChapter);
+  if(bookMatch){
+    const book=canonicalScriptureBook(bookMatch[1]);
+    return {book,chapter:Number(bookMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  if(currentBook){
+    const chapterMatch=raw.match(/(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+([0-9]{1,4}|[IVXLCDM]{1,12}|[\p{L}]+(?:\s+e\s+[\p{L}]+)?)\b/imu);
+    if(chapterMatch){
+      const chapter=spokenChapterNumber(chapterMatch[1]);
+      if(chapter) return {book:currentBook,chapter,work:scriptureWorkForBook(currentBook)};
+    }
+  }
+  return null;
+}
+
+function extractScriptureVerseRange(text,page=0) {
+  const lines=String(text || "").replace(/\r/g,"\n").split("\n");
+  const markers=[];
+  for(const line of lines){
+    const match=String(line||"").match(/^\s*(\d{1,3})\s+([\p{L}“"'(].{2,})$/u);
+    if(!match) continue;
+    const verse=Number(match[1]);
+    if(!verse || verse>176) continue;
+    const rest=String(match[2]||"").trim();
+    if(!/\p{L}/u.test(rest)) continue;
+    if(verse===Number(page||0) && rest.length<18) continue;
+    markers.push(verse);
+  }
+  if(!markers.length) return null;
+  const plausible=markers.filter((value,index)=>index===0 || value>=markers[index-1]);
+  if(markers.length===1 && markers[0]>60) return null;
+  const source=plausible.length?plausible:markers;
+  const start=source[0];
+  const end=source[source.length-1];
+  return {verse_start:start,verse_end:Math.max(start,end)};
+}
+
+function syntheticScriptureReference(book,chapter,verseRange) {
+  if(!book || !chapter || !verseRange?.verse_start) return null;
+  const verseStart=Number(verseRange.verse_start);
+  const verseEnd=Number(verseRange.verse_end || verseStart);
+  return {
+    work:scriptureWorkForBook(book),
+    book,
+    chapter:Number(chapter),
+    verse_start:verseStart,
+    verse_end:verseEnd,
+    reference:book+" "+Number(chapter)+":"+verseStart+(verseEnd!==verseStart?"–"+verseEnd:"")
+  };
+}
+
 function citationPublicView(row,index=0) {
   if(!row) return null;
   const bookTitle=humanDocumentName(row.filename,row.title);
