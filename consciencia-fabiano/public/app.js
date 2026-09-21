@@ -1071,7 +1071,7 @@
     else text.textContent = displayContent;
     wrap.appendChild(text);
 
-    const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(displayContent);
+    const hasDeterministicReferenceSection = role === "assistant" && /REFER[ÊE]NCIAS\s+EXATAS/i.test(displayContent);
     if (role === "assistant" && !hasDeterministicReferenceSection && (sources?.length || fallback)) {
       const src = document.createElement("div");
       src.className = "sources";
@@ -1079,33 +1079,32 @@
         const note = document.createElement("div");
         note.className = "source";
         note.textContent = /índices de busca estão temporariamente indisponíveis/i.test(String(content || ""))
-          ? "A biblioteca não foi considerada vazia. O índice remoto está indisponível e a recuperação local continua ativa."
-          : "Não encontrei uma passagem documental direta nesta busca; tente ampliar os termos.";
+          ? "A biblioteca não foi considerada vazia. A busca exata está temporariamente indisponível."
+          : "Nenhuma referência bibliográfica exata foi confirmada para esta busca.";
         src.appendChild(note);
       }
       (sources || []).forEach(item => {
         const row = document.createElement("div");
         row.className = "source";
         const strong = document.createElement("strong");
-        strong.textContent = item.titulo || item.arquivo || "Documento";
-        row.appendChild(strong);
-
-        const meta = [];
-        if (item.autor) meta.push("autor: " + item.autor);
-        if (item.pagina) meta.push("página " + item.pagina);
-        if (item.idioma && item.idioma !== "unknown") meta.push("idioma: " + item.idioma);
-        if (item.arquivo && item.titulo && item.arquivo !== item.titulo && !/\.pdf$/i.test(item.arquivo)) meta.push(item.arquivo);
-        if (meta.length) {
-          const details = document.createElement("div");
-          details.className = "source-meta";
-          details.textContent = meta.join(" • ");
-          row.appendChild(details);
+        let label="";
+        if(item?.bibliographic_type==="scripture"){
+          label=String(item?.primary_reference || "").trim();
+        }else if(item?.bibliographic_type==="book"){
+          const title=String(item?.book || "").trim();
+          const chapter=Number(item?.chapter || 0);
+          const chapterTitle=String(item?.chapter_title || "").trim();
+          const page=Number(item?.page || 0);
+          if(title && chapter && page){
+            label=title+" — Capítulo "+chapter+(chapterTitle?" — "+chapterTitle:"")+" — Página "+page;
+          }
         }
-
-        // O texto bruto recuperado não é repetido aqui; a síntese limpa já aparece na resposta.
+        if(!label) return;
+        strong.textContent=label;
+        row.appendChild(strong);
         src.appendChild(row);
       });
-      wrap.appendChild(src);
+      if(src.children.length) wrap.appendChild(src);
     }
 
     $("messages").appendChild(wrap);
@@ -1120,14 +1119,14 @@
 
   function citationLocationText(item){
     if(item?.bibliographic_type==="scripture"){
-      if(item?.primary_reference) return String(item.primary_reference);
-      const book=String(item?.book || item?.work || "Escritura");
-      const chapter=Number(item?.chapter || 0);
-      return chapter ? book+" "+chapter : book;
+      return String(item?.primary_reference || "").trim();
     }
-    const chapter=String(item?.chapter_display || "Capítulo: localização bibliográfica pendente");
-    const page=String(item?.page_display || "Página: localização bibliográfica pendente");
-    return chapter+" • "+page;
+    const title=String(item?.book || "").trim();
+    const chapter=Number(item?.chapter || 0);
+    const chapterTitle=String(item?.chapter_title || "").trim();
+    const page=Number(item?.page || 0);
+    if(!title || !chapter || !page) return "";
+    return title+" — Capítulo "+chapter+(chapterTitle?" — "+chapterTitle:"")+" — Página "+page;
   }
 
   function renderCitationCard(item){
@@ -1140,54 +1139,21 @@
 
     const title=document.createElement("strong");
     title.className="citation-primary";
-    if(item?.bibliographic_type==="scripture"){
-      const prefix=String(item?.work || "").trim();
-      const ref=String(item?.primary_reference || item?.book || "Escritura").trim();
-      title.textContent=[prefix,ref].filter(Boolean).join(" — ");
-    }else{
-      title.textContent=String(item?.book || "Livro");
-    }
-
-    const location=document.createElement("div");
-    location.className="citation-location";
-    location.textContent=citationLocationText(item);
+    title.textContent=citationLocationText(item);
 
     const meta=document.createElement("div");
     meta.className="citation-meta";
     const metaBits=[];
-    if(item?.author) metaBits.push("Autor: "+item.author);
-    if(item?.bibliographic_type==="scripture" && item?.page_display) metaBits.push(item.page_display+" (localização auxiliar)");
-    if(item?.metadata_complete===false) metaBits.push("Localização bibliográfica ainda incompleta neste trecho");
+    if(item?.bibliographic_type==="book" && item?.author) metaBits.push("Autor: "+item.author);
     meta.textContent=metaBits.join(" • ");
-
-    const refs=Array.isArray(item?.scripture_references)?item.scripture_references:[];
-    let refsNode=null;
-    if(item?.bibliographic_type==="scripture" && refs.length>1){
-      refsNode=document.createElement("div");
-      refsNode.className="citation-scripture-refs";
-      refsNode.textContent="Referências no trecho: "+refs.map(x=>x.reference).filter(Boolean).join(" • ");
-    }
 
     const excerpt=document.createElement("div");
     excerpt.className="citation-excerpt";
     excerpt.textContent=String(item?.excerpt || "Trecho não disponível.");
 
-    const technical=document.createElement("details");
-    technical.className="citation-technical";
-    const summary=document.createElement("summary");
-    summary.textContent="Detalhes técnicos";
-    const technicalText=document.createElement("div");
-    technicalText.textContent=[
-      item?.technical_document ? "Documento interno: "+item.technical_document : "",
-      item?.chunk_index!==undefined ? "Chunk: "+item.chunk_index : "",
-      item?.chunk_id ? "ID: "+item.chunk_id : ""
-    ].filter(Boolean).join(" • ");
-    technical.append(summary,technicalText);
-
-    card.append(rank,title,location);
+    card.append(rank,title);
     if(metaBits.length) card.appendChild(meta);
-    if(refsNode) card.appendChild(refsNode);
-    card.append(excerpt,technical);
+    card.appendChild(excerpt);
     return card;
   }
 
@@ -1200,14 +1166,14 @@
     const toggle=document.createElement("button");
     toggle.type="button";
     toggle.className="citation-dictionary-toggle";
-    toggle.textContent="📚 Dicionário de Citações — abrir livro, capítulo e página";
+    toggle.textContent="📚 Dicionário de Citações — busca exata";
 
     const panel=document.createElement("div");
     panel.className="citation-dictionary-panel hidden";
 
     const status=document.createElement("div");
     status.className="citation-dictionary-status";
-    status.textContent="O dicionário consulta a biblioteca preservada em blocos para permitir milhares de referências sem travar PC ou celular.";
+    status.textContent="Busca exata: somente referências que contêm exatamente o assunto pedido, com localização bibliográfica completa. Mesmo conteúdo no PC e no celular.";
 
     const list=document.createElement("div");
     list.className="citation-dictionary-list";
@@ -1251,9 +1217,9 @@
       const scanned=state.scanned.toLocaleString("pt-BR");
       const library=state.libraryTotal?state.libraryTotal.toLocaleString("pt-BR"):"?";
       if(state.scanDone){
-        return found+" referências/trechos bibliográficos encontrados em "+scanned+" de "+library+" chunks examinados • varredura concluída.";
+        return found+" referências exatas encontradas em "+scanned+" de "+library+" chunks examinados • varredura concluída.";
       }
-      return found+" referências encontradas até agora • "+scanned+" de "+library+" chunks examinados • continuando em blocos seguros.";
+      return found+" referências exatas encontradas até agora • "+scanned+" de "+library+" chunks examinados • continuando em blocos seguros.";
     };
 
     const updateToggle=()=>{

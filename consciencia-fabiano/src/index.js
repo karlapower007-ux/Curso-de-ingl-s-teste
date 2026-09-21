@@ -792,6 +792,63 @@ function lexicalTerms(question) {
   return [...new Set(foldSearchText(question).split(" ").filter(w => w.length >= 3 && !stop.has(w)))].slice(0, 18);
 }
 
+
+const STRICT_REQUEST_GENERIC_TERMS=new Set([
+  "livro","livros","documento","documentos","pdf","pagina","paginas","capitulo","capitulos",
+  "versiculo","versiculos","citacao","citacoes","referencia","referencias","fonte","fontes",
+  "obra","obras","padrao","biblioteca","texto","textos","resposta","respostas","estudo","estudos",
+  "profundo","profundos","sintese","desenvolva","desenvolver","explique","explicar","diga","dizer",
+  "ensina","ensinam","ensinou","ensino","visao","oficial","lds","sud","igreja","doutrina",
+  "pessoa","pessoas","tema","assunto","informacao","informacoes","conteudo","conteudos",
+  "procure","procurar","busca","buscar","ache","achar","encontre","encontrar","fale","falar",
+  "quem","onde","quando","porque","por","que","qual","quais","quanto","quantos","significa","significado",
+  "who","where","when","why","which","meaning","means",
+  "book","books","document","documents","page","pages","chapter","chapters","verse","verses",
+  "citation","citations","reference","references","source","sources","library","text","answer",
+  "study","explain","official","topic","information","content","search","find"
+]);
+
+function strictRequestAnchors(question) {
+  const anchors=lexicalTerms(question)
+    .filter(term=>!STRICT_REQUEST_GENERIC_TERMS.has(term))
+    .slice(0,12);
+  return [...new Set(anchors)];
+}
+
+function exactWholeAnchorMatch(text,anchors) {
+  const list=Array.isArray(anchors)?anchors.filter(Boolean):[];
+  if(!list.length) return null;
+  const folded=foldSearchText(text);
+  if(!folded) return null;
+  const padded=" "+folded+" ";
+  let totalHits=0;
+  for(const anchor of list){
+    const needle=" "+anchor+" ";
+    let from=0,count=0;
+    while(count<64){
+      const at=padded.indexOf(needle,from);
+      if(at<0) break;
+      count++;
+      totalHits++;
+      from=at+needle.length-1;
+    }
+    if(!count) return null;
+  }
+  return {
+    score:1000+(list.length*25)+Math.min(50,totalHits),
+    coverage:1,
+    matched_terms:list.length,
+    hits:totalHits,
+    exact_phrase:list.length===1 || padded.includes(" "+list.join(" ")+" ")
+  };
+}
+
+function strictCurrentRequestCandidate(row,question) {
+  const anchors=strictRequestAnchors(question);
+  if(!anchors.length) return true;
+  return Boolean(exactWholeAnchorMatch(row?.text || row?.trecho || "",anchors));
+}
+
 function secondaryLexicalRescueQueries(question) {
   const raw=String(question || "").replace(/\s+/g," ").trim();
   if(!raw) return [];
@@ -1800,7 +1857,8 @@ function chapterWordToNumber(value) {
 const CHAPTER_HEADING_TOKEN="[0-9]{1,4}|[IVXLCDM]{1,12}|[A-Za-zÀ-ÿ]+(?:[-\\s](?:e|and|[A-Za-zÀ-ÿ]+)){0,2}";
 const CHAPTER_HEADING_PATTERNS=[
   new RegExp("(?:^|\\n)\\s*(?:cap[ií]tulo|chapter)\\s+("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
-  new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu")
+  new RegExp("(?:^|\\n)\\s*(?:cap\\.?)\\s*("+CHAPTER_HEADING_TOKEN+")\\b(?:\\s*[:.\\-–—]\\s*([^\\n]{2,180}))?","imu"),
+  new RegExp("(?:^|[\\s—–])(?:CAPÍTULO|Capítulo|CHAPTER|Chapter)\\s+("+CHAPTER_HEADING_TOKEN+")\\b","u")
 ];
 
 function extractChapterHeading(text) {
@@ -1970,7 +2028,7 @@ function extractNamedSectionHeading(text,documentTitle="") {
   return "";
 }
 
-const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria)";
+const SCRIPTURE_HEADING_BOOK_PATTERN="(?:[1-4]\\s*N[eé]fi|Palavras\\s+de\\s+M[oó]rmon|Jac[oó]|Enos|Jarom|[ÔO]mni|Mosias|Alma|Helam[aã]|M[oó]rmon|[EÉ]ter|Mor[oô]ni|G[eê]nesis|[EÊ]xodo|Lev[ií]tico|N[uú]meros|Deuteron[oô]mio|Josu[eé]|Ju[ií]zes|Rute|(?:[12]\\s*)?Samuel|(?:[12]\\s*)?Reis|(?:[12]\\s*)?Cr[oô]nicas|Esdras|Neemias|Ester|J[oó]|Salmos?|Prov[eé]rbios|Eclesiastes|Cantares|Isa[ií]as|Jeremias|Lamenta[cç][oõ]es|Ezequiel|Daniel|Oseias|Joel|Am[oó]s|Obadias|Jonas|Miqueias|Naum|Habacuque|Sofonias|Ageu|Zacarias|Malaquias|Mateus|Marcos|Lucas|Jo[aã]o|Atos|Romanos|(?:[12]\\s*)?Cor[ií]ntios|G[aá]latas|Ef[eé]sios|Filipenses|Colossenses|(?:[12]\\s*)?Tessalonicenses|(?:[12]\\s*)?Tim[oó]teo|Tito|Filemom|Hebreus|Tiago|(?:[12]\\s*)?Pedro|(?:[123]\\s*)?Jo[aã]o|Judas|Apocalipse|Mois[eé]s|Abra[aã]o|Joseph\\s+Smith[—\\- ]Hist[oó]ria|Doutrina\\s+e\\s+Conv[eê]nios|D\\s*&\\s*C)";
 const SCRIPTURE_HEADING_LINE_RE=new RegExp(
   "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(\\d{1,3})\\s*(?:$|\\n)",
   "imu"
@@ -1978,6 +2036,18 @@ const SCRIPTURE_HEADING_LINE_RE=new RegExp(
 const SCRIPTURE_BOOK_THEN_CHAPTER_RE=new RegExp(
   "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:\\n|\\s{2,})\\s*(?:cap[ií]tulo|chapter)?\\s*(\\d{1,3})\\b",
   "imu"
+);
+const SCRIPTURE_BOOK_INLINE_CHAPTER_RE=new RegExp(
+  "(?:^|[\\s—–])("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s+(?:(?:CAPÍTULO|Capítulo|CHAPTER|Chapter)\\s+)?(\\d{1,3})\\b",
+  "iu"
+);
+const SCRIPTURE_BOOK_LINE_ONLY_RE=new RegExp(
+  "(?:^|\\n)\\s*("+SCRIPTURE_HEADING_BOOK_PATTERN+")\\s*(?:$|\\n)",
+  "imu"
+);
+const SCRIPTURE_STRONG_CHAPTER_RE=new RegExp(
+  "(?:^|[\\s—–])(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|SEÇÃO|Seção|SECTION|Section)\\s+("+CHAPTER_HEADING_TOKEN+")\\b",
+  "gu"
 );
 
 
@@ -1988,6 +2058,22 @@ function scriptureCollectionSeed(kind) {
   if(kind==="pearl-of-great-price") return "Moisés";
   if(kind==="bible") return "Gênesis";
   return "";
+}
+
+function scriptureCollectionChapterSeed(kind) {
+  if(kind==="standard-works") return 1;
+  if(kind==="book-of-mormon") return 1;
+  if(kind==="doctrine-and-covenants") return 1;
+  if(kind==="pearl-of-great-price") return 1;
+  if(kind==="bible") return 1;
+  return null;
+}
+
+function looksLikeStrongHeadingText(value) {
+  const letters=[...String(value||"")].filter(ch=>/\p{L}/u.test(ch));
+  if(!letters.length) return false;
+  const uppercase=letters.filter(ch=>ch===ch.toLocaleUpperCase("pt-BR") && ch!==ch.toLocaleLowerCase("pt-BR")).length;
+  return uppercase/letters.length>=0.72;
 }
 
 function extractScriptureHeading(text,currentBook="") {
@@ -2005,8 +2091,21 @@ function extractScriptureHeading(text,currentBook="") {
     return {book,chapter:Number(bookMatch[2]),work:scriptureWorkForBook(book)};
   }
 
+  const inlineBookMatch=raw.match(SCRIPTURE_BOOK_INLINE_CHAPTER_RE);
+  if(inlineBookMatch && looksLikeStrongHeadingText(inlineBookMatch[1])){
+    const book=canonicalScriptureBook(inlineBookMatch[1]);
+    return {book,chapter:Number(inlineBookMatch[2]),work:scriptureWorkForBook(book)};
+  }
+
+  const bookOnlyMatch=raw.slice(0,420).match(SCRIPTURE_BOOK_LINE_ONLY_RE);
+  if(bookOnlyMatch){
+    const book=canonicalScriptureBook(bookOnlyMatch[1]);
+    return {book,chapter:1,work:scriptureWorkForBook(book)};
+  }
+
   if(currentBook){
-    const chapterMatch=raw.match(/(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+([0-9]{1,4}|[IVXLCDM]{1,12}|[\p{L}]+(?:\s+e\s+[\p{L}]+)?)\b/imu);
+    SCRIPTURE_STRONG_CHAPTER_RE.lastIndex=0;
+    const chapterMatch=SCRIPTURE_STRONG_CHAPTER_RE.exec(raw);
     if(chapterMatch){
       const chapter=chapterWordToNumber(chapterMatch[1]);
       if(chapter) return {book:currentBook,chapter,work:scriptureWorkForBook(currentBook)};
@@ -2015,27 +2114,98 @@ function extractScriptureHeading(text,currentBook="") {
   return null;
 }
 
-function extractScriptureVerseRange(text,page=0) {
-  const lines=String(text || "").replace(/\r/g,"\n").split("\n");
+const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\s.;!?—–-])(\d{1,3})\s+(?=(?:[a-zà-ÿ]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
+
+function extractScriptureVerseRange(text,page=0,{inferVerseOne=false}={}) {
+  const raw=String(text || "").replace(/\r/g," ").replace(/\s+/g," ").trim();
+  if(!raw) return null;
+
   const markers=[];
-  for(const line of lines){
-    const match=String(line||"").match(/^\s*(\d{1,3})\s+([\p{L}“"'(].{2,})$/u);
-    if(!match) continue;
+  SCRIPTURE_INLINE_VERSE_MARKER_RE.lastIndex=0;
+  let match;
+  while((match=SCRIPTURE_INLINE_VERSE_MARKER_RE.exec(raw))!==null && markers.length<96){
     const verse=Number(match[1]);
     if(!verse || verse>176) continue;
-    const rest=String(match[2]||"").trim();
-    if(!/\p{L}/u.test(rest)) continue;
-    if(verse===Number(page||0) && rest.length<18) continue;
-    markers.push(verse);
+    const position=Math.max(0,Number(match.index||0));
+    if(verse===Number(page||0) && position<16) continue;
+    markers.push({verse,position});
   }
   if(!markers.length) return null;
-  if(markers.length===1 && markers[0]>60) return null;
-  let endIndex=0;
-  for(let i=1;i<markers.length;i++){
-    if(markers[i]>=markers[i-1]) endIndex=i;
-    else break;
+
+  const runs=[];
+  let current=[];
+  for(const marker of markers){
+    if(!current.length){
+      current=[marker];
+      continue;
+    }
+    const previous=current[current.length-1].verse;
+    const delta=marker.verse-previous;
+    if(delta>=0 && delta<=4){
+      if(delta!==0) current.push(marker);
+      continue;
+    }
+    runs.push(current);
+    current=[marker];
   }
-  return {verse_start:markers[0],verse_end:Math.max(markers[0],markers[endIndex])};
+  if(current.length) runs.push(current);
+
+  runs.sort((a,b)=>{
+    if(b.length!==a.length) return b.length-a.length;
+    const spanA=(a[a.length-1]?.verse||0)-(a[0]?.verse||0);
+    const spanB=(b[b.length-1]?.verse||0)-(b[0]?.verse||0);
+    if(spanB!==spanA) return spanB-spanA;
+    return (a[0]?.position||0)-(b[0]?.position||0);
+  });
+  const best=runs[0] || [];
+  if(!best.length) return null;
+
+  let verseStart=Number(best[0].verse||0);
+  let verseEnd=Number(best[best.length-1].verse||verseStart);
+  if(!verseStart || verseStart>176) return null;
+  if(best.length===1 && verseStart>60) return null;
+
+  if(inferVerseOne && verseStart===2){
+    const prefix=raw.slice(0,Math.max(0,best[0].position));
+    if(/[A-Za-zÀ-ÿ]{4}/u.test(prefix)) verseStart=1;
+  }
+  return {verse_start:verseStart,verse_end:Math.max(verseStart,verseEnd)};
+}
+
+function extractScriptureLocationReferences(text,book,currentChapter,page=0) {
+  const raw=String(text || "").slice(0,2400).replace(/\r/g,"\n");
+  if(!raw || !book) return {references:[],final_chapter:currentChapter||null};
+
+  const boundaries=[];
+  SCRIPTURE_STRONG_CHAPTER_RE.lastIndex=0;
+  let match;
+  while((match=SCRIPTURE_STRONG_CHAPTER_RE.exec(raw))!==null && boundaries.length<8){
+    const number=chapterWordToNumber(match[1]);
+    if(!number) continue;
+    boundaries.push({index:Math.max(0,Number(match.index||0)),chapter:number,end:SCRIPTURE_STRONG_CHAPTER_RE.lastIndex});
+  }
+
+  const references=[];
+  let chapter=Math.max(0,Number(currentChapter||0)) || null;
+  let cursor=0;
+
+  const addRange=(segment,segmentChapter,inferVerseOne=false)=>{
+    if(!segmentChapter) return;
+    const range=extractScriptureVerseRange(segment,page,{inferVerseOne});
+    const ref=syntheticScriptureReference(book,segmentChapter,range);
+    if(ref && !references.some(item=>item.reference===ref.reference)) references.push(ref);
+  };
+
+  for(const boundary of boundaries){
+    const before=raw.slice(cursor,boundary.index);
+    addRange(before,chapter,false);
+    chapter=boundary.chapter;
+    cursor=boundary.end;
+  }
+
+  const tail=raw.slice(cursor);
+  addRange(tail,chapter,boundaries.length>0);
+  return {references:references.slice(0,6),final_chapter:chapter};
 }
 
 function syntheticScriptureReference(book,chapter,verseRange) {
@@ -2061,60 +2231,39 @@ function citationPublicView(row,index=0) {
   const chapterNumber=Number(row.chapter_number || primaryScripture?.chapter || 0) || null;
   const chapterTitle=String(row.chapter_title || "").replace(/[\r\n]+/g," ").trim();
   const page=Number(row.page || row.pagina || 0) || null;
+  const scriptureBook=String(primaryScripture?.book || "").trim();
+  const scriptureWork=String(primaryScripture?.work || "").trim();
+  const metadataComplete=scriptureSource
+    ? Boolean(scriptureBook && primaryScripture?.chapter && primaryScripture?.verse_start)
+    : Boolean(bookTitle && chapterNumber && page);
   return {
-    citation_id:String(row.id || (row.document_id||"doc")+"-"+(row.chunk_index||index)).slice(0,220),
+    citation_id:"C"+String(index+1)+"-"+String(page||0)+"-"+String(Number(row.chunk_index||0)),
     rank:Number(row.rank || index+1),
     bibliographic_type:scriptureSource ? "scripture" : "book",
-    book:scriptureSource ? String(primaryScripture?.book || bookTitle) : bookTitle,
-    work:scriptureSource ? String(primaryScripture?.work || (bookTitle==="Obras Padrão"?"Obras Padrão":bookTitle)) : "",
+    book:scriptureSource ? scriptureBook : bookTitle,
+    work:scriptureSource ? scriptureWork : "",
     author:String(row.author || "").replace(/[\r\n]+/g," ").trim(),
     chapter:chapterNumber,
     chapter_title:chapterTitle,
     chapter_display:chapterNumber
       ? "Capítulo "+chapterNumber+(chapterTitle?" — "+chapterTitle:"")
-      : (chapterTitle ? "Capítulo/Seção — "+chapterTitle : "Capítulo: não localizado no texto extraído"),
+      : "",
     page,
-    page_display:page ? "Página "+page : "Página: não localizada",
+    page_display:page ? "Página "+page : "",
     primary_reference:primaryScripture?.reference || "",
     scripture_references:scriptureRefs,
-    cross_references:Array.isArray(row.cross_references)?row.cross_references:[],
+    cross_references:[],
     excerpt:cleanNarrativeText(row.text || "").slice(0,720),
-    technical_document:String(row.filename || "").replace(/[\r\n]+/g," ").trim(),
-    document_id:String(row.document_id || ""),
-    chunk_id:String(row.id || ""),
-    chunk_index:Number(row.chunk_index || 0),
     score:Math.round(Number(row.score || 0)*10000)/10000,
-    metadata_complete:scriptureSource
-      ? Boolean(primaryScripture?.chapter && primaryScripture?.verse_start)
-      : Boolean((chapterNumber || chapterTitle) && page)
+    metadata_complete:metadataComplete
   };
 }
 
 function citationLexicalScore(text,query,terms) {
-  const folded=foldSearchText(text);
-  if(!folded) return null;
-  let matchedTerms=0,hits=0;
-  for(const term of terms){
-    if(!term) continue;
-    let from=0,count=0;
-    while(count<24){
-      const at=folded.indexOf(term,from);
-      if(at<0) break;
-      count++;
-      from=at+term.length;
-    }
-    if(count>0){
-      matchedTerms++;
-      hits+=count;
-    }
-  }
-  if(!matchedTerms) return null;
-  const coverage=matchedTerms/Math.max(1,terms.length);
-  const phrase=foldSearchText(query);
-  const exactPhrase=phrase.length>=5 && folded.includes(phrase);
-  const score=(exactPhrase?100:0)+(matchedTerms*10)+(coverage*5)+Math.min(8,hits*0.35);
-  return {score,coverage,matched_terms:matchedTerms,hits,exact_phrase:exactPhrase};
+  const anchors=(Array.isArray(terms)&&terms.length)?terms:strictRequestAnchors(query);
+  return exactWholeAnchorMatch(text,anchors);
 }
+
 
 function citationCarryFromUrl(url) {
   const chapterNumber=Math.max(0,Number(url.searchParams.get("carry_chapter")||0)) || null;
@@ -2156,7 +2305,7 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
     };
   }
 
-  const terms=lexicalTerms(query);
+  const terms=strictRequestAnchors(query);
   if(!terms.length){
     return {
       ok:true,matches:[],scanned:0,shards_scanned:0,scan_done:true,next_scan_cursor:null,
@@ -2215,9 +2364,10 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
 
       if(scriptureKind){
         if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
+        if(!currentScriptureChapter) currentScriptureChapter=scriptureCollectionChapterSeed(scriptureKind);
         const shouldProbeScriptureHeading=
           firstChunkOfPage ||
-          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+/imu.test(headingProbe);
+          /(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|SEÇÃO|Seção|SECTION|Section)\s+/u.test(headingProbe);
         if(shouldProbeScriptureHeading){
           const scriptureHeading=extractScriptureHeading(headingProbe,currentScriptureBook);
           if(scriptureHeading){
@@ -2228,7 +2378,7 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       }else{
         const shouldProbeBookHeading=
           firstChunkOfPage ||
-          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|cap\.?)\s+/imu.test(headingProbe);
+          /(?:CAPÍTULO|Capítulo|CHAPTER|Chapter|cap\.)\s+/u.test(headingProbe);
         if(shouldProbeBookHeading){
           const heading=extractChapterHeading(String(row?.title||"")+"\n"+headingProbe);
           if(heading){
@@ -2246,9 +2396,14 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
 
       let scriptureLocationRefs=[];
       if(scriptureKind){
-        const verseRange=extractScriptureVerseRange(rowText.slice(0,2400),Number(row?.page||0));
-        const synthetic=syntheticScriptureReference(currentScriptureBook,currentScriptureChapter,verseRange);
-        if(synthetic) scriptureLocationRefs=[synthetic];
+        const located=extractScriptureLocationReferences(
+          rowText,
+          currentScriptureBook,
+          currentScriptureChapter,
+          Number(row?.page||0)
+        );
+        scriptureLocationRefs=located.references;
+        if(located.final_chapter) currentScriptureChapter=located.final_chapter;
       }
 
       const inlineHeading=(!scriptureKind && firstChunkOfPage)
@@ -2328,7 +2483,7 @@ async function citationDictionaryResponse(env,url) {
         const data=await citationSearchR2Segment(env,query,scanCursor,carry);
         const citations=(Array.isArray(data?.matches)?data.matches:[])
           .map((row,index)=>citationPublicView(row,index))
-          .filter(Boolean);
+          .filter(item=>item?.metadata_complete===true);
         return json({
           ok:true,
           query,
@@ -2377,7 +2532,7 @@ async function citationDictionaryResponse(env,url) {
       });
       const citations=(Array.isArray(data?.matches)?data.matches:[])
         .map((row,index)=>citationPublicView(row,offset+index))
-        .filter(Boolean);
+        .filter(item=>item?.metadata_complete===true);
       return json({
         ok:true,
         query,
@@ -2411,43 +2566,100 @@ async function citationDictionaryResponse(env,url) {
   return json({ok:false,code:"CITATION_DICTIONARY_UNAVAILABLE",citations:[]},503);
 }
 
-function uniqueSources(context) {
-  const seen = new Set();
-  const sources = [];
-  const rows=Array.from(context || []);
-  for (let index=0; index<rows.length; index++) {
-    const item=rows[index];
-    if(!item) continue;
-    const key = `${item.document_id}:${item.page}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const humanName=humanDocumentName(item.filename,item.title);
-    sources.push({
-      ref_id: "F"+(index+1),
-      document_id: item.document_id,
-      arquivo: humanName,
-      titulo: humanName,
-      autor: item.author || "",
-      idioma: item.language || "unknown",
-      pagina: item.page || null,
-      trecho: cleanNarrativeText(item.text || "").slice(0, 520),
-      score: Math.round(item.score * 10000) / 10000,
-      retrieval_mode: item.retrieval_mode || "semantic",
-    });
+function sourceBibliographicRecord(item,index=0) {
+  if(!item) return null;
+  const rawText=String(item?.text || item?.trecho || "");
+  const page=Number(item?.page || item?.pagina || 0) || null;
+  const scriptureKind=scriptureSourceKind(item?.filename,item?.title);
+
+  if(scriptureKind){
+    const heading=extractScriptureHeading(rawText.slice(0,1400),"");
+    const located=heading?.book && heading?.chapter
+      ? extractScriptureLocationReferences(rawText,heading.book,heading.chapter,page||0)
+      : {references:[],final_chapter:null};
+    const primary=located.references?.[0] || null;
+    if(!primary?.book || !primary?.chapter || !primary?.verse_start) return null;
+    return {
+      ref_id:"F"+(index+1),
+      document_id:String(item?.document_id || ""),
+      bibliographic_type:"scripture",
+      book:String(primary.book),
+      work:String(primary.work || ""),
+      chapter:Number(primary.chapter),
+      verse_start:Number(primary.verse_start),
+      verse_end:Number(primary.verse_end || primary.verse_start),
+      primary_reference:String(primary.reference || ""),
+      autor:"",
+      pagina:null,
+      chapter_title:"",
+      trecho:cleanNarrativeText(rawText).slice(0,520),
+      score:Math.round(Number(item?.score || 0)*10000)/10000,
+      retrieval_mode:item?.retrieval_mode || "semantic",
+      bibliographic_complete:true
+    };
   }
-  return sources.slice(0, TOP_K);
+
+  const title=humanDocumentName(item?.filename,item?.title);
+  const heading=extractChapterHeading(String(item?.title||"")+"\n"+rawText.slice(0,1800));
+  const chapter=Number(item?.chapter_number || heading?.number || 0) || null;
+  const chapterTitle=String(item?.chapter_title || heading?.title || "").replace(/[\r\n]+/g," ").trim();
+  if(!title || !chapter || !page) return null;
+  return {
+    ref_id:"F"+(index+1),
+    document_id:String(item?.document_id || ""),
+    bibliographic_type:"book",
+    book:title,
+    work:"",
+    chapter,
+    chapter_title:chapterTitle,
+    autor:String(item?.author || "").replace(/[\r\n]+/g," ").trim(),
+    pagina:page,
+    primary_reference:"",
+    trecho:cleanNarrativeText(rawText).slice(0,520),
+    score:Math.round(Number(item?.score || 0)*10000)/10000,
+    retrieval_mode:item?.retrieval_mode || "semantic",
+    bibliographic_complete:true
+  };
+}
+
+function uniqueSources(context) {
+  const seen=new Set();
+  const sources=[];
+  const rows=Array.from(context || []);
+  for(let index=0;index<rows.length;index++){
+    const source=sourceBibliographicRecord(rows[index],index);
+    if(!source?.bibliographic_complete) continue;
+    const key=source.bibliographic_type==="scripture"
+      ? "s:"+source.primary_reference
+      : "b:"+foldSearchText(source.book)+"|"+source.chapter+"|"+source.pagina;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    sources.push(source);
+  }
+  return sources.slice(0,TOP_K);
 }
 
 function publicSourceView(source,index=0) {
-  if(!source) return null;
-  const name=String(source?.titulo || source?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
+  if(!source?.bibliographic_complete) return null;
+  if(source.bibliographic_type==="scripture"){
+    return {
+      ref_id:sourceRefId(source,index),
+      bibliographic_type:"scripture",
+      book:String(source.book || ""),
+      chapter:Number(source.chapter || 0) || null,
+      verse_start:Number(source.verse_start || 0) || null,
+      verse_end:Number(source.verse_end || source.verse_start || 0) || null,
+      primary_reference:String(source.primary_reference || "")
+    };
+  }
   return {
     ref_id:sourceRefId(source,index),
-    arquivo:name,
-    titulo:name,
-    autor:String(source?.autor || "").replace(/[\r\n]+/g," ").trim(),
-    idioma:String(source?.idioma || "unknown"),
-    pagina:source?.pagina ? Number(source.pagina) : null
+    bibliographic_type:"book",
+    book:String(source.book || ""),
+    author:String(source.autor || ""),
+    chapter:Number(source.chapter || 0) || null,
+    chapter_title:String(source.chapter_title || ""),
+    page:Number(source.pagina || 0) || null
   };
 }
 
@@ -2524,63 +2736,45 @@ function exhaustiveSourceRows(sources){
   return rows.map((row,index)=>({...row,ref_id:sourceRefId(row,index)}));
 }
 
-function sourceCoverageMarkdown(sources){
-  const rows=exhaustiveSourceRows(sources);
-  if(!rows.length) return "";
-  const docs=new Map();
-  for(const row of rows){
-    const key=String(row?.document_id || row?.titulo || row?.arquivo || "documento");
-    if(!docs.has(key)) docs.set(key,{
-      name:String(row?.titulo || row?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim(),
-      author:String(row?.autor || "").replace(/[\r\n]+/g," ").trim(),
-      refs:[],
-      pages:new Set()
-    });
-    const doc=docs.get(key);
-    doc.refs.push(sourceRefId(row,0));
-    if(row?.pagina) doc.pages.add(Number(row.pagina));
+function bibliographicSourceLabel(source) {
+  if(source?.bibliographic_type==="scripture"){
+    return String(source?.primary_reference || "").trim();
   }
-  const lines=[...docs.values()].map(doc=>{
-    const pages=[...doc.pages].sort((a,b)=>a-b);
-    const pageText=pages.length ? " páginas "+pages.join(", ") : "";
-    return "- **"+doc.name+"**"+(doc.author?" — "+doc.author:"")+pageText+" — evidências "+doc.refs.map(ref=>"["+ref+"]").join(" ");
-  });
-  return "COBERTURA DOCUMENTAL INTEGRAL UTILIZADA NESTA RESPOSTA\n\n"+lines.join("\n");
+  const title=String(source?.book || "").trim();
+  const chapter=Number(source?.chapter || 0);
+  const chapterTitle=String(source?.chapter_title || "").trim();
+  const page=Number(source?.pagina || source?.page || 0);
+  if(!title || !chapter || !page) return "";
+  return title+" — Capítulo "+chapter+(chapterTitle?" — "+chapterTitle:"")+" — Página "+page;
+}
+
+function sourceCoverageMarkdown(sources){
+  const rows=exhaustiveSourceRows(sources).filter(row=>row?.bibliographic_complete);
+  if(!rows.length) return "";
+  return "REFERÊNCIAS BIBLIOGRÁFICAS EXATAS UTILIZADAS\n\n"+
+    rows.map((row,index)=>"- "+bibliographicSourceLabel(row)+" ["+sourceRefId(row,index)+"]").filter(Boolean).join("\n");
 }
 
 function compactCitationEvidence(sources) {
-  return (Array.isArray(sources)?sources:[]).slice(0,TOP_K).map((s,index)=>{
-    const ref=sourceRefId(s,index);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
-    const excerpt=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,220);
-    return "["+ref+"] "+name+(author?" — "+author:"")+" — "+page+" — "+excerpt;
-  }).join("\n");
+  return (Array.isArray(sources)?sources:[])
+    .filter(s=>s?.bibliographic_complete)
+    .slice(0,TOP_K)
+    .map((s,index)=>{
+      const ref=sourceRefId(s,index);
+      const label=bibliographicSourceLabel(s);
+      const excerpt=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,220);
+      return "["+ref+"] "+label+" — "+excerpt;
+    }).join("\n");
 }
 
 function groundedReferencesMarkdown(sources) {
-  const rows=exhaustiveSourceRows(sources);
+  const rows=exhaustiveSourceRows(sources).filter(row=>row?.bibliographic_complete);
   if(!rows.length) return "";
-  const docs=new Map();
-  for(const row of rows){
-    const key=String(row?.document_id || row?.titulo || row?.arquivo || "documento");
-    if(!docs.has(key)) docs.set(key,{
-      name:String(row?.titulo || row?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim(),
-      author:String(row?.autor || "Autor não informado").replace(/[\r\n]+/g," ").trim(),
-      pages:new Set(),
-      refs:[]
-    });
-    const doc=docs.get(key);
-    if(row?.pagina) doc.pages.add(Number(row.pagina));
-    doc.refs.push(sourceRefId(row,0));
-  }
-  const lines=[...docs.values()].map(doc=>{
-    const pages=[...doc.pages].sort((a,b)=>a-b);
-    const pageText=pages.length ? "Páginas "+pages.join(", ") : "Página não informada";
-    return "- **"+doc.name+"** — "+doc.author+"; "+pageText+"; evidências "+doc.refs.map(ref=>"["+ref+"]").join(" ")+".";
-  });
-  return "2. 📚 FONTES E REFERÊNCIAS — COBERTURA EXAUSTIVA\n\n"+lines.join("\n");
+  const lines=rows.map((row,index)=>{
+    const label=bibliographicSourceLabel(row);
+    return label ? "- **"+label+"** ["+sourceRefId(row,index)+"]" : "";
+  }).filter(Boolean);
+  return lines.length ? "📚 REFERÊNCIAS EXATAS\n\n"+lines.join("\n") : "";
 }
 
 function stripSynthesisPrincipalLabel(answer) {
@@ -2608,34 +2802,17 @@ function isEmptyGroundedFailure(answer) {
 }
 
 function deterministicSynthesisFromSources(sources) {
-  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete).slice(0,TOP_K);
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
-  const docs=new Map();
-  for(let index=0; index<rows.length; index++){
-    const s=rows[index];
-    const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
-    if(!docs.has(key)) docs.set(key,{
-      name:String(s?.titulo || s?.arquivo || "Documento").trim(),
-      author:String(s?.autor || "").trim(),
-      excerpts:[],
-      refs:[]
-    });
-    const entry=docs.get(key);
-    const text=String(s?.trecho || "").replace(/\s+/g," ").trim();
-    if(text && entry.excerpts.length<2){
-      entry.excerpts.push(text.slice(0,260));
-      entry.refs.push(sourceRefId(s,index));
-    }
-  }
   const parts=[];
-  for(const doc of [...docs.values()].slice(0,TOP_K)){
-    const label=doc.author ? doc.name+" de "+doc.author : doc.name;
-    const evidence=doc.excerpts.filter(Boolean).join(" ");
-    const refs=doc.refs.map(ref=>"["+ref+"]").join("");
-    if(evidence) parts.push(label+" sustenta este ponto documental: "+evidence+" "+refs);
+  for(let index=0;index<rows.length;index++){
+    const s=rows[index];
+    const evidence=String(s?.trecho || "").replace(/\s+/g," ").trim();
+    const ref=sourceRefId(s,index);
+    if(evidence) parts.push(evidence.slice(0,320)+" ["+ref+"]");
   }
-  if(!parts.length) return "Há evidência documental válida recuperada, mas ela não pôde ser desenvolvida com segurança.";
-  return "## Desenvolvimento documental\n\n"+parts.join("\n\n");
+  if(!parts.length) return EMPTY_GROUNDED_ANSWER;
+  return "## Resposta documental\n\n"+parts.join("\n\n");
 }
 
 async function repairFalseNegativeSynthesis(env,question,sources) {
@@ -2646,7 +2823,8 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
     {
       role:"system",
       content:
-        "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
+        "Há uma ou mais referências bibliográficas exatas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
+        "É PROIBIDO escrever nome de arquivo/PDF/documento técnico. Use apenas livro canônico + capítulo:versículo nas Escrituras, ou título do livro + capítulo + página nos demais livros. " +
         "Produza texto desenvolvido, em múltiplas seções quando houver material, usando exclusivamente as evidências fornecidas. " +
         "Cruze as fontes independentes diretamente relevantes em prosa coesa, com densidade enciclopédica, sem despejar trechos ou nomes em sequência. " +
         "Depois de cada afirmação factual, mantenha os identificadores [F#] das evidências que realmente a sustentam. " +
@@ -2692,7 +2870,8 @@ async function repairSparseCitationCoverage(env,question,answer,sources) {
     {
       role:"system",
       content:
-        "Reescreva o rascunho no MODO DICIONÁRIO DENSO: um verbete enciclopédico profundo, coeso e articulado, usando EXCLUSIVAMENTE as evidências fornecidas. " +
+        "Reescreva o rascunho no MODO DICIONÁRIO DENSO: um verbete enciclopédico profundo, coeso e articulado, usando EXCLUSIVAMENTE as evidências fornecidas e SOMENTE o assunto exato pedido. " +
+        "É PROIBIDO mostrar nome de arquivo/PDF/documento técnico; referências devem aparecer apenas como livro canônico + capítulo:versículo, ou título do livro + capítulo + página. " +
         "É proibido produzir frases soltas, notas telegráficas, enumeração de livros sem explicação, colagem de citações ou parágrafos de uma única frase. " +
         "Organize prosa contínua em parágrafos sólidos: definição/núcleo, desenvolvimento histórico ou conceitual, convergências entre autores, complementos, nuances ou diferenças sustentadas e uma conclusão integradora. " +
         "Cada parágrafo deve conectar ideias de mais de uma evidência sempre que isso for documentalmente possível. " +
@@ -2976,21 +3155,19 @@ function crossLibraryLedger(context) {
 
 function compactIndependentEvidenceFromSources(sources) {
   const docs=new Map();
-  const rows=Array.isArray(sources)?sources:[];
-  for(let index=0; index<rows.length; index++){
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete);
+  for(let index=0;index<rows.length;index++){
     const s=rows[index];
-    const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
+    const key=String(s?.document_id || bibliographicSourceLabel(s) || index).trim();
     if(docs.has(key)) continue;
     docs.set(key,{...s,ref_id:sourceRefId(s,index)});
   }
   return [...docs.values()].slice(0,TOP_K).map((s)=>{
     const ref=sourceRefId(s,0);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
+    const label=bibliographicSourceLabel(s);
     const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,180);
-    return "["+ref+"] "+name+(author?" — "+author:"")+" — "+page+" — "+text;
-  }).join("\n");
+    return "["+ref+"] "+label+" — "+text;
+  }).filter(Boolean).join("\n");
 }
 
 function documentIdentity(item) {
@@ -3000,12 +3177,12 @@ function documentIdentity(item) {
 function crossLibraryStats(context) {
   const docs=new Map();
   for(const item of (context || [])){
-    const id=documentIdentity(item);
+    const id=String(item?.document_id || bibliographicSourceLabel(item) || "").trim();
     if(!id) continue;
     const current=docs.get(id) || {
       id,
-      name:humanDocumentName(item?.filename,item?.title),
-      author:String(item?.author || ""),
+      name:bibliographicSourceLabel(item),
+      author:String(item?.autor || ""),
       hits:0
     };
     current.hits++;
@@ -3013,7 +3190,7 @@ function crossLibraryStats(context) {
   }
   return {
     independent_documents:docs.size,
-    documents:[...docs.values()].slice(0,TOP_K)
+    documents:[...docs.values()].filter(doc=>doc.name).slice(0,TOP_K)
   };
 }
 
@@ -3122,32 +3299,24 @@ async function runMasterNode20(env,question,lastBatch,baton,history,source) {
 
 function massiveNodeEvidence(source, question, nodeIndex) {
   const node=nodeIndex+1;
-  if(!source){
+  if(!source?.bibliographic_complete){
     return {
-      node,
-      status:"pass-through",
-      ref_id:"",
-      source:"",
-      page:null,
-      evidence:"",
+      node,status:"pass-through",ref_id:"",source:"",page:null,evidence:"",
       metadata:{deterministic:true,temperature:0}
     };
   }
   const ref=sourceRefId(source,nodeIndex);
-  const sourceName=String(source?.titulo || source?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-  const author=String(source?.autor || "").replace(/[\r\n]+/g," ").trim();
-  const page=Number(source?.pagina || 0) || null;
+  const label=bibliographicSourceLabel(source);
   const raw=String(source?.trecho || source?.text || "");
   const excerpt=focusExcerptForQuestion(raw,question,MASSIVE_NODE_EVIDENCE_CHARS) ||
     cleanNarrativeText(raw).slice(0,MASSIVE_NODE_EVIDENCE_CHARS);
-  const evidence="["+ref+"] "+sourceName+(author?" — "+author:"")+(page?" — página "+page:"")+
-    " — "+String(excerpt || "").replace(/\s+/g," ").trim();
+  const evidence="["+ref+"] "+label+" — "+String(excerpt || "").replace(/\s+/g," ").trim();
   return {
     node,
     status:excerpt ? "complete" : "no-evidence",
     ref_id:ref,
-    source:sourceName,
-    page,
+    source:label,
+    page:source?.pagina || null,
     evidence,
     metadata:{
       deterministic:true,
@@ -3286,7 +3455,7 @@ const EXHAUSTIVE_GROUP_BATCH_SIZE=10;
 const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=4800;
 
 function exhaustiveEvidenceGroups(sources){
-  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete).slice(0,TOP_K);
   const groups=[];
   const seen=new Map();
   for(let i=0;i<rows.length;i++){
@@ -3302,9 +3471,9 @@ function exhaustiveEvidenceGroups(sources){
     const group={
       id:"G"+(groups.length+1),
       document_id:String(row?.document_id || ""),
-      title:String(row?.titulo || row?.arquivo || "Documento"),
-      author:String(row?.autor || ""),
-      page:row?.pagina || null,
+      title:bibliographicSourceLabel(row),
+      author:"",
+      page:null,
       refs:[row.ref_id],
       evidence:excerpt.slice(0,520)
     };
@@ -3368,32 +3537,14 @@ function exhaustiveGroupEvidence(groups){
 function deterministicPreservationText(groups){
   const rows=Array.isArray(groups)?groups:[];
   if(!rows.length) return "";
-  const docs=new Map();
-  for(const g of rows){
-    const key=String(g?.document_id || g?.title || "Documento");
-    if(!docs.has(key)) docs.set(key,{
-      title:String(g?.title || "Documento"),
-      author:String(g?.author || ""),
-      groups:[]
-    });
-    docs.get(key).groups.push(g);
-  }
   const sections=[];
-  for(const doc of docs.values()){
-    const heading="### "+doc.title+(doc.author?" — "+doc.author:"");
-    const paragraphs=doc.groups.map(g=>{
-      const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
-      const page=g.page ? " Na página "+g.page+"," : "";
-      const evidence=String(g.evidence||"").replace(/\s+/g," ").trim();
-      return (
-        "Esta evidência acrescenta um ponto documental próprio ao estudo. "+refs+page+
-        " o material recuperado registra que "+evidence+
-        " Este ponto documental permanece visível no desenvolvimento e não é descartado como simples referência; nenhuma conclusão além do que a evidência sustenta é acrescentada."
-      );
-    });
-    sections.push(heading+"\n\n"+paragraphs.join("\n\n"));
+  for(const g of rows){
+    const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
+    const evidence=String(g.evidence||"").replace(/\s+/g," ").trim();
+    if(!evidence || !g.title) continue;
+    sections.push("### "+g.title+"\n\n"+evidence+" "+refs);
   }
-  return "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n");
+  return sections.length ? "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n") : "";
 }
 
 function exhaustiveStructureGate(text,groups,contract){
@@ -4078,13 +4229,12 @@ function buildMapBatchContext(batch,question="",batchIndex=0) {
   const rows=Array.from(batch || []).slice(0,MAP_BATCH_SIZE);
   const parts=[];
   for(let i=0;i<rows.length;i++){
-    const c=rows[i];
+    const raw=rows[i];
+    const source=raw?.bibliographic_complete ? raw : sourceBibliographicRecord(raw,i);
+    if(!source?.bibliographic_complete) continue;
     const globalIndex=batchIndex*MAP_BATCH_SIZE+i+1;
-    const sourceName=humanDocumentName(c.filename,c.title);
-    const header="[F"+globalIndex+"] "+sourceName+
-      (c.author ? " — "+c.author : "")+
-      ", página "+(c.page || "não informada");
-    const focused=focusExcerptForQuestion(c.text || "",question,420);
+    const header="[F"+globalIndex+"] "+bibliographicSourceLabel(source);
+    const focused=focusExcerptForQuestion(source.trecho || raw?.text || "",question,420);
     const excerpt=trimToTokenBudget(focused,105);
     if(!excerpt) continue;
     parts.push(header+"\n"+excerpt);
@@ -4093,26 +4243,24 @@ function buildMapBatchContext(batch,question="",batchIndex=0) {
 }
 
 function buildRagContext(context, question = "", tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
-  if (!Array.isArray(context) || !context.length) {
-    return "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
-  }
-  const parts = [];
-  let used = 0;
-  for (let i = 0; i < context.length; i++) {
-    const c = context[i];
-    const sourceName=humanDocumentName(c.filename,c.title);
-    const header = "[F" + (i + 1) + "] " + sourceName +
-      (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
-    const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
-    if (remaining <= 180 && parts.length) break;
-    const focused=focusExcerptForQuestion(c.text || "",question,720);
-    const excerpt = trimToTokenBudget(focused, Math.min(260, remaining));
+  if(!Array.isArray(context) || !context.length) return "(Nenhuma referência bibliográfica exata foi recuperada para esta pergunta.)";
+  const parts=[];
+  let used=0;
+  for(let i=0;i<context.length;i++){
+    const raw=context[i];
+    const source=raw?.bibliographic_complete ? raw : sourceBibliographicRecord(raw,i);
+    if(!source?.bibliographic_complete) continue;
+    const header="[F"+(i+1)+"] "+bibliographicSourceLabel(source);
+    const remaining=Math.max(180,tokenBudget-used-estimateTokens(header)-20);
+    if(remaining<=180 && parts.length) break;
+    const focused=focusExcerptForQuestion(source.trecho || raw?.text || "",question,720);
+    const excerpt=trimToTokenBudget(focused,Math.min(260,remaining));
     if(!excerpt) continue;
-    const part = header + "\n" + excerpt;
-    const cost = estimateTokens(part);
-    if (parts.length && used + cost > tokenBudget) break;
+    const part=header+"\n"+excerpt;
+    const cost=estimateTokens(part);
+    if(parts.length && used+cost>tokenBudget) break;
     parts.push(part);
-    used += cost;
+    used+=cost;
   }
   return parts.join("\n\n");
 }
@@ -4482,7 +4630,11 @@ function cognitiveContractPrompt(contract) {
     "; idioma="+String(c.language || "pt")+
     "; memória="+(c.use_history?"somente para desambiguação":"não usar para ampliar resposta")+
     "; máximo aproximado="+Number(c.max_words || 700)+" palavras. " +
-    "Responda SOMENTE ao que foi pedido, mas desenvolva a matéria com profundidade, prosa fluida e parágrafos substanciais. Evite respostas telegráficas, superficiais ou excessivamente resumidas, salvo quando o usuário pedir explicitamente brevidade. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. ";
+    "Responda SOMENTE ao que foi pedido, mas desenvolva a matéria com profundidade, prosa fluida e parágrafos substanciais. Evite respostas telegráficas, superficiais ou excessivamente resumidas, salvo quando o usuário pedir explicitamente brevidade. Não inclua convite final, curiosidade extra, tópico lateral ou conclusão não solicitada. " +
+    "ESCOPO EXATO: use somente evidências que contenham todos os termos temáticos específicos do pedido atual; não acrescente pessoas, doutrinas ou assuntos apenas relacionados. " +
+    "PADRÃO BIBLIOGRÁFICO OBRIGATÓRIO: é PROIBIDO mostrar nome de arquivo, nome de PDF, nome de documento técnico, ID, chunk ou rótulo interno. " +
+    "Para Escrituras/Obras Padrão, cite SOMENTE o livro canônico e a localização, por exemplo '2 Néfi 2:4' ou 'Levítico 1:3'. " +
+    "Para livros comuns, cite o título real do livro, número do capítulo, título do capítulo quando conhecido e página. Se a localização bibliográfica não estiver confirmada, omita a referência em vez de adivinhar. ";
 
   const rules={
     factual:
@@ -4498,7 +4650,7 @@ function cognitiveContractPrompt(contract) {
     hypothesis:
       "MODO HIPÓTESE: use duas partes claramente rotuladas no idioma da pergunta: 'BASE DOCUMENTAL'/'DOCUMENTARY BASIS' e 'HIPÓTESE'/'HYPOTHESIS'. A hipótese deve ser apresentada como possibilidade condicional, nunca como fato estabelecido. Não invente dados ausentes.",
     reference_only:
-      "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência documental."
+      "MODO REFERÊNCIA SOMENTE: não explique, não resuma, não reflita e não formule hipótese. Entregue somente a referência bibliográfica exata no padrão: Escrituras = livro capítulo:versículo; livro comum = título do livro, capítulo e página."
   };
   const plan=c?.v74_plan || null;
   const semanticContracts=Array.from(plan?.executed_contracts || plan?.semantic_contracts || []).slice(0,24)
@@ -4515,36 +4667,15 @@ function cognitiveContractPrompt(contract) {
 }
 
 function referenceOnlyAnswer(sources,question="") {
-  const rows=Array.isArray(sources)?sources:[];
-  const q=foldSearchText(question);
-  const wantsStructural=/\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q);
-  if(wantsStructural){
-    const ranked=rows.slice().sort((a,b)=>{
-      const aClient=/client/i.test(String(a?.retrieval_mode||"")) ? 1000 : 0;
-      const bClient=/client/i.test(String(b?.retrieval_mode||"")) ? 1000 : 0;
-      return (bClient+Number(b?.score||0))-(aClient+Number(a?.score||0));
-    });
-    for(const s of ranked){
-      const title=String(s?.titulo || s?.title || s?.arquivo || "").replace(/[\r\n]+/g," ").trim();
-      const corpus=[title,s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ");
-      const location=corpus.match(/\b(\d{1,3})\s*:\s*(\d{1,3})\b/);
-      const chapter=Number(s?.chapter || s?.capitulo || location?.[1] || 0);
-      const verse=Number(s?.verse || s?.versiculo || location?.[2] || 0);
-      if(title && chapter>0 && verse>0) return title+" "+chapter+":"+verse;
-    }
-  }
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete);
   const seen=new Set(),lines=[];
   for(let i=0;i<rows.length;i++){
     const s=rows[i];
-    const ref=sourceRefId(s,i);
-    const key=[s?.document_id||"",s?.pagina||"",s?.titulo||s?.arquivo||""].join("|");
-    if(seen.has(key)) continue;
-    seen.add(key);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "";
-    lines.push("["+ref+"] "+[name,author,page].filter(Boolean).join(" — "));
-    if(lines.length>=12) break;
+    const label=bibliographicSourceLabel(s);
+    if(!label || seen.has(label)) continue;
+    seen.add(label);
+    lines.push(label);
+    if(lines.length>=50) break;
   }
   return lines.join("\n");
 }
@@ -4865,6 +4996,115 @@ async function durableExactDocumentChunks(env,documentId,startChunk,limit) {
   };
 }
 
+function directBibliographicSources(rows,question="") {
+  const ordered=sortSequentialChunks(rows);
+  const anchors=strictRequestAnchors(question);
+  const out=[];
+  const seen=new Set();
+
+  let currentDocument="";
+  let currentBookChapter=null;
+  let currentBookChapterTitle="";
+  let currentScriptureBook="";
+  let currentScriptureChapter=null;
+
+  for(let index=0;index<ordered.length;index++){
+    const row=ordered[index];
+    const text=String(row?.text||"");
+    if(!text) continue;
+    const documentId=String(row?.document_id||"");
+    if(documentId!==currentDocument){
+      currentDocument=documentId;
+      currentBookChapter=null;
+      currentBookChapterTitle="";
+      currentScriptureBook="";
+      currentScriptureChapter=null;
+    }
+
+    const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+    const probe=text.slice(0,1200);
+    if(scriptureKind){
+      if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
+      if(!currentScriptureChapter) currentScriptureChapter=scriptureCollectionChapterSeed(scriptureKind);
+      const heading=extractScriptureHeading(probe,currentScriptureBook);
+      if(heading){
+        currentScriptureBook=heading.book || currentScriptureBook;
+        currentScriptureChapter=heading.chapter || currentScriptureChapter;
+      }
+    }else{
+      const heading=extractChapterHeading(String(row?.title||"")+"\n"+probe);
+      if(heading){
+        currentBookChapter=heading.number || currentBookChapter;
+        currentBookChapterTitle=heading.title || currentBookChapterTitle || "";
+      }else if(!currentBookChapterTitle){
+        const named=extractNamedSectionHeading(probe,row?.title||row?.filename||"");
+        if(named) currentBookChapterTitle=named;
+      }
+    }
+
+    if(anchors.length && !exactWholeAnchorMatch(text,anchors)) continue;
+
+    if(scriptureKind){
+      const located=extractScriptureLocationReferences(
+        text,
+        currentScriptureBook,
+        currentScriptureChapter,
+        Number(row?.page||0)
+      );
+      if(located.final_chapter) currentScriptureChapter=located.final_chapter;
+      for(const ref of (located.references||[])){
+        if(!ref?.book || !ref?.chapter || !ref?.verse_start) continue;
+        const key="s:"+String(ref.reference||"");
+        if(seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          ref_id:"F"+(out.length+1),
+          document_id:documentId,
+          bibliographic_type:"scripture",
+          book:String(ref.book),
+          work:String(ref.work||""),
+          chapter:Number(ref.chapter),
+          verse_start:Number(ref.verse_start),
+          verse_end:Number(ref.verse_end||ref.verse_start),
+          primary_reference:String(ref.reference||""),
+          autor:"",
+          pagina:null,
+          chapter_title:"",
+          trecho:cleanNarrativeText(text).slice(0,520),
+          score:1000,
+          retrieval_mode:"direct-exact-bibliographic",
+          bibliographic_complete:true
+        });
+      }
+    }else{
+      const title=humanDocumentName(row?.filename,row?.title);
+      const page=Number(row?.page||0)||null;
+      if(!title || !currentBookChapter || !page) continue;
+      const key="b:"+foldSearchText(title)+"|"+currentBookChapter+"|"+page;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        ref_id:"F"+(out.length+1),
+        document_id:documentId,
+        bibliographic_type:"book",
+        book:title,
+        work:"",
+        chapter:Number(currentBookChapter),
+        chapter_title:String(currentBookChapterTitle||""),
+        autor:String(row?.author||"").replace(/[\r\n]+/g," ").trim(),
+        pagina:page,
+        primary_reference:"",
+        trecho:cleanNarrativeText(text).slice(0,520),
+        score:1000,
+        retrieval_mode:"direct-exact-bibliographic",
+        bibliographic_complete:true
+      });
+    }
+    if(out.length>=TOP_K) break;
+  }
+  return out;
+}
+
 async function directRetrievalPayload(env,body) {
   const question=String(body?.question || body?.pergunta || "").trim();
   const intent=detectExactRetrievalIntent(question);
@@ -4933,6 +5173,7 @@ async function directRetrievalPayload(env,body) {
     return {ok:false,direct:true,bypass_llm:true,code:"DIRECT_TEXT_EMPTY",intent,provider};
   }
 
+  const bibliographicSources=directBibliographicSources(ordered,question);
   return {
     ok:true,
     direct:true,
@@ -4941,11 +5182,8 @@ async function directRetrievalPayload(env,body) {
     scope:assembled.scope,
     intent,
     provider,
-    document_id:String(anchor?.document_id || ""),
-    filename:String(anchor?.filename || anchor?.title || "Documento"),
-    title:String(anchor?.title || anchor?.filename || "Documento"),
-    author:String(anchor?.author || ""),
-    page:Number(anchor?.page || 0) || null,
+    bibliographic_sources:bibliographicSources,
+    public_references:publicSourceViews(bibliographicSources),
     anchor_chunk_index:Number(anchor?.chunk_index || 0),
     logical_swarm_size:EXACT_SWARM_NODE_COUNT,
     logical_nodes_used:ordered.length,
@@ -4953,6 +5191,7 @@ async function directRetrievalPayload(env,body) {
     ordered_buffer:true,
     chunks_reassembled:assembled.chunks,
     llm_calls:0,
+    document_names_exposed:false,
     circuit_breaker:{
       failure_threshold:EXACT_CIRCUIT_FAILURE_THRESHOLD,
       slow_ms:EXACT_CIRCUIT_SLOW_MS,
@@ -5027,20 +5266,16 @@ async function chat(request, env) {
   const exactIntent=detectExactRetrievalIntent(question);
   if(exactIntent.triggered){
     const direct=await directRetrievalPayload(env,body);
+    const directSources=direct.ok && Array.isArray(direct?.bibliographic_sources)
+      ? direct.bibliographic_sources.filter(source=>source?.bibliographic_complete)
+      : [];
+    const directRefs=groundedReferencesMarkdown(directSources);
     const answer=direct.ok
-      ? String(direct.text || "")
-      : "Não foi possível recuperar o texto documental exato neste momento. O modo de leitura direta não acionou o LLM.";
+      ? (String(direct.text || "").trim()+(directRefs?"\n\n"+directRefs:""))
+      : "Não foi possível confirmar uma localização bibliográfica exata para esta busca.";
     const wantsStream=
       String(request.headers.get("Accept") || "").includes("text/event-stream") ||
       body?.stream === true;
-    const directSources=direct.ok ? [{
-      document_id:direct.document_id,
-      arquivo:direct.filename,
-      titulo:direct.title,
-      autor:direct.author,
-      pagina:direct.page,
-      ref_id:"RAW1"
-    }] : [];
     const directExecution=await runCognitivePlan(cognitivePlan,{sources:directSources,contract:cognitiveRuntime});
     const payload={
       ok:direct.ok,
@@ -5071,7 +5306,7 @@ async function chat(request, env) {
     if(wantsStream){
       const frames=
         sseFrame("meta",{...payload,resposta:undefined})+
-        sseFrame("delta",{text:answer,raw_document:true})+
+        sseFrame("delta",{text:answer,raw_document:false,bibliographic_only:true})+
         sseFrame("done",payload);
       return new Response(frames,{status:direct.ok?200:503,headers:securityHeaders(new Headers({
         "Content-Type":"text/event-stream; charset=utf-8",
@@ -5141,6 +5376,7 @@ async function chat(request, env) {
   }
 
   context=(Array.isArray(context)?context:[])
+    .filter(row=>strictCurrentRequestCandidate(row,retrievalQuestion))
     .filter(row=>groundedHybridCandidate(row,retrievalQuestion));
   const legacyRankedContext=context
     .map(row=>({...row,__hybrid_rank:groundedHybridRank(row,retrievalQuestion)}))
@@ -5470,6 +5706,16 @@ async function status(env) {
     citation_dictionary_ultrasafe_one_shard: true,
     citation_dictionary_crossrefs_deferred: true,
     citation_dictionary_heading_probe_chars: 900,
+    citation_dictionary_inline_chapter_headings: true,
+    citation_dictionary_inline_verse_markers: true,
+    citation_dictionary_multi_chapter_chunk_locations: true,
+    citation_dictionary_scripture_initial_chapter_seed: true,
+    citation_dictionary_footnote_aware_verse_markers: true,
+    citation_dictionary_exact_request_only: true,
+    citation_dictionary_all_anchor_terms_required: true,
+    citation_dictionary_document_names_exposed: false,
+    chat_exact_request_only: true,
+    chat_document_names_exposed: false,
     citation_dictionary_scripture_location_not_crossref: true,
     citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_chapter_word_numbers: true,
@@ -6694,60 +6940,45 @@ export class LibraryDO {
         const body=await request.json().catch(()=>({}));
         const rawQuery=String(body?.query || body?.question || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
         const query=foldSearchText(rawQuery);
-        const terms=lexicalTerms(rawQuery).slice(0,18);
+        const terms=strictRequestAnchors(rawQuery);
         const offset=Math.max(0,Number(body?.offset || 0));
         const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(body?.limit || CITATION_PAGE_SIZE)));
         const scanLimit=Math.max(200,Math.min(CITATION_SCAN_LIMIT,Number(body?.scan_limit || CITATION_SCAN_LIMIT)));
-        if(!terms.length) return json({ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,mode:"citation-dictionary-bm25"});
+        if(!terms.length) return json({
+          ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
+          mode:"citation-dictionary-exact-and",or_disabled:true,fuzzy_disabled:true
+        });
 
         this.citationCache=this.citationCache || new Map();
-        const cacheKey=query+"|"+scanLimit;
+        const cacheKey="exact|"+query+"|"+terms.join("+")+"|"+scanLimit;
         let cached=this.citationCache.get(cacheKey);
         if(!cached || (Date.now()-Number(cached.created_at||0))>10*60*1000){
           const rows=[...this.sql.exec(
             "SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,d.filename,d.title,d.author,d.language "+
             "FROM chunks c JOIN documents d ON d.id=c.document_id "+
             "WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local') "+
-            "ORDER BY c.created_at DESC LIMIT ?",
+            "ORDER BY d.id ASC,c.chunk_index ASC LIMIT ?",
             scanLimit
           )];
 
-          const docs=rows.map(row=>{
-            const tokens=lexicalTokens(row.text);
-            const tf=new Map();
-            for(const token of tokens) tf.set(token,(tf.get(token)||0)+1);
-            return {row,tokens,tf,dl:Math.max(1,tokens.length)};
-          });
-          const N=Math.max(1,docs.length);
-          const avgdl=docs.reduce((sum,d)=>sum+d.dl,0)/N || 1;
-          const df=new Map();
-          for(const term of terms){
-            let count=0;
-            for(const d of docs) if(d.tf.has(term)) count++;
-            df.set(term,count);
-          }
           const ranked=[];
-          for(const d of docs){
-            let score=0,matchedTerms=0,hits=0;
-            for(const term of terms){
-              const freq=d.tf.get(term)||0;
-              if(!freq) continue;
-              matchedTerms++;
-              hits+=freq;
-              const termDf=df.get(term)||0;
-              const idf=Math.log(1+((N-termDf+0.5)/(termDf+0.5)));
-              const denom=freq+BM25_K1*(1-BM25_B+BM25_B*(d.dl/avgdl));
-              score+=idf*((freq*(BM25_K1+1))/Math.max(0.0001,denom));
-            }
-            if(!matchedTerms) continue;
-            const coverage=matchedTerms/terms.length;
-            const folded=foldSearchText(d.row.text);
-            const exactPhrase=query.length>=5 && folded.includes(query);
-            if(exactPhrase) score+=3.5;
-            score+=coverage*2.0+Math.min(1.5,hits*0.12);
-            ranked.push({...d.row,score,coverage});
+          for(const row of rows){
+            const lexical=exactWholeAnchorMatch(row?.text||"",terms);
+            if(!lexical) continue;
+            ranked.push({
+              ...row,
+              score:Number(lexical.score||1000),
+              coverage:1,
+              matched_terms:terms.length,
+              retrieval_mode:"exact-and-durable-citation"
+            });
           }
-          ranked.sort((a,b)=>Number(b.score||0)-Number(a.score||0) || Number(a.page||0)-Number(b.page||0) || Number(a.chunk_index||0)-Number(b.chunk_index||0));
+          ranked.sort((a,b)=>
+            Number(b.score||0)-Number(a.score||0) ||
+            String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
+            Number(a.page||0)-Number(b.page||0) ||
+            Number(a.chunk_index||0)-Number(b.chunk_index||0)
+          );
           cached={created_at:Date.now(),scanned:rows.length,matches:ranked};
           this.citationCache.clear();
           this.citationCache.set(cacheKey,cached);
@@ -6756,7 +6987,7 @@ export class LibraryDO {
         const all=Array.isArray(cached.matches)?cached.matches:[];
         const pageRows=all.slice(offset,offset+limit);
         const chapterCandidates=new Map();
-        const previousContext=new Map();
+        const scriptureStateCache=new Map();
 
         const chapterFor=(documentId,chunkIndex,currentText)=>{
           const direct=extractChapterHeading(currentText);
@@ -6785,32 +7016,52 @@ export class LibraryDO {
         };
 
         const scriptureRefsFor=(row)=>{
-          let refs=extractScriptureReferences(row.text);
-          if(refs.length || !scriptureSourceKind(row.filename,row.title)) return refs;
-          const key=String(row.document_id||"")+"|"+String(row.chunk_index||0);
-          if(!previousContext.has(key)){
-            previousContext.set(key,[...this.sql.exec(
-              "SELECT chunk_index,text FROM chunks WHERE document_id=? AND chunk_index<=? "+
-              "ORDER BY chunk_index DESC LIMIT 16",
-              String(row.document_id||""),Number(row.chunk_index||0)
-            )]);
+          const kind=scriptureSourceKind(row.filename,row.title);
+          if(!kind) return [];
+          const documentId=String(row.document_id||"");
+          const chunkIndex=Number(row.chunk_index||0);
+          const stateKey=documentId+"|"+chunkIndex;
+          if(scriptureStateCache.has(stateKey)) return scriptureStateCache.get(stateKey);
+
+          let book=scriptureCollectionSeed(kind);
+          let chapter=scriptureCollectionChapterSeed(kind);
+          const preceding=[...this.sql.exec(
+            "SELECT chunk_index,page,text FROM chunks WHERE document_id=? AND chunk_index<=? "+
+            "ORDER BY chunk_index DESC LIMIT 32",
+            documentId,chunkIndex
+          )].reverse();
+
+          for(const prior of preceding){
+            const probe=String(prior?.text||"").slice(0,900);
+            const heading=extractScriptureHeading(probe,book);
+            if(heading){
+              book=heading.book || book;
+              chapter=heading.chapter || chapter;
+            }
+            if(Number(prior.chunk_index||0)===chunkIndex) break;
           }
-          for(const prior of previousContext.get(key)||[]){
-            refs=extractScriptureReferences(prior.text);
-            if(refs.length) break;
-          }
+
+          const located=extractScriptureLocationReferences(
+            String(row.text||""),
+            book,
+            chapter,
+            Number(row.page||0)
+          );
+          const refs=Array.isArray(located?.references)?located.references:[];
+          scriptureStateCache.set(stateKey,refs);
           return refs;
         };
 
         const enriched=pageRows.map((row,index)=>{
           const scriptureKind=scriptureSourceKind(row.filename,row.title);
-          const scriptureRefs=scriptureRefsFor(row);
+          const scriptureRefs=scriptureKind ? scriptureRefsFor(row) : [];
           const chapter=scriptureKind ? null : chapterFor(String(row.document_id||""),Number(row.chunk_index||0),row.text);
           return {
             ...row,
             rank:offset+index+1,
             scripture_source_kind:scriptureKind,
             scripture_references:scriptureRefs,
+            cross_references:[],
             chapter_number:chapter?.number || null,
             chapter_title:chapter?.title || ""
           };
@@ -6825,8 +7076,12 @@ export class LibraryDO {
           limit,
           has_more:offset+enriched.length<all.length,
           next_offset:offset+enriched.length<all.length ? offset+enriched.length : null,
-          mode:"citation-dictionary-bm25",
-          cache_ttl_ms:600000
+          mode:"citation-dictionary-exact-and",
+          cache_ttl_ms:600000,
+          all_anchor_terms_required:true,
+          or_disabled:true,
+          fuzzy_disabled:true,
+          document_names_exposed:false
         });
       }
 

@@ -21,7 +21,7 @@
     "scan_limit": 50000,
     "llm_independent": true,
     "desktop_mobile_parity": true,
-    "technical_document_secondary": true,
+    "technical_document_secondary": false,
     "ordinary_book_primary_fields": [
       "book",
       "chapter",
@@ -67,7 +67,47 @@
     ],
     "heading_probe_chars": 900,
     "verse_probe_chars": 2400,
-    "cross_references_deferred": true
+    "cross_references_deferred": true,
+    "inline_chapter_headings": true,
+    "inline_verse_markers": true,
+    "multi_chapter_chunk_locations": true,
+    "scripture_initial_chapter_seed": true,
+    "footnote_aware_verse_markers": true,
+    "book_inline_heading_guard": "strong-heading-case-only",
+    "primary_scripture_location": [
+      "work",
+      "book",
+      "chapter",
+      "verse_start",
+      "verse_end"
+    ],
+    "exact_request_only": true,
+    "all_anchor_terms_required": true,
+    "document_names_exposed": false,
+    "chat_exact_request_only": true,
+    "chat_document_names_exposed": false,
+    "book_reference_required": [
+      "book",
+      "chapter",
+      "page"
+    ],
+    "book_chapter_title_optional": true,
+    "scripture_reference_required": [
+      "book",
+      "chapter",
+      "verse"
+    ],
+    "standard_works_document_name_forbidden": true,
+    "query_scope_examples": {
+      "Adão": "somente trechos que contêm Adão",
+      "Miguel": "somente trechos que contêm Miguel"
+    },
+    "technical_document_exposure_forbidden": true,
+    "chat_technical_document_exposure_forbidden": true,
+    "exact_scope_policy": "all-specific-request-anchors-required",
+    "scripture_display_format": "canonical-book chapter:verse",
+    "ordinary_book_display_format": "book-title + chapter-number + optional-chapter-title + page",
+    "desktop_mobile_same_contract": true
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
