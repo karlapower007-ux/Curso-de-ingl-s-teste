@@ -32,7 +32,10 @@
       "book",
       "chapter",
       "verse"
-    ]
+    ],
+    "backend_preference": "r2-authoritative",
+    "r2_full_scan_fallback": true,
+    "r2_authoritative_snapshot_required": true
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
