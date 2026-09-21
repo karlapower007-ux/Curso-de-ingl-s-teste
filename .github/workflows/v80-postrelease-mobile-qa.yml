@@ -49,6 +49,9 @@ jobs:
           if(healthRes.status!==200 || health?.version!=="8.0.0-adaptive-20x20x20"){
             throw new Error("health failed "+healthRes.status+" "+JSON.stringify(health));
           }
+          if(health?.structural_multisection_gate!==true){
+            throw new Error("structural_multisection_gate not active in production");
+          }
 
           const appRes=await fetch(BASE+"/app.js?qa="+Date.now());
           const appText=await appRes.text();
@@ -132,7 +135,12 @@ jobs:
               throw new Error(name+" leaked internal pipeline metadata into UI");
             }
             if(api500.length) throw new Error(name+" observed API 500s "+JSON.stringify(api500));
-            if(expectDeveloped && text.length<100) throw new Error(name+" developed answer unexpectedly short: "+text.length);
+            if(expectDeveloped){
+              const paragraphs=text.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+              if(text.length<1200 || paragraphs.length<4){
+                throw new Error(name+" developed answer too condensed "+JSON.stringify({chars:text.length,paragraphs:paragraphs.length}));
+              }
+            }
 
             await page.screenshot({path:"qa-"+name+".png",fullPage:true});
             results.push({
@@ -159,7 +167,7 @@ jobs:
           await runViewport(
             "mobile",
             {width:390,height:844},
-            "Explique em texto desenvolvido a frase temos mais amigos atrás do véu do que deste lado usando apenas a biblioteca.",
+            "Faça um estudo profundo e desenvolvido, usando apenas a biblioteca, sobre Adão, seus relacionamentos familiares e o mundo dos espíritos. Não resuma em uma única síntese; desenvolva os pontos documentais relevantes em vários parágrafos.",
             true
           );
 
@@ -192,3 +200,4 @@ jobs:
           if-no-files-found: ignore
 
 # rerun-after-output-render-fix-f568592
+# rerun-after-structural-multisection-ffd56c0f
