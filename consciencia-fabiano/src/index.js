@@ -2710,7 +2710,44 @@ function deterministicPreservationText(groups){
   return "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n");
 }
 
-function needsExhaustiveContinuation(contract,coverage,finishReason){
+function exhaustiveStructureGate(text,groups,contract){
+  const cognitive=String(contract?.mode || "").toLowerCase();
+  const explicitCompact=
+    cognitive==="summary" ||
+    cognitive==="reference_only" ||
+    String(contract?.v74_plan?.output || "")==="one_sentence";
+  const rows=Array.isArray(groups)?groups:[];
+  const body=stripModelReferenceSection(text);
+  const words=body.split(/\s+/).filter(Boolean).length;
+  const blocks=body.split(/\n\s*\n+/).map(x=>x.trim()).filter(Boolean);
+  const substantiveParagraphs=blocks.filter(block=>{
+    const prose=block
+      .replace(/^\s{0,3}#{1,6}\s+.*$/gm,"")
+      .replace(/\[[Ff]\d{1,3}\]/g,"")
+      .replace(/\s+/g," ")
+      .trim();
+    const wordCount=prose.split(/\s+/).filter(Boolean).length;
+    return wordCount>=45 || prose.length>=280;
+  }).length;
+  const headings=(body.match(/^\s{0,3}#{2,6}\s+\S.+$/gm)||[]).length;
+
+  if(explicitCompact || rows.length<3){
+    return {sufficient:true,words,substantive_paragraphs:substantiveParagraphs,headings,min_words:0,min_paragraphs:0};
+  }
+
+  const minWords=rows.length>=20 ? 900 : rows.length>=10 ? 700 : rows.length>=5 ? 500 : 320;
+  const minParagraphs=rows.length>=20 ? 6 : rows.length>=10 ? 5 : rows.length>=5 ? 4 : 3;
+  return {
+    sufficient:words>=minWords && substantiveParagraphs>=minParagraphs,
+    words,
+    substantive_paragraphs:substantiveParagraphs,
+    headings,
+    min_words:minWords,
+    min_paragraphs:minParagraphs
+  };
+}
+
+function needsExhaustiveContinuation(contract,coverage,finishReason,structure=null){
   const cognitive=String(contract?.mode || "").toLowerCase();
   const explicitCompact=
     cognitive==="summary" ||
@@ -2718,26 +2755,34 @@ function needsExhaustiveContinuation(contract,coverage,finishReason){
     String(contract?.v74_plan?.output || "")==="one_sentence";
   if(finishReason==="length") return true;
   if(explicitCompact) return coverage.coverage_percent<75;
-  // Fora de pedidos explicitamente curtos, nenhuma evidência recuperada pode virar
-  // apenas metadado/referência. O texto continua até todos os grupos aparecerem
-  // em parágrafos desenvolvidos; o fallback determinístico preserva o restante.
-  return coverage.groups_developed<coverage.groups_total;
+  // Cobertura de citações não basta: uma resposta com todos os [F#] comprimidos
+  // em um único bloco continua incompleta. O gate estrutural exige desenvolvimento
+  // substancial em múltiplos parágrafos antes de encerrar o estudo.
+  return coverage.groups_developed<coverage.groups_total || structure?.sufficient===false;
 }
 
 async function continueExhaustiveFullText(env,question,initialText,sources,cognitiveContract,onSection=null,initialFinishReason="stop"){
   const groups=exhaustiveEvidenceGroups(sources);
   let full=stripModelReferenceSection(initialText).replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"").trim();
   let coverage=exhaustiveCoverage(full,groups);
+  let structure=exhaustiveStructureGate(full,groups,cognitiveContract);
   const parts=[];
   let finishReason=String(initialFinishReason || "stop");
   let lastError="";
   let fallbackGroups=0;
 
   for(let part=0;part<EXHAUSTIVE_CONTINUATION_MAX_PARTS;part++){
-    if(!needsExhaustiveContinuation(cognitiveContract,coverage,finishReason)) break;
+    if(!needsExhaustiveContinuation(cognitiveContract,coverage,finishReason,structure)) break;
     const missing=coverage.missing_groups.slice(0,EXHAUSTIVE_GROUP_BATCH_SIZE);
-    if(!missing.length && finishReason!=="length") break;
-    const selected=missing.length?missing:groups.slice(part*EXHAUSTIVE_GROUP_BATCH_SIZE,(part+1)*EXHAUSTIVE_GROUP_BATCH_SIZE);
+    const structuralOnly=!missing.length && structure.sufficient===false;
+    if(!missing.length && finishReason!=="length" && !structuralOnly) break;
+
+    const structuralOffset=(part*EXHAUSTIVE_GROUP_BATCH_SIZE)%Math.max(1,groups.length);
+    let selected=missing.length
+      ? missing
+      : groups.slice(structuralOffset,structuralOffset+EXHAUSTIVE_GROUP_BATCH_SIZE);
+    if(!selected.length && structuralOnly) selected=groups.slice(0,EXHAUSTIVE_GROUP_BATCH_SIZE);
+
     const evidence=exhaustiveGroupEvidence(selected);
     if(!evidence) break;
 
@@ -2758,8 +2803,8 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
         content:
           "PERGUNTA ORIGINAL:\n"+trimToTokenBudget(question,600)+
           "\n\nFINAL DO TEXTO JÁ PRODUZIDO — NÃO REPITA:\n"+trimToTokenBudget(full.slice(-9000),2200)+
-          "\n\nGRUPOS AINDA NÃO DESENVOLVIDOS:\n"+trimToTokenBudget(evidence,5200)+
-          "\n\nCONTINUE DIRETAMENTE COM NOVAS SEÇÕES E PARÁGRAFOS SUBSTANCIAIS. CITE TODOS OS [F#] RECEBIDOS AO DESENVOLVER SEUS PONTOS."
+          "\n\nGRUPOS PENDENTES OU NECESSÁRIOS PARA EXPANSÃO ESTRUTURAL:\n"+trimToTokenBudget(evidence,5200)+
+          "\n\nCONTINUE DIRETAMENTE COM NOVAS SEÇÕES E PARÁGRAFOS SUBSTANCIAIS. NÃO comprima todas as evidências em um único parágrafo. CITE TODOS OS [F#] RECEBIDOS AO DESENVOLVER SEUS PONTOS."
       }
     ];
     try{
@@ -2779,6 +2824,7 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
       full+=(full?"\n\n":"")+piece;
       parts.push(piece);
       coverage=exhaustiveCoverage(full,groups);
+      structure=exhaustiveStructureGate(full,groups,cognitiveContract);
       if(onSection) await onSection({
         section_index:parts.length,
         text:piece,
@@ -2795,12 +2841,14 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
   }
 
   coverage=exhaustiveCoverage(full,groups);
+  structure=exhaustiveStructureGate(full,groups,cognitiveContract);
   if(coverage.missing_groups.length){
     const preserved=deterministicPreservationText(coverage.missing_groups);
     if(preserved){
       fallbackGroups=coverage.missing_groups.length;
       full+=(full?"\n\n":"")+preserved;
       coverage=exhaustiveCoverage(full,groups);
+      structure=exhaustiveStructureGate(full,groups,cognitiveContract);
       if(onSection) await onSection({
         section_index:parts.length+1,
         text:preserved,
@@ -2822,8 +2870,13 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
     groups_total:coverage.groups_total,
     groups_developed:coverage.groups_developed,
     coverage_percent:coverage.coverage_percent,
-    continuation_cursor:coverage.missing_groups.length?String(parts.length):null,
-    complete:coverage.missing_groups.length===0
+    structural_gate_pass:structure.sufficient===true,
+    structural_words:Number(structure.words||0),
+    structural_substantive_paragraphs:Number(structure.substantive_paragraphs||0),
+    structural_min_words:Number(structure.min_words||0),
+    structural_min_paragraphs:Number(structure.min_paragraphs||0),
+    continuation_cursor:(coverage.missing_groups.length || structure.sufficient===false)?String(parts.length):null,
+    complete:coverage.missing_groups.length===0 && structure.sufficient===true
   };
 }
 
@@ -2906,6 +2959,11 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     evidence_groups_total:Number(expanded.groups_total||0),
     evidence_groups_developed:Number(expanded.groups_developed||0),
     evidence_coverage_percent:Number(expanded.coverage_percent||0),
+    structural_gate_pass:expanded.structural_gate_pass===true,
+    structural_words:Number(expanded.structural_words||0),
+    structural_substantive_paragraphs:Number(expanded.structural_substantive_paragraphs||0),
+    structural_min_words:Number(expanded.structural_min_words||0),
+    structural_min_paragraphs:Number(expanded.structural_min_paragraphs||0),
     information_preservation_gate:expanded.complete===true ? "pass" : "partial",
     reducer_ms:reducerMs,
     groq_ms:Number(master.groq_ms || 0),
@@ -5033,6 +5091,23 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/reindex" && request.method === "POST") return await reindexLibrary(request, env);
     return json({ ok: false, message: "Rota não encontrada." }, 404);
   } catch (error) {
+    // These two routes are read-only/support surfaces used by both desktop and mobile.
+    // Unexpected Durable Object/storage faults must fail soft instead of surfacing HTTP 500.
+    if(url?.pathname==="/api/memory" && request.method==="GET"){
+      return json({
+        ok:true,messages:[],total:0,persistent:false,degraded:true,
+        code:"MEMORY_ROUTE_DEGRADED",
+        message:"Memória persistente temporariamente indisponível; o histórico local do navegador permanece utilizável."
+      },200);
+    }
+    if(url?.pathname==="/api/admin/r2-reconcile-state" && request.method==="GET"){
+      return json({
+        ok:true,in_sync:false,degraded:true,durable_available:false,
+        code:"R2_RECONCILE_ROUTE_DEGRADED",
+        message:"Estado de reconciliação temporariamente indisponível; o R2 foi preservado e nenhuma operação destrutiva foi executada.",
+        safe_read_only_fallback:true
+      },200);
+    }
     return json({
       ok: false,
       code: error?.code || "INTERNAL_ERROR",
@@ -6187,6 +6262,7 @@ export default {
         continuation_max_parts: EXHAUSTIVE_CONTINUATION_MAX_PARTS,
         information_preservation_gate: true,
         synthesis_principal_single_block_disabled: true,
+        structural_multisection_gate: true,
         memory_degraded_fallback: true,
         r2_reconcile_degraded_fallback: true,
         supabase_mirror_configured: secondarySupabaseConfigured(env),

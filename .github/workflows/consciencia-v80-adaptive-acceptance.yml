@@ -52,8 +52,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
-          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
+          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
+          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
+          test "$(jq -r '.library.historical_verified_fallback_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
           test "$(jq -r '.hard_guards.pre_final_llm_calls' consciencia-fabiano/v8-preservation-manifest.json)" = "0"
           test "$(jq -r '.hard_guards.production_auto_promotion' consciencia-fabiano/v8-preservation-manifest.json)" = "false"
           echo "V8_MANIFEST_GATE=pass"
