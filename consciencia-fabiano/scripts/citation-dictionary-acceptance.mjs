@@ -34,7 +34,7 @@ const r2CitationBlock=worker.slice(
   worker.indexOf("async function citationSearchR2"),
   worker.indexOf("async function citationDictionaryResponse")
 );
-must(r2CitationBlock.includes("env.PDFS.list"),"R2 citation path must scan authoritative shards");
+must(worker.includes("async function listR2CitationShards") && worker.includes("env.PDFS.list({prefix,limit:1000"),"R2 citation path must scan authoritative shards");
 must(r2CitationBlock.includes("r2JsonGet(env.PDFS"),"R2 citation path must read shard payloads");
 must(!/\b(?:put|delete)\s*\(/i.test(r2CitationBlock),"R2 citation path must remain read-only");
 
