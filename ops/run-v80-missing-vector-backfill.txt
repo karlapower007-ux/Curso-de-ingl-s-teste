@@ -1,7 +1,8 @@
 run=missing-vectors-3437
-attempt=sharp-enabled-resume
+attempt=small-mirror-batches
 strict_incremental=true
 missing_only=true
-shard_checkpoint=true
+reuse_r2_vectors=true
+mirror_batch=8
 no_reindex=true
 no_frontend_changes=true
