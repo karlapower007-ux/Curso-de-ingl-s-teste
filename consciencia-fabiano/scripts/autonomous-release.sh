@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: V7.4 COGNITIVE 1000 MICRO-TURBINES release =="
+log "== Consciência do Fabiano :: v7.5.0-stateful-resilience release =="
 log "1/7 Validate source"
 npm run check
 node scripts/cognitive-v74-acceptance.mjs | tee /tmp/cognitive-v74-acceptance.json
@@ -237,7 +237,12 @@ for i in $(seq 1 15); do
     and .indexeddb_persistent_storage_requested == true
     and .indexeddb_r2_self_heal == true
     and .r2_vectors_preserved == true
-    and .upload_gate_requires_indexeddb_and_r2_empty == true
+    and .upload_gate_requires_indexeddb_and_r2_empty == false
+    and .library_upload_always_available == true
+    and .library_upload_drag_drop == true
+    and .deep_answer_mode == true
+    and .exhaustive_source_references == true
+    and .exhaustive_source_footer == true
     and .plan_c_worker_count_source == "navigator.hardwareConcurrency"
     and .plan_c_main_thread_extraction == false
     and .plan_c_offline_intelligence == "strict-same-paragraph-phrase-v4"
