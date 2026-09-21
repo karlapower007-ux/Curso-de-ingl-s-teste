@@ -2490,7 +2490,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
 
 const EXHAUSTIVE_CONTINUATION_MAX_PARTS=6;
 const EXHAUSTIVE_GROUP_BATCH_SIZE=10;
-const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=1900;
+const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=4800;
 
 function exhaustiveEvidenceGroups(sources){
   const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
@@ -2554,6 +2554,37 @@ function exhaustiveGroupEvidence(groups){
   }).join("\n");
 }
 
+function deterministicPreservationText(groups){
+  const rows=Array.isArray(groups)?groups:[];
+  if(!rows.length) return "";
+  const docs=new Map();
+  for(const g of rows){
+    const key=String(g?.document_id || g?.title || "Documento");
+    if(!docs.has(key)) docs.set(key,{
+      title:String(g?.title || "Documento"),
+      author:String(g?.author || ""),
+      groups:[]
+    });
+    docs.get(key).groups.push(g);
+  }
+  const sections=[];
+  for(const doc of docs.values()){
+    const heading="### "+doc.title+(doc.author?" — "+doc.author:"");
+    const paragraphs=doc.groups.map(g=>{
+      const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
+      const page=g.page ? " Na página "+g.page+"," : "";
+      const evidence=String(g.evidence||"").replace(/\s+/g," ").trim();
+      return (
+        "Esta evidência acrescenta um ponto documental próprio ao estudo. "+refs+page+
+        " o material recuperado registra que "+evidence+
+        " O conteúdo é preservado integralmente no desenvolvimento porque não foi tratado como duplicata semântica; nenhuma conclusão além do que a evidência sustenta é acrescentada."
+      );
+    });
+    sections.push(heading+"\n\n"+paragraphs.join("\n\n"));
+  }
+  return "## Evidências complementares preservadas\n\n"+sections.join("\n\n");
+}
+
 function needsExhaustiveContinuation(contract,coverage,finishReason){
   const v80Mode=String(contract?.v80_plan?.mode || contract?.v80_plan?.runtime?.mode || "").toUpperCase();
   const cognitive=String(contract?.mode || "").toLowerCase();
@@ -2569,12 +2600,15 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
   let coverage=exhaustiveCoverage(full,groups);
   const parts=[];
   let finishReason=String(initialFinishReason || "stop");
+  let lastError="";
+  let fallbackGroups=0;
 
   for(let part=0;part<EXHAUSTIVE_CONTINUATION_MAX_PARTS;part++){
     if(!needsExhaustiveContinuation(cognitiveContract,coverage,finishReason)) break;
     const missing=coverage.missing_groups.slice(0,EXHAUSTIVE_GROUP_BATCH_SIZE);
     if(!missing.length && finishReason!=="length") break;
-    const evidence=exhaustiveGroupEvidence(missing.length?missing:groups.slice(part*EXHAUSTIVE_GROUP_BATCH_SIZE,(part+1)*EXHAUSTIVE_GROUP_BATCH_SIZE));
+    const selected=missing.length?missing:groups.slice(part*EXHAUSTIVE_GROUP_BATCH_SIZE,(part+1)*EXHAUSTIVE_GROUP_BATCH_SIZE);
+    const evidence=exhaustiveGroupEvidence(selected);
     if(!evidence) break;
 
     const messages=[
@@ -2595,12 +2629,12 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
           "PERGUNTA ORIGINAL:\n"+trimToTokenBudget(question,600)+
           "\n\nFINAL DO TEXTO JÁ PRODUZIDO — NÃO REPITA:\n"+trimToTokenBudget(full.slice(-9000),2200)+
           "\n\nGRUPOS AINDA NÃO DESENVOLVIDOS:\n"+trimToTokenBudget(evidence,5200)+
-          "\n\nCONTINUE DIRETAMENTE COM NOVAS SEÇÕES E PARÁGRAFOS SUBSTANCIAIS."
+          "\n\nCONTINUE DIRETAMENTE COM NOVAS SEÇÕES E PARÁGRAFOS SUBSTANCIAIS. CITE TODOS OS [F#] RECEBIDOS AO DESENVOLVER SEUS PONTOS."
       }
     ];
     try{
       const res=await groqCompletion(env,messages,false,{
-        input_budget:8600,
+        input_budget:9000,
         max_completion_tokens:EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS,
         temperature:0.0,
         max_retries:2
@@ -2608,7 +2642,10 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
       const data=await res.json().catch(()=>({}));
       const piece=stripModelReferenceSection(String(data?.choices?.[0]?.message?.content || "")).trim();
       finishReason=String(data?.choices?.[0]?.finish_reason || "stop");
-      if(!piece) break;
+      if(!piece){
+        lastError="empty-continuation-output";
+        continue;
+      }
       full+=(full?"\n\n":"")+piece;
       parts.push(piece);
       coverage=exhaustiveCoverage(full,groups);
@@ -2621,15 +2658,36 @@ async function continueExhaustiveFullText(env,question,initialText,sources,cogni
         coverage_percent:coverage.coverage_percent,
         continuation_cursor:coverage.missing_groups.length?String(parts.length):null
       });
-    }catch{
-      break;
+    }catch(error){
+      lastError=String(error?.message || error || "continuation-error").slice(0,300);
+      continue;
     }
   }
 
   coverage=exhaustiveCoverage(full,groups);
+  if(coverage.missing_groups.length){
+    const preserved=deterministicPreservationText(coverage.missing_groups);
+    if(preserved){
+      fallbackGroups=coverage.missing_groups.length;
+      full+=(full?"\n\n":"")+preserved;
+      coverage=exhaustiveCoverage(full,groups);
+      if(onSection) await onSection({
+        section_index:parts.length+1,
+        text:preserved,
+        finish_reason:"deterministic-preservation",
+        groups_total:coverage.groups_total,
+        groups_developed:coverage.groups_developed,
+        coverage_percent:coverage.coverage_percent,
+        continuation_cursor:null
+      });
+    }
+  }
+
   return {
     text:full,
     continuation_parts:parts.length,
+    continuation_fallback_groups:fallbackGroups,
+    continuation_last_error:lastError,
     finish_reason:finishReason,
     groups_total:coverage.groups_total,
     groups_developed:coverage.groups_developed,
@@ -2712,6 +2770,8 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     llm_calls:1+Number(expanded.continuation_parts||0),
     pre_master_llm_calls:0,
     continuation_parts:Number(expanded.continuation_parts||0),
+    continuation_fallback_groups:Number(expanded.continuation_fallback_groups||0),
+    continuation_last_error:String(expanded.continuation_last_error||""),
     continuation_cursor:expanded.continuation_cursor,
     evidence_groups_total:Number(expanded.groups_total||0),
     evidence_groups_developed:Number(expanded.groups_developed||0),
@@ -2813,6 +2873,8 @@ async function massivePipelineStreamResponse(env,meta) {
           relay_mode:"async-worker-pool",
           master_node:"final-fusion+adaptive-continuation",
           continuation_parts:Number(reduced.continuation_parts||0),
+          continuation_fallback_groups:Number(reduced.continuation_fallback_groups||0),
+          continuation_last_error:String(reduced.continuation_last_error||""),
           continuation_cursor:reduced.continuation_cursor || null,
           evidence_groups_total:Number(reduced.evidence_groups_total||0),
           evidence_groups_developed:Number(reduced.evidence_groups_developed||0),
@@ -4381,6 +4443,8 @@ async function chat(request, env) {
     relay_mode: "async-worker-pool",
     master_node: "final-fusion+adaptive-continuation",
     continuation_parts: Number(reduced.continuation_parts || 0),
+    continuation_fallback_groups: Number(reduced.continuation_fallback_groups || 0),
+    continuation_last_error: String(reduced.continuation_last_error || ""),
     continuation_cursor: reduced.continuation_cursor || null,
     evidence_groups_total: Number(reduced.evidence_groups_total || 0),
     evidence_groups_developed: Number(reduced.evidence_groups_developed || 0),
