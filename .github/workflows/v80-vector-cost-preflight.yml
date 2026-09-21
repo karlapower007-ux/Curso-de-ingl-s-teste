@@ -1,0 +1,83 @@
+name: V8 Missing Vector Cost Preflight
+
+on:
+  push:
+    branches:
+      - "ops-v80-vector-cost-preflight-*"
+    paths:
+      - "ops/run-v80-vector-cost-preflight.txt"
+      - ".github/workflows/v80-vector-cost-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+      BUCKET: consciencia-fabiano-pdfs
+    steps:
+      - name: Read-only Cloudflare R2 cost preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json" >/tmp/accounts.json
+          ACCOUNT=""
+          while IFS= read -r candidate; do
+            [ -n "$candidate" ] || continue
+            code=$(curl -sS -o /tmp/service.json -w '%{http_code}'               "https://api.cloudflare.com/client/v4/accounts/$candidate/workers/services/consciencia-fabiano"               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"               -H "Content-Type: application/json" || true)
+            if [ "$code" = "200" ]; then ACCOUNT="$candidate"; break; fi
+          done < <(jq -r '.result[].id // empty' /tmp/accounts.json)
+          test -n "$ACCOUNT"
+          echo "ACCOUNT_DISCOVERED=yes"
+
+          curl -fsS "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/r2/metrics"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json" >/tmp/r2metrics.json || true
+          echo "R2_STORAGE_METRICS"
+          jq '{success,result}' /tmp/r2metrics.json || cat /tmp/r2metrics.json
+
+          START="$(date -u +%Y-%m-01T00:00:00Z)"
+          END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg account "$ACCOUNT" --arg start "$START" --arg end "$END" --arg bucket "$BUCKET" '{
+            query:"query R2Ops($accountTag: string!, $startDate: Time, $endDate: Time, $bucketName: string) { viewer { accounts(filter: { accountTag: $accountTag }) { r2OperationsAdaptiveGroups(limit: 10000, filter: { datetime_geq: $startDate, datetime_leq: $endDate, bucketName: $bucketName }) { sum { requests } dimensions { actionType } } } } }",
+            variables:{accountTag:$account,startDate:$start,endDate:$end,bucketName:$bucket}
+          }' >/tmp/graphql-payload.json
+          curl -sS "https://api.cloudflare.com/client/v4/graphql"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json"             --data @/tmp/graphql-payload.json >/tmp/r2ops.json
+
+          echo "R2_OPERATION_METRICS"
+          jq '{errors,data}' /tmp/r2ops.json
+
+          jq -r '.data.viewer.accounts[0].r2OperationsAdaptiveGroups[]? | [.dimensions.actionType,(.sum.requests|tostring)] | @tsv' /tmp/r2ops.json             | sort > /tmp/ops.tsv
+          cat /tmp/ops.tsv
+
+          CLASS_A=$(awk -F '\t' '$1 ~ /^(ListBuckets|PutBucket|ListObjects|PutObject|CopyObject|CompleteMultipartUpload|CreateMultipartUpload|LifecycleStorageTierTransition|ListMultipartUploads|UploadPart|UploadPartCopy|ListParts|PutBucketEncryption|PutBucketCors|PutBucketLifecycleConfiguration)$/ {s+=$2} END{print s+0}' /tmp/ops.tsv)
+          CLASS_B=$(awk -F '\t' '$1 ~ /^(HeadBucket|HeadObject|GetObject|UsageSummary|GetBucketEncryption|GetBucketLocation|GetBucketCors|GetBucketLifecycleConfiguration)$/ {s+=$2} END{print s+0}' /tmp/ops.tsv)
+          echo "CLASS_A_MONTH=$CLASS_A"
+          echo "CLASS_B_MONTH=$CLASS_B"
+
+          # Worst-case plan: <=147 shard reads + <=147 shard writes + validation reads.
+          PLAN_A_MAX=200
+          PLAN_B_MAX=1000
+          A_AFTER=$((CLASS_A + PLAN_A_MAX))
+          B_AFTER=$((CLASS_B + PLAN_B_MAX))
+          echo "PLAN_CLASS_A_MAX=$PLAN_A_MAX"
+          echo "PLAN_CLASS_B_MAX=$PLAN_B_MAX"
+          echo "PROJECTED_CLASS_A=$A_AFTER"
+          echo "PROJECTED_CLASS_B=$B_AFTER"
+          if [ "$A_AFTER" -ge 1000000 ] || [ "$B_AFTER" -ge 10000000 ]; then
+            echo "ZERO_COST_PREFLIGHT=blocked"
+            exit 2
+          fi
+
+          # Standard storage free tier is 10 GB-month. Block if current Standard payload+metadata >= 9 GB,
+          # leaving generous headroom for a few MB of vectors.
+          STD_BYTES=$(jq -r '((.result.standard.published.payloadSize // 0)+(.result.standard.published.metadataSize // 0)+(.result.standard.uploaded.payloadSize // 0)+(.result.standard.uploaded.metadataSize // 0))|floor' /tmp/r2metrics.json 2>/dev/null || echo 0)
+          IA_BYTES=$(jq -r '((.result.infrequentAccess.published.payloadSize // 0)+(.result.infrequentAccess.uploaded.payloadSize // 0))|floor' /tmp/r2metrics.json 2>/dev/null || echo 0)
+          echo "STANDARD_BYTES=$STD_BYTES"
+          echo "INFREQUENT_ACCESS_BYTES=$IA_BYTES"
+          if [ "$IA_BYTES" -gt 0 ] || [ "$STD_BYTES" -ge 9663676416 ]; then
+            echo "ZERO_COST_PREFLIGHT=blocked"
+            exit 3
+          fi
+          echo "ZERO_COST_PREFLIGHT=pass"
