@@ -5,21 +5,23 @@ log(){ printf '%s\n' "$*"; }
 die(){ log "AUTONOMOUS_RELEASE_BLOCKED=$*"; exit 78; }
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
-: "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 : "${GROQ_API_KEY:?GROQ_API_KEY is required}"
 
 GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:space:]"]*//' -e 's/[[:space:]"]*$//')
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: v7.5.0-stateful-resilience release =="
+log "== Consciência do Fabiano :: v8.0.0-adaptive-20x20x20 release =="
 log "1/7 Validate source"
 npm run check
 node scripts/cognitive-v74-acceptance.mjs | tee /tmp/cognitive-v74-acceptance.json
 node scripts/build-cognitive-v74-manifest.mjs
 test -f public/cognitive-v74-manifest.json || die "COGNITIVE_V74_MANIFEST_MISSING"
 node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8"));if(!m.audit.valid||m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20)process.exit(1)'
+node scripts/adaptive-v80-acceptance.mjs | tee /tmp/adaptive-v80-acceptance.json
 log "COGNITIVE_V74_LOCAL_ACCEPTANCE_PASS=yes"
+log "ADAPTIVE_V80_LOCAL_ACCEPTANCE_PASS=yes"
 node --check scripts/browser-voice-smoke.mjs
 node --check scripts/browser-ingest-smoke.mjs
 ! grep -q 'AI.toMarkdown' src/index.js
@@ -35,7 +37,7 @@ grep -q 'text/event-stream' src/index.js
 ! grep -q '@cf/' src/index.js
 
 log "2/7 Validate Worker authorization"
-npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
+env -u CLOUDFLARE_ACCOUNT_ID npx wrangler whoami >/tmp/whoami.txt 2>&1 || { cat /tmp/whoami.txt; die "WHOAMI_FAILED"; }
 grep -E 'Account Name|Account ID|associated with the email' /tmp/whoami.txt || true
 EXPECTED_CF_EMAIL="${FABIANO_CLOUDFLARE_EMAIL:-focoeepoder2@gmail.com}"
 grep -Fq "associated with the email $EXPECTED_CF_EMAIL" /tmp/whoami.txt || {
@@ -52,8 +54,25 @@ jq -e '.success == true and (.result|type)=="array" and (.result|length)>=1' /tm
   cat /tmp/fabiano-accounts.json
   die "FABIANO_ACCOUNT_DISCOVERY_EMPTY"
 }
-DISCOVERED_ACCOUNT_ID=$(jq -r '.result[0].id // empty' /tmp/fabiano-accounts.json)
-[ -n "$DISCOVERED_ACCOUNT_ID" ] || die "FABIANO_ACCOUNT_ID_EMPTY"
+DISCOVERED_ACCOUNT_ID=""
+ACCOUNT_COUNT=$(jq -r '.result | length' /tmp/fabiano-accounts.json)
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  code=$(curl -sS -o /tmp/fabiano-service-probe.json -w '%{http_code}' \
+    "https://api.cloudflare.com/client/v4/accounts/$candidate/workers/services/consciencia-fabiano" \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    -H "Content-Type: application/json" || true)
+  if [ "$code" = "200" ]; then
+    DISCOVERED_ACCOUNT_ID="$candidate"
+    break
+  fi
+done < <(jq -r '.result[].id // empty' /tmp/fabiano-accounts.json)
+
+if [ -z "$DISCOVERED_ACCOUNT_ID" ] && [ "$ACCOUNT_COUNT" = "1" ]; then
+  DISCOVERED_ACCOUNT_ID=$(jq -r '.result[0].id // empty' /tmp/fabiano-accounts.json)
+fi
+
+[ -n "$DISCOVERED_ACCOUNT_ID" ] || die "FABIANO_ACCOUNT_ID_NOT_UNAMBIGUOUS"
 export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
 log "FABIANO_ACCOUNT_ID_DISCOVERED=yes"
 
@@ -145,7 +164,7 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.5.0-stateful-resilience"
+    and .version == "8.0.0-adaptive-20x20x20"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false

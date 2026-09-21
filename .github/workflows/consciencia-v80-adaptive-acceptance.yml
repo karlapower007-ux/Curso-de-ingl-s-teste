@@ -7,6 +7,12 @@ on:
     paths:
       - "consciencia-fabiano/**"
       - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
+  pull_request:
+    branches:
+      - consciencia-cloudflare-native-v1
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/consciencia-v80-adaptive-acceptance.yml"
   workflow_dispatch:
 
 permissions:
@@ -63,6 +69,10 @@ jobs:
       - name: Explicit V8 overload test
         working-directory: consciencia-fabiano
         run: npm run test:adaptive-v80
+
+      - name: Validate autonomous release shell
+        working-directory: consciencia-fabiano
+        run: bash -n scripts/autonomous-release.sh
 
       - name: Gate summary
         run: |
