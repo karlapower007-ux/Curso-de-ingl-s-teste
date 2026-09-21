@@ -333,9 +333,20 @@ try:
         save_report()
         sys.exit(0)
 
+    existing_candidate=admin_get("/api/admin/r2-recovery-candidate-state?generation="+urllib.parse.quote(candidate_generation))
+    candidate_already_complete=(
+        existing_candidate.get("ok") is True and
+        int(existing_candidate.get("chunks") or 0)==candidate_total and
+        int(existing_candidate.get("documents") or 0)==candidate_documents and
+        int(existing_candidate.get("invalid_shards") or 0)==0
+    )
+    if candidate_already_complete:
+        log("candidate_reused",chunks=candidate_total,documents=candidate_documents,
+            shards=int(existing_candidate.get("shards") or 0),generation=candidate_generation)
+
     shards=0
-    uploaded=0
-    for doc in docs:
+    uploaded=candidate_total if candidate_already_complete else 0
+    for doc in ([] if candidate_already_complete else docs):
         docid=doc["document_id"]
         doc_offset=0
         while True:
