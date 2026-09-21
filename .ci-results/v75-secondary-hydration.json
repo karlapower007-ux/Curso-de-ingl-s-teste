@@ -1,14 +1,14 @@
 {
-  "state": "waiting",
-  "primary_total": 0,
-  "mirrored_chunks": 0,
-  "hydrated_embeddings": 0,
-  "total_books": 0,
-  "generation": "",
-  "source_signature": "",
-  "source": "none",
-  "source_generation": "",
+  "state": "hydrated",
+  "primary_total": 25199,
+  "mirrored_chunks": 25199,
+  "hydrated_embeddings": 25199,
+  "total_books": 4,
+  "generation": "v75-static-eeadaf861443",
+  "source_signature": "774919227d787717c1ef09971e5186b0d88974ad1c3150ab1b7595b68c8a76ca",
+  "source": "static-backup",
+  "source_generation": "git:eeadaf861443:2026-09-21T00:17:02.926Z",
   "cursor_id": "",
   "embedding_cursor_id": "",
-  "reason": "primary Cloudflare Worker 1101; R2 snapshot is non-authoritative or has zero vectors"
+  "reason": ""
 }
