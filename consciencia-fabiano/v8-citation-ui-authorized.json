@@ -44,7 +44,17 @@
     "strict_scripture_source_classification": true,
     "chapter_word_number_resolution": true,
     "segment_shards": 4,
-    "concurrent_desktop_mobile_cpu_guard": true
+    "concurrent_desktop_mobile_cpu_guard": true,
+    "canonical_scripture_filename_matching": true,
+    "scripture_reference_carry": true,
+    "scripture_carry_fields": [
+      "work",
+      "book",
+      "chapter",
+      "verse_start",
+      "verse_end",
+      "reference"
+    ]
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
