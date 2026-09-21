@@ -1,9 +1,9 @@
 {
-  "state": "failed",
-  "primary_total": 14666,
-  "exported_chunks": 14666,
+  "state": "waiting",
+  "primary_total": 0,
+  "exported_chunks": 0,
   "vectors": 0,
-  "shards": 442,
-  "generation": "v75-r2-muald3y5",
-  "reason": "Primary export returned zero vectors"
+  "shards": 0,
+  "generation": "",
+  "reason": "primary Cloudflare Worker 1101; wait for quota reset"
 }
