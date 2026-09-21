@@ -1,0 +1,71 @@
+name: V8 Library App Bind Diagnostic
+
+on:
+  push:
+    branches:
+      - "ops-v80-final-ui-qa-*"
+    paths:
+      - ".github/workflows/v80-library-bind-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BASE_URL: https://consciencia-fabiano.focoeepoder2.workers.dev
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install chromium --with-deps
+      - name: Diagnose dynamic app binding
+        shell: bash
+        run: |
+          cat > ./diag.mjs <<'EOF'
+          import { chromium } from "playwright";
+          const BASE=process.env.BASE_URL;
+          const direct=await fetch(BASE+"/app.js?diag="+Date.now(),{headers:{"Cache-Control":"no-cache"}});
+          const directText=await direct.text();
+          const browser=await chromium.launch({headless:true});
+          const context=await browser.newContext({viewport:{width:1440,height:900}});
+          const page=await context.newPage();
+          const events=[];
+          page.on("pageerror",e=>events.push({type:"pageerror",message:String(e.message||e)}));
+          page.on("console",m=>{if(["error","warning"].includes(m.type())) events.push({type:"console-"+m.type(),message:m.text()})});
+          page.on("requestfailed",r=>events.push({type:"requestfailed",url:r.url(),error:String(r.failure()?.errorText||"")}));
+          page.on("response",r=>{
+            if(/app\.js|marked|purify|style\.css/.test(r.url())) events.push({type:"response",status:r.status(),url:r.url()});
+          });
+          const nav=await page.goto(BASE+"/?bind-diag="+Date.now(),{waitUntil:"domcontentloaded",timeout:60000});
+          await page.waitForTimeout(12000);
+          const state=await page.evaluate(()=>({
+            readyState:document.readyState,
+            handlerType:typeof document.querySelector("#libraryTab")?.onclick,
+            sendHandlerType:typeof document.querySelector("#sendBtn")?.onclick,
+            scripts:[...document.scripts].map(s=>({src:s.src,type:s.type,async:s.async,defer:s.defer})),
+            markedPresent:typeof window.marked!=="undefined",
+            domPurifyPresent:typeof window.DOMPurify!=="undefined",
+            title:document.title,
+            versionLabel:document.querySelector("#systemVersionLabel")?.textContent||"",
+            messagesCount:document.querySelectorAll(".msg").length
+          }));
+          await browser.close();
+          console.log("DIRECT_APP="+JSON.stringify({
+            status:direct.status,
+            content_type:direct.headers.get("content-type"),
+            chars:directText.length,
+            has_library_binding:directText.includes('libraryTab").onclick'),
+            has_switch_panel:directText.includes("function switchPanel")
+          }));
+          console.log("NAV_HTTP="+String(nav?.status()||0));
+          console.log("BIND_STATE="+JSON.stringify(state));
+          console.log("BIND_EVENTS="+JSON.stringify(events.slice(0,80)));
+          EOF
+          node ./diag.mjs
