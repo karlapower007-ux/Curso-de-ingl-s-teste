@@ -54,7 +54,17 @@
     "false_positive_example_must_remain_book": "Doutrina e Convênios e o Futuro (Roy W. Doxey) sudbr.org.pdf",
     "scripture_direct_reference_parser_gate": true,
     "max_matches_per_segment": 1000,
-    "cpu_1102_hotfix": "gate-expensive-scripture-regex-and-use-2-shard-segments"
+    "cpu_1102_hotfix": "gate-expensive-scripture-regex-and-use-2-shard-segments",
+    "regex_precompiled": true,
+    "scripture_primary_location_is_not_cross_reference": true,
+    "scripture_cross_references_separate": true,
+    "standard_works_seed_book": "Gênesis",
+    "precompiled_patterns": [
+      "chapter-heading",
+      "scripture-source",
+      "scripture-reference",
+      "scripture-heading"
+    ]
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
