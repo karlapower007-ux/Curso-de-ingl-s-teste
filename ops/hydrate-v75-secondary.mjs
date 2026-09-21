@@ -8,7 +8,9 @@ const OWNER=String(process.env.FNS_OWNER_TOKEN || "").trim();
 const STATUS_PATH=path.resolve(process.env.ETL_STATUS_PATH || ".ci-results/v75-secondary-hydration.json");
 const PAGE_SIZE=200;
 const UPSERT_BATCH=200;
+const EMBEDDING_BATCH=Math.max(1,Math.min(32,Number(process.env.FNS_EMBEDDING_BATCH || 16)));
 const MAX_FETCH_RETRIES=4;
+const EMBEDDING_MODEL="Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 
 async function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -24,10 +26,15 @@ async function writeStatus(data){
     source_signature:String(data.source_signature||""),
     source:String(data.source||""),
     source_generation:String(data.source_generation||""),
+    cursor_id:String(data.cursor_id||""),
+    embedding_cursor_id:String(data.embedding_cursor_id||""),
     reason:String(data.reason||"")
   };
   await fs.writeFile(STATUS_PATH,JSON.stringify(safe,null,2)+"\n");
-  console.log("FNS_ETL_STATE="+safe.state);
+  console.log("FNS_ETL_STATE="+safe.state+
+    " mirrored="+safe.mirrored_chunks+
+    " embeddings="+safe.hydrated_embeddings+
+    " primary="+safe.primary_total);
 }
 
 function quotaLike(status,text){
@@ -74,7 +81,7 @@ async function secondaryPost(action,body){
       let data={};
       try{data=JSON.parse(text||"{}");}catch{}
       if(res.ok && data?.ok!==false) return data;
-      last=new Error("Secondary "+action+" HTTP "+res.status+" "+String(data?.code||text).slice(0,300));
+      last=new Error("Secondary "+action+" HTTP "+res.status+" "+String(data?.code||data?.message||text).slice(0,500));
       if(res.status<500 || res.status===409) throw last;
     }catch(error){
       last=error;
@@ -116,9 +123,77 @@ function normalizeRecord(raw,generation){
     content_hash:String(raw?.content_hash||raw?.content_sha256||hashText(text)).toLowerCase().slice(0,180),
     vector:normalizeVector(raw),
     source_generation:generation,
-    original_r2_key:String(raw?.original_r2_key||raw?.r2_key||"").slice(0,700),
-    embedding_model:String(raw?.embedding_model||"").slice(0,180)
+    original_r2_key:String(raw?.original_r2_key||raw?.r2_key||raw?.metadata?.original_r2_key||"").slice(0,700),
+    embedding_model:String(raw?.embedding_model||raw?.metadata?.embedding_model||EMBEDDING_MODEL).slice(0,180)
   };
+}
+
+let extractorPromise=null;
+async function getExtractor(){
+  if(!extractorPromise){
+    extractorPromise=(async()=>{
+      const mod=await import("@xenova/transformers");
+      mod.env.allowLocalModels=false;
+      mod.env.allowRemoteModels=true;
+      mod.env.cacheDir=String(process.env.TRANSFORMERS_CACHE || ".cache/transformers");
+      console.log("FNS_EMBEDDING_MODEL_LOAD="+EMBEDDING_MODEL);
+      return mod.pipeline("feature-extraction",EMBEDDING_MODEL,{quantized:true});
+    })();
+  }
+  return extractorPromise;
+}
+
+function tensorRows(output,expected){
+  const list=typeof output?.tolist==="function" ? output.tolist() : [];
+  if(!Array.isArray(list)) return [];
+  if(expected===1 && list.length===384 && list.every(Number.isFinite)) return [list];
+  if(list.length===expected && list.every(row=>Array.isArray(row))) return list;
+  return [];
+}
+
+async function embedRecords(records){
+  const rows=records.map(r=>({...r}));
+  const pending=[];
+  for(let i=0;i<rows.length;i++){
+    if(!normalizeVector(rows[i])) pending.push(i);
+  }
+  if(!pending.length) return rows;
+
+  const extractor=await getExtractor();
+  for(let p=0;p<pending.length;p+=EMBEDDING_BATCH){
+    const indexes=pending.slice(p,p+EMBEDDING_BATCH);
+    const texts=indexes.map(i=>{
+      const t=String(rows[i].text||"").replace(/\s+/g," ").trim();
+      return t.slice(0,2400);
+    });
+    let vectors=[];
+    try{
+      const out=await extractor(texts,{pooling:"mean",normalize:true});
+      vectors=tensorRows(out,texts.length);
+    }catch(error){
+      console.log("FNS_EMBEDDING_BATCH_FALLBACK="+String(error?.message||error).slice(0,180));
+    }
+
+    if(vectors.length!==texts.length){
+      vectors=[];
+      for(const text of texts){
+        const out=await extractor(text,{pooling:"mean",normalize:true});
+        const one=tensorRows(out,1);
+        if(one.length!==1) throw new Error("Local embedding model returned invalid tensor");
+        vectors.push(one[0]);
+      }
+    }
+
+    for(let j=0;j<indexes.length;j++){
+      const vec=(vectors[j]||[]).map(Number);
+      if(vec.length!==384 || !vec.every(Number.isFinite)){
+        throw new Error("Local embedding dimension mismatch");
+      }
+      rows[indexes[j]].vector=vec;
+      rows[indexes[j]].embedding_model=EMBEDDING_MODEL;
+    }
+  }
+  return rows;
 }
 
 if(!OWNER){
@@ -180,14 +255,33 @@ if(primaryTotal<=0){
   process.exit(0);
 }
 
-const generation="v75-etl-"+Date.now().toString(36);
-const signature=crypto.createHash("sha256");
+let generation="v75-etl-"+Date.now().toString(36);
 let cursorId="";
 let exported=0;
+let resumeVectors=0;
+let totalBooks=0;
 
 try{
+  const resume=await secondaryPost("resume_state",{});
+  const resumable=String(resume?.generation||"") &&
+    Number(resume?.total_chunks||0)>0 &&
+    Number(resume?.total_chunks||0)<=primaryTotal;
+
+  if(resumable){
+    generation=String(resume.generation);
+    exported=Number(resume.total_chunks||0);
+    resumeVectors=Number(resume.vector_count||0);
+    totalBooks=Number(resume.total_books||0);
+    cursorId=String(resume.last_id||"");
+    console.log("FNS_ETL_RESUME=yes generation="+generation+
+      " mirrored="+exported+
+      " vectors="+resumeVectors+
+      " after_id="+cursorId);
+  }else{
+    console.log("FNS_ETL_RESUME=no generation="+generation);
+  }
+
   if(sourceMode==="durable-object"){
-    let cursorId="";
     while(exported<primaryTotal){
       const params=new URLSearchParams({
         mode:"cursor",
@@ -197,9 +291,15 @@ try{
 
       const page=await adminGet(BASE+"/api/admin/export-library?"+params.toString());
       if(page.waiting){
+        const stats=await secondaryPost("generation_stats",{generation}).catch(()=>({}));
         await writeStatus({
-          state:"waiting",primary_total:primaryTotal,generation,source:sourceMode,
-          reason:"quota returned during cursor ETL; manifest not promoted"
+          state:"waiting",
+          primary_total:primaryTotal,
+          mirrored_chunks:Number(stats?.total_chunks||exported),
+          hydrated_embeddings:Number(stats?.vector_count||resumeVectors),
+          total_books:Number(stats?.total_books||totalBooks),
+          generation,source:sourceMode,cursor_id:cursorId,
+          reason:"quota returned during cursor ETL; resume cursor preserved"
         });
         process.exit(0);
       }
@@ -212,10 +312,6 @@ try{
       }
 
       const records=raw.map(r=>normalizeRecord(r,generation));
-      for(const row of records){
-        signature.update(row.id+"|"+row.document_id+"|"+row.content_hash+"\n");
-      }
-
       for(let i=0;i<records.length;i+=UPSERT_BATCH){
         const batch=records.slice(i,i+UPSERT_BATCH);
         const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
@@ -226,21 +322,39 @@ try{
 
       exported+=records.length;
       const next=page.data?.next_cursor||null;
+      if(next?.id) cursorId=String(next.id);
+
+      if(exported%2000===0 || exported===primaryTotal){
+        const stats=await secondaryPost("generation_stats",{generation}).catch(()=>({}));
+        await writeStatus({
+          state:"loading",
+          primary_total:primaryTotal,
+          mirrored_chunks:Number(stats?.total_chunks||exported),
+          hydrated_embeddings:Number(stats?.vector_count||resumeVectors),
+          total_books:Number(stats?.total_books||totalBooks),
+          generation,source:sourceMode,cursor_id:cursorId,
+          reason:"resumable cursor ETL in progress"
+        });
+      }
+
       if(page.data?.done===true) break;
       if(!next?.id) throw new Error("Primary cursor missing next_cursor");
-      if(next.id===cursorId) throw new Error("Primary cursor did not advance");
-      cursorId=String(next.id);
     }
   }else{
-    let offset=0;
+    let offset=exported;
     while(exported<primaryTotal){
       const page=await adminGet(
         BASE+"/api/admin/omni-sync-page?offset="+encodeURIComponent(offset)+"&limit="+encodeURIComponent(PAGE_SIZE)
       );
       if(page.waiting){
+        const stats=await secondaryPost("generation_stats",{generation}).catch(()=>({}));
         await writeStatus({
-          state:"waiting",primary_total:primaryTotal,generation,source:sourceMode,source_generation:sourceGeneration,
-          reason:"R2 snapshot temporarily unavailable during ETL"
+          state:"waiting",primary_total:primaryTotal,
+          mirrored_chunks:Number(stats?.total_chunks||exported),
+          hydrated_embeddings:Number(stats?.vector_count||resumeVectors),
+          total_books:Number(stats?.total_books||totalBooks),
+          generation,source:sourceMode,source_generation:sourceGeneration,
+          reason:"R2 snapshot temporarily unavailable during resumable ETL"
         });
         process.exit(0);
       }
@@ -253,10 +367,6 @@ try{
       }
 
       const records=raw.map(r=>normalizeRecord(r,generation));
-      for(const row of records){
-        signature.update(row.id+"|"+row.document_id+"|"+row.content_hash+"\n");
-      }
-
       for(let i=0;i<records.length;i+=UPSERT_BATCH){
         const batch=records.slice(i,i+UPSERT_BATCH);
         const mirrored=await secondaryPost("mirror_chunks",{generation,records:batch});
@@ -273,30 +383,78 @@ try{
     }
   }
 
-  if(exported!==primaryTotal){
-    throw new Error("ETL count mismatch: exported="+exported+" primary="+primaryTotal);
+  const textStats=await secondaryPost("generation_stats",{generation});
+  if(Number(textStats?.total_chunks||0)!==primaryTotal){
+    throw new Error("Secondary generation count mismatch after resume: mirrored="+Number(textStats?.total_chunks||0)+" primary="+primaryTotal);
+  }
+  console.log("FNS_ETL_TEXT_MIRROR_COMPLETE="+primaryTotal);
+
+  let embeddingCursor="";
+  let embeddingsAdded=Number(textStats?.vector_count||0);
+  while(embeddingsAdded<primaryTotal){
+    const missing=await secondaryPost("missing_embeddings",{
+      generation,
+      after_id:embeddingCursor,
+      limit:EMBEDDING_BATCH
+    });
+    const rows=Array.isArray(missing?.records)?missing.records:[];
+    if(!rows.length) break;
+
+    const normalized=rows.map(r=>normalizeRecord(r,generation));
+    const embedded=await embedRecords(normalized);
+    const mirrored=await secondaryPost("mirror_embeddings",{generation,records:embedded});
+    if(Number(mirrored?.embeddings||0)!==embedded.length){
+      throw new Error("Embedding mirror count mismatch at cursor "+embeddingCursor);
+    }
+
+    embeddingCursor=String(embedded[embedded.length-1]?.id||embeddingCursor);
+    embeddingsAdded+=embedded.length;
+
+    if(embeddingsAdded%512===0 || embeddingsAdded>=primaryTotal){
+      const stats=await secondaryPost("generation_stats",{generation});
+      embeddingsAdded=Number(stats?.vector_count||embeddingsAdded);
+      await writeStatus({
+        state:"embedding",
+        primary_total:primaryTotal,
+        mirrored_chunks:Number(stats?.total_chunks||primaryTotal),
+        hydrated_embeddings:embeddingsAdded,
+        total_books:Number(stats?.total_books||0),
+        generation,source:sourceMode,source_generation:sourceGeneration,
+        cursor_id:cursorId,embedding_cursor_id:embeddingCursor,
+        reason:"local free-tier embedding backfill in progress"
+      });
+    }
   }
 
   const stats=await secondaryPost("generation_stats",{generation});
   const mirroredChunks=Number(stats?.total_chunks||0);
   const hydratedEmbeddings=Number(stats?.vector_count||0);
-  const totalBooks=Number(stats?.total_books||0);
+  totalBooks=Number(stats?.total_books||0);
 
   if(mirroredChunks!==primaryTotal) throw new Error("Secondary generation count mismatch");
-  if(!(hydratedEmbeddings>0)) throw new Error("Secondary hydrated_embeddings is zero");
+  if(hydratedEmbeddings!==primaryTotal) throw new Error("Secondary embedding count mismatch: vectors="+hydratedEmbeddings+" primary="+primaryTotal);
   if(!(totalBooks>0)) throw new Error("Secondary total_books is zero");
 
-  const sourceSignature=signature.digest("hex");
+  const sig=await secondaryPost("generation_signature",{generation});
+  const sourceSignature=String(sig?.source_signature||"");
+  if(!/^[a-f0-9]{64}$/i.test(sourceSignature)) throw new Error("Secondary generation signature invalid");
+
   const promoted=await secondaryPost("mirror_manifest",{
     generation,
     expected_total:primaryTotal,
     source_signature:sourceSignature,
-    metadata:[{source:"cloudflare-primary",verified:true}]
+    metadata:[{
+      source:"cloudflare-primary",
+      verified:true,
+      embedding_model:EMBEDDING_MODEL,
+      embedding_dimensions:384,
+      resumed_from_existing_chunks:true
+    }]
   });
 
   const manifest=promoted?.manifest||{};
   if(Number(manifest?.total_chunks||0)!==primaryTotal ||
-     Number(manifest?.vector_count||0)<=0 ||
+     Number(manifest?.vector_count||0)!==primaryTotal ||
      Number(manifest?.total_books||0)<=0 ||
      String(manifest?.generation||"")!==generation){
     throw new Error("Manifest verification failed");
@@ -311,15 +469,23 @@ try{
     generation,
     source_signature:sourceSignature,
     source:sourceMode,
-    source_generation:sourceGeneration
+    source_generation:sourceGeneration,
+    cursor_id:cursorId,
+    embedding_cursor_id:"",
+    reason:""
   });
 }catch(error){
+  const stats=await secondaryPost("generation_stats",{generation}).catch(()=>({}));
   await writeStatus({
     state:"failed",
     primary_total:primaryTotal,
+    mirrored_chunks:Number(stats?.total_chunks||exported),
+    hydrated_embeddings:Number(stats?.vector_count||resumeVectors),
+    total_books:Number(stats?.total_books||totalBooks),
     generation,
     source:sourceMode,
     source_generation:sourceGeneration,
+    cursor_id:cursorId,
     reason:String(error?.message||error)
   });
   process.exitCode=1;
