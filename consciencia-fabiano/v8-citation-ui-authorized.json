@@ -43,7 +43,7 @@
     "max_library_capacity": 50000,
     "strict_scripture_source_classification": true,
     "chapter_word_number_resolution": true,
-    "segment_shards": 2,
+    "segment_shards": 1,
     "concurrent_desktop_mobile_cpu_guard": true,
     "named_section_fallback": true,
     "scripture_segment_carry": true,
@@ -53,8 +53,8 @@
     "known_production_standard_works_filename": "standard-works-83806-por.pdf",
     "false_positive_example_must_remain_book": "Doutrina e Convênios e o Futuro (Roy W. Doxey) sudbr.org.pdf",
     "scripture_direct_reference_parser_gate": true,
-    "max_matches_per_segment": 1000,
-    "cpu_1102_hotfix": "gate-expensive-scripture-regex-and-use-2-shard-segments",
+    "max_matches_per_segment": 500,
+    "cpu_1102_hotfix": "one-shard-bounded-metadata-parsing",
     "regex_precompiled": true,
     "scripture_primary_location_is_not_cross_reference": true,
     "scripture_cross_references_separate": true,
@@ -64,7 +64,10 @@
       "scripture-source",
       "scripture-reference",
       "scripture-heading"
-    ]
+    ],
+    "heading_probe_chars": 900,
+    "verse_probe_chars": 2400,
+    "cross_references_deferred": true
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
