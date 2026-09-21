@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {assertCompleteLibrary,hybridRank,validateRecoveredSources,buildMapReducePlan,sourceContract,CircuitBreaker,promotionGate} from "../core/golden-rag.mjs";
+import {assertCompleteLibrary,hybridRank,validateRecoveredSources,buildMapReducePlan,sourceContract,buildCitationCatalog,buildEncyclopedicContract,validateCitationCatalog,runFailoverChain,CircuitBreaker,promotionGate} from "../core/golden-rag.mjs";
 
 assert.throws(()=>assertCompleteLibrary({documents:1,chunks:10,embeddings:0}),/EMPTY_EMBEDDINGS/);
 assert.throws(()=>assertCompleteLibrary({documents:1,chunks:10,embeddings:9}),/PARTIAL_EMBEDDINGS/);
@@ -19,6 +19,24 @@ assert.equal(sourceContract(ranked).answerAllowed,true);
 const many=Array.from({length:60},(_,i)=>({id:String(i),document_id:"d"+i,text:"x"}));
 assert.equal(buildMapReducePlan(many,{batchSize:10,threshold:20}).mode,"map-reduce");
 assert.equal(buildMapReducePlan(many,{batchSize:10,threshold:20}).batches.length,6);
+
+const catalog=buildCitationCatalog(ranked);
+assert.equal(catalog[0].ref,"F1");
+assert.equal(validateCitationCatalog(catalog).valid,true);
+assert.equal(buildEncyclopedicContract([]).answerAllowed,false);
+assert.equal(buildEncyclopedicContract(many,{batchSize:10,threshold:20}).mode,"map-reduce");
+
+const primaryCircuit=new CircuitBreaker({threshold:1,pauseMs:1000});
+const failover=await runFailoverChain({
+  query:"Restauração",
+  providers:[
+    {name:"primary",circuit:primaryCircuit,run:async()=>{throw new Error("quota")}},
+    {name:"secondary",run:async()=>({sources:[{id:"a"}]})}
+  ],
+  accept:value=>Array.isArray(value?.sources)&&value.sources.length>0
+});
+assert.equal(failover.provider,"secondary");
+assert.equal(primaryCircuit.canTry(),false);
 
 const cb=new CircuitBreaker({threshold:2,pauseMs:1000,maxPauseMs:4000});
 cb.failure(100); assert.equal(cb.canTry(100),true);
