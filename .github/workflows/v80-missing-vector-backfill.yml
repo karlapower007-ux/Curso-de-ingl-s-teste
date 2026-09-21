@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: consciencia-cloudflare-native-production
+  group: consciencia-v80-vector-backfill-corrected
   cancel-in-progress: true
 
 jobs:
