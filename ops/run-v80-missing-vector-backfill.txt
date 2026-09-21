@@ -1,8 +1,10 @@
 run=missing-vectors-3437
-attempt=small-mirror-batches
+attempt=idempotence-proof-after-rag-index-repair
 strict_incremental=true
 missing_only=true
-reuse_r2_vectors=true
-mirror_batch=8
+expected_new_embeddings=0
+expected_chunks=28636
+expected_vectors=28636
+directed_rag=true
 no_reindex=true
 no_frontend_changes=true
