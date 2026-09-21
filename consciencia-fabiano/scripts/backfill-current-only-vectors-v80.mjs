@@ -310,6 +310,116 @@ async function main(){
   const manifestObj=await getJson(manifestKey);
   const manifest=manifestObj.json||{};
 
+  // Idempotence fast-path: once both R2 pointer and generation manifest already
+  // advertise the fully audited 28,636/28,636 state, do not rescan/rewrite 147
+  // shards. Verify the frozen 3,437 target set, secondary missing=0, and prove
+  // retrieval against production RAG with known current_only chunks.
+  if(Number(pointer.vectors||0)===EXPECTED_TOTAL &&
+     Number(manifest?.total_chunks||manifest?.chunks||0)===EXPECTED_TOTAL &&
+     Number(manifest?.vector_count||manifest?.vectors||0)===EXPECTED_TOTAL){
+    const checkpointKey="library/vector-backfill-checkpoints/"+generation+".json";
+    const checkpoint=(await getJson(checkpointKey,true))?.json||{};
+    const targetIds=Array.isArray(checkpoint?.target_ids)?checkpoint.target_ids.map(String):[];
+    const targetSet=new Set(targetIds);
+    if(targetIds.length!==EXPECTED_MISSING){
+      return fail("idempotence checkpoint target count "+targetIds.length+" != 3437");
+    }
+
+    const sm=await secondary("manifest",{});
+    const activeGeneration=String(sm?.generation||"");
+    if(!activeGeneration)return fail("idempotence secondary generation missing");
+    const stats=await secondary("generation_stats",{generation:activeGeneration});
+    if(Number(stats?.total_chunks||0)!==EXPECTED_TOTAL || Number(stats?.vector_count||0)!==EXPECTED_TOTAL){
+      return fail("idempotence secondary state must be 28636/28636");
+    }
+    const missing=await secondary("missing_embeddings",{generation:activeGeneration,after_id:"",limit:1});
+    if((Array.isArray(missing?.records)?missing.records:[]).length!==0){
+      return fail("idempotence missing_embeddings is not zero");
+    }
+
+    const probes=[
+      {
+        chunk_id:"00051dd9f25249f9be6aa5f32e7a7e50",
+        document_id:"0ee8a89e0c00499ca31829ce4c9c2485",
+        query:"Mas que comece entre os pobres da Terra — aqueles que vivem nos porões, sótãos e ruas secundárias"
+      },
+      {
+        chunk_id:"00099d86923e47b2b261d4e372808644",
+        document_id:"11df9803ae084a38b558bfa92c26055d",
+        query:"irão comparecer ao grande conselho de Adam-Ondi-Ahman mencionado pelo Profeta Joseph Smith"
+      },
+      {
+        chunk_id:"00c9c045b5aa4c2ba39179d4dc0b47ae",
+        document_id:"5b806646ded04373ba03d3476cb848ea",
+        query:"abrir e manter uma comunicação com seu irmão mais velho nosso Salvador"
+      },
+      {
+        chunk_id:"00085c2a3e754e54ada3f2ba7ea005a2",
+        document_id:"c9bb7b3535ec4fa08951b667f04c9b9c",
+        query:"podemos nos voltar para o exemplo de Joseph Smith nos últimos dias"
+      }
+    ];
+
+    let successes=0;
+    for(const probe of probes){
+      if(!targetSet.has(probe.chunk_id)){
+        return fail("directed RAG probe is not in frozen current_only set: "+probe.chunk_id);
+      }
+      const [qv]=await embedTexts([probe.query]);
+      const rag=await ragSearch(probe.query,qv);
+      const matches=Array.isArray(rag?.matches)?rag.matches:[];
+      const idx=matches.findIndex(m=>String(m?.id||m?.chunk_id||"")===probe.chunk_id);
+      const hit=idx>=0?matches[idx]:null;
+      report.tests.push({
+        query:probe.query,
+        chunk_id:probe.chunk_id,
+        document_id:probe.document_id,
+        score:hit?Number(hit?.score||0):null,
+        lexical_score:hit?Number(hit?.lexical_score||0):null,
+        semantic_score:hit?Number(hit?.semantic_score||0):null,
+        retrieval_mode:hit?String(hit?.retrieval_mode||""):"",
+        origin:"current_only",
+        formerly_without_vector:true,
+        embedding_present:true,
+        returned:Boolean(hit),
+        rank:hit?idx+1:null
+      });
+      if(hit)successes++;
+    }
+    if(successes<3)return fail("idempotence production RAG proof insufficient: "+successes);
+
+    report.ok=true;
+    report.state="completed";
+    report.result="28636-chunks-28636-vectors";
+    report.generated_new_embeddings=0;
+    report.target_count=targetIds.length;
+    report.target_list_sha256=String(checkpoint?.target_list_sha256||"");
+    report.r2_after={
+      generation,
+      chunks:Number(pointer.chunks||0),
+      vectors:Number(pointer.vectors||0),
+      documents:Number(pointer.documents||0),
+      shards:Number(pointer.shards||0)
+    };
+    report.secondary_after={
+      generation:activeGeneration,
+      chunks:Number(stats?.total_chunks||0),
+      vectors:Number(stats?.vector_count||0)
+    };
+    report.directed_rag_successes=successes;
+    report.idempotence_proof=true;
+    report.notes.push("Fast idempotence path: zero document embeddings generated; no shard rewrite; production RAG probes only.");
+    await saveReport();
+    console.log("V80_VECTOR_BACKFILL_SUCCESS=yes");
+    console.log("V80_VECTOR_BACKFILL_GENERATED_NEW=0");
+    console.log("V80_VECTOR_BACKFILL_TARGETS="+targetIds.length);
+    console.log("V80_VECTOR_BACKFILL_R2_VECTORS="+Number(pointer.vectors||0));
+    console.log("V80_VECTOR_BACKFILL_SECONDARY_VECTORS="+Number(stats?.vector_count||0));
+    console.log("V80_VECTOR_BACKFILL_RAG_SUCCESSES="+successes);
+    console.log("V80_VECTOR_BACKFILL_IDEMPOTENCE=yes");
+    return;
+  }
+
   const shardPrefix="library/generations/"+generation+"/shards/";
   const keys=(await listKeys(shardPrefix)).filter(k=>k.endsWith(".json"));
   if(keys.length!==Number(pointer.shards||0)) return fail("R2 shard count mismatch");
