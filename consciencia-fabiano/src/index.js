@@ -2264,31 +2264,6 @@ function citationLexicalScore(text,query,terms) {
   return exactWholeAnchorMatch(text,anchors);
 }
 
-function citationLexicalScore(text,query,terms) {
-  const folded=foldSearchText(text);
-  if(!folded) return null;
-  let matchedTerms=0,hits=0;
-  for(const term of terms){
-    if(!term) continue;
-    let from=0,count=0;
-    while(count<24){
-      const at=folded.indexOf(term,from);
-      if(at<0) break;
-      count++;
-      from=at+term.length;
-    }
-    if(count>0){
-      matchedTerms++;
-      hits+=count;
-    }
-  }
-  if(!matchedTerms) return null;
-  const coverage=matchedTerms/Math.max(1,terms.length);
-  const phrase=foldSearchText(query);
-  const exactPhrase=phrase.length>=5 && folded.includes(phrase);
-  const score=(exactPhrase?100:0)+(matchedTerms*10)+(coverage*5)+Math.min(8,hits*0.35);
-  return {score,coverage,matched_terms:matchedTerms,hits,exact_phrase:exactPhrase};
-}
 
 function citationCarryFromUrl(url) {
   const chapterNumber=Math.max(0,Number(url.searchParams.get("carry_chapter")||0)) || null;
