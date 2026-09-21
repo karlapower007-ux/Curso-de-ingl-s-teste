@@ -559,3 +559,19 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
   line-height:1.4;
   overflow-wrap:anywhere;
 }
+
+/* V8.1 STRICT FOCUS — Dicionário/Enciclopédia responsivo */
+.dictionary-card{max-width:1100px;margin:0 auto;padding:24px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.dictionary-note{color:var(--muted);line-height:1.55;margin:14px 0}
+.dictionary-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+.dictionary-search input{min-height:48px}
+.dictionary-results{display:grid;gap:14px;margin-top:16px}
+.dictionary-result{background:#141414;border:1px solid #333;border-left:4px solid var(--accent);border-radius:10px;padding:16px;overflow-wrap:anywhere}
+.dictionary-result-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
+.dictionary-result-head strong{color:#f8fafc}
+.dictionary-result-ref{color:#7dd3fc;font-size:.8rem;white-space:nowrap}
+.dictionary-result-text{white-space:pre-wrap;line-height:1.65;color:#e2e8f0}
+.dictionary-pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:18px}
+.dictionary-pager span{color:var(--muted);font-size:.88rem}
+@media(max-width:780px){.top-actions{flex-wrap:wrap}.top-actions button{min-width:calc(50% - 8px)}.dictionary-card{padding:16px}}
+@media(max-width:560px){.top-actions{display:grid;grid-template-columns:1fr}.top-actions button{width:100%}.dictionary-search{grid-template-columns:1fr}.dictionary-search .primary{width:100%}.dictionary-result-head{display:grid}.dictionary-result-ref{white-space:normal}.dictionary-card{padding:12px}.dictionary-result{padding:14px}}
