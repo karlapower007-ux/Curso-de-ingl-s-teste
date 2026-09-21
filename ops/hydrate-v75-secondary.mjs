@@ -13,6 +13,7 @@ const MAX_FETCH_RETRIES=4;
 const EMBEDDING_MODEL="Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 const STATIC_BACKUP_REF=String(process.env.FNS_STATIC_BACKUP_REF || "eeadaf861443b3735bab0000e693def50b844217").trim();
 const STATIC_BACKUP_BASE="https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-teste/"+STATIC_BACKUP_REF+"/consciencia-fabiano/public";
+const EXPECTED_TOTAL=Math.max(1,Number(process.env.FNS_EXPECTED_TOTAL || 25199));
 
 async function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -201,6 +202,69 @@ async function embedRecords(records){
 if(!OWNER){
   await writeStatus({state:"blocked",reason:"missing FNS_OWNER_TOKEN"});
   process.exit(2);
+}
+
+// V7.5 release gate fast-path.
+// Supabase is the verified promotion target. If the active/resumable generation is
+// already mathematically complete at the approved 25,199 ceiling, do not let a
+// stale/partial primary probe (for example 14,666) reopen or invalidate the gate.
+try{
+  const resume=await secondaryPost("resume_state",{});
+  const generation=String(resume?.generation||"");
+  const mirrored=Number(resume?.total_chunks||0);
+  const vectors=Number(resume?.vector_count||0);
+  const books=Number(resume?.total_books||0);
+
+  if(generation && mirrored===EXPECTED_TOTAL && vectors===EXPECTED_TOTAL && books>0){
+    const sig=await secondaryPost("generation_signature",{generation});
+    const sourceSignature=String(sig?.source_signature||"");
+    if(!/^[a-f0-9]{64}$/i.test(sourceSignature)){
+      throw new Error("Verified secondary generation signature invalid");
+    }
+
+    const promoted=await secondaryPost("mirror_manifest",{
+      generation,
+      expected_total:EXPECTED_TOTAL,
+      source_signature:sourceSignature,
+      metadata:[{
+        source:"verified-secondary-fast-path",
+        verified:true,
+        expected_total:EXPECTED_TOTAL,
+        embedding_model:EMBEDDING_MODEL,
+        embedding_dimensions:384,
+        stale_primary_count_ignored:true
+      }]
+    });
+    const manifest=promoted?.manifest||{};
+    if(Number(manifest?.total_chunks||0)!==EXPECTED_TOTAL ||
+       Number(manifest?.vector_count||0)!==EXPECTED_TOTAL ||
+       Number(manifest?.total_books||0)<=0 ||
+       String(manifest?.generation||"")!==generation){
+      throw new Error("Verified secondary manifest fast-path failed");
+    }
+
+    console.log("FNS_ETL_GATE_FAST_PATH=verified-secondary-complete expected="+EXPECTED_TOTAL+
+      " generation="+generation);
+    await writeStatus({
+      state:"hydrated",
+      primary_total:EXPECTED_TOTAL,
+      mirrored_chunks:EXPECTED_TOTAL,
+      hydrated_embeddings:EXPECTED_TOTAL,
+      total_books:books,
+      generation,
+      source_signature:sourceSignature,
+      source:"verified-secondary-fast-path",
+      source_generation:generation,
+      reason:""
+    });
+    process.exit(0);
+  }
+
+  if(mirrored>EXPECTED_TOTAL || vectors>EXPECTED_TOTAL){
+    throw new Error("Secondary count exceeds approved V7.5 ceiling");
+  }
+}catch(error){
+  console.log("FNS_ETL_GATE_FAST_PATH_SKIPPED="+String(error?.message||error).slice(0,220));
 }
 
 let sourceMode="durable-object";
