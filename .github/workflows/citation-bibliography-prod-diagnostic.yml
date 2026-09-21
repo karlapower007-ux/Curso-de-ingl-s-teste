@@ -25,6 +25,8 @@ jobs:
           carry_doc=""
           carry_chapter=""
           carry_title=""
+          carry_scripture_book=""
+          carry_scripture_chapter=""
           guard=0
           scanned=0
           found=0
@@ -49,7 +51,9 @@ jobs:
             [ -n "$carry_doc" ] && args+=(--data-urlencode "carry_doc=$carry_doc")
             [ -n "$carry_chapter" ] && args+=(--data-urlencode "carry_chapter=$carry_chapter")
             [ -n "$carry_title" ] && args+=(--data-urlencode "carry_title=$carry_title")
-            code="$(curl "${args[@]}" "$BASE/api/citations")"
+            [ -n "$carry_scripture_book" ] && args+=(--data-urlencode "carry_scripture_book=$carry_scripture_book")
+            [ -n "$carry_scripture_chapter" ] && args+=(--data-urlencode "carry_scripture_chapter=$carry_scripture_chapter")
+            code="$(curl --retry 3 --retry-delay 1 --retry-all-errors "${args[@]}" "$BASE/api/citations")"
             test "$code" = "200"
             jq -e '.ok==true and .backend=="r2-authoritative"' "$tmp" >/dev/null
 
@@ -74,19 +78,21 @@ jobs:
             jq -c '.citations[]|select(.bibliographic_type=="scripture" and ((.primary_reference|length)==0))|{work,book,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/incomplete-scriptures.ndjson
             jq -r '.citations[].book // empty' "$tmp" >>/tmp/all-books.txt
             jq -c '.citations[]|select(.book=="Obras Padrão")|{book,work,bibliographic_type,technical_document,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/obras-padrao-raw.ndjson
-            jq -c '.citations[]|select(.book=="Obras Padrão")|{technical_document,bibliographic_type,page,excerpt}' "$tmp" | head -n 2 || true
 
             done_flag="$(jq -r '(.scan_done // false)|tostring' "$tmp")"
             cursor="$(jq -r '.next_scan_cursor // ""' "$tmp")"
             carry_doc="$(jq -r '.carry.document_id // ""' "$tmp")"
             carry_chapter="$(jq -r '.carry.chapter_number // ""' "$tmp")"
             carry_title="$(jq -r '.carry.chapter_title // ""' "$tmp")"
+            carry_scripture_book="$(jq -r '.carry.scripture_book // ""' "$tmp")"
+            carry_scripture_chapter="$(jq -r '.carry.scripture_chapter // ""' "$tmp")"
             library_total="$(jq -r '.library_total_chunks // 0' "$tmp")"
             rm -f "$tmp"
 
             echo "SEGMENT=$guard scanned=$scanned/$library_total found=$found books=$books incomplete_books=$books_incomplete scriptures=$scriptures incomplete_scriptures=$scriptures_incomplete done=$done_flag"
             [ "$done_flag" = "true" ] && break
             test -n "$cursor"
+            sleep 0.15
           done
 
           echo "FINAL scanned=$scanned found=$found books=$books books_complete=$books_complete books_incomplete=$books_incomplete scriptures=$scriptures scriptures_complete=$scriptures_complete scriptures_incomplete=$scriptures_incomplete"
