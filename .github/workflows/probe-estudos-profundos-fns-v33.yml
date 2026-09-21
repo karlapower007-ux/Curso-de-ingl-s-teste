@@ -433,6 +433,26 @@ jobs:
             git grep -n -E               'secrets\.[A-Z0-9_]*(SITE|CHATGPT|OPENAI)|chatgpt\.site|chatgpt\.com/sites|hosting\.json|appgprj_|source_version_number|projection_revision|deploy.*Sites|publish.*Sites|Sites.*deploy|Sites.*publish'               "$ref" -- '.github/workflows/**' '.openai/**' 'hosting.json' 'chatgpt-site.json' 2>/dev/null || true
           done | sort -u | head -n 1000
 
+      - name: Enumerate all live server routes for publisher endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          FILE="probe/assets/index-tb94fmnW.js"
+          [ -f "$FILE" ] || curl -L --compressed --fail --silent --show-error "$BASE/_next/static/chunks/index-tb94fmnW.js" -o "$FILE"
+
+          node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const src=fs.readFileSync(process.argv[2],'utf8');
+          const routes=[...new Set([...src.matchAll(/route:\/([^\x60"']+)/g)].map(m=>'/'+m[1]))].sort();
+          console.log('ROUTE_COUNT='+routes.length);
+          console.log('ALL_ROUTES='+JSON.stringify(routes));
+          const publish=routes.filter(r=>/publish|deploy|version|hosting|project|site|projection|source/i.test(r));
+          console.log('PUBLISH_CANDIDATE_ROUTES='+JSON.stringify(publish));
+          const fabiano=routes.filter(r=>/fabiano/i.test(r));
+          console.log('FABIANO_ROUTES='+JSON.stringify(fabiano));
+          NODE
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
