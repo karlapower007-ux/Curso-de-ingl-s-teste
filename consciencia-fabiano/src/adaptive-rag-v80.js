@@ -84,7 +84,7 @@ function deepSignal(q){
 function simpleSignal(q){
   const n=normalize(q);
   return q.length<=120 &&
-    !/\b(compare|compar|analise|análise|cronologia|contexto|por que|porque|causa|consequencia|consequência|fontes|cita[cç][aã]o|aprofund)\b/i.test(n);
+    !/\b(compare|compar|analise|análise|cronologia|contexto|por que|porque|causa|consequencia|consequência|fontes|cita[cç][aã]o|aprofund|rela[cç][aã]o|diferen[cç]a|contraponto)\b/i.test(n);
 }
 
 function downgradeMode(mode,loadLevel){
