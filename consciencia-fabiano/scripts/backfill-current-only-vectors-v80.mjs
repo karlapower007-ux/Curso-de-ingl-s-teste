@@ -146,7 +146,8 @@ async function secondary(action,payload={}){
       const text=await res.text();
       let data={}; try{data=JSON.parse(text||"{}");}catch{}
       if(res.ok && data?.ok!==false) return data;
-      const err=new Error("secondary "+action+" HTTP "+res.status+" "+String(data?.code||data?.message||text).slice(0,500));
+      const detail=[data?.code,data?.message,text].filter(Boolean).join(" | ");
+      const err=new Error("secondary "+action+" HTTP "+res.status+" "+String(detail).slice(0,900));
       err.status=res.status;
       if(res.status===429 || res.status>=500) throw err;
       throw err;
