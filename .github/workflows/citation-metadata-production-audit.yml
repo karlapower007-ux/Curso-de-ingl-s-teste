@@ -167,3 +167,5 @@ jobs:
             echo "- Scripture complete (book + chapter + verse): **$scripture_complete / $scripture_total**"
             echo "- Scripture reference missing: **$scripture_ref_missing**"
           } >> "$GITHUB_STEP_SUMMARY"
+
+# rerun-after-metadata-hardening-deploy
