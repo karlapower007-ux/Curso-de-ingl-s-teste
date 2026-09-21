@@ -1823,16 +1823,18 @@ function scriptureSourceKind(filename,title) {
   const normalize=value=>foldSearchText(
     String(value || "")
       .replace(/\.(?:pdf|txt|epub|docx?)$/i,"")
+      .replace(/[-_]+/g," ")
       .replace(/\s+/g," ")
       .trim()
   );
   const candidates=[filename,title].map(normalize).filter(Boolean);
+  const suffix="(?:lds|sud|edicao|edition|portugues|portuguese|english|por|pt|eng|en|spa|es|\\d{2,8})";
   const exactPatterns=[
-    ["standard-works",/^(?:obras padrao|standard works|scriptures|escrituras)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
-    ["book-of-mormon",/^(?:(?:o|the)\s+)?(?:livro de mormon|book of mormon)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
-    ["doctrine-and-covenants",/^(?:doutrina e convenios|doctrine and covenants)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
-    ["pearl-of-great-price",/^(?:perola de grande valor|pearl of great price)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/],
-    ["bible",/^(?:(?:a|the)\s+)?(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)(?:\s+(?:lds|sud|edicao|edition|portugues|english|pt|en|\d{4}))*$/]
+    ["standard-works",new RegExp("^(?:obras padrao|standard works|scriptures|escrituras)(?:\\s+"+suffix+")*$")],
+    ["book-of-mormon",new RegExp("^(?:(?:o|the)\\s+)?(?:livro de mormon|book of mormon)(?:\\s+"+suffix+")*$")],
+    ["doctrine-and-covenants",new RegExp("^(?:doutrina e convenios|doctrine and covenants)(?:\\s+"+suffix+")*$")],
+    ["pearl-of-great-price",new RegExp("^(?:perola de grande valor|pearl of great price)(?:\\s+"+suffix+")*$")],
+    ["bible",new RegExp("^(?:(?:a|the)\\s+)?(?:biblia|bible|old testament|new testament|velho testamento|novo testamento)(?:\\s+"+suffix+")*$")]
   ];
   for(const value of candidates){
     for(const [kind,re] of exactPatterns){
@@ -5438,6 +5440,7 @@ async function status(env) {
     citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_cpu_bounded: true,
     citation_dictionary_strict_scripture_source_classification: true,
+    citation_dictionary_canonical_filename_suffixes: true,
     citation_dictionary_chapter_word_numbers: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
@@ -6926,6 +6929,7 @@ export default {
         citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
         citation_dictionary_cpu_bounded: true,
         citation_dictionary_strict_scripture_source_classification: true,
+        citation_dictionary_canonical_filename_suffixes: true,
         citation_dictionary_chapter_word_numbers: true,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
