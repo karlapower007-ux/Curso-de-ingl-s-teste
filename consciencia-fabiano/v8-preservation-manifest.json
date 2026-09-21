@@ -55,6 +55,9 @@
     "legacy_evidence_gate_may_be_bypassed": false,
     "production_auto_promotion": false,
     "frontend_replacement_allowed": false,
-    "library_reset_allowed": false
+    "library_reset_allowed": false,
+    "production_deploy_requires_preflight": true,
+    "automatic_worker_rollback": true,
+    "rollback_armed_only_after_preflight": true
   }
 }
