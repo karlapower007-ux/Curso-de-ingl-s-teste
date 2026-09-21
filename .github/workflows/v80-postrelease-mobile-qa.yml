@@ -32,7 +32,7 @@ jobs:
         working-directory: consciencia-fabiano
         shell: bash
         run: |
-          cat > /tmp/v80-postrelease-qa.mjs <<'EOF'
+          cat > .qa-v80-postrelease.mjs <<'EOF'
           import { chromium } from "playwright";
 
           const BASE=process.env.BASE_URL;
@@ -177,7 +177,7 @@ jobs:
           };
           console.log("V80_POSTRELEASE_QA="+JSON.stringify(report));
           EOF
-          node /tmp/v80-postrelease-qa.mjs
+          node .qa-v80-postrelease.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
