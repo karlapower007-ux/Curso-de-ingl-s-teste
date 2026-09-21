@@ -84,7 +84,7 @@ jobs:
                 try{
                   const r=await fetch('/api/v1/r2/library-manifest',{headers:{'X-FNS-Owner-Token':'gadu'}});
                   const j=await r.json().catch(()=>({}));
-                  return {ok:r.ok,status:r.status,total_books:Number(j?.total_books||0),total_chunks:Number(j?.total_chunks||0),vector_count:Number(j?.vector_count||0),generation:String(j?.generation||''),source:String(j?.source||'')};
+                  return {ok:r.ok,status:r.status,total_books:Number(j?.total_books||0),total_chunks:Number(j?.total_chunks||0),vector_count:Number(j?.vector_count||0),generation:String(j?.generation||''),source:String(j?.source||''),metadata_is_array:Array.isArray(j?.metadata),metadata_count:Array.isArray(j?.metadata)?j.metadata.length:0,metadata_sample:Array.isArray(j?.metadata)?j.metadata.slice(0,3).map(x=>({keys:Object.keys(x||{}).sort(),document_id:String(x?.document_id||''),filename:String(x?.filename||x?.arquivo||''),title:String(x?.title||x?.titulo||'')})):[]};
                 }catch(e){return {ok:false,status:0,error:String(e?.message||e)}}
               });
               const rows=await page.locator('#booksList .book').evaluateAll(nodes=>nodes.map(n=>({
