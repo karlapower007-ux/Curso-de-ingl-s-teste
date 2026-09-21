@@ -40,6 +40,56 @@ jobs:
           echo "--- HOME ASSET URLS ---"
           grep -Eo '(src|href)="[^"]+"' probe/home.html | sed 's/^[^=]*="//; s/"$//' | head -n 120 || true
 
+      - name: Inspect published JS bundles and API contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://estudos-profundos-fns.karlapower007.chatgpt.site"
+          mkdir -p probe/assets
+
+          for PAGE in probe/fale-com-o-fabiano.html probe/admin-fabiano.html; do
+            [ -f "$PAGE" ] || continue
+            grep -Eo '(/_next/static/chunks/[^"\\ ]+\.js)' "$PAGE" | sort -u
+          done > probe/chunk-paths.txt
+
+          while IFS= read -r ASSET; do
+            [ -n "$ASSET" ] || continue
+            NAME="$(basename "$ASSET")"
+            curl -L --compressed --fail --silent --show-error --max-time 30               "$BASE$ASSET" -o "probe/assets/$NAME" || true
+            curl -L --compressed --silent --show-error --max-time 20               "$BASE$ASSET.map" -o "probe/assets/$NAME.map" || true
+          done < probe/chunk-paths.txt
+
+          echo "--- API/ROUTE STRINGS ---"
+          grep -RahoE '(/api/[A-Za-z0-9_?&=./:-]+|/admin/[A-Za-z0-9_?&=./:-]+|/fale-com-o-fabiano|indexedDB|OPFS|navigator\.storage|embedd[a-zA-Z_-]*|vector[a-zA-Z_-]*|chunk[a-zA-Z_-]*|map.?reduce|source[a-zA-Z_-]*|citation[a-zA-Z_-]*|groq|supabase|D1|R2)' probe/assets             | sort -u | head -n 500 || true
+
+          echo "--- FABIANO BUNDLE CONTEXT ---"
+          for FILE in probe/assets/*fabiano-conversation*.js; do
+            [ -f "$FILE" ] || continue
+            node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2], s=fs.readFileSync(p,'utf8');
+          const needles=['/api/','fetch(','indexedDB','OPFS','navigator.storage','embedding','vector','chunk','source','citation','map','reduce','audio','speechSynthesis','localStorage'];
+          for(const n of needles){
+            let i=s.indexOf(n);
+            if(i>=0) console.log('\n### '+n+'\n'+s.slice(Math.max(0,i-900),Math.min(s.length,i+2400)));
+          }
+          NODE
+          done
+
+          echo "--- ADMIN BUNDLE CONTEXT ---"
+          for FILE in probe/assets/*admin-panel*.js; do
+            [ -f "$FILE" ] || continue
+            node - "$FILE" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2], s=fs.readFileSync(p,'utf8');
+          const needles=['/api/','fetch(','upload','pdf','chunk','embedding','vector','index','reindex','delete','library','document'];
+          for(const n of needles){
+            let i=s.indexOf(n);
+            if(i>=0) console.log('\n### '+n+'\n'+s.slice(Math.max(0,i-900),Math.min(s.length,i+2600)));
+          }
+          NODE
+          done
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
