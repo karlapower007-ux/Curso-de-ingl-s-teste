@@ -1,0 +1,43 @@
+name: Audit FNS Publisher Path
+
+on:
+  push:
+    branches:
+      - estudos-profundos-fns-v33-golden-20260920
+    paths:
+      - ".github/workflows/audit-fns-publisher-path.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inventory repository publishing links
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -u
+          echo "=== WORKFLOW 360999688 RUNS ==="
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/360999688/runs?per_page=100"             --jq '{total_count,workflow_runs:[.workflow_runs[]|{id,name,event,status,conclusion,head_branch,head_sha,path,run_number,created_at,updated_at,html_url}]}' || true
+
+          echo "=== DEPLOYMENTS ==="
+          gh api "repos/$GITHUB_REPOSITORY/deployments?per_page=100"             --jq '[.[]|{id,ref,sha,task,environment,created_at,updated_at,description}]' || true
+
+          echo "=== ENVIRONMENTS ==="
+          gh api "repos/$GITHUB_REPOSITORY/environments?per_page=100"             --jq '{total_count,environments:[.environments[]|{id,name,created_at,updated_at}]}' || true
+
+          echo "=== HOOKS ==="
+          gh api "repos/$GITHUB_REPOSITORY/hooks?per_page=100"             --jq '[.[]|{id,type,name,active,events,config:{url:.config.url,content_type:.config.content_type}}]' || true
+
+          echo "=== PAGES ==="
+          gh api "repos/$GITHUB_REPOSITORY/pages"             --jq '{url,status,cname,custom_404,html_url,source,build_type}' || true
+
+          echo "=== ARTIFACTS MATCHING SITE ==="
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100"             --jq '{total_count,artifacts:[.artifacts[]|select((.name|ascii_downcase|contains("site")) or (.name|ascii_downcase|contains("fns")))|{id,name,expired,created_at,updated_at,workflow_run}]}' || true
