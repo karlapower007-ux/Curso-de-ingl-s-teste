@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <title>Consciência do Fabiano - v7.5.0-stateful-resilience</title>
+  <title>Consciência do Fabiano - v8.1 Strict Focus</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
@@ -13,11 +13,12 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">v7.5.0-stateful-resilience</span>
+      <span class="header-kicker">v8.1 Strict Focus</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
       <button id="chatTab" class="ghost active" type="button">Conversar</button>
+      <button id="dictionaryTab" class="ghost" type="button">Dicionário / Enciclopédia</button>
       <button id="libraryTab" class="ghost" type="button">Biblioteca</button>
     </div>
   </header>
@@ -58,6 +59,29 @@
           <p id="status-whisper" class="whisper-status" aria-live="polite"></p>
         </div>
       </section>
+    </section>
+
+    <section id="dictionaryPanel" class="dictionary hidden">
+      <div class="dictionary-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">BUSCA TOTAL COM STRICT FOCUS LOCK</p>
+            <h2>Dicionário / Enciclopédia</h2>
+          </div>
+        </div>
+        <p class="dictionary-note">Pesquise exatamente o assunto desejado. A biblioteca inteira é examinada, mas somente resultados realmente ligados ao tema solicitado são exibidos.</p>
+        <div class="dictionary-search">
+          <input id="dictionaryInput" type="search" placeholder="Ex.: Adão, Miguel, Elohim, lei do dízimo" autocomplete="off">
+          <button id="dictionarySearchBtn" class="primary" type="button">Pesquisar</button>
+        </div>
+        <p id="dictionaryStatus" class="status" aria-live="polite"></p>
+        <div id="dictionaryResults" class="dictionary-results"></div>
+        <div id="dictionaryPager" class="dictionary-pager hidden">
+          <button id="dictionaryPrev" class="ghost" type="button">Anterior</button>
+          <span id="dictionaryPageInfo"></span>
+          <button id="dictionaryNext" class="ghost" type="button">Próxima</button>
+        </div>
+      </div>
     </section>
 
     <section id="libraryPanel" class="library hidden">
