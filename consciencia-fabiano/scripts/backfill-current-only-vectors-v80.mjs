@@ -2,17 +2,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import {
-  S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command
-} from "@aws-sdk/client-s3";
 
 const BASE="https://consciencia-fabiano.focoeepoder2.workers.dev";
 const SECONDARY="https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary";
 const BUCKET="consciencia-fabiano-pdfs";
 const OWNER=String(process.env.FNS_OWNER_TOKEN||"").trim();
 const ACCOUNT=String(process.env.CLOUDFLARE_ACCOUNT_ID||"").trim();
-const ACCESS=String(process.env.R2_ACCESS_KEY_ID||"").trim();
-const SECRET=String(process.env.R2_SECRET_ACCESS_KEY||"").trim();
+const CF_TOKEN=String(process.env.CLOUDFLARE_API_TOKEN||"").trim();
 
 const EXPECTED_TOTAL=28636;
 const EXPECTED_BASELINE=25199;
@@ -24,18 +20,12 @@ const REPORT_PATH=path.resolve(".ci-results/v80-missing-vector-backfill.json");
 const IDS_PATH=path.resolve(".ci-results/v80-current-only-missing-ids.json");
 
 for(const [name,value] of Object.entries({
-  FNS_OWNER_TOKEN:OWNER,CLOUDFLARE_ACCOUNT_ID:ACCOUNT,
-  R2_ACCESS_KEY_ID:ACCESS,R2_SECRET_ACCESS_KEY:SECRET
+  FNS_OWNER_TOKEN:OWNER,CLOUDFLARE_ACCOUNT_ID:ACCOUNT,CLOUDFLARE_API_TOKEN:CF_TOKEN
 })){
   if(!value) throw new Error(name+" is required");
 }
 
-const s3=new S3Client({
-  region:"auto",
-  endpoint:"https://"+ACCOUNT+".r2.cloudflarestorage.com",
-  credentials:{accessKeyId:ACCESS,secretAccessKey:SECRET},
-  forcePathStyle:true
-});
+const R2_API="https://api.cloudflare.com/client/v4/accounts/"+ACCOUNT+"/r2/buckets/"+BUCKET;
 
 const report={
   ok:false,state:"starting",started_at:new Date().toISOString(),
@@ -79,25 +69,26 @@ function quotaLike(error){
   const s=String(error?.name||"")+" "+String(error?.Code||"")+" "+String(error?.message||"");
   return /429|quota|rate.?limit|SlowDown|TooManyRequests|free tier|exceeded/i.test(s);
 }
-async function bodyText(body){
-  if(!body)return "";
-  if(typeof body.transformToString==="function") return body.transformToString();
-  const chunks=[]; for await (const c of body) chunks.push(c);
-  return Buffer.concat(chunks).toString("utf8");
+function keyPath(key){
+  return String(key||"").split("/").map(encodeURIComponent).join("/");
+}
+function authHeaders(extra={}){
+  return {Authorization:"Bearer "+CF_TOKEN,...extra};
 }
 async function getObject(key,allowMissing=false){
-  try{
-    const out=await s3.send(new GetObjectCommand({Bucket:BUCKET,Key:key}));
-    return {
-      key,
-      text:await bodyText(out.Body),
-      metadata:out.Metadata||{},
-      contentType:out.ContentType||"application/json"
-    };
-  }catch(e){
-    if(allowMissing && (e?.name==="NoSuchKey" || e?.$metadata?.httpStatusCode===404)) return null;
-    throw e;
+  const res=await fetch(R2_API+"/objects/"+keyPath(key),{
+    headers:authHeaders({Accept:"application/octet-stream"})
+  });
+  if(res.status===404 && allowMissing)return null;
+  if(!res.ok){
+    const t=await res.text().catch(()=>"");
+    const e=new Error("R2 GET "+res.status+" "+key+" "+t.slice(0,300));
+    e.status=res.status; throw e;
   }
+  return {
+    key,text:await res.text(),metadata:{},
+    contentType:res.headers.get("content-type")||"application/json"
+  };
 }
 async function getJson(key,allowMissing=false){
   const o=await getObject(key,allowMissing);
@@ -105,20 +96,36 @@ async function getJson(key,allowMissing=false){
   return {...o,json:JSON.parse(o.text||"{}")};
 }
 async function putJson(key,data,metadata={}){
-  await s3.send(new PutObjectCommand({
-    Bucket:BUCKET,Key:key,Body:JSON.stringify(data),
-    ContentType:"application/json",Metadata:metadata
-  }));
+  const form=new FormData();
+  form.append("body",new Blob([JSON.stringify(data)],{type:"application/json"}),path.basename(key)||"object.json");
+  const res=await fetch(R2_API+"/objects/"+keyPath(key),{
+    method:"PUT",headers:authHeaders(),body:form
+  });
+  const text=await res.text().catch(()=>"");
+  let parsed={};try{parsed=JSON.parse(text||"{}");}catch{}
+  if(!res.ok || parsed?.success===false){
+    const e=new Error("R2 PUT "+res.status+" "+key+" "+text.slice(0,400));
+    e.status=res.status; throw e;
+  }
+  return parsed;
 }
 async function listKeys(prefix){
-  const out=[]; let token=undefined;
+  const out=[]; let cursor="";
   do{
-    const r=await s3.send(new ListObjectsV2Command({
-      Bucket:BUCKET,Prefix:prefix,ContinuationToken:token,MaxKeys:1000
-    }));
-    for(const x of (r.Contents||[])) if(x.Key) out.push(String(x.Key));
-    token=r.IsTruncated?r.NextContinuationToken:undefined;
-  }while(token);
+    const u=new URL(R2_API+"/objects");
+    u.searchParams.set("prefix",prefix);
+    u.searchParams.set("per_page","1000");
+    if(cursor)u.searchParams.set("cursor",cursor);
+    const res=await fetch(u,{headers:authHeaders({Accept:"application/json"})});
+    const text=await res.text();
+    let data={};try{data=JSON.parse(text||"{}");}catch{}
+    if(!res.ok || data?.success===false){
+      const e=new Error("R2 LIST "+res.status+" "+text.slice(0,400));
+      e.status=res.status;throw e;
+    }
+    for(const x of (Array.isArray(data?.result)?data.result:[])) if(x?.key)out.push(String(x.key));
+    cursor=data?.result_info?.is_truncated?String(data?.result_info?.cursor||""):"";
+  }while(cursor);
   return out.sort();
 }
 
@@ -463,11 +470,7 @@ async function main(){
     shard.payload.count=shard.rows.length;
     shard.payload.updated_at=iso();
 
-    await s3.send(new PutObjectCommand({
-      Bucket:BUCKET,Key:key,Body:JSON.stringify(shard.payload),
-      ContentType:shard.contentType||"application/json",
-      Metadata:shard.metadata||{}
-    }));
+    await putJson(key,shard.payload);
 
     const verify=await getJson(key);
     const verifiedRows=Array.isArray(verify.json?.rows)?verify.json.rows:[];
