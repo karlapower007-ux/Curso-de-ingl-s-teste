@@ -212,6 +212,34 @@ jobs:
           }
           NODE
 
+      - name: Discover native ChatGPT Sites project metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- PROJECT/PUBLISHER METADATA FROM LIVE BUILD ---"
+          grep -RahoE 'appgprj_[A-Za-z0-9_-]+|project[_-]?id["'''=: ]+[A-Za-z0-9_-]+|source[_-]?version[_-]?(number)?["'''=: ]+[0-9]+|projection[_-]?revision["'''=: ]+[0-9]+|deployment[_-]?id["'''=: ]+[A-Za-z0-9_-]+' probe probe/assets 2>/dev/null             | sort -u | head -n 200 || true
+
+          echo "--- SITE CONTROL / EDIT URL CONTEXT ---"
+          node - <<'NODE'
+          const fs=require('fs'), path=require('path');
+          const roots=['probe/fale-com-o-fabiano.html','probe/admin-fabiano.html'];
+          for(const name of fs.readdirSync('probe/assets').filter(x=>x.endsWith('.js'))){
+            roots.push(path.join('probe/assets',name));
+          }
+          const needles=['appgprj_','project_id','projectId','source_version','sourceVersion','projection_revision','projectionRevision','chatgpt.com','/edit','site-controls'];
+          for(const p of roots){
+            if(!fs.existsSync(p)) continue;
+            const src=fs.readFileSync(p,'utf8');
+            for(const n of needles){
+              const i=src.indexOf(n);
+              if(i>=0){
+                console.log('\nFILE='+p+' NEEDLE='+n);
+                console.log(src.slice(Math.max(0,i-1400),Math.min(src.length,i+3000)));
+              }
+            }
+          }
+          NODE
+
       - name: Upload probe evidence
         uses: actions/upload-artifact@v4
         with:
