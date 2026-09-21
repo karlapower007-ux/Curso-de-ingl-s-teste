@@ -563,6 +563,10 @@
     backendR2ReconcileRunning=true;
     try{
       const authoritative=await api("/api/admin/r2-reconcile-state",{},false);
+      // Preservation rule: when the Durable Object is quota-degraded, R2 is the
+      // safe read-only authority. Do not start a write reconciliation from an
+      // unavailable/partial source.
+      if(authoritative?.degraded===true || authoritative?.durable_available===false)return;
       if(authoritative?.in_sync===true && !force)return;
       if(authoritative?.in_sync===true)return;
 
@@ -583,6 +587,7 @@
           method:"POST",headers:{"Content-Type":"application/json"},
           body:JSON.stringify({generation:state.generation,offset:Number(state.offset||0),limit:200})
         },false);
+        if(step?.degraded===true || step?.skipped===true)return;
         state.offset=Number(step?.next_offset||state.offset||0);
         state.vectors=Number(state.vectors||0)+Number(step?.vectors||0);
         state.shards=Number(state.shards||0)+Number(step?.shards_written||0);
@@ -2843,22 +2848,26 @@
       : [];
 
     if(Number(manifest?.total_books||0)>0){
-      const merged=mergeBookLists(local,r2Books);
-      for(const item of merged)if(item.document_id)saveLocalCatalogEntry(item).catch(()=>{});
-      renderBooks(merged,true);
+      // The recovered R2 manifest is the authoritative online catalog. Legacy
+      // IndexedDB/RAG rows can contain many historical document IDs for the same
+      // PDF, so never union those stale identities into the visible cloud list.
+      // Nothing local is deleted: offline fallback remains intact.
+      const canonicalBooks=r2Books.filter(item=>item.document_id || item.arquivo || item.titulo);
+      for(const item of canonicalBooks)if(item.document_id)saveLocalCatalogEntry(item).catch(()=>{});
+      renderBooks(canonicalBooks,true);
       setUploadGate(false);
 
       const generation=String(manifest?.generation||"");
       const lastGeneration=String(localStorage.getItem(R2_LIBRARY_GENERATION_KEY)||"");
-      const needsHydration=local.length<Number(manifest.total_books||0) || generation!==lastGeneration;
+      const needsHydration=canonicalBooks.length<Number(manifest.total_books||0) || generation!==lastGeneration;
       if(needsHydration){
-        $("adminStatus").textContent="Biblioteca recuperada do R2 • "+merged.length+" livro(s) visíveis • hidratando IndexedDB silenciosamente…";
+        $("adminStatus").textContent="Biblioteca recuperada do R2 • "+canonicalBooks.length+" livro(s) visíveis • hidratando IndexedDB silenciosamente…";
         localStorage.setItem(R2_LIBRARY_GENERATION_KEY,generation);
         requestR2Hydration(true).catch(()=>{});
       }else{
-        $("adminStatus").textContent="Biblioteca íntegra • R2 + IndexedDB sincronizados • "+merged.length+" PDF(s).";
+        $("adminStatus").textContent="Biblioteca íntegra • R2 + IndexedDB sincronizados • "+canonicalBooks.length+" PDF(s).";
       }
-      return merged;
+      return canonicalBooks;
     }
 
     // Somente se o R2 estiver vazio, confirme também o DO antes de liberar upload.
