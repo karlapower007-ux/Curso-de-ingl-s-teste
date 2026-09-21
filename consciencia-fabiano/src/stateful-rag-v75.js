@@ -155,7 +155,10 @@ async function secondaryFetch(env, path, body = {}) {
   const directKey = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   const functionBase = String(env?.SUPABASE_SECONDARY_FUNCTION_URL || "").replace(/\/$/, "");
   const ownerToken = String(env?.FNS_OWNER_TOKEN || "").trim();
-  const useFunction = !(directBase && directKey) && Boolean(functionBase && ownerToken);
+  // Prefer the authenticated Edge Function whenever it is available.
+  // Direct REST remains a legacy fallback only, so stale direct credentials
+  // cannot silently bypass the verified 25,199-record secondary transport.
+  const useFunction = Boolean(functionBase && ownerToken);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SECONDARY_TIMEOUT_MS);
   try {
