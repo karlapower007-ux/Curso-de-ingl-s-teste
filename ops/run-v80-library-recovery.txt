@@ -1,4 +1,5 @@
 run=v8-library-recovery
+attempt=2
 requested_at=2026-09-21
 mode=deterministic-merge
 preserve_current=true
