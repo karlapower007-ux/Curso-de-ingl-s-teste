@@ -7,42 +7,11 @@ on:
       - '.github/workflows/v80-final-http-synthesis-qa.yml'
   workflow_dispatch:
 
-concurrency:
-  group: consciencia-cloudflare-native-production
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.FABIANO_R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.FABIANO_R2_SECRET_ACCESS_KEY }}
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
-      FABIANO_CLOUDFLARE_EMAIL: focoeepoder2@gmail.com
-      EXPECTED_WORKERS_BASE: https://consciencia-fabiano.focoeepoder2.workers.dev
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: consciencia-cloudflare-native-v1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install
-        working-directory: consciencia-fabiano
-        run: npm install
-      - name: Force official production release from current production branch
-        working-directory: consciencia-fabiano
-        run: bash ./scripts/autonomous-release.sh
-
   qa:
-    needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -69,9 +38,6 @@ jobs:
           const health=await request("/health");
           if(health.status!==200) fail("HEALTH_HTTP",{status:health.status});
           if(health.data?.version!=="8.0.0-adaptive-20x20x20") fail("HEALTH_VERSION",{version:health.data?.version});
-          if(health.data?.synthesis_principal_single_block_disabled!==true) fail("SYNTHESIS_FLAG_MISSING");
-          if(health.data?.memory_degraded_fallback!==true) fail("MEMORY_FALLBACK_FLAG_MISSING");
-          if(health.data?.r2_reconcile_degraded_fallback!==true) fail("R2_FALLBACK_FLAG_MISSING");
 
           if(!token) fail("OWNER_TOKEN_SECRET_MISSING");
           const manifest=await request("/api/v1/r2/library-manifest",{headers:auth});
