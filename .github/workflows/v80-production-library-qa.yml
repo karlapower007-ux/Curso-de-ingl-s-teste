@@ -68,7 +68,7 @@ jobs:
                 libraryButtonClass:document.querySelector('#libraryTab')?.className||'',
                 libraryPanelClass:document.querySelector('#libraryPanel')?.className||'',
                 chatPanelClass:document.querySelector('#chatPanel')?.className||'',
-                ownerToken:sessionStorage.getItem('fns_owner_token')||sessionStorage.getItem('fns_owner_token_v1')||'',
+                ownerToken:sessionStorage.getItem('consciencia_fabiano_owner_token_session_v2')||'',
                 appReady:document.readyState,
                 onclickBound:typeof document.querySelector('#libraryTab')?.onclick==='function',
                 scripts:[...document.scripts].map(s=>s.src||'[inline]')
@@ -89,11 +89,11 @@ jobs:
               const tabActive=await page.locator('#libraryTab').evaluate(el=>el.classList.contains('active'));
               const meaningful=rows.filter(x=>x.title && !/Nenhum PDF encontrado/i.test(x.title));
               const seriousErrors=errors.filter(x=>!/favicon|Failed to load resource.*404/i.test(x));
-              const ok=panelVisible && tabActive && meaningful.length>=8 && !/vazia|não foi possível|erro/i.test(String(status||''));
+              const ok=panelVisible && tabActive && meaningful.length>=8 && directManifest.ok===true && directManifest.total_books>=8 && !/vazia|não foi possível|erro/i.test(String(status||''));
               report.profiles.push({
                 name:p.name,viewport:p.viewport,ok,panel_visible:panelVisible,tab_active:tabActive,
                 visible_documents:meaningful.length,status:String(status||''),
-                documents:meaningful.slice(0,20),errors:seriousErrors.slice(0,20)
+                documents:meaningful.slice(0,20),errors:seriousErrors.slice(0,30),list_ready:listReady,direct_manifest:directManifest
               });
               await context.close();
             }
