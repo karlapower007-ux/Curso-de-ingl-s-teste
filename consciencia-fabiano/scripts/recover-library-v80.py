@@ -71,11 +71,21 @@ def request_json(method,url,headers=None,payload=None,timeout=45,retries=HTTP_RE
         time.sleep(min(8,2**attempt))
     raise last or RuntimeError("request failed")
 
+HTTP_USER_AGENT="curl/8.5.0"
+
 def admin_headers():
-    return {"X-FNS-Automation":AUTOMATION_SECRET,"Accept":"application/json"}
+    return {
+        "X-FNS-Automation":AUTOMATION_SECRET,
+        "Accept":"application/json",
+        "User-Agent":HTTP_USER_AGENT
+    }
 
 def owner_headers():
-    return {"X-FNS-Owner-Token":OWNER_TOKEN,"Accept":"application/json"}
+    return {
+        "X-FNS-Owner-Token":OWNER_TOKEN,
+        "Accept":"application/json",
+        "User-Agent":HTTP_USER_AGENT
+    }
 
 def secondary(action,payload):
     url=SECONDARY_URL+"?action="+urllib.parse.quote(action)
