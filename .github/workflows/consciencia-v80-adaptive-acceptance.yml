@@ -47,41 +47,7 @@ jobs:
             exit 1
           fi
 
-          if printf '%s\n' "$CHANGED" | grep -Eq '^consciencia-fabiano/public/(index\.html|failover-v3\.js|sw-v3\.js)
-      - name: Verify preservation manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
-          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
-          test "$(jq -r '.library.historical_verified_fallback_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
-          test "$(jq -r '.hard_guards.pre_final_llm_calls' consciencia-fabiano/v8-preservation-manifest.json)" = "0"
-          test "$(jq -r '.hard_guards.production_auto_promotion' consciencia-fabiano/v8-preservation-manifest.json)" = "false"
-          echo "V8_MANIFEST_GATE=pass"
-
-      - name: Install only existing dev dependencies
-        working-directory: consciencia-fabiano
-        run: npm install --ignore-scripts
-
-      - name: Run legacy plus V8 acceptance gates
-        working-directory: consciencia-fabiano
-        run: npm run check
-
-      - name: Explicit V8 overload test
-        working-directory: consciencia-fabiano
-        run: npm run test:adaptive-v80
-
-      - name: Validate autonomous release shell
-        working-directory: consciencia-fabiano
-        run: bash -n scripts/autonomous-release.sh
-
-      - name: Gate summary
-        run: |
-          echo "V8_ADAPTIVE_ACCEPTANCE=pass"
-          echo "PRODUCTION_DEPLOY=disabled"
-          echo "FRONTEND_PRESERVED=protected-core-plus-authorized-citation-ui"
-          echo "LIBRARY_REINDEX=disabled"
-; then
+          if printf '%s\n' "$CHANGED" | grep -Eq '^consciencia-fabiano/public/(index\.html|failover-v3\.js|sw-v3\.js)$'; then
             echo "V8 preservation gate: protected frontend core changed."
             exit 1
           fi
@@ -93,41 +59,7 @@ jobs:
             test "$(jq -r '.library.mutate_existing_chunks' consciencia-fabiano/v8-citation-ui-authorized.json)" = "false"
             test "$(jq -r '.library.mutate_existing_vectors' consciencia-fabiano/v8-citation-ui-authorized.json)" = "false"
 
-            UNAUTHORIZED="$(printf '%s\n' "$FRONTEND_CHANGED" | grep -Ev '^consciencia-fabiano/public/(app\.js|style\.css)
-      - name: Verify preservation manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(jq -r '.library.expected_verified_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
-          test "$(jq -r '.library.expected_verified_vectors' consciencia-fabiano/v8-preservation-manifest.json)" = "28636"
-          test "$(jq -r '.library.historical_verified_fallback_chunks' consciencia-fabiano/v8-preservation-manifest.json)" = "25199"
-          test "$(jq -r '.hard_guards.pre_final_llm_calls' consciencia-fabiano/v8-preservation-manifest.json)" = "0"
-          test "$(jq -r '.hard_guards.production_auto_promotion' consciencia-fabiano/v8-preservation-manifest.json)" = "false"
-          echo "V8_MANIFEST_GATE=pass"
-
-      - name: Install only existing dev dependencies
-        working-directory: consciencia-fabiano
-        run: npm install --ignore-scripts
-
-      - name: Run legacy plus V8 acceptance gates
-        working-directory: consciencia-fabiano
-        run: npm run check
-
-      - name: Explicit V8 overload test
-        working-directory: consciencia-fabiano
-        run: npm run test:adaptive-v80
-
-      - name: Validate autonomous release shell
-        working-directory: consciencia-fabiano
-        run: bash -n scripts/autonomous-release.sh
-
-      - name: Gate summary
-        run: |
-          echo "V8_ADAPTIVE_ACCEPTANCE=pass"
-          echo "PRODUCTION_DEPLOY=disabled"
-          echo "FRONTEND_PRESERVED=yes"
-          echo "LIBRARY_REINDEX=disabled"
- || true)"
+            UNAUTHORIZED="$(printf '%s\n' "$FRONTEND_CHANGED" | grep -Ev '^consciencia-fabiano/public/(app\.js|style\.css)$' || true)"
             if [ -n "$UNAUTHORIZED" ]; then
               echo "V8 preservation gate: unauthorized frontend file changed:"
               printf '%s\n' "$UNAUTHORIZED"
@@ -171,5 +103,5 @@ jobs:
         run: |
           echo "V8_ADAPTIVE_ACCEPTANCE=pass"
           echo "PRODUCTION_DEPLOY=disabled"
-          echo "FRONTEND_PRESERVED=yes"
+          echo "FRONTEND_PRESERVED=protected-core-plus-authorized-citation-ui"
           echo "LIBRARY_REINDEX=disabled"
