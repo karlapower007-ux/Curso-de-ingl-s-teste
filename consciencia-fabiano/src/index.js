@@ -801,6 +801,8 @@ const STRICT_REQUEST_GENERIC_TERMS=new Set([
   "ensina","ensinam","ensinou","ensino","visao","oficial","lds","sud","igreja","doutrina",
   "pessoa","pessoas","tema","assunto","informacao","informacoes","conteudo","conteudos",
   "procure","procurar","busca","buscar","ache","achar","encontre","encontrar","fale","falar",
+  "quem","onde","quando","porque","por","que","qual","quais","quanto","quantos","significa","significado",
+  "who","where","when","why","which","meaning","means",
   "book","books","document","documents","page","pages","chapter","chapters","verse","verses",
   "citation","citations","reference","references","source","sources","library","text","answer",
   "study","explain","official","topic","information","content","search","find"
@@ -3176,21 +3178,19 @@ function crossLibraryLedger(context) {
 
 function compactIndependentEvidenceFromSources(sources) {
   const docs=new Map();
-  const rows=Array.isArray(sources)?sources:[];
-  for(let index=0; index<rows.length; index++){
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete);
+  for(let index=0;index<rows.length;index++){
     const s=rows[index];
-    const key=String(s?.document_id || s?.titulo || s?.arquivo || "").trim() || "documento";
+    const key=String(s?.document_id || bibliographicSourceLabel(s) || index).trim();
     if(docs.has(key)) continue;
     docs.set(key,{...s,ref_id:sourceRefId(s,index)});
   }
   return [...docs.values()].slice(0,TOP_K).map((s)=>{
     const ref=sourceRefId(s,0);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "página não informada";
+    const label=bibliographicSourceLabel(s);
     const text=String(s?.trecho || "").replace(/\s+/g," ").trim().slice(0,180);
-    return "["+ref+"] "+name+(author?" — "+author:"")+" — "+page+" — "+text;
-  }).join("\n");
+    return "["+ref+"] "+label+" — "+text;
+  }).filter(Boolean).join("\n");
 }
 
 function documentIdentity(item) {
@@ -3200,12 +3200,12 @@ function documentIdentity(item) {
 function crossLibraryStats(context) {
   const docs=new Map();
   for(const item of (context || [])){
-    const id=documentIdentity(item);
+    const id=String(item?.document_id || bibliographicSourceLabel(item) || "").trim();
     if(!id) continue;
     const current=docs.get(id) || {
       id,
-      name:humanDocumentName(item?.filename,item?.title),
-      author:String(item?.author || ""),
+      name:bibliographicSourceLabel(item),
+      author:String(item?.autor || ""),
       hits:0
     };
     current.hits++;
@@ -3213,7 +3213,7 @@ function crossLibraryStats(context) {
   }
   return {
     independent_documents:docs.size,
-    documents:[...docs.values()].slice(0,TOP_K)
+    documents:[...docs.values()].filter(doc=>doc.name).slice(0,TOP_K)
   };
 }
 
@@ -3322,32 +3322,24 @@ async function runMasterNode20(env,question,lastBatch,baton,history,source) {
 
 function massiveNodeEvidence(source, question, nodeIndex) {
   const node=nodeIndex+1;
-  if(!source){
+  if(!source?.bibliographic_complete){
     return {
-      node,
-      status:"pass-through",
-      ref_id:"",
-      source:"",
-      page:null,
-      evidence:"",
+      node,status:"pass-through",ref_id:"",source:"",page:null,evidence:"",
       metadata:{deterministic:true,temperature:0}
     };
   }
   const ref=sourceRefId(source,nodeIndex);
-  const sourceName=String(source?.titulo || source?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-  const author=String(source?.autor || "").replace(/[\r\n]+/g," ").trim();
-  const page=Number(source?.pagina || 0) || null;
+  const label=bibliographicSourceLabel(source);
   const raw=String(source?.trecho || source?.text || "");
   const excerpt=focusExcerptForQuestion(raw,question,MASSIVE_NODE_EVIDENCE_CHARS) ||
     cleanNarrativeText(raw).slice(0,MASSIVE_NODE_EVIDENCE_CHARS);
-  const evidence="["+ref+"] "+sourceName+(author?" — "+author:"")+(page?" — página "+page:"")+
-    " — "+String(excerpt || "").replace(/\s+/g," ").trim();
+  const evidence="["+ref+"] "+label+" — "+String(excerpt || "").replace(/\s+/g," ").trim();
   return {
     node,
     status:excerpt ? "complete" : "no-evidence",
     ref_id:ref,
-    source:sourceName,
-    page,
+    source:label,
+    page:source?.pagina || null,
     evidence,
     metadata:{
       deterministic:true,
@@ -3486,7 +3478,7 @@ const EXHAUSTIVE_GROUP_BATCH_SIZE=10;
 const EXHAUSTIVE_PART_MAX_COMPLETION_TOKENS=4800;
 
 function exhaustiveEvidenceGroups(sources){
-  const rows=Array.isArray(sources)?sources.slice(0,TOP_K):[];
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete).slice(0,TOP_K);
   const groups=[];
   const seen=new Map();
   for(let i=0;i<rows.length;i++){
@@ -3502,9 +3494,9 @@ function exhaustiveEvidenceGroups(sources){
     const group={
       id:"G"+(groups.length+1),
       document_id:String(row?.document_id || ""),
-      title:String(row?.titulo || row?.arquivo || "Documento"),
-      author:String(row?.autor || ""),
-      page:row?.pagina || null,
+      title:bibliographicSourceLabel(row),
+      author:"",
+      page:null,
       refs:[row.ref_id],
       evidence:excerpt.slice(0,520)
     };
@@ -3568,32 +3560,14 @@ function exhaustiveGroupEvidence(groups){
 function deterministicPreservationText(groups){
   const rows=Array.isArray(groups)?groups:[];
   if(!rows.length) return "";
-  const docs=new Map();
-  for(const g of rows){
-    const key=String(g?.document_id || g?.title || "Documento");
-    if(!docs.has(key)) docs.set(key,{
-      title:String(g?.title || "Documento"),
-      author:String(g?.author || ""),
-      groups:[]
-    });
-    docs.get(key).groups.push(g);
-  }
   const sections=[];
-  for(const doc of docs.values()){
-    const heading="### "+doc.title+(doc.author?" — "+doc.author:"");
-    const paragraphs=doc.groups.map(g=>{
-      const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
-      const page=g.page ? " Na página "+g.page+"," : "";
-      const evidence=String(g.evidence||"").replace(/\s+/g," ").trim();
-      return (
-        "Esta evidência acrescenta um ponto documental próprio ao estudo. "+refs+page+
-        " o material recuperado registra que "+evidence+
-        " Este ponto documental permanece visível no desenvolvimento e não é descartado como simples referência; nenhuma conclusão além do que a evidência sustenta é acrescentada."
-      );
-    });
-    sections.push(heading+"\n\n"+paragraphs.join("\n\n"));
+  for(const g of rows){
+    const refs=(g.refs||[]).map(ref=>"["+ref+"]").join(" ");
+    const evidence=String(g.evidence||"").replace(/\s+/g," ").trim();
+    if(!evidence || !g.title) continue;
+    sections.push("### "+g.title+"\n\n"+evidence+" "+refs);
   }
-  return "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n");
+  return sections.length ? "## Desenvolvimento documental complementar\n\n"+sections.join("\n\n") : "";
 }
 
 function exhaustiveStructureGate(text,groups,contract){
@@ -4278,13 +4252,12 @@ function buildMapBatchContext(batch,question="",batchIndex=0) {
   const rows=Array.from(batch || []).slice(0,MAP_BATCH_SIZE);
   const parts=[];
   for(let i=0;i<rows.length;i++){
-    const c=rows[i];
+    const raw=rows[i];
+    const source=raw?.bibliographic_complete ? raw : sourceBibliographicRecord(raw,i);
+    if(!source?.bibliographic_complete) continue;
     const globalIndex=batchIndex*MAP_BATCH_SIZE+i+1;
-    const sourceName=humanDocumentName(c.filename,c.title);
-    const header="[F"+globalIndex+"] "+sourceName+
-      (c.author ? " — "+c.author : "")+
-      ", página "+(c.page || "não informada");
-    const focused=focusExcerptForQuestion(c.text || "",question,420);
+    const header="[F"+globalIndex+"] "+bibliographicSourceLabel(source);
+    const focused=focusExcerptForQuestion(source.trecho || raw?.text || "",question,420);
     const excerpt=trimToTokenBudget(focused,105);
     if(!excerpt) continue;
     parts.push(header+"\n"+excerpt);
@@ -4293,26 +4266,24 @@ function buildMapBatchContext(batch,question="",batchIndex=0) {
 }
 
 function buildRagContext(context, question = "", tokenBudget = GROQ_RAG_BUDGET_TOKENS) {
-  if (!Array.isArray(context) || !context.length) {
-    return "(Nenhum trecho da biblioteca foi recuperado para esta pergunta.)";
-  }
-  const parts = [];
-  let used = 0;
-  for (let i = 0; i < context.length; i++) {
-    const c = context[i];
-    const sourceName=humanDocumentName(c.filename,c.title);
-    const header = "[F" + (i + 1) + "] " + sourceName +
-      (c.author ? " — " + c.author : "") + ", página " + (c.page || "não informada");
-    const remaining = Math.max(180, tokenBudget - used - estimateTokens(header) - 20);
-    if (remaining <= 180 && parts.length) break;
-    const focused=focusExcerptForQuestion(c.text || "",question,720);
-    const excerpt = trimToTokenBudget(focused, Math.min(260, remaining));
+  if(!Array.isArray(context) || !context.length) return "(Nenhuma referência bibliográfica exata foi recuperada para esta pergunta.)";
+  const parts=[];
+  let used=0;
+  for(let i=0;i<context.length;i++){
+    const raw=context[i];
+    const source=raw?.bibliographic_complete ? raw : sourceBibliographicRecord(raw,i);
+    if(!source?.bibliographic_complete) continue;
+    const header="[F"+(i+1)+"] "+bibliographicSourceLabel(source);
+    const remaining=Math.max(180,tokenBudget-used-estimateTokens(header)-20);
+    if(remaining<=180 && parts.length) break;
+    const focused=focusExcerptForQuestion(source.trecho || raw?.text || "",question,720);
+    const excerpt=trimToTokenBudget(focused,Math.min(260,remaining));
     if(!excerpt) continue;
-    const part = header + "\n" + excerpt;
-    const cost = estimateTokens(part);
-    if (parts.length && used + cost > tokenBudget) break;
+    const part=header+"\n"+excerpt;
+    const cost=estimateTokens(part);
+    if(parts.length && used+cost>tokenBudget) break;
     parts.push(part);
-    used += cost;
+    used+=cost;
   }
   return parts.join("\n\n");
 }
@@ -4715,36 +4686,15 @@ function cognitiveContractPrompt(contract) {
 }
 
 function referenceOnlyAnswer(sources,question="") {
-  const rows=Array.isArray(sources)?sources:[];
-  const q=foldSearchText(question);
-  const wantsStructural=/\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q);
-  if(wantsStructural){
-    const ranked=rows.slice().sort((a,b)=>{
-      const aClient=/client/i.test(String(a?.retrieval_mode||"")) ? 1000 : 0;
-      const bClient=/client/i.test(String(b?.retrieval_mode||"")) ? 1000 : 0;
-      return (bClient+Number(b?.score||0))-(aClient+Number(a?.score||0));
-    });
-    for(const s of ranked){
-      const title=String(s?.titulo || s?.title || s?.arquivo || "").replace(/[\r\n]+/g," ").trim();
-      const corpus=[title,s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ");
-      const location=corpus.match(/\b(\d{1,3})\s*:\s*(\d{1,3})\b/);
-      const chapter=Number(s?.chapter || s?.capitulo || location?.[1] || 0);
-      const verse=Number(s?.verse || s?.versiculo || location?.[2] || 0);
-      if(title && chapter>0 && verse>0) return title+" "+chapter+":"+verse;
-    }
-  }
+  const rows=(Array.isArray(sources)?sources:[]).filter(s=>s?.bibliographic_complete);
   const seen=new Set(),lines=[];
   for(let i=0;i<rows.length;i++){
     const s=rows[i];
-    const ref=sourceRefId(s,i);
-    const key=[s?.document_id||"",s?.pagina||"",s?.titulo||s?.arquivo||""].join("|");
-    if(seen.has(key)) continue;
-    seen.add(key);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "";
-    lines.push("["+ref+"] "+[name,author,page].filter(Boolean).join(" — "));
-    if(lines.length>=12) break;
+    const label=bibliographicSourceLabel(s);
+    if(!label || seen.has(label)) continue;
+    seen.add(label);
+    lines.push(label);
+    if(lines.length>=50) break;
   }
   return lines.join("\n");
 }
