@@ -29,8 +29,19 @@ must(worker.includes("function syntheticScriptureReference"),"scripture canonica
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
 must(worker.includes("citation_dictionary_canonical_filename_suffixes: true"),"canonical scripture filename suffix flag missing");
 must(worker.includes("citation_dictionary_scripture_direct_ref_gate: true"),"scripture direct reference CPU gate missing");
-must(worker.includes("extractScriptureHeading(text,currentBook=\"\",precomputedDirect=null)"),"precomputed scripture heading reference path missing");
-must(worker.includes("explicitScriptureReferenceLikely"),"scripture direct reference parser must be gated by chapter:verse syntax");
+must(worker.includes("citation_dictionary_regex_precompiled: true"),"precompiled citation regex flag missing");
+must(worker.includes("citation_dictionary_scripture_location_not_crossref: true"),"scripture location must be separated from cross-references");
+must(worker.includes("const SCRIPTURE_REFERENCE_RE=new RegExp"),"precompiled scripture reference regex missing");
+must(worker.includes("const SCRIPTURE_SOURCE_PATTERNS=["),"precompiled scripture source patterns missing");
+must(worker.includes("const CHAPTER_HEADING_PATTERNS=["),"precompiled chapter heading patterns missing");
+must(worker.includes("const SCRIPTURE_HEADING_LINE_RE=new RegExp"),"precompiled scripture heading regex missing");
+must(worker.includes("cross_references:scriptureCrossRefs"),"scripture cross-reference separation missing");
+must(worker.includes('if(/\\d{1,3}\\s*:\\s*\\d{1,3}/.test(rowText))'),"scripture cross-reference parser must be gated by chapter:verse syntax");
+
+must(worker.includes("scripture_references:scriptureLocationRefs"),"scripture primary location array missing");
+must(worker.includes('if(kind==="standard-works") return "Gênesis";'),"standard works location seed missing");
+
+must(worker.includes("function extractScriptureHeading(text,currentBook=\"\")"),"scripture heading resolver must not use cross-references as location state");
 
 must(worker.includes('.replace(/[-_]+/g," ")'),"scripture filename slug normalization missing");
 must(worker.includes('portugues|portuguese|english|por|pt|eng|en|spa|es'),"canonical scripture language suffixes missing");
