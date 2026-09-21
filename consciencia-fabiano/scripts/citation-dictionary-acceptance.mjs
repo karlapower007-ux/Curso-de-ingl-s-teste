@@ -69,6 +69,22 @@ must(worker.includes('backend:"r2-authoritative"'),"citation backend must identi
 must(worker.includes("authoritative_r2_preferred:true"),"public citation contract must prefer authoritative R2");
 must(worker.includes("cpu_bounded_segment:true"),"CPU bounded citation contract missing");
 
+must(worker.includes("function strictRequestAnchors"),"strict current-request anchor extractor missing");
+must(worker.includes("function exactWholeAnchorMatch"),"whole-token exact matcher missing");
+must(worker.includes("function strictCurrentRequestCandidate"),"chat exact-request filter missing");
+must(worker.includes("return exactWholeAnchorMatch(text,anchors);"),"dictionary must use strict AND exact matcher");
+must(worker.includes(".filter(row=>strictCurrentRequestCandidate(row,retrievalQuestion))"),"chat must reject off-topic retrieval rows");
+must(worker.includes("citation_dictionary_exact_request_only: true"),"dictionary exact-request runtime flag missing");
+must(worker.includes("citation_dictionary_all_anchor_terms_required: true"),"dictionary AND-anchor runtime flag missing");
+must(worker.includes("citation_dictionary_document_names_exposed: false"),"dictionary must forbid document-name exposure");
+must(worker.includes("chat_exact_request_only: true"),"chat exact-request runtime flag missing");
+must(worker.includes("chat_document_names_exposed: false"),"chat must forbid document-name exposure");
+must(worker.includes("function bibliographicSourceLabel"),"bibliographic chat label formatter missing");
+must(worker.includes("bibliographic_type:\"scripture\""),"scripture bibliographic source contract missing");
+must(worker.includes("bibliographic_type:\"book\""),"book bibliographic source contract missing");
+must(worker.includes("Boolean(bookTitle && chapterNumber && page)"),"books must require title + chapter + page");
+must(worker.includes("Boolean(scriptureBook && primaryScripture?.chapter && primaryScripture?.verse_start)"),"scriptures must require book + chapter + verse");
+
 const citationBlock=worker.slice(
   worker.indexOf('if (url.pathname === "/citation-search"'),
   worker.indexOf('if (url.pathname === "/search-lexical"')
@@ -85,8 +101,14 @@ must(!/env\.PDFS\.(?:put|delete)\s*\(/i.test(r2CitationBlock),"R2 citation path 
 
 must(app.includes("attachCitationDictionary"),"desktop/mobile citation component missing");
 must(app.includes("Dicionário de Citações"),"citation dictionary label missing");
-must(app.includes("Capítulo: localização bibliográfica pendente"),"chapter field must never silently disappear");
-must(app.includes("Página: localização bibliográfica pendente"),"page field must never silently disappear");
+
+must(app.includes("busca exata"),"dictionary UI must state exact-search mode");
+must(app.includes("somente referências que contêm exatamente o assunto pedido"),"dictionary UI exact-scope explanation missing");
+must(app.includes('label=String(item?.primary_reference || "").trim();'),"scripture UI must display canonical book chapter verse only");
+must(app.includes('title+" — Capítulo "+chapter'),"book UI must display title + chapter");
+must(app.includes('" — Página "+page'),"book UI must display page");
+must(!app.includes("Documento interno:"),"technical document name must never be shown");
+must(!app.includes("item?.technical_document"),"technical document field must not be rendered");
 must(app.includes("CITATION_UI_PAGE_SIZE=50"),"browser pagination must be 50");
 must(app.includes("scan_cursor"),"browser must continue segmented citation scans");
 must(app.includes("continueBackgroundScan"),"browser must continue citation scanning without blocking the first page");
@@ -103,6 +125,12 @@ must(css.includes(".citation-dictionary-nav"),"pagination navigation styles miss
 must(manifest?.library?.mutate_existing_chunks===false,"existing chunks must stay frozen");
 must(manifest?.library?.mutate_existing_vectors===false,"existing vectors must stay frozen");
 must(manifest?.citation_dictionary?.desktop_mobile_parity===true,"desktop/mobile parity required");
+
+must(manifest?.citation_dictionary?.exact_request_only===true,"manifest must require exact request only");
+must(manifest?.citation_dictionary?.all_anchor_terms_required===true,"manifest must require all topical anchors");
+must(manifest?.citation_dictionary?.document_names_exposed===false,"manifest must forbid document names");
+must(manifest?.citation_dictionary?.book_reference_required?.join("+")==="book+chapter+page","book bibliographic contract mismatch");
+must(manifest?.citation_dictionary?.scripture_reference_required?.join("+")==="book+chapter+verse","scripture bibliographic contract mismatch");
 
 console.log(JSON.stringify({
   ok:true,
