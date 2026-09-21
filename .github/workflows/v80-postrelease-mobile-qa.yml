@@ -44,7 +44,7 @@ jobs:
             try{return JSON.parse(text)}catch{return {raw:text.slice(0,600)}}
           };
 
-          const healthRes=await fetch(BASE+"/api/health");
+          const healthRes=await fetch(BASE+"/health/deploy");
           const health=await asJson(healthRes);
           if(healthRes.status!==200 || health?.version!=="8.0.0-adaptive-20x20x20"){
             throw new Error("health failed "+healthRes.status+" "+JSON.stringify(health));
