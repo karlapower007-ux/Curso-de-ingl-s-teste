@@ -54,8 +54,8 @@ const CITATION_SCAN_LIMIT = 50000;
 const CITATION_MAX_QUERY_CHARS = 4000;
 const CITATION_R2_CACHE_TTL_MS = 5 * 60 * 1000;
 const CITATION_R2_CACHE_MAX_QUERIES = 2;
-const CITATION_R2_SHARDS_PER_REQUEST = 2;
-const CITATION_R2_MAX_MATCHES_PER_REQUEST = 1000;
+const CITATION_R2_SHARDS_PER_REQUEST = 1;
+const CITATION_R2_MAX_MATCHES_PER_REQUEST = 500;
 const citationR2SearchCache = new Map();
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
@@ -2209,21 +2209,35 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       }
 
       const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+      const rowChunkIndex=Math.max(0,Number(row?.chunk_index||0));
+      const firstChunkOfPage=(rowChunkIndex % 10000)===0;
+      const headingProbe=rowText.slice(0,900);
+
       if(scriptureKind){
         if(!currentScriptureBook) currentScriptureBook=scriptureCollectionSeed(scriptureKind);
-        const scriptureHeading=extractScriptureHeading(rowText,currentScriptureBook);
-        if(scriptureHeading){
-          currentScriptureBook=scriptureHeading.book || currentScriptureBook;
-          currentScriptureChapter=scriptureHeading.chapter || currentScriptureChapter;
+        const shouldProbeScriptureHeading=
+          firstChunkOfPage ||
+          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|se[cç][aã]o|section)\s+/imu.test(headingProbe);
+        if(shouldProbeScriptureHeading){
+          const scriptureHeading=extractScriptureHeading(headingProbe,currentScriptureBook);
+          if(scriptureHeading){
+            currentScriptureBook=scriptureHeading.book || currentScriptureBook;
+            currentScriptureChapter=scriptureHeading.chapter || currentScriptureChapter;
+          }
         }
       }else{
-        const heading=extractChapterHeading(String(row?.title||"")+"\n"+rowText);
-        if(heading){
-          currentChapterNumber=heading.number || currentChapterNumber;
-          currentChapterTitle=heading.title || currentChapterTitle || "";
-        }else{
-          const named=extractNamedSectionHeading(rowText,row?.title||row?.filename||"");
-          if(named) currentChapterTitle=named;
+        const shouldProbeBookHeading=
+          firstChunkOfPage ||
+          /(?:^|\n)\s*(?:cap[ií]tulo|chapter|cap\.?)\s+/imu.test(headingProbe);
+        if(shouldProbeBookHeading){
+          const heading=extractChapterHeading(String(row?.title||"")+"\n"+headingProbe);
+          if(heading){
+            currentChapterNumber=heading.number || currentChapterNumber;
+            currentChapterTitle=heading.title || currentChapterTitle || "";
+          }else if(firstChunkOfPage){
+            const named=extractNamedSectionHeading(headingProbe,row?.title||row?.filename||"");
+            if(named) currentChapterTitle=named;
+          }
         }
       }
 
@@ -2231,19 +2245,15 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
       if(!lexical) continue;
 
       let scriptureLocationRefs=[];
-      let scriptureCrossRefs=[];
       if(scriptureKind){
-        const verseRange=extractScriptureVerseRange(rowText,Number(row?.page||0));
+        const verseRange=extractScriptureVerseRange(rowText.slice(0,2400),Number(row?.page||0));
         const synthetic=syntheticScriptureReference(currentScriptureBook,currentScriptureChapter,verseRange);
         if(synthetic) scriptureLocationRefs=[synthetic];
-        if(/\d{1,3}\s*:\s*\d{1,3}/.test(rowText)){
-          scriptureCrossRefs=extractScriptureReferences(rowText)
-            .filter(ref=>!synthetic || ref.reference!==synthetic.reference)
-            .slice(0,12);
-        }
       }
 
-      const inlineHeading=!scriptureKind ? extractChapterHeading(String(row?.title||"")+"\n"+rowText) : null;
+      const inlineHeading=(!scriptureKind && firstChunkOfPage)
+        ? extractChapterHeading(String(row?.title||"")+"\n"+headingProbe)
+        : null;
       const chapterNumber=inlineHeading?.number || currentChapterNumber || null;
       const chapterTitle=inlineHeading?.title || currentChapterTitle || "";
 
@@ -2262,7 +2272,7 @@ async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) 
         matched_terms:lexical.matched_terms,
         scripture_source_kind:scriptureKind,
         scripture_references:scriptureLocationRefs,
-        cross_references:scriptureCrossRefs,
+        cross_references:[],
         chapter_number:chapterNumber,
         chapter_title:chapterTitle
       });
@@ -5457,6 +5467,9 @@ async function status(env) {
     citation_dictionary_canonical_filename_suffixes: true,
     citation_dictionary_scripture_direct_ref_gate: true,
     citation_dictionary_regex_precompiled: true,
+    citation_dictionary_ultrasafe_one_shard: true,
+    citation_dictionary_crossrefs_deferred: true,
+    citation_dictionary_heading_probe_chars: 900,
     citation_dictionary_scripture_location_not_crossref: true,
     citation_dictionary_scripture_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
     citation_dictionary_chapter_word_numbers: true,
