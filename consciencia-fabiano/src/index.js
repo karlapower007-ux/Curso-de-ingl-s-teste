@@ -2050,7 +2050,7 @@ function extractScriptureHeading(text,currentBook="") {
   return null;
 }
 
-const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\\s.;!?—–-])(\\d{1,3})\\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
+const SCRIPTURE_INLINE_VERSE_MARKER_RE=/(?:^|[\s.;!?—–-])(\d{1,3})\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇÀ“"'(])/gu;
 
 function extractScriptureVerseRange(text,page=0,{inferVerseOne=false}={}) {
   const raw=String(text || "").replace(/\r/g," ").replace(/\s+/g," ").trim();
