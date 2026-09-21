@@ -80,7 +80,28 @@
       "chapter",
       "verse_start",
       "verse_end"
-    ]
+    ],
+    "exact_request_only": true,
+    "all_anchor_terms_required": true,
+    "document_names_exposed": false,
+    "chat_exact_request_only": true,
+    "chat_document_names_exposed": false,
+    "book_reference_required": [
+      "book",
+      "chapter",
+      "page"
+    ],
+    "book_chapter_title_optional": true,
+    "scripture_reference_required": [
+      "book",
+      "chapter",
+      "verse"
+    ],
+    "standard_works_document_name_forbidden": true,
+    "query_scope_examples": {
+      "Adão": "somente trechos que contêm Adão",
+      "Miguel": "somente trechos que contêm Miguel"
+    }
   },
   "ci_retrigger": "v8-adaptive-acceptance-after-authorized-ui-gate"
 }
