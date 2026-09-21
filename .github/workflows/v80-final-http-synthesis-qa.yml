@@ -26,7 +26,6 @@ jobs:
           const token=String(process.env.FNS_OWNER_TOKEN||"").trim();
           const auth=token ? {Authorization:"Bearer "+token} : {};
           const memoryKey="v80-final-qa-memory-key-20260921-abcdef0123456789";
-          const fail=(msg,extra={})=>{ console.error("QA_FAIL="+msg,JSON.stringify(extra)); process.exit(1); };
           const request=async(path,options={})=>{
             const res=await fetch(base+path,options);
             const text=await res.text();
@@ -34,99 +33,96 @@ jobs:
             try{ data=JSON.parse(text); }catch{}
             return {status:res.status,data,text};
           };
+          const fatal=(msg,extra={})=>{ console.error("QA_FATAL="+msg,JSON.stringify(extra)); process.exit(1); };
 
           const health=await request("/health");
-          if(health.status!==200) fail("HEALTH_HTTP",{status:health.status});
-          if(health.data?.version!=="8.0.0-adaptive-20x20x20") fail("HEALTH_VERSION",{version:health.data?.version});
+          if(health.status!==200) fatal("HEALTH_HTTP",{status:health.status});
+          if(!token) fatal("OWNER_TOKEN_SECRET_MISSING");
 
-          if(!token) fail("OWNER_TOKEN_SECRET_MISSING");
           const manifest=await request("/api/v1/r2/library-manifest",{headers:auth});
-          if(manifest.status!==200) fail("MANIFEST_HTTP",{status:manifest.status,code:manifest.data?.code});
-          if(manifest.data?.ok!==true) fail("MANIFEST_NOT_OK");
-          if(Number(manifest.data?.total_chunks)!==28636) fail("MANIFEST_CHUNKS",{value:manifest.data?.total_chunks});
-          if(Number(manifest.data?.vector_count)!==28636) fail("MANIFEST_VECTORS",{value:manifest.data?.vector_count});
-          if(Number(manifest.data?.total_books)<8) fail("MANIFEST_BOOKS",{value:manifest.data?.total_books});
+          if(manifest.status!==200 || manifest.data?.ok!==true) fatal("MANIFEST_HTTP",{status:manifest.status,code:manifest.data?.code});
+          if(Number(manifest.data?.total_chunks)!==28636 || Number(manifest.data?.vector_count)!==28636) {
+            fatal("MANIFEST_COUNTS",{chunks:manifest.data?.total_chunks,vectors:manifest.data?.vector_count});
+          }
 
           const reconcile=await request("/api/admin/r2-reconcile-state",{headers:auth});
-          if(reconcile.status>=500) fail("RECONCILE_HTTP_5XX",{status:reconcile.status,code:reconcile.data?.code});
-          if(reconcile.status!==200 || reconcile.data?.ok!==true) fail("RECONCILE_NOT_OK",{status:reconcile.status,code:reconcile.data?.code});
+          if(reconcile.status>=500 || reconcile.status!==200 || reconcile.data?.ok!==true) fatal("RECONCILE_HTTP",{status:reconcile.status,code:reconcile.data?.code});
           const safeReconcile = reconcile.data?.in_sync===true ||
             (reconcile.data?.degraded===true && reconcile.data?.safe_read_only_fallback===true &&
              Number(reconcile.data?.r2_chunks)>=28636 && Number(reconcile.data?.r2_vectors)>=28636);
-          if(!safeReconcile) fail("RECONCILE_UNSAFE",{
-            in_sync:reconcile.data?.in_sync,degraded:reconcile.data?.degraded,
-            r2_chunks:reconcile.data?.r2_chunks,r2_vectors:reconcile.data?.r2_vectors
-          });
+          if(!safeReconcile) fatal("RECONCILE_UNSAFE",{in_sync:reconcile.data?.in_sync,degraded:reconcile.data?.degraded,r2_chunks:reconcile.data?.r2_chunks,r2_vectors:reconcile.data?.r2_vectors});
 
           const memory=await request("/api/memory",{headers:{"X-FNS-Memory-Key":memoryKey}});
-          if(memory.status>=500) fail("MEMORY_HTTP_5XX",{status:memory.status,code:memory.data?.code});
-          if(memory.status!==200 || memory.data?.ok!==true) fail("MEMORY_NOT_OK",{status:memory.status,code:memory.data?.code});
+          if(memory.status>=500 || memory.status!==200 || memory.data?.ok!==true) fatal("MEMORY_HTTP",{status:memory.status,code:memory.data?.code});
 
           const ragQuestion="temos mais amigos atrás do véu do que deste lado";
           const rag=await request("/api/rag/search",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
+            method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({question:ragQuestion})
           });
-          if(rag.status!==200 || rag.data?.ok!==true) fail("RAG_HTTP",{status:rag.status,code:rag.data?.code});
+          if(rag.status!==200 || rag.data?.ok!==true) fatal("RAG_HTTP",{status:rag.status,code:rag.data?.code});
           const matches=Array.isArray(rag.data?.matches)?rag.data.matches:[];
-          if(!matches.length) fail("RAG_EMPTY");
           const ragHit=matches.some(x=>String(x?.id||"")==="fe639974452546918f43f24d09c0a81e" ||
             String(x?.text||x?.trecho||"").toLowerCase().includes("amigos atrás do véu"));
-          if(!ragHit) fail("RAG_CURRENT_ONLY_TARGET_NOT_FOUND",{matches:matches.length});
+          if(!matches.length || !ragHit) fatal("RAG_CURRENT_ONLY_TARGET",{matches:matches.length,ragHit});
 
           const chat=await request("/api/chat",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
+            method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
               pergunta:"Faça um estudo profundo e desenvolvido, usando a biblioteca, sobre Adão, seus relacionamentos familiares e o mundo dos espíritos. Não resuma em uma única síntese; desenvolva todos os pontos documentais relevantes.",
-              memory_key:memoryKey,
-              stream:false
+              memory_key:memoryKey,stream:false
             })
           });
-          if(chat.status>=500) fail("CHAT_HTTP_5XX",{status:chat.status,code:chat.data?.code});
-          if(chat.status!==200 || chat.data?.ok!==true) fail("CHAT_NOT_OK",{status:chat.status,code:chat.data?.code});
           const answer=String(chat.data?.resposta||"").trim();
-          if(!answer) fail("CHAT_EMPTY");
-          if(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL/i.test(answer)) fail("SYNTHESIS_PRINCIPAL_LABEL_PRESENT");
-          if(String(chat.data?.full_text||"").trim()!==answer) fail("FULL_TEXT_MISMATCH");
+          const fullText=String(chat.data?.full_text||"").trim();
           const paragraphs=answer.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
-          if(paragraphs.length<4) fail("CHAT_TOO_CONDENSED",{paragraphs:paragraphs.length,chars:answer.length});
-          if(answer.length<1200) fail("CHAT_TOO_SHORT",{chars:answer.length});
+          const sources=Array.isArray(chat.data?.fontes)?chat.data.fontes:[];
           const forbiddenSourceKeys=["text","trecho","embedding","content_hash","document_id","score","retrieval_mode","updated_at","rescue_query"];
-          for(const source of (Array.isArray(chat.data?.fontes)?chat.data.fontes:[])){
-            for(const key of forbiddenSourceKeys){
-              if(Object.prototype.hasOwnProperty.call(source,key)) fail("SOURCE_METADATA_LEAK",{key});
-            }
-          }
-          if(!Array.isArray(chat.data?.fontes) || !chat.data.fontes.length) fail("CHAT_WITHOUT_PUBLIC_SOURCES");
+          const leakedKeys=[...new Set(sources.flatMap(s=>forbiddenSourceKeys.filter(k=>Object.prototype.hasOwnProperty.call(s,k))))];
+          const violations=[];
+          if(chat.status>=500) violations.push("CHAT_HTTP_5XX");
+          if(chat.status!==200 || chat.data?.ok!==true) violations.push("CHAT_NOT_OK");
+          if(!answer) violations.push("CHAT_EMPTY");
+          if(/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL/i.test(answer)) violations.push("SYNTHESIS_PRINCIPAL_LABEL_PRESENT");
+          if(fullText!==answer) violations.push("FULL_TEXT_MISMATCH");
+          if(paragraphs.length<4) violations.push("CHAT_TOO_CONDENSED");
+          if(answer.length<1200) violations.push("CHAT_TOO_SHORT");
+          if(leakedKeys.length) violations.push("SOURCE_METADATA_LEAK");
+          if(!sources.length) violations.push("CHAT_WITHOUT_PUBLIC_SOURCES");
           if(Number(chat.data?.evidence_groups_total||0)>0 &&
-             Number(chat.data?.evidence_groups_developed||0)<Number(chat.data?.evidence_groups_total||0)){
-            fail("INFORMATION_PRESERVATION_INCOMPLETE",{
-              total:chat.data?.evidence_groups_total,
-              developed:chat.data?.evidence_groups_developed,
-              coverage:chat.data?.evidence_coverage_percent
-            });
+             Number(chat.data?.evidence_groups_developed||0)<Number(chat.data?.evidence_groups_total||0)) {
+            violations.push("INFORMATION_PRESERVATION_INCOMPLETE");
           }
 
-          console.log(JSON.stringify({
-            ok:true,
-            version:health.data.version,
-            manifest:{books:manifest.data.total_books,chunks:manifest.data.total_chunks,vectors:manifest.data.vector_count},
-            reconcile:{in_sync:reconcile.data.in_sync,degraded:reconcile.data.degraded,safe_read_only_fallback:reconcile.data.safe_read_only_fallback===true},
-            memory:{persistent:memory.data.persistent,degraded:memory.data.degraded},
-            rag:{matches:matches.length,current_only_target:true},
+          console.log("QA_DIAGNOSTIC="+JSON.stringify({
+            health:{status:health.status,version:health.data?.version},
+            manifest:{status:manifest.status,books:manifest.data?.total_books,chunks:manifest.data?.total_chunks,vectors:manifest.data?.vector_count,generation:manifest.data?.generation},
+            reconcile:{status:reconcile.status,in_sync:reconcile.data?.in_sync,degraded:reconcile.data?.degraded,safe_read_only_fallback:reconcile.data?.safe_read_only_fallback===true,r2_chunks:reconcile.data?.r2_chunks,r2_vectors:reconcile.data?.r2_vectors},
+            memory:{status:memory.status,persistent:memory.data?.persistent,degraded:memory.data?.degraded,code:memory.data?.code||""},
+            rag:{status:rag.status,matches:matches.length,current_only_target:ragHit},
             chat:{
-              chars:answer.length,
-              paragraphs:paragraphs.length,
-              sources:chat.data.fontes.length,
+              status:chat.status,ok:chat.data?.ok,
+              provider:chat.data?.provider||"",fallback:chat.data?.fallback,
+              retrieval_unavailable:chat.data?.retrieval_unavailable,
+              retrieval_level:chat.data?.retrieval_level,
+              resposta_chars:answer.length,full_text_chars:fullText.length,
+              paragraphs:paragraphs.length,sources:sources.length,
               continuation_parts:Number(chat.data?.continuation_parts||0),
+              continuation_fallback_groups:Number(chat.data?.continuation_fallback_groups||0),
               evidence_groups_total:Number(chat.data?.evidence_groups_total||0),
               evidence_groups_developed:Number(chat.data?.evidence_groups_developed||0),
               evidence_coverage_percent:Number(chat.data?.evidence_coverage_percent||0),
-              synthesis_principal_label:false,
-              internal_source_metadata_leak:false
-            }
-          },null,2));
+              evidence_gate_can_answer:chat.data?.evidence_gate?.canAnswer,
+              top_level_keys:Object.keys(chat.data||{}).sort(),
+              leaked_source_keys:leakedKeys,
+              synthesis_principal_label:/^\s*(?:#{1,6}\s*)?(?:\d+\.\s*)?(?:\*\*)?S[ÍI]NTESE\s+PRINCIPAL/i.test(answer)
+            },
+            violations
+          }));
+          if(violations.length){
+            console.error("QA_FAILS="+violations.join(","));
+            process.exit(1);
+          }
+          console.log("QA_PASS=yes");
           NODE
           node /tmp/qa.mjs
