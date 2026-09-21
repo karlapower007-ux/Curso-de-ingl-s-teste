@@ -79,6 +79,13 @@ must(worker.includes("citation_dictionary_all_anchor_terms_required: true"),"dic
 must(worker.includes("citation_dictionary_document_names_exposed: false"),"dictionary must forbid document-name exposure");
 must(worker.includes("chat_exact_request_only: true"),"chat exact-request runtime flag missing");
 must(worker.includes("chat_document_names_exposed: false"),"chat must forbid document-name exposure");
+must(worker.includes("technical document") || worker.includes("documento técnico"),"chat prompt must explicitly forbid technical document names");
+must(worker.includes("function directBibliographicSources"),"direct retrieval bibliographic resolver missing");
+must(worker.includes("bibliographic_sources:bibliographicSources"),"direct retrieval must expose bibliographic sources instead of file metadata");
+must(worker.includes("document_names_exposed:false"),"direct retrieval must declare document names hidden");
+must(!worker.includes('filename:String(anchor?.filename || anchor?.title || "Documento")'),"direct retrieval must not expose filename");
+must(!worker.includes('title:String(anchor?.title || anchor?.filename || "Documento")'),"direct retrieval must not expose technical title");
+
 must(worker.includes("function bibliographicSourceLabel"),"bibliographic chat label formatter missing");
 must(worker.includes("bibliographic_type:\"scripture\""),"scripture bibliographic source contract missing");
 must(worker.includes("bibliographic_type:\"book\""),"book bibliographic source contract missing");
@@ -90,6 +97,12 @@ const citationBlock=worker.slice(
   worker.indexOf('if (url.pathname === "/search-lexical"')
 );
 must(citationBlock.includes("SELECT c.id,c.document_id,c.page,c.chunk_index,c.text"),"citation route must read canonical chunks");
+must(citationBlock.includes("strictRequestAnchors(rawQuery)"),"durable citation fallback must use exact request anchors");
+must(citationBlock.includes("exactWholeAnchorMatch(row?.text||\"\",terms)"),"durable citation fallback must require all exact anchors");
+must(citationBlock.includes('mode:"citation-dictionary-exact-and"'),"durable citation fallback must advertise exact AND mode");
+must(citationBlock.includes("or_disabled:true"),"durable citation fallback OR must be disabled");
+must(citationBlock.includes("fuzzy_disabled:true"),"durable citation fallback fuzzy matching must be disabled");
+
 must(!/\b(?:INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i.test(citationBlock),"citation route must remain read-only");
 const r2CitationBlock=worker.slice(
   worker.indexOf("async function citationSearchR2Segment"),
@@ -129,6 +142,12 @@ must(manifest?.citation_dictionary?.desktop_mobile_parity===true,"desktop/mobile
 must(manifest?.citation_dictionary?.exact_request_only===true,"manifest must require exact request only");
 must(manifest?.citation_dictionary?.all_anchor_terms_required===true,"manifest must require all topical anchors");
 must(manifest?.citation_dictionary?.document_names_exposed===false,"manifest must forbid document names");
+must(manifest?.citation_dictionary?.technical_document_secondary===false,"technical document name must not be a secondary UI field");
+must(manifest?.citation_dictionary?.technical_document_exposure_forbidden===true,"technical document exposure must be permanently forbidden");
+must(manifest?.citation_dictionary?.chat_technical_document_exposure_forbidden===true,"chat must permanently forbid technical document names");
+must(manifest?.citation_dictionary?.desktop_mobile_same_contract===true,"desktop and mobile must use the same exact bibliographic contract");
+must(manifest?.citation_dictionary?.scripture_display_format==="canonical-book chapter:verse","scripture display format must be canonical book chapter:verse");
+
 must(manifest?.citation_dictionary?.book_reference_required?.join("+")==="book+chapter+page","book bibliographic contract mismatch");
 must(manifest?.citation_dictionary?.scripture_reference_required?.join("+")==="book+chapter+verse","scripture bibliographic contract mismatch");
 
