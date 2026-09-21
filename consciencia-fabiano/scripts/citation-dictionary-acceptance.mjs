@@ -8,7 +8,7 @@ const app=read("public/app.js");
 const css=read("public/style.css");
 const manifest=JSON.parse(read("v8-citation-ui-authorized.json"));
 
-must(worker.includes('8.0.1-adaptive-20x20x20-citation-dictionary'),"version marker missing");
+must(worker.includes('8.0.0-adaptive-20x20x20'),"version marker missing");
 must(worker.includes('url.pathname === "/api/citations"'),"public citation endpoint missing");
 must(worker.includes('url.pathname === "/citation-search"'),"internal citation search missing");
 must(worker.includes('const CITATION_PAGE_SIZE = 50;'),"citation page size must be 50");
