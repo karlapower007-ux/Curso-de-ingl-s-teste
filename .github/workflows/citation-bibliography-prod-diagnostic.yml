@@ -74,6 +74,7 @@ jobs:
             jq -c '.citations[]|select(.bibliographic_type=="scripture" and ((.primary_reference|length)==0))|{work,book,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/incomplete-scriptures.ndjson
             jq -r '.citations[].book // empty' "$tmp" >>/tmp/all-books.txt
             jq -c '.citations[]|select(.book=="Obras Padrão")|{book,work,bibliographic_type,technical_document,chapter,page,primary_reference,excerpt}' "$tmp" >>/tmp/obras-padrao-raw.ndjson
+            jq -c '.citations[]|select(.book=="Obras Padrão")|{technical_document,bibliographic_type,page,excerpt}' "$tmp" | head -n 2 || true
 
             done_flag="$(jq -r '(.scan_done // false)|tostring' "$tmp")"
             cursor="$(jq -r '.next_scan_cursor // ""' "$tmp")"
