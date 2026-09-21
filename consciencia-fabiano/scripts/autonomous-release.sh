@@ -20,6 +20,7 @@ node scripts/build-cognitive-v74-manifest.mjs
 test -f public/cognitive-v74-manifest.json || die "COGNITIVE_V74_MANIFEST_MISSING"
 node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8"));if(!m.audit.valid||m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20)process.exit(1)'
 node scripts/adaptive-v80-acceptance.mjs | tee /tmp/adaptive-v80-acceptance.json
+node scripts/exhaustive-v80-acceptance.mjs | tee /tmp/exhaustive-v80-acceptance.json
 log "COGNITIVE_V74_LOCAL_ACCEPTANCE_PASS=yes"
 log "ADAPTIVE_V80_LOCAL_ACCEPTANCE_PASS=yes"
 node --check scripts/browser-voice-smoke.mjs
