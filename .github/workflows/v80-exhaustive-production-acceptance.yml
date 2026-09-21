@@ -70,11 +70,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          npm install --no-save @xenova/transformers@2.17.2
           cat > deep-adao.mjs <<'EOF'
           import fs from 'node:fs/promises';
+          import { pipeline, env } from '@xenova/transformers';
+          env.allowLocalModels=false;
+          env.allowRemoteModels=true;
           const base=process.env.BASE;
           const memoryKey='v8-exhaustive-adao-memory-20260921-000000000000';
           const question='Adão — faça uma pesquisa profunda, exaustiva e enciclopédica usando toda evidência documental relevante recuperada. Desenvolva contexto doutrinário e histórico, autores e documentos, convergências, divergências, cronologia quando houver, detalhes complementares e pontos minoritários. Não reduza a resposta a uma síntese curta.';
+          const extractor=await pipeline('feature-extraction','Xenova/paraphrase-multilingual-MiniLM-L12-v2',{quantized:true});
+          const emb=await extractor(question,{pooling:'mean',normalize:true});
+          const nested=emb.tolist();
+          const queryEmbedding=Array.isArray(nested[0])?nested[0]:nested;
           const response=await fetch(base+'/api/chat',{
             method:'POST',
             headers:{
@@ -83,7 +91,7 @@ jobs:
               'X-FNS-Memory-Key':memoryKey,
               'User-Agent':'curl/8.5.0'
             },
-            body:JSON.stringify({pergunta:question,memory_key:memoryKey,stream:false,deep_research:true}),
+            body:JSON.stringify({pergunta:question,memory_key:memoryKey,stream:false,deep_research:true,query_embedding:queryEmbedding}),
             signal:AbortSignal.timeout(900000)
           });
           const data=await response.json().catch(()=>({}));
