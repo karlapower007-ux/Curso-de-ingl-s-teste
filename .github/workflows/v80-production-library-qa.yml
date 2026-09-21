@@ -52,6 +52,8 @@ jobs:
               const errors=[];
               page.on('pageerror',e=>errors.push('pageerror:'+String(e.message||e)));
               page.on('console',m=>{if(m.type()==='error')errors.push('console:'+m.text())});
+              page.on('response',r=>{if(r.status()>=400)errors.push('http:'+r.status()+':'+r.url())});
+              page.on('requestfailed',r=>errors.push('requestfailed:'+r.url()+':'+String(r.failure()?.errorText||'')));
               page.on('dialog',async d=>{
                 if(d.type()==='prompt')await d.accept('gadu');
                 else await d.dismiss();
@@ -67,10 +69,15 @@ jobs:
                 libraryPanelClass:document.querySelector('#libraryPanel')?.className||'',
                 chatPanelClass:document.querySelector('#chatPanel')?.className||'',
                 ownerToken:sessionStorage.getItem('fns_owner_token')||sessionStorage.getItem('fns_owner_token_v1')||'',
-                appReady:document.readyState
+                appReady:document.readyState,
+                onclickBound:typeof document.querySelector('#libraryTab')?.onclick==='function',
+                scripts:[...document.scripts].map(s=>s.src||'[inline]')
               }));
-              if(!await page.locator('#libraryPanel').isVisible()){
-                throw new Error(p.name+' library did not open; state='+JSON.stringify(debugState)+' errors='+JSON.stringify(errors.slice(0,10)));
+              const opened=await page.locator('#libraryPanel').isVisible();
+              if(!opened){
+                report.profiles.push({name:p.name,viewport:p.viewport,ok:false,panel_visible:false,tab_active:false,visible_documents:0,status:'panel-not-opened',documents:[],errors:errors.slice(0,20),debug:debugState});
+                await context.close();
+                continue;
               }
               await page.waitForFunction(()=>document.querySelectorAll('#booksList .book').length>0,{timeout:30000});
               await page.waitForTimeout(1500);
