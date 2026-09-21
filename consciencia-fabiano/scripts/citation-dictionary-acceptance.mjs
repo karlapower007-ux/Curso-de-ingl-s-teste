@@ -20,7 +20,7 @@ must(worker.includes('chapter_display'),"chapter must be exposed in citation res
 must(worker.includes('page_display'),"page must be exposed in citation response");
 must(worker.includes("async function citationSearchR2Segment"),"segmented authoritative R2 citation search missing");
 must(worker.includes("CITATION_R2_SHARDS_PER_REQUEST"),"bounded R2 shard segment missing");
-must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 2;"),"citation segments must stay at two shards after scripture CPU 1102");
+must(worker.includes("const CITATION_R2_SHARDS_PER_REQUEST = 1;"),"citation segments must stay at one shard after repeated Cloudflare 1102");
 must(worker.includes("function chapterWordToNumber"),"written chapter number resolver missing");
 must(worker.includes("function extractNamedSectionHeading"),"named book section resolver missing");
 must(worker.includes("function extractScriptureHeading"),"scripture heading resolver missing");
@@ -28,15 +28,19 @@ must(worker.includes("function extractScriptureVerseRange"),"scripture verse ran
 must(worker.includes("function syntheticScriptureReference"),"scripture canonical reference builder missing");
 must(worker.includes("citation_dictionary_strict_scripture_source_classification: true"),"strict scripture source classification flag missing");
 must(worker.includes("citation_dictionary_canonical_filename_suffixes: true"),"canonical scripture filename suffix flag missing");
-must(worker.includes("citation_dictionary_scripture_direct_ref_gate: true"),"scripture direct reference CPU gate missing");
+must(worker.includes("citation_dictionary_scripture_direct_ref_gate: false"),"scripture cross-reference parser must stay disabled during exhaustive scan");
 must(worker.includes("citation_dictionary_regex_precompiled: true"),"precompiled citation regex flag missing");
+must(worker.includes("citation_dictionary_ultrasafe_one_shard: true"),"ultra-safe one-shard citation flag missing");
+must(worker.includes("citation_dictionary_crossrefs_deferred: true"),"cross-reference parser must be deferred from exhaustive scan");
+must(worker.includes("headingProbe=rowText.slice(0,900)"),"citation heading parser must use bounded probe text");
+must(worker.includes("extractScriptureVerseRange(rowText.slice(0,2400)"),"scripture verse parser must use bounded text");
+must(worker.includes("cross_references:[]"),"exhaustive citation scan must not parse nonessential cross-references");
+
 must(worker.includes("citation_dictionary_scripture_location_not_crossref: true"),"scripture location must be separated from cross-references");
 must(worker.includes("const SCRIPTURE_REFERENCE_RE=new RegExp"),"precompiled scripture reference regex missing");
 must(worker.includes("const SCRIPTURE_SOURCE_PATTERNS=["),"precompiled scripture source patterns missing");
 must(worker.includes("const CHAPTER_HEADING_PATTERNS=["),"precompiled chapter heading patterns missing");
 must(worker.includes("const SCRIPTURE_HEADING_LINE_RE=new RegExp"),"precompiled scripture heading regex missing");
-must(worker.includes("cross_references:scriptureCrossRefs"),"scripture cross-reference separation missing");
-must(worker.includes('if(/\\d{1,3}\\s*:\\s*\\d{1,3}/.test(rowText))'),"scripture cross-reference parser must be gated by chapter:verse syntax");
 
 must(worker.includes("scripture_references:scriptureLocationRefs"),"scripture primary location array missing");
 must(worker.includes('if(kind==="standard-works") return "Gênesis";'),"standard works location seed missing");
