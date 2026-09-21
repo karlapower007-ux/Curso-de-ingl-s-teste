@@ -1,4 +1,5 @@
 run=desktop-mobile-library-qa
-auth=preseed-session
-wait_books_ms=45000
 production_read_only=true
+post_vector_completion=true
+expected_chunks=28636
+expected_vectors=28636
