@@ -24,7 +24,7 @@ permissions:
 
 concurrency:
   group: v75-secondary-hydration-promotion
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   hydrate-and-promote:
@@ -53,13 +53,31 @@ jobs:
       - name: Stop after verified promotion
         id: previous
         shell: bash
+        env:
+          FNS_SECONDARY_URL: https://bfctgmtidroczuwzhqkg.supabase.co/functions/v1/fns-resilience-secondary
+          FNS_OWNER_TOKEN: ${{ secrets.FNS_OWNER_TOKEN }}
         run: |
+          DONE=false
           if [ -f .ci-results/v75-secondary-hydration.json ] && \
              [ "$(jq -r '.state // ""' .ci-results/v75-secondary-hydration.json)" = "promoted" ]; then
-            echo "done=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "done=false" >> "$GITHUB_OUTPUT"
+            DONE=true
           fi
+
+          if [ "$DONE" != "true" ] && [ -n "$FNS_OWNER_TOKEN" ]; then
+            BODY="$(curl -fsS --max-time 20 -X POST "$FNS_SECONDARY_URL?action=manifest" \
+              -H "X-FNS-Owner-Token: $FNS_OWNER_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{}' || true)"
+            CHUNKS="$(printf '%s' "$BODY" | jq -r '.total_chunks // 0' 2>/dev/null || echo 0)"
+            VECTORS="$(printf '%s' "$BODY" | jq -r '.vector_count // 0' 2>/dev/null || echo 0)"
+            GENERATION="$(printf '%s' "$BODY" | jq -r '.generation // ""' 2>/dev/null || true)"
+            if [ "$CHUNKS" = "25199" ] && [ "$VECTORS" = "25199" ] && [ "$GENERATION" = "v75-static-eeadaf861443" ]; then
+              DONE=true
+              echo "VERIFIED_SECONDARY_GATE=25199/25199 generation=$GENERATION"
+            fi
+          fi
+
+          echo "done=$DONE" >> "$GITHUB_OUTPUT"
 
       - name: Reconcile authoritative DO snapshot to R2
         if: steps.previous.outputs.done != 'true'
