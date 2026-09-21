@@ -54,6 +54,8 @@ const CITATION_SCAN_LIMIT = 50000;
 const CITATION_MAX_QUERY_CHARS = 4000;
 const CITATION_R2_CACHE_TTL_MS = 5 * 60 * 1000;
 const CITATION_R2_CACHE_MAX_QUERIES = 2;
+const CITATION_R2_SHARDS_PER_REQUEST = 8;
+const CITATION_R2_MAX_MATCHES_PER_REQUEST = 2000;
 const citationR2SearchCache = new Map();
 
 // V2.0 MASSIVE SCALE: 500 nós lógicos, no máximo 25 workers ativos por vez.
@@ -1949,223 +1951,256 @@ function citationLexicalScore(text,query,terms) {
   return {score,coverage,matched_terms:matchedTerms,hits,exact_phrase:exactPhrase};
 }
 
-async function listR2CitationShards(env,generation) {
-  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
-  let cursor=undefined;
-  const objects=[];
-  do{
-    const listed=await env.PDFS.list({prefix,limit:1000,cursor,include:["customMetadata"]});
-    for(const object of (Array.isArray(listed.objects)?listed.objects:[])){
-      if(String(object?.key||"").endsWith(".json")) objects.push(object);
-    }
-    cursor=(listed.truncated && listed.cursor)?String(listed.cursor):undefined;
-  }while(cursor);
-  objects.sort((a,b)=>String(a?.key||"").localeCompare(String(b?.key||"")));
-  return objects;
+function citationCarryFromUrl(url) {
+  const chapterNumber=Math.max(0,Number(url.searchParams.get("carry_chapter")||0)) || null;
+  const chapterTitle=String(url.searchParams.get("carry_title")||"").replace(/[\r\n]+/g," ").trim().slice(0,180);
+  return {
+    document_id:String(url.searchParams.get("carry_doc")||"").slice(0,180),
+    chapter_number:chapterNumber,
+    chapter_title:chapterTitle
+  };
 }
 
-function trimCitationR2Cache() {
-  while(citationR2SearchCache.size>CITATION_R2_CACHE_MAX_QUERIES){
-    const oldest=[...citationR2SearchCache.entries()]
-      .sort((a,b)=>Number(a[1]?.created_at||0)-Number(b[1]?.created_at||0))[0]?.[0];
-    if(!oldest) break;
-    citationR2SearchCache.delete(oldest);
-  }
+function citationCarryPublic(carry) {
+  return {
+    document_id:String(carry?.document_id||"").slice(0,180),
+    chapter_number:Math.max(0,Number(carry?.chapter_number||0)) || null,
+    chapter_title:String(carry?.chapter_title||"").replace(/[\r\n]+/g," ").trim().slice(0,180)
+  };
 }
 
-async function citationSearchR2(env,query,offset,limit) {
+async function citationSearchR2Segment(env,query,scanCursor="",carryInput=null) {
   if(!env.PDFS) {
     const err=new Error("Binding R2 PDFS ausente.");
     err.code="R2_LIBRARY_BINDING_MISSING";
     throw err;
   }
+
   const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
   const generation=String(pointer?.generation||"");
   const libraryTotal=Math.max(0,Number(pointer?.chunks||0));
   if(!generation || !libraryTotal){
     return {
-      ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
-      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,cache_hit:false
+      ok:true,matches:[],scanned:0,shards_scanned:0,scan_done:true,next_scan_cursor:null,
+      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,
+      carry:citationCarryPublic(null)
     };
   }
 
-  const foldedQuery=foldSearchText(query);
   const terms=lexicalTerms(query);
   if(!terms.length){
     return {
-      ok:true,matches:[],total_found:0,scanned:0,offset,limit,has_more:false,next_offset:null,
-      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,cache_hit:false
+      ok:true,matches:[],scanned:0,shards_scanned:0,scan_done:true,next_scan_cursor:null,
+      backend:"r2-authoritative",generation,library_total_chunks:libraryTotal,
+      carry:citationCarryPublic(null)
     };
   }
 
-  const cacheKey=generation+"|"+foldedQuery;
-  let cached=citationR2SearchCache.get(cacheKey);
-  if(cached && (Date.now()-Number(cached.created_at||0))>CITATION_R2_CACHE_TTL_MS){
-    citationR2SearchCache.delete(cacheKey);
-    cached=null;
-  }
+  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
+  const listOptions={
+    prefix,
+    limit:CITATION_R2_SHARDS_PER_REQUEST,
+    include:["customMetadata"]
+  };
+  if(scanCursor) listOptions.cursor=String(scanCursor);
 
-  if(!cached){
-    const objects=await listR2CitationShards(env,generation);
-    const matches=[];
-    const chapterByDocument=new Map();
-    const scriptureByDocument=new Map();
-    let scanned=0;
+  const listed=await env.PDFS.list(listOptions);
+  const objects=(Array.isArray(listed.objects)?listed.objects:[])
+    .filter(object=>String(object?.key||"").endsWith(".json"))
+    .sort((a,b)=>String(a?.key||"").localeCompare(String(b?.key||"")));
 
-    for(let start=0;start<objects.length;start+=8){
-      const batch=objects.slice(start,start+8);
-      const shards=await Promise.all(batch.map(object=>r2JsonGet(env.PDFS,object.key).catch(()=>null)));
-      for(let shardIndex=0;shardIndex<shards.length;shardIndex++){
-        const shard=shards[shardIndex];
-        const rows=Array.isArray(shard?.rows)?shard.rows:[];
-        for(const row of rows){
-          if(scanned>=CITATION_SCAN_LIMIT) break;
-          scanned++;
-          const documentId=String(row?.document_id || shard?.document_id || "");
-          const rowText=String(row?.text || "");
-          if(!rowText) continue;
+  const shards=await Promise.all(
+    objects.map(object=>r2JsonGet(env.PDFS,object.key).catch(()=>null))
+  );
 
-          const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
-          const heading=scriptureKind ? null : extractChapterHeading(rowText);
-          if(heading && documentId) chapterByDocument.set(documentId,heading);
+  const matches=[];
+  let scanned=0;
+  let currentDocument=String(carryInput?.document_id||"");
+  let currentChapterNumber=Math.max(0,Number(carryInput?.chapter_number||0)) || null;
+  let currentChapterTitle=String(carryInput?.chapter_title||"").replace(/[\r\n]+/g," ").trim().slice(0,180);
 
-          const directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
-          if(directScriptureRefs.length && documentId) scriptureByDocument.set(documentId,directScriptureRefs);
+  for(const shard of shards){
+    const rows=Array.isArray(shard?.rows)?shard.rows:[];
+    for(const row of rows){
+      if(scanned>=CITATION_SCAN_LIMIT || matches.length>=CITATION_R2_MAX_MATCHES_PER_REQUEST) break;
+      scanned++;
 
-          const lexical=citationLexicalScore(rowText,query,terms);
-          if(!lexical) continue;
+      const documentId=String(row?.document_id || shard?.document_id || "");
+      const rowText=String(row?.text || "");
+      if(!rowText) continue;
 
-          const chapter=scriptureKind ? null : chapterByDocument.get(documentId);
-          const scriptureRefs=scriptureKind
-            ? (directScriptureRefs.length ? directScriptureRefs : (scriptureByDocument.get(documentId)||[]))
-            : [];
-
-          matches.push({
-            id:String(row?.id || (documentId+"-"+String(row?.chunk_index||scanned))).slice(0,220),
-            document_id:documentId,
-            filename:String(row?.filename || row?.title || "Documento").slice(0,300),
-            title:String(row?.title || row?.filename || "Documento").slice(0,500),
-            author:String(row?.author || "").slice(0,300),
-            language:String(row?.language || "pt").slice(0,40),
-            page:Number(row?.page || 0) || 0,
-            chunk_index:Number(row?.chunk_index || 0) || 0,
-            text:rowText.slice(0,1400),
-            score:lexical.score,
-            coverage:lexical.coverage,
-            matched_terms:lexical.matched_terms,
-            scripture_source_kind:scriptureKind,
-            scripture_references:scriptureRefs,
-            chapter_number:chapter?.number || null,
-            chapter_title:chapter?.title || ""
-          });
-        }
-        rows.length=0;
-        if(scanned>=CITATION_SCAN_LIMIT) break;
+      if(documentId!==currentDocument){
+        currentDocument=documentId;
+        currentChapterNumber=null;
+        currentChapterTitle="";
       }
-      if(scanned>=CITATION_SCAN_LIMIT) break;
+
+      const scriptureKind=scriptureSourceKind(row?.filename,row?.title);
+      if(!scriptureKind && /(?:^|\n)\s*(?:cap[ií]tulo|chapter|cap\.?)\s+/imu.test(rowText)){
+        const heading=extractChapterHeading(rowText);
+        if(heading){
+          currentChapterNumber=heading.number || currentChapterNumber;
+          currentChapterTitle=heading.title || "";
+        }
+      }
+
+      const lexical=citationLexicalScore(rowText,query,terms);
+      if(!lexical) continue;
+
+      const directScriptureRefs=scriptureKind ? extractScriptureReferences(rowText) : [];
+      const inlineHeading=!scriptureKind ? extractChapterHeading(String(row?.title||"")+"\n"+rowText) : null;
+      const chapterNumber=inlineHeading?.number || currentChapterNumber || null;
+      const chapterTitle=inlineHeading?.title || currentChapterTitle || "";
+
+      matches.push({
+        id:String(row?.id || (documentId+"-"+String(row?.chunk_index||scanned))).slice(0,220),
+        document_id:documentId,
+        filename:String(row?.filename || row?.title || "Documento").slice(0,300),
+        title:String(row?.title || row?.filename || "Documento").slice(0,500),
+        author:String(row?.author || "").slice(0,300),
+        language:String(row?.language || "pt").slice(0,40),
+        page:Number(row?.page || 0) || 0,
+        chunk_index:Number(row?.chunk_index || 0) || 0,
+        text:rowText.slice(0,900),
+        score:lexical.score,
+        coverage:lexical.coverage,
+        matched_terms:lexical.matched_terms,
+        scripture_source_kind:scriptureKind,
+        scripture_references:directScriptureRefs,
+        chapter_number:chapterNumber,
+        chapter_title:chapterTitle
+      });
     }
-
-    matches.sort((a,b)=>
-      Number(b.score||0)-Number(a.score||0) ||
-      Number(b.coverage||0)-Number(a.coverage||0) ||
-      String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
-      Number(a.page||0)-Number(b.page||0) ||
-      Number(a.chunk_index||0)-Number(b.chunk_index||0)
-    );
-
-    cached={
-      created_at:Date.now(),
-      scanned,
-      generation,
-      library_total_chunks:libraryTotal,
-      matches
-    };
-    citationR2SearchCache.set(cacheKey,cached);
-    trimCitationR2Cache();
+    rows.length=0;
+    if(scanned>=CITATION_SCAN_LIMIT || matches.length>=CITATION_R2_MAX_MATCHES_PER_REQUEST) break;
   }
 
-  const all=Array.isArray(cached.matches)?cached.matches:[];
-  const pageRows=all.slice(offset,offset+limit).map((row,index)=>({...row,rank:offset+index+1}));
+  matches.sort((a,b)=>
+    Number(b.score||0)-Number(a.score||0) ||
+    Number(b.coverage||0)-Number(a.coverage||0) ||
+    String(a.document_id||"").localeCompare(String(b.document_id||"")) ||
+    Number(a.page||0)-Number(b.page||0) ||
+    Number(a.chunk_index||0)-Number(b.chunk_index||0)
+  );
+
+  const nextCursor=(listed.truncated && listed.cursor) ? String(listed.cursor) : null;
   return {
     ok:true,
-    matches:pageRows,
-    total_found:all.length,
-    scanned:Number(cached.scanned||0),
-    offset,
-    limit,
-    has_more:offset+pageRows.length<all.length,
-    next_offset:offset+pageRows.length<all.length ? offset+pageRows.length : null,
+    matches,
+    scanned,
+    shards_scanned:objects.length,
+    scan_done:!nextCursor,
+    next_scan_cursor:nextCursor,
     backend:"r2-authoritative",
-    generation:String(cached.generation||generation),
-    library_total_chunks:Number(cached.library_total_chunks||libraryTotal),
-    cache_hit:Boolean(citationR2SearchCache.get(cacheKey)===cached)
+    generation,
+    library_total_chunks:libraryTotal,
+    carry:citationCarryPublic({
+      document_id:currentDocument,
+      chapter_number:currentChapterNumber,
+      chapter_title:currentChapterTitle
+    }),
+    cpu_bounded_segment:true,
+    shards_per_request:CITATION_R2_SHARDS_PER_REQUEST
   };
 }
 
 async function citationDictionaryResponse(env,url) {
   const query=String(url.searchParams.get("q") || "").trim().slice(0,CITATION_MAX_QUERY_CHARS);
   if(query.length<2) return json({ok:false,code:"CITATION_QUERY_REQUIRED",citations:[]},400);
+
   const offset=Math.max(0,Number(url.searchParams.get("offset") || 0));
   const limit=Math.max(1,Math.min(CITATION_PAGE_SIZE,Number(url.searchParams.get("limit") || CITATION_PAGE_SIZE)));
+  const scanCursor=String(url.searchParams.get("scan_cursor") || "").slice(0,4096);
+  const carry=citationCarryFromUrl(url);
 
-  let data=null;
-  let r2Error=null;
   if(env.PDFS){
     try{
       const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
       if(pointer?.generation && Number(pointer?.chunks||0)>0){
-        data=await citationSearchR2(env,query,offset,limit);
+        const data=await citationSearchR2Segment(env,query,scanCursor,carry);
+        const citations=(Array.isArray(data?.matches)?data.matches:[])
+          .map((row,index)=>citationPublicView(row,index))
+          .filter(Boolean);
+        return json({
+          ok:true,
+          query,
+          total_found:citations.length,
+          scanned:Math.max(0,Number(data?.scanned || 0)),
+          scanned_batch:Math.max(0,Number(data?.scanned || 0)),
+          library_total_chunks:Math.max(0,Number(data?.library_total_chunks || 0)),
+          shards_scanned:Math.max(0,Number(data?.shards_scanned || 0)),
+          backend:"r2-authoritative",
+          generation:String(data?.generation || ""),
+          offset:0,
+          limit,
+          returned:citations.length,
+          has_more:false,
+          next_offset:null,
+          citations,
+          scan_done:Boolean(data?.scan_done),
+          next_scan_cursor:data?.next_scan_cursor || null,
+          carry:data?.carry || citationCarryPublic(null),
+          cpu_bounded_segment:true,
+          shards_per_request:CITATION_R2_SHARDS_PER_REQUEST,
+          dictionary_mode:"bibliographic-segmented-r2-v8.0.2",
+          llm_independent:true,
+          desktop_mobile_parity:true,
+          authoritative_r2_preferred:true
+        });
       }
     }catch(error){
-      r2Error=error;
+      return json({
+        ok:false,
+        code:error?.code || "CITATION_R2_SEGMENT_FAILED",
+        message:String(error?.message || error),
+        citations:[],
+        backend:"r2-authoritative",
+        cpu_bounded_segment:true
+      },503);
     }
   }
 
-  if(!data && env.LIBRARY){
+  if(env.LIBRARY){
     try{
-      data=await libraryCall(env,"/citation-search",{
+      const data=await libraryCall(env,"/citation-search",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({query,offset,limit,scan_limit:CITATION_SCAN_LIMIT})
       });
-      data={...data,backend:"durable-object",library_total_chunks:Number(data?.scanned||0)};
+      const citations=(Array.isArray(data?.matches)?data.matches:[])
+        .map((row,index)=>citationPublicView(row,offset+index))
+        .filter(Boolean);
+      return json({
+        ok:true,
+        query,
+        total_found:Math.max(0,Number(data?.total_found || 0)),
+        scanned:Math.max(0,Number(data?.scanned || 0)),
+        library_total_chunks:Math.max(0,Number(data?.scanned || 0)),
+        backend:"durable-object",
+        offset,
+        limit,
+        returned:citations.length,
+        has_more:Boolean(data?.has_more),
+        next_offset:data?.has_more ? Math.max(0,Number(data?.next_offset || offset+citations.length)) : null,
+        citations,
+        scan_done:true,
+        next_scan_cursor:null,
+        dictionary_mode:"bibliographic-cursor-v8.0.1-fallback",
+        llm_independent:true,
+        desktop_mobile_parity:true,
+        authoritative_r2_preferred:false
+      });
     }catch(error){
-      if(!r2Error) r2Error=error;
+      return json({
+        ok:false,
+        code:error?.code || "CITATION_DICTIONARY_UNAVAILABLE",
+        message:String(error?.message || error),
+        citations:[]
+      },503);
     }
   }
 
-  if(!data){
-    return json({
-      ok:false,
-      code:r2Error?.code || "CITATION_DICTIONARY_UNAVAILABLE",
-      message:String(r2Error?.message || "Dicionário bibliográfico temporariamente indisponível."),
-      citations:[]
-    },503);
-  }
-
-  const citations=(Array.isArray(data?.matches)?data.matches:[])
-    .map((row,index)=>citationPublicView(row,offset+index))
-    .filter(Boolean);
-  return json({
-    ok:true,
-    query,
-    total_found:Math.max(0,Number(data?.total_found || 0)),
-    scanned:Math.max(0,Number(data?.scanned || 0)),
-    library_total_chunks:Math.max(0,Number(data?.library_total_chunks || 0)),
-    backend:String(data?.backend || "unknown"),
-    generation:String(data?.generation || ""),
-    cache_hit:Boolean(data?.cache_hit),
-    offset,
-    limit,
-    returned:citations.length,
-    has_more:Boolean(data?.has_more),
-    next_offset:data?.has_more ? Math.max(0,Number(data?.next_offset || offset+citations.length)) : null,
-    citations,
-    dictionary_mode:"bibliographic-cursor-v8.0.1",
-    llm_independent:true,
-    desktop_mobile_parity:true,
-    authoritative_r2_preferred:true
-  });
+  return json({ok:false,code:"CITATION_DICTIONARY_UNAVAILABLE",citations:[]},503);
 }
 
 function uniqueSources(context) {
@@ -5217,6 +5252,9 @@ async function status(env) {
     citation_dictionary_backend_preference: "r2-authoritative",
     citation_dictionary_r2_full_scan_fallback: true,
     citation_dictionary_r2_cache_ttl_ms: CITATION_R2_CACHE_TTL_MS,
+    citation_dictionary_segmented_r2_scan: true,
+    citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
+    citation_dictionary_cpu_bounded: true,
     cross_document_citation_mode: "mandatory",
     anti_bibliographic_isolation: true,
     false_negative_synthesis_guard: true,
@@ -6700,6 +6738,9 @@ export default {
         citation_dictionary_backend_preference: "r2-authoritative",
         citation_dictionary_r2_full_scan_fallback: true,
         citation_dictionary_r2_cache_ttl_ms: CITATION_R2_CACHE_TTL_MS,
+        citation_dictionary_segmented_r2_scan: true,
+        citation_dictionary_shards_per_request: CITATION_R2_SHARDS_PER_REQUEST,
+        citation_dictionary_cpu_bounded: true,
         require_lexical_match: REQUIRE_LEXICAL_MATCH,
         cognitive_orchestrator: true,
         cognitive_1000_microturbines: true,
