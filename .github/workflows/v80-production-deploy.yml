@@ -132,6 +132,19 @@ jobs:
           done
           test "$OK" = "true"
           echo "V10_1_PRODUCTION_ENDPOINT=healthy"
+          GROQ_STATUS="$(printf '%s' "$BODY" | jq -r '.external_providers.groq // "unknown"')"
+          GROQ_ZDR="$(printf '%s' "$BODY" | jq -r '.groq_zdr_confirmed // false')"
+          GROQ_FREE="$(printf '%s' "$BODY" | jq -r '.groq_free_tier_confirmed // false')"
+          WORKERS_AI_STATUS="$(printf '%s' "$BODY" | jq -r '.external_providers.workers_ai // "unknown"')"
+          R2_DICT_FALLBACK="$(printf '%s' "$BODY" | jq -r '.dictionary_r2_quota_fallback // false')"
+          if [ "$GROQ_STATUS" = "enabled" ]; then
+            test "$GROQ_ZDR" = "true"
+            test "$GROQ_FREE" = "true"
+          fi
+          test "$R2_DICT_FALLBACK" = "true"
+          echo "V10_1_GROQ_POLICY=status=$GROQ_STATUS,zdr=$GROQ_ZDR,free=$GROQ_FREE"
+          echo "V10_1_WORKERS_AI_STATUS=$WORKERS_AI_STATUS"
+          echo "V10_1_R2_DICTIONARY_QUOTA_FALLBACK=$R2_DICT_FALLBACK"
           printf '%s' "$BODY" | jq -e '
             .zero_cost_guard == true and
             .external_privacy_gate == true and
