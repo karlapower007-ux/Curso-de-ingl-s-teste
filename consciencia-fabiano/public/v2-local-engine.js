@@ -201,26 +201,45 @@ function queryTerms(question){
 }
 async function lexicalSearch(question,topK=70){
   const terms=queryTerms(question);if(!terms.length)return [];
+  const merged=new Map();
+
+  try{
+    const fts=await workerCall({type:"search-fts",question,top_k:Math.max(20,topK)},20000);
+    for(const row of (fts.matches||[])){
+      const key=String(row?.key||row?.document_id+":"+String(row?.page||0)+":"+String(row?.text||"").slice(0,48));
+      if(!key)continue;
+      merged.set(key,{...row,reference:publicReference(row),coverage:1,lexical_score:10+Number(row?.score||0),search_backend:"opfs-sqlite-fts5"});
+    }
+  }catch{}
+
   const db=await openLegacy();
-  if(!db.objectStoreNames.contains("chunks")){db.close();return [];}
-  const store=db.transaction("chunks","readonly").objectStore("chunks"),best=[];
-  await new Promise((resolve,reject)=>{
-    const req=store.openCursor();
-    req.onsuccess=()=>{
-      const c=req.result;if(!c){resolve();return;}
-      const r=c.value||{},hay=fold(r.text||"");let matched=0,freq=0;
-      for(const t of terms){if(!hay.includes(t))continue;matched++;let at=0,n=0;while((at=hay.indexOf(t,at))>=0&&n<8){n++;at+=t.length;}freq+=n;}
-      if(matched){
-        const coverage=matched/terms.length,score=coverage*8+Math.min(2,freq*.12);
-        best.push({...r,reference:publicReference(r),coverage,lexical_score:score});
-        best.sort((a,b)=>b.lexical_score-a.lexical_score||b.coverage-a.coverage);
-        if(best.length>Math.max(1,topK))best.length=Math.max(1,topK);
-      }
-      c.continue();
-    };
-    req.onerror=()=>reject(req.error);
-  });
-  db.close();return best;
+  if(db.objectStoreNames.contains("chunks")){
+    const store=db.transaction("chunks","readonly").objectStore("chunks"),best=[];
+    await new Promise((resolve,reject)=>{
+      const req=store.openCursor();
+      req.onsuccess=()=>{
+        const c=req.result;if(!c){resolve();return;}
+        const r=c.value||{},hay=fold(r.text||"");let matched=0,freq=0;
+        for(const t of terms){if(!hay.includes(t))continue;matched++;let at=0,n=0;while((at=hay.indexOf(t,at))>=0&&n<8){n++;at+=t.length;}freq+=n;}
+        if(matched){
+          const coverage=matched/terms.length,score=coverage*8+Math.min(2,freq*.12);
+          best.push({...r,reference:publicReference(r),coverage,lexical_score:score,search_backend:"indexeddb-lexical"});
+          best.sort((a,b)=>b.lexical_score-a.lexical_score||b.coverage-a.coverage);
+          if(best.length>Math.max(1,topK))best.length=Math.max(1,topK);
+        }
+        c.continue();
+      };
+      req.onerror=()=>reject(req.error);
+    });
+    for(const row of best){
+      const key=String(row?.key||row?.id||row?.document_id+":"+String(row?.chunk_index||0));
+      if(!key)continue;
+      const existing=merged.get(key);
+      if(!existing||Number(row.lexical_score||0)>Number(existing.lexical_score||0))merged.set(key,row);
+    }
+  }
+  db.close();
+  return [...merged.values()].sort((a,b)=>Number(b.lexical_score||0)-Number(a.lexical_score||0)).slice(0,Math.max(1,topK));
 }
 async function exactSearch(query,{page=1,pageSize=50}={}){
   const aliasObject=await aliases(),concepts=splitConcepts(query,aliasObject);
