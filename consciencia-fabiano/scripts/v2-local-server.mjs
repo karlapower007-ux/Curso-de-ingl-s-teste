@@ -20,7 +20,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-citation-integrity-r8";
+const LOCAL_RUNTIME_BUILD="2026-09-22-citation-integrity-r9";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -402,6 +402,9 @@ async function handleChat(req,res){
         id:String(row?.id||("browser:"+index)),
         document_id:String(row?.document_id||"browser-local"),
         title:String(row?.title||row?.public_title||""),
+        source_title:String(row?.source_title||""),
+        filename:String(row?.filename||""),
+        canonical_reference:String(row?.canonical_reference||""),
         page:Number(row?.page||0)||null,
         chunk_index:Number(row?.chunk_index||index),
         text:String(row?.text||"").slice(0,16000),
@@ -412,7 +415,19 @@ async function handleChat(req,res){
 
   if(mode==="exact"){
     const result=exactAndMatches(searchRows,question,{aliases,page:1,pageSize:Math.min(100,Number(body.page_size||25))});
-    json(res,{...exactPayload(result),evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault"});return;
+    const verifiedMatches=applyCitationIntegrity(result.matches);
+    const verified={
+      ...result,
+      total:verifiedMatches.length,
+      pages:verifiedMatches.length?1:0,
+      page:1,
+      matches:verifiedMatches
+    };
+    json(res,{
+      ...exactPayload(verified),
+      citation_integrity:true,
+      evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault"
+    });return;
   }
 
   const lowRam=ramGb()<=5;
