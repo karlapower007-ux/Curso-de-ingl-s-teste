@@ -12,7 +12,7 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v8.1-strict-focus-dictionary";
+  const CURRENT_SYSTEM_VERSION = "v9.0-private-hybrid-encyclopedia";
 
   function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
     return {
@@ -1965,11 +1965,9 @@
     const rows=dictionaryState.hits;
     rows.forEach((hit,index)=>{
       const card=document.createElement("article");card.className="dictionary-result";
-      const head=document.createElement("div");head.className="dictionary-result-head";
-      const title=document.createElement("strong");title.textContent=publicSourceLabel(hit);
-      const ref=document.createElement("span");ref.className="dictionary-result-ref";ref.textContent="Resultado "+(start+index+1);
       const body=document.createElement("div");body.className="dictionary-result-text";body.textContent=String(hit?.text||hit?.trecho||"").trim();
-      head.append(title,ref);card.append(head,body);host.appendChild(card);
+      const source=document.createElement("small");source.className="dictionary-source";source.textContent=publicSourceLabel(hit);
+      card.append(body,source);host.appendChild(card);
     });
     const pages=Math.max(1,Number(dictionaryState.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize)));
     $("dictionaryPageInfo").textContent="Página "+dictionaryState.page+" de "+pages+" • "+dictionaryState.total+" ocorrência(s) exata(s)";
@@ -1981,7 +1979,7 @@
     const q=String($("dictionaryInput")?.value||"").trim();
     if(!q)return;
     dictionaryState.query=q;if(!dictionaryState.page)dictionaryState.page=1;dictionaryState.hits=[];
-    $("dictionaryStatus").textContent="Pesquisando toda a biblioteca com foco estrito…";
+    $("dictionaryStatus").textContent="Consultando a enciclopédia privada…";
     $("dictionarySearchBtn").disabled=true;
     try{
       const data=await api("/api/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})},false);
@@ -1990,7 +1988,7 @@
       dictionaryState.pages=Number(data?.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize));
       renderDictionaryPage();
       $("dictionaryStatus").textContent=dictionaryState.total
-        ? "Busca concluída • "+Number(data.scanned||0)+" trechos examinados • somente correspondências do assunto solicitado."
+        ? "Verbete localizado • "+dictionaryState.total+" ocorrência(s) na biblioteca."
         : "Nenhuma correspondência exata encontrada para este assunto.";
     }catch(error){
       $("dictionaryStatus").textContent="Busca indisponível agora: "+String(error?.message||error);

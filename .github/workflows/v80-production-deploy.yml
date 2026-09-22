@@ -1,4 +1,4 @@
-name: Deploy Consciência Fabiano V8 Production Safely
+name: Deploy Consciência Fabiano V9 Production Safely
 
 on:
   push:
@@ -110,16 +110,16 @@ jobs:
             BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
             VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
             HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
-            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.2.0-strict-focus-lock" ]; then
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "9.0.0-private-hybrid-encyclopedia" ]; then
               OK=true
               break
             fi
             sleep 3
           done
           test "$OK" = "true"
-          echo "V8_2_PRODUCTION_ENDPOINT=healthy"
+          echo "V9_0_PRODUCTION_ENDPOINT=healthy"
           curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ | grep -q 'Dicionário / Enciclopédia'
-          echo "V8_2_DICTIONARY_UI=visible"
+          echo "V9_0_DICTIONARY_UI=visible"
           # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
           DICT="$(curl -fsS --max-time 30 -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}')"
           printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0)' >/dev/null
@@ -134,8 +134,8 @@ jobs:
             echo "Stale browser dictionary route detected"
             exit 1
           fi
-          echo "V8_2_DICTIONARY_BROWSER_ROUTE=pass"
-          echo "V8_2_DICTIONARY_FUNCTIONAL=pass"
+          echo "V9_0_DICTIONARY_BROWSER_ROUTE=pass"
+          echo "V9_0_DICTIONARY_FUNCTIONAL=pass"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'

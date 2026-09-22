@@ -575,3 +575,10 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 .dictionary-pager span{color:var(--muted);font-size:.88rem}
 @media(max-width:780px){.top-actions{flex-wrap:wrap}.top-actions button{min-width:calc(50% - 8px)}.dictionary-card{padding:16px}}
 @media(max-width:560px){.top-actions{display:grid;grid-template-columns:1fr}.top-actions button{width:100%}.dictionary-search{grid-template-columns:1fr}.dictionary-search .primary{width:100%}.dictionary-result-head{display:grid}.dictionary-result-ref{white-space:normal}.dictionary-card{padding:12px}.dictionary-result{padding:14px}}
+
+/* v9 encyclopedia: compact reading on desktop and mobile */
+.dictionary-result{padding:13px 14px}
+.dictionary-result-text{font-size:.92rem;line-height:1.48;color:#e5e7eb}
+.dictionary-source{display:block;margin-top:8px;padding-top:7px;border-top:1px solid #2a2a2a;color:#94a3b8;font-size:.76rem;line-height:1.35}
+@media(max-width:780px){.dictionary-result-text{font-size:.9rem}.dictionary-source{font-size:.74rem}}
+@media(max-width:560px){.dictionary-result{padding:12px}.dictionary-result-text{font-size:.88rem;line-height:1.44}.dictionary-source{font-size:.72rem}.dictionary-pager{flex-wrap:wrap}}

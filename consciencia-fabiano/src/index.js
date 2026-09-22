@@ -2,7 +2,9 @@ import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAu
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "8.2.0-strict-focus-lock";
+const VERSION = "9.0.0-private-hybrid-encyclopedia";
+const GEMINI_MODEL = "gemini-3.8-flash";
+const FAST_MEMORY_MESSAGES = 8;
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -1427,9 +1429,10 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
 
 function humanDocumentName(filename, title = "") {
   const t=String(title || "").trim();
+  if(/^(?:standard works|obras padrão)$/iu.test(t)) return "";
   if(t && !/\.pdf$/i.test(t) && !/^[\w-]+\.pdf$/i.test(t)) return t;
   const raw=String(filename || "").trim();
-  if(/standard[-_ ]?works/i.test(raw)) return "";
+  if(/standard[-_ ]?works|obras[-_ ]?padr[aã]o/i.test(raw)) return "";
   const base=raw.replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\b\d{4,}\b/g," ").replace(/\s+/g," ").trim();
   if(!base) return "Documento";
   return base.replace(/\b\p{L}/gu,m=>m.toUpperCase());
@@ -1475,6 +1478,7 @@ function uniqueSources(context) {
       idioma: item.language || "unknown",
       pagina: item.page || null,
       trecho: cleanNarrativeText(item.text || "").slice(0, 520),
+      referencia: extractSemanticReference(item.text || ""),
       score: Math.round(item.score * 10000) / 10000,
       retrieval_mode: item.retrieval_mode || "semantic",
     });
@@ -1802,6 +1806,26 @@ async function enforceDenseEncyclopedicMode(env,question,answer,sources) {
   return answer;
 }
 
+
+function compactGroundedReferencesMarkdown(sources) {
+  const rows=exhaustiveSourceRows(sources);
+  if(!rows.length) return "";
+  const lines=[];
+  const seen=new Set();
+  for(const row of rows){
+    const canonical=String(row?.referencia || extractSemanticReference(row?.trecho || "") || "").trim();
+    const name=humanDocumentName("",row?.titulo || row?.arquivo || "");
+    const page=row?.pagina ? "p. "+Number(row.pagina) : "";
+    const label=canonical || [name,page].filter(Boolean).join(" — ");
+    if(!label || /^(?:standard works|obras padrão|documento|fonte)$/iu.test(label)) continue;
+    if(seen.has(label)) continue;
+    seen.add(label);
+    lines.push("- "+label);
+    if(lines.length>=24) break;
+  }
+  return lines.length ? "Fontes\n\n"+lines.join("\n") : "";
+}
+
 function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
   const rows=Array.isArray(sources)?sources:[];
   if(!rows.length) return EMPTY_GROUNDED_ANSWER;
@@ -1826,22 +1850,15 @@ function finalizeGroundedAnswer(answer,sources,cognitiveContract=null) {
     return sentence;
   }
 
-  const normalized=/^1\.\s*SÍNTESE PRINCIPAL:/i.test(base)
-    ? base
-    : "1. SÍNTESE PRINCIPAL:\n\n"+base;
-  const allSources=exhaustiveSourceRows(rows);
-  const coverage=sourceCoverageMarkdown(allSources);
-  const references=groundedReferencesMarkdown(allSources);
-  return normalized+
-    (coverage?"\n\n"+coverage:"")+
-    (references?"\n\n"+references:"");
+  base=base.replace(/^1\.\s*SÍNTESE PRINCIPAL:\s*/i,"").trim();
+  const references=compactGroundedReferencesMarkdown(rows);
+  return base+(references?"\n\n"+references:"");
 }
 
 function ensureEngagementQuestion(answer, fallback = false) {
   const text=String(answer || "").trim();
   if(!text) return gracefulEmptyAnswer();
-  if(fallback || /\?\s*$/.test(text)) return text;
-  return text+"\n\nGostaria de explorar outra referência sobre isto?";
+  return text;
 }
 
 let groqRoundRobinCursor = 0;
@@ -1918,6 +1935,46 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
   return res;
 }
 
+
+function geminiApiKey(env) {
+  return String(env?.GEMINI_API_KEY || env?.GOOGLE_API_KEY || "").trim();
+}
+
+function redactExternalPrompt(text) {
+  return String(text || "")
+    .replace(/\b(?:filename|document_id|chunk_index|storage_key|r2_key)\s*[:=]\s*[^\s,;]+/giu,"")
+    .replace(/\b[^\s/\\]+\.pdf\b/giu,"[arquivo]")
+    .replace(/\b[a-f0-9]{32,64}\b/giu,"[id]")
+    .replace(/\b(?:standard works|obras padrão)\b/giu,"")
+    .replace(/[ \t]{2,}/g," ")
+    .trim();
+}
+
+function externalSafeMessages(messages) {
+  return Array.from(messages || []).map(m=>({role:String(m?.role || "user"),content:redactExternalPrompt(m?.content || "")}));
+}
+
+async function geminiCompletion(env,messages,options={}) {
+  const key=geminiApiKey(env);
+  if(!key){const error=new Error("Gemini não configurado.");error.code="GEMINI_NOT_CONFIGURED";throw error;}
+  const safe=externalSafeMessages(messages);
+  const system=safe.filter(m=>m.role==="system").map(m=>m.content).filter(Boolean).join("\n\n");
+  const conversation=safe.filter(m=>m.role!=="system").map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
+  const model=String(env?.GEMINI_MODEL || GEMINI_MODEL).trim() || GEMINI_MODEL;
+  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({system_instruction:system?{parts:[{text:system}]}:undefined,contents:conversation,generationConfig:{maxOutputTokens:Math.max(200,Number(options.max_completion_tokens || MASTER_NODE_MAX_COMPLETION_TOKENS))}})});
+  if(!res.ok){const body=await res.json().catch(()=>({}));const error=new Error(body?.error?.message || ("Gemini HTTP "+res.status));error.status=res.status;throw error;}
+  const data=await res.json();
+  const text=Array.from(data?.candidates?.[0]?.content?.parts || []).map(p=>String(p?.text || "")).join("").trim();
+  if(!text) throw new Error("Gemini retornou resposta vazia.");
+  return new Response(JSON.stringify({choices:[{message:{content:text}}],_provider:"gemini"}),{headers:{"Content-Type":"application/json"}});
+}
+
+async function hybridReasoningCompletion(env,messages,options={}) {
+  if(geminiApiKey(env)){try{return await geminiCompletion(env,messages,options);}catch{}}
+  const res=await groqCompletion(env,externalSafeMessages(messages),false,options);
+  const data=await res.clone().json().catch(()=>({}));
+  return new Response(JSON.stringify({...data,_provider:"groq"}),{status:res.status,headers:{"Content-Type":"application/json"}});
+}
 async function mapExtractReferences(env, question, batch, batchIndex) {
   const raw=buildMapBatchContext(batch,question,batchIndex);
   const messages=[
@@ -2285,7 +2342,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
   ];
   const groqStarted=Date.now();
   try{
-    const res=await groqCompletion(env,messages,false,{
+    const res=await hybridReasoningCompletion(env,messages,{
       input_budget:9200,
       max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
       temperature:0.0,
@@ -2293,7 +2350,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
     });
     const data=await res.json().catch(()=>({}));
     const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,groq_ms:Date.now()-groqStarted};
+    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,provider:String(data?._provider || "groq"),groq_ms:Date.now()-groqStarted};
   }catch(error){
     return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
   }
@@ -2389,7 +2446,7 @@ async function massivePipelineStreamResponse(env,meta) {
         emit("meta",{
           fontes:meta.sources,
           fallback:false,
-          provider:"groq-final-only+500-node-grounded-rag",
+          provider:"hybrid-private-rag",
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
           cognitive_contract_version:"1.0",
           cognitive_v74:true,
@@ -2437,7 +2494,7 @@ async function massivePipelineStreamResponse(env,meta) {
           fontes:usedSources,
           fallback:false,
           memory_persisted:memoryPersisted,
-          provider:"groq-final-only+500-node-grounded-rag",
+          provider:"hybrid-private-rag",
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
           cognitive_contract_version:"1.0",
           cognitive_memory_used:Boolean(meta.cognitiveContract?.use_history),
@@ -3786,10 +3843,10 @@ async function chat(request, env) {
 
   const ownerId = await memoryOwner(request, body);
   // Stateful window: até 10 interações (20 mensagens), sem ampliar o orçamento do Groq.
-  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-20) : [];
+  const clientHistory = Array.isArray(body?.historico) ? body.historico.slice(-FAST_MEMORY_MESSAGES) : [];
   let storedHistory = [];
   try {
-    storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, 20));
+    storedHistory = await readPersistentHistory(env, ownerId, Math.min(MAX_SERVER_HISTORY, FAST_MEMORY_MESSAGES));
   } catch {}
   const normalizeHistoryTurn=x=>({
     role:x?.role === "assistant" ? "assistant" : "user",
@@ -3998,7 +4055,7 @@ async function chat(request, env) {
     fontes: usedSources,
     fallback: false,
     memory_persisted: memoryPersisted,
-    provider: "groq-final-only+500-node-grounded-rag",
+    provider: "hybrid-private-rag",
     cognitive_mode: cognitiveContract.mode,
     cognitive_contract_version: cognitiveContract.version,
     cognitive_memory_used: cognitiveContract.use_history,
@@ -5338,7 +5395,10 @@ export class LibraryDO {
           const audit=strictIntentAudit(evidence,intent);
           if(!audit.accepted)continue;
           const canonical=extractSemanticReference(evidence);
-          accepted.push({page:Number(row.page||0),text:evidence,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,score:100,coverage:audit.coverage});
+          const clean=cleanNarrativeText(evidence);
+          const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+          const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
+          accepted.push({page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage});
         }
         const from=(page-1)*pageSize;
         const matches=accepted.slice(from,from+pageSize);
