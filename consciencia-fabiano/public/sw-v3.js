@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-consiencia-v10-1-private-offline-online";
+const CACHE_NAME="fns-consiencia-v10-1-private-offline-online-alias-v2";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const OFFLINE_ASSET_HOSTS=new Set([
   "cdn.jsdelivr.net",
