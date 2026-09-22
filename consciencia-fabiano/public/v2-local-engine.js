@@ -204,7 +204,7 @@ async function lexicalSearch(question,topK=70){
   const merged=new Map();
 
   try{
-    const fts=await workerCall({type:"search-fts",question,top_k:Math.max(20,topK)},20000);
+    const fts=await workerCall({type:"search-fts",question,top_k:Math.max(20,topK)},1500);
     for(const row of (fts.matches||[])){
       const key=String(row?.key||row?.document_id+":"+String(row?.page||0)+":"+String(row?.text||"").slice(0,48));
       if(!key)continue;
