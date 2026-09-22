@@ -19,6 +19,8 @@ const R2_ZERO_COST_SOURCE_BUDGET_BYTES = 6_000_000_000;
 const R2_DOCUMENTED_FREE_STORAGE_BYTES = 10_000_000_000;
 const R2_DICTIONARY_MAX_SHARDS = 400;
 const R2_DICTIONARY_PARALLEL_READS = 8;
+const CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK = 4;
+const CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET = 1500;
 const ZERO_COST_MODE = true;
 const PRIVATE_EGRESS_LOCK = true;
 const LEGACY_EXTERNAL_EMBEDDINGS = false;
@@ -823,9 +825,9 @@ function extractEncyclopediaConcepts(text) {
       key,label:canonical?.label || label,kind:canonical?.kind || (label.includes(" ")?"entity":"concept"),
       aliases:[label]
     });
-    if(found.size>=8) break;
+    if(found.size>=CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK) break;
   }
-  return [...found.values()].slice(0,8);
+  return [...found.values()].slice(0,CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK);
 }
 
 function lexicalTokens(text) {
@@ -4837,6 +4839,11 @@ async function handleApi(request, env, url, ctx) {
           else throw error;
         }else throw error;
       }
+      if(ctx?.waitUntil){
+        ctx.waitUntil(libraryCall(env,"/encyclopedia/concepts/backfill",{
+          method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:20})
+        }).catch(()=>{}));
+      }
       return json({...data,strict_focus_plan:"A",fallback_plans:["B-r2-private-strict","C-cross-language-local","D-context-controlled","E-local-contingency","F-final-audit"]});
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
@@ -5248,8 +5255,7 @@ export class LibraryDO {
     const concepts=extractEncyclopediaConcepts(text);
     for(const concept of concepts){
       this.sql.exec(
-        "INSERT INTO encyclopedia_concepts (concept_key,label,kind,created_at,updated_at) VALUES (?,?,?,?,?) "+
-        "ON CONFLICT(concept_key) DO UPDATE SET label=excluded.label,kind=excluded.kind,updated_at=excluded.updated_at",
+        "INSERT OR IGNORE INTO encyclopedia_concepts (concept_key,label,kind,created_at,updated_at) VALUES (?,?,?,?,?)",
         concept.key,concept.label,concept.kind,now,now
       );
       const aliases=new Set([concept.label,...(concept.aliases||[])]);
@@ -5267,7 +5273,7 @@ export class LibraryDO {
       );
     }
     let relations=0;
-    const relational=concepts.slice(0,6);
+    const relational=concepts.slice(0,CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK);
     for(let i=0;i<relational.length;i++){
       for(let j=i+1;j<relational.length;j++){
         const pair=[relational[i].key,relational[j].key].sort();
@@ -5286,7 +5292,24 @@ export class LibraryDO {
   }
 
   backfillEncyclopediaConcepts(limit = 100) {
-    const safeLimit=Math.max(1,Math.min(200,Number(limit||100)));
+    const requestedLimit=Math.max(1,Math.min(200,Number(limit||100)));
+    const day=new Date().toISOString().slice(0,10);
+    const provider="encyclopedia-concept-backfill-chunks";
+    const currentUsage=Number([...this.sql.exec(
+      "SELECT calls FROM zero_cost_usage WHERE day=? AND provider=? LIMIT 1",day,provider
+    )][0]?.calls || 0);
+    const remainingBudget=Math.max(0,CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET-currentUsage);
+    if(remainingBudget<=0){
+      const markerRow=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_concept_backfill_rowid' LIMIT 1")][0];
+      const last=Math.max(0,Number(markerRow?.value||0));
+      const maxRow=Math.max(0,Number([...this.sql.exec("SELECT COALESCE(MAX(rowid),0) AS n FROM chunks")][0]?.n||0));
+      return {
+        ok:true,processed:0,paused_zero_cost:true,daily_chunk_budget:CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET,
+        daily_chunks_used:currentUsage,last_rowid:last,max_rowid:maxRow,complete:last>=maxRow,
+        progress:maxRow?Math.min(100,Math.round((last/maxRow)*100)):100
+      };
+    }
+    const safeLimit=Math.max(1,Math.min(requestedLimit,remainingBudget));
     const markerRow=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_concept_backfill_rowid' LIMIT 1")][0];
     const last=Math.max(0,Number(markerRow?.value||0));
     const rows=[...this.sql.exec(
@@ -5308,10 +5331,18 @@ export class LibraryDO {
       );
     }
     const maxRow=Math.max(0,Number([...this.sql.exec("SELECT COALESCE(MAX(rowid),0) AS n FROM chunks")][0]?.n||0));
+    const nextUsage=currentUsage+rows.length;
+    if(rows.length){
+      this.sql.exec(
+        "INSERT OR REPLACE INTO zero_cost_usage (day,provider,calls,updated_at) VALUES (?,?,?,?)",
+        day,provider,nextUsage,now
+      );
+    }
     return {
       ok:true,processed:rows.length,concept_candidates:conceptCount,relations_written:relationCount,
       last_rowid:newLast,max_rowid:maxRow,complete:newLast>=maxRow,
-      progress:maxRow?Math.min(100,Math.round((newLast/maxRow)*100)):100
+      progress:maxRow?Math.min(100,Math.round((newLast/maxRow)*100)):100,
+      paused_zero_cost:false,daily_chunk_budget:CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET,daily_chunks_used:nextUsage
     };
   }
 
@@ -6355,6 +6386,8 @@ export default {
         encyclopedia_relation_type: "co_occurs_with",
         encyclopedia_concept_backfill: "incremental-derived-no-reindex",
         encyclopedia_concept_fail_open: true,
+        encyclopedia_concept_max_per_chunk: CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK,
+        encyclopedia_concept_daily_chunk_budget: CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET,
         dictionary_r2_max_shards_per_query: R2_DICTIONARY_MAX_SHARDS,
         workers_ai_neuron_budget_headroom: "15% below documented free allocation",
         groq_zdr_required: GROQ_ZDR_REQUIRED,
