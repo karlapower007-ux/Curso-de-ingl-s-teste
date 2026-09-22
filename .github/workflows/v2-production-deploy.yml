@@ -1,0 +1,178 @@
+name: Deploy Consciência Fabiano v2 Local-First Safely
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - ".github/workflows/v2-production-deploy.yml"
+      - "consciencia-fabiano/public/v2-*.js"
+      - "consciencia-fabiano/public/v2-*.json"
+      - "consciencia-fabiano/public/index.html"
+      - "consciencia-fabiano/public/style.css"
+      - "consciencia-fabiano/public/sw-v3.js"
+      - "consciencia-fabiano/public/opfs-sqlite-worker.js"
+      - "consciencia-fabiano/scripts/v2-*"
+      - "consciencia-fabiano/scripts/setup-v2-windows.ps1"
+      - "consciencia-fabiano/INICIAR_CONSCIENCIA_V2.cmd"
+      - "consciencia-fabiano/package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-fabiano-v2-production
+  cancel-in-progress: false
+
+jobs:
+  preflight-deploy-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      V2_GOLDEN_BASELINE_SHA: 36ace3188d281e82f4cb8a7e1ac78a803515374d
+      V2_ROLLBACK_SHA: 36ace3188d281e82f4cb8a7e1ac78a803515374d
+      EXPECTED_WORKERS_BASE: https://consciencia-fabiano.focoeepoder2.workers.dev
+
+    steps:
+      - name: Checkout official v2 commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prove cloud backend and persistent library stayed frozen
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$V2_GOLDEN_BASELINE_SHA^{commit}"
+          git diff --exit-code "$V2_GOLDEN_BASELINE_SHA"...HEAD --             consciencia-fabiano/src/index.js             consciencia-fabiano/wrangler.jsonc             consciencia-fabiano/public/failover-v3.js             consciencia-fabiano/public/biblioteca_backup.json             consciencia-fabiano/public/biblioteca_backup             consciencia-fabiano/supabase/migrations
+          echo "V2_CLOUD_BACKEND_FROZEN=true"
+          echo "V2_LIBRARY_PERSISTENCE_BOUNDARY=pass"
+
+      - name: Install
+        working-directory: consciencia-fabiano
+        run: npm install --ignore-scripts
+
+      - name: Run v2 and legacy acceptance gates
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run check
+          npm run v2:test
+          test -f public/v2-local-ui.js
+          test -f public/v2-local-engine.js
+          test -f public/v2-aliases.json
+          test -f scripts/v2-local-server.mjs
+          grep -q 'qwen3-embedding:0.6b' scripts/v2-local-core.mjs
+          grep -q 'Citação exata • zero LLM' public/v2-local-ui.js
+          grep -q 'http://127.0.0.1:8788/api/v2/health' public/v2-local-ui.js
+          grep -q 'LOCAL_BRIDGE_ORIGINS' scripts/v2-local-server.mjs
+          ! grep -qi 'api.groq.com' scripts/v2-local-server.mjs
+          ! grep -qi 'generativelanguage.googleapis.com' scripts/v2-local-server.mjs
+          ! grep -qi 'api.x.ai' scripts/v2-local-server.mjs
+          echo "V2_PREFLIGHT=pass"
+
+      - name: Test trusted Cloudflare to localhost bridge
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/v2-mock-ollama.mjs >/tmp/v2-mock-ollama.log 2>&1 &
+          OLLAMA_PID=$!
+          node scripts/v2-local-server.mjs >/tmp/v2-local-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" "$OLLAMA_PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8788/api/v2/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          curl -sS -D /tmp/allowed.headers -o /dev/null -X OPTIONS             -H 'Origin: https://consciencia-fabiano.focoeepoder2.workers.dev'             -H 'Access-Control-Request-Method: POST'             -H 'Access-Control-Request-Headers: content-type'             -H 'Access-Control-Request-Private-Network: true'             http://127.0.0.1:8788/api/v2/chat
+
+          grep -Fiq 'Access-Control-Allow-Origin: https://consciencia-fabiano.focoeepoder2.workers.dev' /tmp/allowed.headers
+          grep -Fiq 'Access-Control-Allow-Private-Network: true' /tmp/allowed.headers
+
+          curl -sS -D /tmp/blocked.headers -o /dev/null -X OPTIONS             -H 'Origin: https://evil.example'             -H 'Access-Control-Request-Method: POST'             http://127.0.0.1:8788/api/v2/chat
+          ! grep -Fiq 'Access-Control-Allow-Origin:' /tmp/blocked.headers
+
+          curl -fsS -X POST http://127.0.0.1:8788/api/v2/chat             -H 'Origin: https://consciencia-fabiano.focoeepoder2.workers.dev'             -H 'Content-Type: application/json'             --data '{"question":"Explique o Plano de Salvação","mode":"explain","model":"qwen3:0.6b","semantic":false,"evidence":[{"id":"bridge:1","document_id":"qa","title":"QA","page":1,"chunk_index":1,"text":"O Plano de Salvação inclui a Vida Pré-Mortal.","reference":"QA • página 1"}]}'             >/tmp/v2-bridge-chat.json
+          node -e 'const d=require("/tmp/v2-bridge-chat.json"); if(!d.ok||d.provider!=="ollama-local"||!String(d.answer||"").includes("MOCK_QWEN_LOCAL_OK")) process.exit(1)'
+
+          echo "V2_LOCAL_BRIDGE=pass"
+
+      - name: Arm v2 deployment
+        shell: bash
+        run: echo "V2_DEPLOY_ARMED=true" >> "$GITHUB_ENV"
+
+      - name: Deploy official Worker with frozen cloud backend
+        working-directory: consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          ACCOUNTS="$(curl -fsS 'https://api.cloudflare.com/client/v4/accounts?per_page=50'             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H 'Content-Type: application/json')"
+          DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
+          test -n "$DISCOVERED_ACCOUNT_ID"
+          export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
+          npx wrangler deploy
+          echo "V2_CLOUDFLARE_DEPLOY=completed"
+
+      - name: Verify v2 production assets and unchanged cloud backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$EXPECTED_WORKERS_BASE"
+
+          for attempt in 1 2 3 4 5 6; do
+            curl -fsS --max-time 20 "$BASE/health/deploy" -o /tmp/v2-health.json || true
+            if jq -e '.ok == true and .version == "10.1.0-private-egress-offline-online"' /tmp/v2-health.json >/dev/null 2>&1; then
+              break
+            fi
+            sleep 3
+          done
+
+          jq -e '.ok == true and .version == "10.1.0-private-egress-offline-online"' /tmp/v2-health.json >/dev/null
+          echo "V2_CLOUD_BACKEND_STILL_V10_1=pass"
+
+          curl -fsS --max-time 20 "$BASE/?v2_release=${GITHUB_SHA}" -o /tmp/v2-home.html
+          grep -Fq 'Consciência do Fabiano v2' /tmp/v2-home.html
+          grep -Fq '/v2-local-ui.js' /tmp/v2-home.html
+
+          curl -fsS --max-time 20 "$BASE/v2-local-ui.js?v=${GITHUB_SHA}" -o /tmp/v2-ui.js
+          curl -fsS --max-time 20 "$BASE/v2-local-engine.js?v=${GITHUB_SHA}" -o /tmp/v2-engine.js
+          curl -fsS --max-time 20 "$BASE/v2-aliases.json?v=${GITHUB_SHA}" -o /tmp/v2-aliases.json
+          grep -Fq 'Citação exata • zero LLM' /tmp/v2-ui.js
+          grep -Fq 'http://127.0.0.1:8788/api/v2/health' /tmp/v2-ui.js
+          grep -Fq 'fns_qwen_vectors_v2' /tmp/v2-engine.js
+          jq -e '."plano de salvação" | length > 0' /tmp/v2-aliases.json >/dev/null
+
+          API_V2_HTTP="$(curl -sS -o /tmp/cloud-v2-api.json -w '%{http_code}' "$BASE/api/v2/health" || true)"
+          test "$API_V2_HTTP" != "200"
+          echo "V2_LOCAL_API_NOT_HOSTED_IN_CLOUD=pass"
+          echo "V2_PRODUCTION_ASSETS=pass"
+
+      - name: Roll back to last known v10.1 production on v2 failure
+        if: failure() && env.V2_DEPLOY_ARMED == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "$V2_ROLLBACK_SHA"
+          cd consciencia-fabiano
+          npm install --ignore-scripts
+          ACCOUNTS="$(curl -fsS 'https://api.cloudflare.com/client/v4/accounts?per_page=50'             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H 'Content-Type: application/json')"
+          DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
+          test -n "$DISCOVERED_ACCOUNT_ID"
+          export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
+          npx wrangler deploy
+          echo "V2_ROLLBACK_TO_36ACE318=executed"
