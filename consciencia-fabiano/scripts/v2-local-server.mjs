@@ -230,10 +230,10 @@ async function handleV3Chat(req,res){
   const mode=RESPONSE_MODES.has(String(body.mode||""))?String(body.mode):"explain";
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
   const [index,aliases]=await Promise.all([ensureV3Index(),loadAliases()]);
-  const strict=mode==="exact";
-  let result=searchV3Evidence(index,question,aliases,{limit:strict?25:40,strict});
+  const strict=mode==="exact" && body.strict_phrase===true;
+  let result=searchV3Evidence(index,question,aliases,{limit:mode==="exact"?25:40,strict});
   let query_expansions=[];
-  if(!strict && result.results.length<8 && body.allow_query_expansion!==false){
+  if(mode!=="exact" && !strict && result.results.length<8 && body.allow_query_expansion!==false){
     query_expansions=await expandV3WithQwen(question);
     if(query_expansions.length){
       result=searchV3Evidence(index,question,aliases,{
