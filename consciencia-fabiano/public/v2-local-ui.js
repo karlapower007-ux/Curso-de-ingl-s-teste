@@ -114,7 +114,19 @@ async function sendLocal(){
     }
 
     if(engine&&Number(localState?.chunks||0)>0){
-      try{evidence=await engine.lexicalSearch(q,70);}catch{}
+      try{
+        const lexical=await engine.lexicalSearch(q,70);
+        let semantic=[];
+        if(Number(localState?.qwen_vectors||0)>0){
+          try{semantic=await engine.semanticSearch(q,30);}catch{}
+        }
+        const merged=new Map();
+        for(const row of [...semantic,...lexical]){
+          const key=String(row?.key||row?.id||row?.document_id+":"+String(row?.chunk_index||0));
+          if(key&&!merged.has(key))merged.set(key,row);
+        }
+        evidence=[...merged.values()].slice(0,90);
+      }catch{}
     }
     const data=await call("/api/v2/chat",{
       question:q,mode,model,semantic:mode!=="exact",page_size:25,
@@ -217,9 +229,13 @@ async function prepareBrain(){
     const mod=await import("/v2-local-engine.js");
     let state=await mod.FNSV2LocalEngine.counts();
     const status=$("v2LocalStatus");
+    let previous=-1,stalls=0;
     while(state.pending>0){
-      state=await mod.FNSV2LocalEngine.prepare({batches:1,batchSize:Number(navigator.deviceMemory||4)<=4?2:6,mirror:true});
+      state=await mod.FNSV2LocalEngine.prepare({batches:1,batchSize:Number(navigator.deviceMemory||4)<=4?8:24,mirror:true});
       if(status)status.textContent="Embeddings Qwen v2: "+state.qwen_vectors+"/"+state.chunks+" • faltam "+state.pending;
+      if(Number(state.qwen_vectors||0)===previous)stalls++;else stalls=0;
+      previous=Number(state.qwen_vectors||0);
+      if(stalls>=3)throw new Error("A preparação não avançou após três tentativas; verifique se qwen3-embedding:0.6b está instalado no Ollama.");
       await new Promise(r=>setTimeout(r,10));
     }
     if(status)status.textContent="Cérebro local preparado • "+state.qwen_vectors+" vetores Qwen v2";
