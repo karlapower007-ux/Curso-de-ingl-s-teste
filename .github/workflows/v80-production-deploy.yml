@@ -129,8 +129,8 @@ jobs:
           fi
           # Verify the browser-facing asset itself calls the public /api route.
           APP_JS="$(curl -fsS --max-time 20 "https://consciencia-fabiano.focoeepoder2.workers.dev/app.js?v=${GITHUB_SHA}")"
-          printf '%s' "$APP_JS" | grep -Fq 'api("/api/dictionary/search"'
-          if printf '%s' "$APP_JS" | grep -Fq 'api("/dictionary/search"'; then
+          grep -Fq 'api("/api/dictionary/search"' <<<"$APP_JS"
+          if grep -Fq 'api("/dictionary/search"' <<<"$APP_JS"; then
             echo "Stale browser dictionary route detected"
             exit 1
           fi
