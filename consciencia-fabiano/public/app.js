@@ -2381,11 +2381,34 @@
         throw new Error("Mude temporariamente o modo para Automático ou Online durante a preparação offline.");
       }
       const engine=await ensureRagCascade("v10-offline-preparation");
-      if(status) status.textContent="Copiando a biblioteca para o armazenamento local…";
-      await engine.hydrateStaticBackup(true);
-      const stats=await engine.localStats();
-      const chunks=Number(stats?.chunks||0);
-      if(chunks<=0) throw new Error("A biblioteca local não recebeu chunks nesta preparação.");
+      if(status) status.textContent="Copiando a biblioteca base para o armazenamento local…";
+      const baseline=await engine.hydrateStaticBackup(true);
+      let stats=await engine.localStats();
+      let chunks=Number(stats?.chunks||0);
+      if(chunks<=0) throw new Error("A biblioteca local não recebeu registros nesta preparação.");
+
+      // If this device is already authorized for the private Library, merge the
+      // newest R2 generation into IndexedDB too. This preserves privacy and makes
+      // the offline copy more current without requiring Durable Object reads.
+      let privateTarget=0;
+      if(ownerToken() && networkAllowed()){
+        try{
+          if(status) status.textContent="Sincronizando os livros privados mais recentes para este aparelho…";
+          const cloud=await api("/api/admin/omni-sync-state",{},false);
+          privateTarget=Math.max(0,Number(cloud?.total||0));
+          if(privateTarget>chunks){
+            await requestR2Hydration(true);
+            const deadline=Date.now()+120000;
+            while(Date.now()<deadline){
+              await new Promise(resolve=>setTimeout(resolve,2000));
+              stats=await engine.localStats();
+              chunks=Number(stats?.chunks||0);
+              if(chunks>=privateTarget)break;
+              if(status) status.textContent="Sincronizando offline… "+chunks.toLocaleString("pt-BR")+" / "+privateTarget.toLocaleString("pt-BR")+" registros";
+            }
+          }
+        }catch{}
+      }
 
       // Prime PDF.js into Cache Storage so local PDF extraction keeps working offline.
       if(status) status.textContent="Preparando leitura de PDF offline…";
@@ -2412,7 +2435,12 @@
 
       localStorage.setItem(OFFLINE_PREP_KEY,"1");
       if(status){
-        status.textContent="Offline pronto: "+chunks.toLocaleString("pt-BR")+" registros locais • PDF pronto • busca semântica "+(embeddingReady?"pronta":"opcional indisponível")+" • voz "+(voiceReady?"pronta":"opcional indisponível")+".";
+        const baseExpected=Math.max(0,Number(baseline?.expected_records||0));
+        const coverageTarget=Math.max(baseExpected,privateTarget);
+        status.textContent="Offline pronto: "+chunks.toLocaleString("pt-BR")+
+          (coverageTarget?" / "+coverageTarget.toLocaleString("pt-BR")+" registros disponíveis":" registros locais")+
+          " • PDF pronto • busca semântica "+(embeddingReady?"pronta":"literal/BM25 ativo")+
+          " • voz "+(voiceReady?"pronta":"opcional indisponível")+".";
       }
       updateOperatingModeUi();
       await notifyServiceWorkerMode();
