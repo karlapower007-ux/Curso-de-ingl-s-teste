@@ -120,6 +120,14 @@ jobs:
           echo "V8_2_PRODUCTION_ENDPOINT=healthy"
           curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ | grep -q 'Dicionário / Enciclopédia'
           echo "V8_2_DICTIONARY_UI=visible"
+          # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
+          DICT="$(curl -fsS --max-time 30 -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}')"
+          printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array")' >/dev/null
+          if printf '%s' "$DICT" | grep -Eqi '"(filename|document_id|chunk_index)"[[:space:]]*:|Standard Works|Obras Padrão'; then
+            echo "Technical metadata leaked from dictionary"
+            exit 1
+          fi
+          echo "V8_2_DICTIONARY_FUNCTIONAL=pass"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'
