@@ -3,6 +3,14 @@
 // while the origin is active, and Periodic Background Sync is used when supported.
 const CACHE_NAME="fns-consiencia-v10-offline-online";
 const DAEMON_INTERVAL_MS=3*60*1000;
+const OFFLINE_ASSET_HOSTS=new Set([
+  "cdn.jsdelivr.net",
+  "huggingface.co",
+  "cdn-lfs.huggingface.co",
+  "hf.co",
+  "cdn-lfs.hf.co",
+  "cas-bridge.xethub.hf.co"
+]);
 const BATCH_SIZE=200;
 const DAEMON_DB="fns_omni_daemon_v6";
 const DAEMON_DB_VERSION=1;
@@ -12,6 +20,8 @@ const RAG_DB_VERSION=1;
 const CORE=[
   "/",
   "/index.html",
+  "/manifest.webmanifest",
+  "/biblioteca_backup.json",
   "/style.css",
   "/app.js",
   "/failover-v3.js",
@@ -315,7 +325,28 @@ self.addEventListener("sync",event=>{
 self.addEventListener("fetch",event=>{
   const req=event.request;
   const url=new URL(req.url);
-  if(url.origin!==self.location.origin) return;
+
+  // v10 Egress Firewall: in forced 100% offline mode, even a page opened while
+  // the device still has Internet access cannot contact external hosts. Approved
+  // static AI/PDF assets are served only from the local Cache Storage if present.
+  if(url.origin!==self.location.origin){
+    event.respondWith((async()=>{
+      const mode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
+      const cache=await caches.open(CACHE_NAME);
+      const cached=await cache.match(req,{ignoreVary:true});
+      if(mode==="offline") return cached || Response.error();
+      if(!OFFLINE_ASSET_HOSTS.has(url.hostname)) return fetch(req);
+      try{
+        const res=await fetch(req);
+        if(res.ok || res.type==="opaque") await cache.put(req,res.clone()).catch(()=>{});
+        return res;
+      }catch{
+        return cached || Response.error();
+      }
+    })());
+    return;
+  }
+
   if(url.pathname.startsWith("/api/") || url.pathname.startsWith("/health")){
     event.respondWith((async()=>{
       const mode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
