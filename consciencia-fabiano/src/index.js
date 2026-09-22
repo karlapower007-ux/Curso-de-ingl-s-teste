@@ -2043,7 +2043,7 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
   const startIndex=(groqRoundRobinCursor++) % keys.length;
 
   const execute=async(payloadMessages,apiKey)=>{
-    return fetch("https://api.groq.com/openai/v1/chat/completions", {
+    return externalEgressFetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": "Bearer " + apiKey,
@@ -2087,6 +2087,23 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
 
 function workersAiConfigured(env) {
   return Boolean(env?.AI && typeof env.AI.run === "function");
+}
+
+const EXTERNAL_EGRESS_ALLOWLIST = new Set(["api.groq.com"]);
+function assertExternalEgressAllowed(target) {
+  const url = target instanceof URL ? target : new URL(String(target));
+  const host = String(url.hostname || "").toLowerCase();
+  if (url.protocol !== "https:" || !EXTERNAL_EGRESS_ALLOWLIST.has(host)) {
+    const error = new Error("Privacy Gate bloqueou saída externa não autorizada.");
+    error.code = "EGRESS_FIREWALL_BLOCKED";
+    error.host = host;
+    throw error;
+  }
+  return url;
+}
+async function externalEgressFetch(target, options = {}) {
+  const url = assertExternalEgressAllowed(target);
+  return fetch(url.toString(), options);
 }
 
 function redactExternalPrompt(text) {
@@ -3815,6 +3832,11 @@ function exactCircuitRecover() {
 }
 
 async function exactGuardedFetch(url,options={}) {
+  if (PRIVATE_EGRESS_LOCK) {
+    const error=new Error("Saída externa legada bloqueada pelo PRIVATE_EGRESS_LOCK.");
+    error.code="PRIVATE_EGRESS_BLOCKED";
+    throw error;
+  }
   if(Date.now()<exactSupabaseCircuit.open_until){
     await exactSleep(exactSupabaseCircuit.open_until-Date.now());
   }
@@ -4383,7 +4405,8 @@ async function chat(request, env) {
 
 async function stt(request, env) {
   assertBindings(env);
-  const apiKey = requireSecret(env, "GROQ_API_KEY");
+  const keys = requireGroqKeys(env);
+  const apiKey = keys[0];
   const buffer = await request.arrayBuffer();
   if (!buffer.byteLength) return json({ ok: false, message: "Áudio vazio." }, 400);
   const contentType = request.headers.get("Content-Type") || "audio/webm";
@@ -4394,7 +4417,7 @@ async function stt(request, env) {
   form.append("language", "pt");
   form.append("response_format", "json");
   form.append("temperature", "0");
-  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+  const res = await externalEgressFetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST",
     headers: { "Authorization": "Bearer " + apiKey },
     body: form,
