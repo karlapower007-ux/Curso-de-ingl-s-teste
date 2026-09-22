@@ -5308,14 +5308,14 @@ export class LibraryDO {
       if (url.pathname === "/dictionary/search" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const question=String(body?.query||"").trim();
-        const limit=Math.max(1,Math.min(1000,Number(body?.limit||1000)));
+        const page=Math.max(1,Number(body?.page||1));
+        const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
         const target=deriveStrictPhrase(question);
-        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",mode:"strict-focus-dictionary-v8.1"});
-        const perDocument=new Map();
+        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"strict-focus-dictionary-v8.2"});
+        const hits=[];
         let scanned=0,exactHits=0;
         const cursor=this.sql.exec(`
-          SELECT c.id,c.document_id,c.page,c.chunk_index,c.text,
-                 d.filename,d.title,d.author,d.language
+          SELECT c.page,c.text,d.title,d.author
           FROM chunks c JOIN documents d ON d.id=c.document_id
           WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
           ORDER BY d.id ASC,c.chunk_index ASC
@@ -5325,22 +5325,21 @@ export class LibraryDO {
           const match=strictParagraphMatch(row?.text||"",question);
           if(!match.matched)continue;
           exactHits++;
-          pushStrictHit(perDocument,{
-            ...row,filename:undefined,
-            score:100,coverage:1,strict_phrase:match.target,
-            strict_paragraph_index:match.paragraph_index,
-            retrieval_mode:"strict-focus-dictionary-v8.1"
-          },Math.max(STRICT_PER_DOCUMENT_HIT_CAP,50));
+          hits.push({
+            page:Number(row.page||0),
+            text:String(match.paragraph||"").trim(),
+            title:humanDocumentName("",row.title),
+            author:String(row.author||""),
+            score:100,coverage:1
+          });
         }
-        const matches=roundRobinStrictHits(perDocument,limit).map(row=>({
-          id:row.id,document_id:row.document_id,page:Number(row.page||0),
-          chunk_index:Number(row.chunk_index||0),text:String(row.text||""),
-          title:humanDocumentName("",row.title),author:String(row.author||""),
-          score:Number(row.score||100),coverage:Number(row.coverage||1)
-        }));
+        const from=(page-1)*pageSize;
+        const matches=hits.slice(from,from+pageSize);
         return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,
-          documents_hit:perDocument.size,target,mode:"strict-focus-dictionary-v8.1",
-          strict_focus_lock:true,or_disabled:true,fuzzy_disabled:true});
+          target,page,page_size:pageSize,pages:Math.ceil(exactHits/pageSize),
+          mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,
+          plans:{A:"exact",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
+          or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false});
       }
 
       if (url.pathname === "/search-strict" && request.method === "POST") {
