@@ -10,6 +10,9 @@ import {
   formatExactAnswer, formatGroundedAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
   focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus, focusedEvidenceWindow
 } from "./v2-local-core.mjs";
+import {
+  buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer
+} from "./v3-evidence-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(__dirname,"..");
@@ -33,6 +36,7 @@ const authoritativeRows=new Map();
 const authoritativePages=new Map();
 let libraryPromise=null;
 let aliasesPromise=null;
+let v3IndexPromise=null;
 const embedCache=new Map();
 
 const MIME={
@@ -168,6 +172,97 @@ async function loadLibrary(){
     return {chunks:rows.length,files:names.length,ms:Date.now()-started};
   })();
   return libraryPromise;
+}
+
+async function ensureV3Index(){
+  if(v3IndexPromise)return v3IndexPromise;
+  v3IndexPromise=(async()=>{
+    const started=Date.now();
+    await loadLibrary();
+    const index=buildV3EvidenceIndex(rows);
+    return {...index,build_ms:Date.now()-started};
+  })();
+  return v3IndexPromise;
+}
+async function expandV3WithQwen(question){
+  const models=await installedModels();
+  const model=autoModel(models);
+  if(!model)return [];
+  const prompt=[
+    "Você é somente um expansor de consulta para pesquisa em biblioteca.",
+    "Não responda à pergunta.",
+    "Retorne no máximo 8 expressões equivalentes ou estreitamente relacionadas, em português e inglês.",
+    "Separe as expressões apenas com o caractere |.",
+    "Não invente citações, fontes, pessoas ou fatos.",
+    "Consulta:",String(question||"").trim()
+  ].join("\n");
+  try{
+    const data=await fetchOllama("/api/chat",{
+      method:"POST",
+      body:JSON.stringify({
+        model,stream:false,think:false,
+        messages:[{role:"user",content:prompt}],
+        options:{temperature:0,num_ctx:768,num_predict:80}
+      })
+    },45000);
+    return String(data?.message?.content||"")
+      .split("|").map(x=>x.replace(/[\n\r"']/g," ").replace(/^[-*\d.\s]+/,"").trim())
+      .filter(x=>x.length>=3&&x.length<=100)
+      .slice(0,8);
+  }catch{return [];}
+}
+async function handleV3Health(req,res){
+  const index=await ensureV3Index();
+  json(res,{
+    ok:true,
+    version:index.version,
+    engine:"Evidence Engine V3",
+    dictionary_frozen:true,
+    source_rows:index.source_rows,
+    evidence_units:index.units.length,
+    counts:index.counts,
+    build_ms:index.build_ms
+  });
+}
+async function handleV3Chat(req,res){
+  const body=await readJsonBody(req);
+  const question=String(body.question||"").trim();
+  const mode=RESPONSE_MODES.has(String(body.mode||""))?String(body.mode):"explain";
+  if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
+  const [index,aliases]=await Promise.all([ensureV3Index(),loadAliases()]);
+  const strict=mode==="exact";
+  let result=searchV3Evidence(index,question,aliases,{limit:strict?25:40,strict});
+  let query_expansions=[];
+  if(!strict && result.results.length<8 && body.allow_query_expansion!==false){
+    query_expansions=await expandV3WithQwen(question);
+    if(query_expansions.length){
+      result=searchV3Evidence(index,question,aliases,{
+        limit:40,strict:false,extraExpansions:query_expansions
+      });
+    }
+  }
+  const answer=formatV3EvidenceAnswer(result,mode);
+  json(res,{
+    ok:true,
+    answer,
+    speech_text:answer,
+    provider:"v3-evidence-engine",
+    dictionary_frozen:true,
+    qwen_role:query_expansions.length?"query-expansion-only":"not-used-for-answer",
+    query_expansions,
+    total_candidates:result.total,
+    evidence_count:result.results.length,
+    index_version:index.version,
+    matches:result.results.slice(0,mode==="short"?4:14).map(row=>({
+      reference:row.reference,
+      citation_verified:true,
+      kind:row.kind,
+      title:row.title||"",
+      page:row.page||null,
+      score:Number(row.score||0),
+      text:row.text
+    }))
+  });
 }
 async function fetchOllama(endpoint,options={},timeoutMs=120000){
   const controller=new AbortController();
@@ -633,6 +728,8 @@ http.createServer(async(req,res)=>{
   localHeaders(req,res);
   try{
     const url=new URL(req.url,"http://localhost");
+    if(req.method==="GET" && url.pathname==="/api/v3/health"){await handleV3Health(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/health"){await handleHealth(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/models"){
       const installed=await installedModels();
@@ -657,5 +754,8 @@ http.createServer(async(req,res)=>{
   console.log("EMBED_MODEL="+EMBED_MODEL);
   console.log("RECOMMENDED_MODEL="+recommendedByHardware());
   console.log("SELECTED_MODEL="+(autoModel(models)||"nenhum instalado"));
-  loadLibrary().then(info=>console.log("LOCAL_LIBRARY_CHUNKS="+info.chunks)).catch(()=>{});
+  loadLibrary().then(info=>{
+    console.log("LOCAL_LIBRARY_CHUNKS="+info.chunks);
+    ensureV3Index().then(index=>console.log("V3_EVIDENCE_UNITS="+index.units.length)).catch(()=>{});
+  }).catch(()=>{});
 });
