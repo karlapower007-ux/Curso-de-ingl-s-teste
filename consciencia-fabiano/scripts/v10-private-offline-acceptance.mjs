@@ -37,8 +37,15 @@ for (const forbidden of [
 
 assert(index.includes("https://api.groq.com/openai/v1/chat/completions"), "Groq chat endpoint missing");
 assert(index.includes('external_egress_allowlist: ["api.groq.com","cloudflare-workers-ai-binding"]'), "declared egress allowlist missing");
+assert(index.includes('const EXTERNAL_EGRESS_ALLOWLIST = new Set(["api.groq.com"]);'), "runtime egress firewall missing");
+assert(index.includes("async function externalEgressFetch"), "egress wrapper missing");
+assert(index.includes('externalEgressFetch("https://api.groq.com/openai/v1/chat/completions"'), "Groq chat does not use runtime egress firewall");
+assert(index.includes('externalEgressFetch("https://api.groq.com/openai/v1/audio/transcriptions"'), "Groq STT does not use runtime egress firewall");
+assert(index.includes("const keys = requireGroqKeys(env);"), "Groq STT bypasses ZDR/free-tier gate");
 assert(index.includes('privacy_mode: "strict-private-egress-lock"'), "strict privacy health marker missing");
 assert(index.includes("encyclopedia_fts USING fts5"), "SQLite FTS5 encyclopedia missing");
+assert(index.includes("ready_for_search:readyForSearch"), "real PDF ready-for-search stage missing");
+assert(index.includes("encyclopedia:{progress:encyclopediaProgress"), "encyclopedia indexing progress stage missing");
 assert(index.includes("semantic_query_embedding_server_enabled: false"), "server semantic embeddings must stay disabled");
 
 assert(!app.includes("LOCAL_ADMIN_PASSWORD"), "admin password constant leaked to browser");
