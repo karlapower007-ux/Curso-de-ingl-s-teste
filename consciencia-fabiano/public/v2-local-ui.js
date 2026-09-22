@@ -135,7 +135,7 @@ function addControls(){
   const response=document.createElement("select");response.id="v2ResponseMode";response.setAttribute("aria-label","Modo de resposta");
   [
     ["short","Resposta curta"],
-    ["explain","Explicação"],
+    ["explain","Explicação exata"],
     ["compare","Comparar fontes"],
     ["timeline","Linha do tempo"],
     ["exact","Citação exata • zero LLM"]
@@ -277,7 +277,7 @@ async function sendLocal(){
         evidence=[...merged.values()].slice(0,90);
       }catch{}
     }
-    if(browserOnly||health?.ollama?.reachable===false){
+    if(browserOnly&&!apiBase){
       const answer=browserDeterministicAnswer(mode,q,evidence);
       appendMessage("assistant",answer,evidence);
       speakV2Answer(answer).catch(()=>{});
@@ -289,7 +289,7 @@ async function sendLocal(){
 
     const outboundEvidence=evidence.slice(0,lowRam?24:90);
     const data=await call("/api/v2/chat",{
-      question:q,mode,model,semantic:mode!=="exact"&&!lowRam,page_size:25,
+      question:q,mode,model,grounded:mode!=="exact",semantic:false,page_size:25,
       candidate_limit:lowRam?60:70,
       evidence:outboundEvidence.map(r=>({
         id:r.id||r.key,document_id:r.document_id||r.doc_key,title:r.title||"",
@@ -301,7 +301,9 @@ async function sendLocal(){
     speakV2Answer(data.speech_text||data.answer||"").catch(()=>{});
     const backend=$("backendText");if(backend)backend.textContent=mode==="exact"
       ?"v2 local • Citação exata • zero LLM"
-      :"v2 local • "+String(data.model||"Qwen")+" • "+String(data.embedding_model||"busca lexical")+" • "+(evidence.length?"acervo deste aparelho":"cofre local");
+      :data.provider==="grounded-exact-no-llm"
+        ?"v2 local • Grounded Exact • somente evidências da biblioteca • zero invenções"
+        :"v2 local • "+String(data.model||"Qwen")+" • "+String(data.embedding_model||"busca lexical")+" • "+(evidence.length?"acervo deste aparelho":"cofre local");
     const dot=$("backendDot");if(dot)dot.className="dot ok";
     const state=$("avatarState");if(state)state.textContent="Pronto";
   }catch(error){
