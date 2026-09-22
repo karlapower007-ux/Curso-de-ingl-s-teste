@@ -9,6 +9,17 @@ let dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0};
 const $=id=>document.getElementById(id);
 function selectedModel(){return String(localStorage.getItem(V2_KEY_MODEL)||"auto");}
 function selectedResponse(){const v=String(localStorage.getItem(V2_KEY_RESPONSE)||"explain");return ["short","explain","compare","timeline","exact"].includes(v)?v:"explain";}
+function resolvedModelForRequest(){
+  const chosen=selectedModel();
+  if(chosen!=="auto")return chosen;
+  const selected=String(health?.hardware?.selected||"").trim();
+  if(selected)return selected;
+  const installed=Array.isArray(health?.ollama?.installed)?health.ollama.installed.map(String):[];
+  for(const candidate of ["qwen3:0.6b","qwen3:1.7b","qwen3:4b","qwen3:8b","qwen3.8:27b"]){
+    if(installed.includes(candidate))return candidate;
+  }
+  return "auto";
+}
 
 function createOption(value,label){const o=document.createElement("option");o.value=value;o.textContent=label;return o;}
 function addControls(){
@@ -121,7 +132,7 @@ async function call(path,body,timeout=300000){
 }
 async function sendLocal(){
   const input=$("questionInput"),q=String(input?.value||"").trim();if(!q)return;
-  const mode=selectedResponse(),model=selectedModel();
+  const mode=selectedResponse(),model=resolvedModelForRequest();
   appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
   try{
     let engine=null,localState=null,evidence=[];
