@@ -96,11 +96,37 @@ async function sendLocal(){
   const mode=selectedResponse(),model=selectedModel();
   appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
   try{
-    const data=await call("/api/v2/chat",{question:q,mode,model,semantic:mode!=="exact",page_size:25});
+    let engine=null,localState=null,evidence=[];
+    try{
+      const mod=await import("/v2-local-engine.js");
+      engine=mod.FNSV2LocalEngine;
+      localState=await engine.counts();
+    }catch{}
+
+    if(mode==="exact"&&engine&&Number(localState?.chunks||0)>0){
+      const exact=await engine.exactSearch(q,{page:1,pageSize:25});
+      const answer=engine.formatExact(exact.matches||[]);
+      appendMessage("assistant",answer,exact.matches||[]);
+      const backend=$("backendText");if(backend)backend.textContent="v2 local • Citação exata no acervo deste aparelho • zero LLM";
+      const dot=$("backendDot");if(dot)dot.className="dot ok";
+      const state=$("avatarState");if(state)state.textContent="Pronto";
+      return;
+    }
+
+    if(engine&&Number(localState?.chunks||0)>0){
+      try{evidence=await engine.lexicalSearch(q,70);}catch{}
+    }
+    const data=await call("/api/v2/chat",{
+      question:q,mode,model,semantic:mode!=="exact",page_size:25,
+      evidence:evidence.map(r=>({
+        id:r.id||r.key,document_id:r.document_id||r.doc_key,title:r.title||"",
+        page:r.page||null,chunk_index:r.chunk_index||0,text:r.text||"",reference:r.reference||""
+      }))
+    });
     appendMessage("assistant",data.answer||"",data.matches||[]);
     const backend=$("backendText");if(backend)backend.textContent=mode==="exact"
       ?"v2 local • Citação exata • zero LLM"
-      :"v2 local • "+String(data.model||"Qwen")+" • "+String(data.embedding_model||"busca lexical");
+      :"v2 local • "+String(data.model||"Qwen")+" • "+String(data.embedding_model||"busca lexical")+" • "+(evidence.length?"acervo deste aparelho":"cofre local");
     const dot=$("backendDot");if(dot)dot.className="dot ok";
     const state=$("avatarState");if(state)state.textContent="Pronto";
   }catch(error){
@@ -148,10 +174,20 @@ async function searchDictionary(reset=true){
   const status=$("dictionaryStatus");if(status)status.textContent="Busca strict AND local em toda a biblioteca…";
   const btn=$("dictionarySearchBtn");if(btn)btn.disabled=true;
   try{
-    const data=await call("/api/v2/dictionary",{query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize},120000);
+    let data=null;
+    try{
+      const mod=await import("/v2-local-engine.js");
+      const state=await mod.FNSV2LocalEngine.counts();
+      if(Number(state?.chunks||0)>0){
+        data=await mod.FNSV2LocalEngine.exactSearch(q,{page:dictionaryState.page,pageSize:dictionaryState.pageSize});
+      }
+    }catch{}
+    if(!data){
+      data=await call("/api/v2/dictionary",{query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize},120000);
+    }
     renderDictionary(data);
     if(status)status.textContent=data.total
-      ?"v2 local • "+data.total+" ocorrência(s) exata(s) encontradas."
+      ?"v2 local • "+data.total+" ocorrência(s) exata(s) no mesmo bloco • sem teto lógico."
       :"Nenhuma correspondência em que todos os conceitos estejam no mesmo bloco.";
   }catch(error){if(status)status.textContent="Busca local v2 indisponível: "+String(error?.message||error);}
   finally{if(btn)btn.disabled=false;}
