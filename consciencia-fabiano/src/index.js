@@ -767,6 +767,67 @@ function foldSearchText(text) {
     .trim();
 }
 
+const ENCYCLOPEDIA_ALIAS_GROUPS = Object.freeze([
+  {key:"adam",label:"Adão",kind:"person",aliases:["adão","adao","adam"]},
+  {key:"michael",label:"Miguel",kind:"person",aliases:["miguel","michael","miguel arcanjo","michael archangel"]},
+  {key:"elohim",label:"Elohim",kind:"deity",aliases:["elohim"]},
+  {key:"jehovah",label:"Jeová",kind:"deity",aliases:["jeová","jeova","jehovah"]},
+  {key:"jesus-christ",label:"Jesus Cristo",kind:"person",aliases:["jesus cristo","jesus christ"]},
+  {key:"holy-ghost",label:"Espírito Santo",kind:"deity",aliases:["espírito santo","espirito santo","holy ghost","holy spirit"]},
+  {key:"satan",label:"Satanás",kind:"entity",aliases:["satanás","satanas","satan"]},
+  {key:"lucifer",label:"Lúcifer",kind:"entity",aliases:["lúcifer","lucifer"]},
+  {key:"joseph-smith",label:"Joseph Smith",kind:"person",aliases:["joseph smith","josé smith","jose smith"]},
+  {key:"brigham-young",label:"Brigham Young",kind:"person",aliases:["brigham young"]},
+  {key:"second-anointing",label:"Segunda Unção",kind:"concept",aliases:["segunda unção","segunda uncao","second anointing"]},
+  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]}
+]);
+const ENCYCLOPEDIA_ALIAS_CANONICAL = new Map();
+for (const group of ENCYCLOPEDIA_ALIAS_GROUPS) {
+  for (const alias of group.aliases) ENCYCLOPEDIA_ALIAS_CANONICAL.set(foldSearchText(alias),group);
+}
+const ENCYCLOPEDIA_GENERIC_STOP = new Set([
+  "assim","ainda","agora","alem","antes","aqui","cada","capitulo","como","contudo","depois","deus","dessa","deste",
+  "durante","entao","este","esta","isso","isto","livro","mesmo","muito","nao","neste","nessa","outro","pagina","parte",
+  "porem","porque","quando","segundo","sobre","tambem","texto","toda","todo","todos","uma","the","this","that","these",
+  "those","chapter","page","book","therefore","however","because","after","before","during","another","same"
+]);
+
+function encyclopediaConceptKey(label) {
+  const folded=foldSearchText(label).slice(0,160);
+  return ENCYCLOPEDIA_ALIAS_CANONICAL.get(folded)?.key || folded.replace(/\s+/g,"-");
+}
+
+function extractEncyclopediaConcepts(text) {
+  const raw=String(text||"");
+  if(!raw.trim()) return [];
+  const folded=" "+foldSearchText(raw)+" ";
+  const found=new Map();
+
+  for(const group of ENCYCLOPEDIA_ALIAS_GROUPS){
+    const matched=group.aliases.find(alias=>folded.includes(" "+foldSearchText(alias)+" "));
+    if(matched){
+      found.set(group.key,{key:group.key,label:group.label,kind:group.kind,aliases:[matched,group.label]});
+    }
+  }
+
+  const proper=/\b(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\p{L}'’.-]{2,})(?:\s+(?:(?:de|da|do|dos|das|e|of|the|and)\s+)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\p{L}'’.-]{2,}){0,3}\b/gu;
+  for(const match of raw.matchAll(proper)){
+    const label=String(match[0]||"").replace(/\s+/g," ").trim().slice(0,100);
+    const foldedLabel=foldSearchText(label);
+    if(!foldedLabel || ENCYCLOPEDIA_GENERIC_STOP.has(foldedLabel) || /^\d/.test(foldedLabel)) continue;
+    if(label.split(/\s+/).length===1 && foldedLabel.length<5) continue;
+    const canonical=ENCYCLOPEDIA_ALIAS_CANONICAL.get(foldedLabel);
+    const key=canonical?.key || encyclopediaConceptKey(label);
+    if(!key || found.has(key)) continue;
+    found.set(key,{
+      key,label:canonical?.label || label,kind:canonical?.kind || (label.includes(" ")?"entity":"concept"),
+      aliases:[label]
+    });
+    if(found.size>=8) break;
+  }
+  return [...found.values()].slice(0,8);
+}
+
 function lexicalTokens(text) {
   return foldSearchText(text).split(" ").filter(token=>token.length>=2);
 }
@@ -4735,13 +4796,27 @@ async function handleApi(request, env, url, ctx) {
       url.pathname.startsWith("/api/admin/") ||
       url.pathname === "/api/v1/r2/library-manifest" ||
       url.pathname === "/api/trigger-index" ||
-      url.pathname === "/api/index-status";
+      url.pathname === "/api/index-status" ||
+      url.pathname === "/api/admin/encyclopedia-concepts/backfill";
 
     if (privateIndexRoute && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
     if (url.pathname === "/api/encyclopedia/status" && request.method === "GET") {
       return json(await libraryCall(env,"/encyclopedia/status"));
+    }
+    if (url.pathname === "/api/encyclopedia/concept" && request.method === "POST") {
+      const body=await request.json().catch(()=>({}));
+      const query=String(body?.query||"").trim();
+      return json(await libraryCall(env,"/encyclopedia/concepts/query",{
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query})
+      }));
+    }
+    if (url.pathname === "/api/admin/encyclopedia-concepts/backfill" && request.method === "POST") {
+      const body=await request.json().catch(()=>({}));
+      return json(await libraryCall(env,"/encyclopedia/concepts/backfill",{
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:Math.max(1,Math.min(200,Number(body?.limit||100)))})
+      }));
     }
     if (url.pathname === "/api/dictionary/search" && request.method === "POST") {
       const body=await request.json().catch(()=>({}));
@@ -4970,6 +5045,47 @@ export class LibraryDO {
         CREATE INDEX IF NOT EXISTS idx_memory_owner_created ON conversation_messages(owner_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
+        CREATE TABLE IF NOT EXISTS encyclopedia_concepts (
+          concept_key TEXT PRIMARY KEY,
+          label TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'concept',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS encyclopedia_aliases (
+          alias_key TEXT PRIMARY KEY,
+          concept_key TEXT NOT NULL,
+          alias TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(concept_key) REFERENCES encyclopedia_concepts(concept_key) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS encyclopedia_concept_occurrences (
+          concept_key TEXT NOT NULL,
+          chunk_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          page INTEGER NOT NULL DEFAULT 0,
+          label TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(concept_key,chunk_id),
+          FOREIGN KEY(concept_key) REFERENCES encyclopedia_concepts(concept_key) ON DELETE CASCADE,
+          FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS encyclopedia_relations (
+          subject_key TEXT NOT NULL,
+          object_key TEXT NOT NULL,
+          predicate TEXT NOT NULL DEFAULT 'co_occurs_with',
+          chunk_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          page INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(subject_key,object_key,predicate,chunk_id),
+          FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_encyclopedia_alias_concept ON encyclopedia_aliases(concept_key);
+        CREATE INDEX IF NOT EXISTS idx_encyclopedia_occurrence_concept ON encyclopedia_concept_occurrences(concept_key);
+        CREATE INDEX IF NOT EXISTS idx_encyclopedia_occurrence_document ON encyclopedia_concept_occurrences(document_id);
+        CREATE INDEX IF NOT EXISTS idx_encyclopedia_relation_subject ON encyclopedia_relations(subject_key);
+        CREATE INDEX IF NOT EXISTS idx_encyclopedia_relation_object ON encyclopedia_relations(object_key);
       `);
       // Encyclopedia acceleration is derived and optional. Never let its setup
       // make the primary document/chunk library unavailable.
@@ -5123,6 +5239,113 @@ export class LibraryDO {
     });
   }
 
+  indexEncyclopediaConceptChunk(chunk, now = new Date().toISOString()) {
+    const id=String(chunk?.id||"").trim();
+    const documentId=String(chunk?.document_id||"").trim();
+    const text=String(chunk?.text||"");
+    if(!id || !documentId || !text) return {concepts:0,relations:0};
+    const concepts=extractEncyclopediaConcepts(text);
+    for(const concept of concepts){
+      this.sql.exec(
+        "INSERT INTO encyclopedia_concepts (concept_key,label,kind,created_at,updated_at) VALUES (?,?,?,?,?) "+
+        "ON CONFLICT(concept_key) DO UPDATE SET label=excluded.label,kind=excluded.kind,updated_at=excluded.updated_at",
+        concept.key,concept.label,concept.kind,now,now
+      );
+      const aliases=new Set([concept.label,...(concept.aliases||[])]);
+      for(const alias of aliases){
+        const aliasKey=foldSearchText(alias).slice(0,160);
+        if(!aliasKey)continue;
+        this.sql.exec(
+          "INSERT OR IGNORE INTO encyclopedia_aliases (alias_key,concept_key,alias,created_at) VALUES (?,?,?,?)",
+          aliasKey,concept.key,String(alias).slice(0,120),now
+        );
+      }
+      this.sql.exec(
+        "INSERT OR IGNORE INTO encyclopedia_concept_occurrences (concept_key,chunk_id,document_id,page,label,created_at) VALUES (?,?,?,?,?,?)",
+        concept.key,id,documentId,Number(chunk?.page||0),concept.label,now
+      );
+    }
+    let relations=0;
+    const relational=concepts.slice(0,6);
+    for(let i=0;i<relational.length;i++){
+      for(let j=i+1;j<relational.length;j++){
+        const pair=[relational[i].key,relational[j].key].sort();
+        if(pair[0]===pair[1])continue;
+        this.sql.exec(
+          "INSERT OR IGNORE INTO encyclopedia_relations (subject_key,object_key,predicate,chunk_id,document_id,page,created_at) VALUES (?,?, 'co_occurs_with', ?,?,?,?)",
+          pair[0],pair[1],id,documentId,Number(chunk?.page||0),now
+        );
+        relations++;
+      }
+    }
+    return {concepts:concepts.length,relations};
+  }
+
+  backfillEncyclopediaConcepts(limit = 100) {
+    const safeLimit=Math.max(1,Math.min(200,Number(limit||100)));
+    const markerRow=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_concept_backfill_rowid' LIMIT 1")][0];
+    const last=Math.max(0,Number(markerRow?.value||0));
+    const rows=[...this.sql.exec(
+      "SELECT rowid,id,document_id,page,text FROM chunks WHERE rowid>? ORDER BY rowid ASC LIMIT ?",
+      last,safeLimit
+    )];
+    let conceptCount=0,relationCount=0,newLast=last;
+    const now=new Date().toISOString();
+    for(const row of rows){
+      const stats=this.indexEncyclopediaConceptChunk(row,now);
+      conceptCount+=Number(stats?.concepts||0);
+      relationCount+=Number(stats?.relations||0);
+      newLast=Math.max(newLast,Number(row.rowid||0));
+    }
+    if(newLast!==last){
+      this.sql.exec(
+        "INSERT OR REPLACE INTO system_meta (key,value,updated_at) VALUES ('encyclopedia_concept_backfill_rowid',?,?)",
+        String(newLast),now
+      );
+    }
+    const maxRow=Math.max(0,Number([...this.sql.exec("SELECT COALESCE(MAX(rowid),0) AS n FROM chunks")][0]?.n||0));
+    return {
+      ok:true,processed:rows.length,concept_candidates:conceptCount,relations_written:relationCount,
+      last_rowid:newLast,max_rowid:maxRow,complete:newLast>=maxRow,
+      progress:maxRow?Math.min(100,Math.round((newLast/maxRow)*100)):100
+    };
+  }
+
+  encyclopediaConceptSummary(query) {
+    const aliasKey=foldSearchText(query).slice(0,160);
+    if(!aliasKey)return {ok:true,found:false};
+    const row=[...this.sql.exec(
+      "SELECT c.concept_key,c.label,c.kind FROM encyclopedia_aliases a "+
+      "JOIN encyclopedia_concepts c ON c.concept_key=a.concept_key WHERE a.alias_key=? LIMIT 1",
+      aliasKey
+    )][0] || [...this.sql.exec(
+      "SELECT concept_key,label,kind FROM encyclopedia_concepts WHERE concept_key=? LIMIT 1",
+      encyclopediaConceptKey(query)
+    )][0] || null;
+    if(!row)return {ok:true,found:false};
+    const aliases=[...this.sql.exec(
+      "SELECT alias FROM encyclopedia_aliases WHERE concept_key=? ORDER BY alias COLLATE NOCASE LIMIT 30",
+      row.concept_key
+    )].map(x=>String(x.alias||"")).filter(Boolean);
+    const stats=[...this.sql.exec(
+      "SELECT COUNT(*) AS occurrences,COUNT(DISTINCT document_id) AS documents FROM encyclopedia_concept_occurrences WHERE concept_key=?",
+      row.concept_key
+    )][0] || {occurrences:0,documents:0};
+    const related=[...this.sql.exec(
+      "SELECT CASE WHEN r.subject_key=? THEN r.object_key ELSE r.subject_key END AS related_key,COUNT(*) AS n "+
+      "FROM encyclopedia_relations r WHERE r.subject_key=? OR r.object_key=? "+
+      "GROUP BY related_key ORDER BY n DESC LIMIT 20",
+      row.concept_key,row.concept_key,row.concept_key
+    )].map(rel=>{
+      const concept=[...this.sql.exec("SELECT label,kind FROM encyclopedia_concepts WHERE concept_key=? LIMIT 1",rel.related_key)][0] || {};
+      return {label:String(concept.label||rel.related_key),kind:String(concept.kind||"concept"),relation:"co_occurs_with",occurrences:Number(rel.n||0)};
+    });
+    return {
+      ok:true,found:true,concept:{label:String(row.label||""),kind:String(row.kind||"concept"),aliases,
+        occurrences:Number(stats.occurrences||0),documents:Number(stats.documents||0),related}
+    };
+  }
+
   updateJob(id, status, progress, error = null, documentId = null, pages = null, chunks = null) {
     this.sql.exec(
       "UPDATE index_jobs SET status=?, progress=?, error=?, document_id=COALESCE(?,document_id), pages=COALESCE(?,pages), chunks=COALESCE(?,chunks), updated_at=? WHERE id=?",
@@ -5252,6 +5475,7 @@ export class LibraryDO {
             "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
             chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,"[]",new Date().toISOString()
           );
+          this.indexEncyclopediaConceptChunk({...chunk,document_id:documentId});
         }
       } else {
         for(let embedOffset=0;embedOffset<wave.length;embedOffset+=COHERE_API_BATCH){
@@ -5263,6 +5487,7 @@ export class LibraryDO {
               "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
               chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embeddings[i]),new Date().toISOString()
             );
+            this.indexEncyclopediaConceptChunk({...chunk,document_id:documentId});
           }
           if(embedOffset+COHERE_API_BATCH<wave.length) {
             await new Promise(resolve=>setTimeout(resolve,COHERE_THROTTLE_MS));
@@ -5413,6 +5638,7 @@ export class LibraryDO {
               "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,'[]',?)",
               chunkId,job.document_id,Number(page.page || 1),chunkIndex,text,new Date().toISOString()
             );
+            this.indexEncyclopediaConceptChunk({id:chunkId,document_id:job.document_id,page:Number(page.page||1),text});
           }
         }
 
@@ -5626,6 +5852,7 @@ export class LibraryDO {
               c.id, d.id, Number(c.page || 1), Number(c.chunk_index || 0), String(c.text || ""),
               JSON.stringify(c.embedding || []), now
             );
+            this.indexEncyclopediaConceptChunk({id:c.id,document_id:d.id,page:Number(c.page||1),text:String(c.text||"")},now);
           }
         } catch (error) {
           this.sql.exec("DELETE FROM chunks WHERE document_id = ?", d.id);
@@ -5827,6 +6054,16 @@ export class LibraryDO {
           day,provider,next,new Date().toISOString()
         );
         return json({ok:true,allowed:true,provider,day,usage_units:next,consumed_units:amount,limit});
+      }
+
+      if (url.pathname === "/encyclopedia/concepts/backfill" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        return json(this.backfillEncyclopediaConcepts(body?.limit||100));
+      }
+
+      if (url.pathname === "/encyclopedia/concepts/query" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        return json(this.encyclopediaConceptSummary(String(body?.query||"")));
       }
 
       if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
@@ -6109,6 +6346,10 @@ export default {
         r2_zero_cost_source_budget_bytes: R2_ZERO_COST_SOURCE_BUDGET_BYTES,
         r2_documented_free_storage_bytes: R2_DOCUMENTED_FREE_STORAGE_BYTES,
         dictionary_r2_quota_fallback: true,
+        encyclopedia_concept_graph: true,
+        encyclopedia_alias_index: true,
+        encyclopedia_relation_type: "co_occurs_with",
+        encyclopedia_concept_backfill: "incremental-derived-no-reindex",
         dictionary_r2_max_shards_per_query: R2_DICTIONARY_MAX_SHARDS,
         workers_ai_neuron_budget_headroom: "15% below documented free allocation",
         groq_zdr_required: GROQ_ZDR_REQUIRED,
