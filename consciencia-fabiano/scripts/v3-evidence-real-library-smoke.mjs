@@ -60,6 +60,9 @@ for(const query of queries){
   assert.ok(result.results.every(x=>x.verified===true),"toda evidência V3 precisa estar marcada como verificada");
   assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes(".pdf")),"referência pública não pode vazar nome físico de PDF");
   assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes("standard-works")),"Obras Padrão não podem vazar nome técnico do arquivo");
+  assert.ok(result.results.every(x=>x.kind!=="scripture-page-window"),"Chat V3 não pode usar faixa bíblica ampla sem versículo preciso");
+  assert.ok(result.results.every(x=>!v3Fold(x.text).includes("gee ")),"Chat V3 não pode exibir aparato GEE como evidência");
+  assert.ok(result.results.every(x=>x.focus_verified===true),"todo resultado exibido precisa ter janela de foco validada");
   const top=result.results.slice(0,10);
   if(query.includes("mundo espiritual")){
     assert.ok(top.length>=5,"mundo espiritual deve ter fluxo documental suficiente");
