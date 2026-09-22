@@ -111,14 +111,17 @@ jobs:
               apiProbe:await (async()=>{
                 try{
                   const r=await fetch("/api/status?offline_probe="+Date.now(),{cache:"no-store"});
-                  return {resolved:true,status:r.status,type:r.type};
+                  const body=await r.json().catch(()=>({}));
+        return {resolved:true,status:r.status,type:r.type,code:String(body?.code||""),offline:body?.offline===true};
                 }catch(error){
                   return {resolved:false,error:String(error)};
                 }
               })()
             }));
             if(offlineState.mode!=="offline") throw new Error("Modo offline não persistiu: "+JSON.stringify(offlineState));
-            if(offlineState.apiProbe?.resolved!==false) throw new Error("Uma chamada /api conseguiu sair durante o modo offline: "+JSON.stringify(offlineState));
+            const blockedByServiceWorker=offlineState.apiProbe?.resolved===true && offlineState.apiProbe?.status===503 && offlineState.apiProbe?.code==="OFFLINE_ONLY" && offlineState.apiProbe?.offline===true;
+  const blockedByNetwork=offlineState.apiProbe?.resolved===false;
+  if(!blockedByServiceWorker && !blockedByNetwork) throw new Error("Uma chamada /api conseguiu sair durante o modo offline: "+JSON.stringify(offlineState));
             if(offlineState.scrollWidth>offlineState.width+2) throw new Error("Overflow no reload offline: "+JSON.stringify(offlineState));
             report.push({offline_shell_reload:offlineState});
             await context.close();
