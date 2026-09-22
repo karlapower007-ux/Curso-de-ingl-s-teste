@@ -15,6 +15,8 @@ const WORKERS_AI_INPUT_NEURONS_PER_M = 5500;
 const WORKERS_AI_OUTPUT_NEURONS_PER_M = 36400;
 const GROQ_ZDR_REQUIRED = true;
 const GROQ_FREE_ONLY_REQUIRED = true;
+const R2_ZERO_COST_SOURCE_BUDGET_BYTES = 6_000_000_000;
+const R2_DOCUMENTED_FREE_STORAGE_BYTES = 10_000_000_000;
 const ZERO_COST_MODE = true;
 const PRIVATE_EGRESS_LOCK = true;
 const LEGACY_EXTERNAL_EMBEDDINGS = false;
@@ -552,6 +554,29 @@ function amzTimestamp(date = new Date()) { return date.toISOString().replace(/[:
 
 async function presignR2Put(request, env) {
   const body = await request.json().catch(() => ({}));
+  const requestedBytes=Math.max(0,Number(body?.size_bytes || 0));
+  if (ZERO_COST_MODE) {
+    try {
+      const cost=await libraryCall(env,"/zero-cost/status");
+      const currentBytes=Math.max(0,Number(cost?.source_bytes || 0));
+      if(requestedBytes<=0 || currentBytes+requestedBytes>R2_ZERO_COST_SOURCE_BUDGET_BYTES){
+        return json({
+          ok:false,
+          code:"ZERO_COST_R2_STORAGE_GUARD",
+          message:"Upload bloqueado pelo ZERO_COST_GUARD para manter margem dentro da franquia gratuita do R2.",
+          current_source_bytes:currentBytes,
+          requested_bytes:requestedBytes,
+          source_budget_bytes:R2_ZERO_COST_SOURCE_BUDGET_BYTES
+        },507);
+      }
+    } catch (error) {
+      return json({
+        ok:false,
+        code:"ZERO_COST_R2_STATUS_UNAVAILABLE",
+        message:"Não foi possível confirmar o orçamento gratuito do R2; upload bloqueado por segurança."
+      },503);
+    }
+  }
   if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY) {
     return json({ ok:false, code:"R2_DIRECT_DISABLED", message:"Cofre R2 direto ainda não configurado. A indexação continua por texto sem enviar o PDF ao Worker." }, 503);
   }
@@ -4710,6 +4735,31 @@ async function handleApi(request, env, url, ctx) {
       return json({ok:false,code:"CLIENT_EXTRACTION_REQUIRED",message:"Binário PDF desativado. Extraia no navegador com pdf.js e envie somente texto para /api/trigger-index."},410);
     }
     if (url.pathname === "/api/admin/r2-presign" && request.method === "POST") return presignR2Put(request, env);
+    if (url.pathname === "/api/admin/cost-status" && request.method === "GET") {
+      const usage=await libraryCall(env,"/zero-cost/status");
+      return json({
+        ok:true,
+        zero_cost_mode:ZERO_COST_MODE,
+        r2:{
+          source_bytes:Number(usage?.source_bytes||0),
+          source_budget_bytes:R2_ZERO_COST_SOURCE_BUDGET_BYTES,
+          documented_free_storage_bytes:R2_DOCUMENTED_FREE_STORAGE_BYTES
+        },
+        workers_ai:{
+          calls:Number(usage?.providers?.["workers-ai-calls"]||0),
+          daily_call_limit:WORKERS_AI_DAILY_CALL_LIMIT,
+          estimated_neurons:Number(usage?.providers?.["workers-ai-neurons"]||0),
+          daily_neuron_budget:WORKERS_AI_DAILY_NEURON_BUDGET
+        },
+        groq:{
+          status:groqExternalStatus(env),
+          zdr_required:GROQ_ZDR_REQUIRED,
+          zdr_confirmed:groqZdrConfirmed(env),
+          free_only_required:GROQ_FREE_ONLY_REQUIRED,
+          free_tier_confirmed:groqFreeTierConfirmed(env)
+        }
+      });
+    }
     if (url.pathname === "/api/trigger-index" && request.method === "POST") return json({ok:false,code:"LOCAL_EMBEDDINGS_REQUIRED",message:"Fluxo remoto de embeddings desativado. Atualize a página e use o motor local com Web Worker."},410);
     if (url.pathname === "/api/index-status" && request.method === "GET") return indexStatus(env, url);
     if (url.pathname === "/api/admin/livros" && request.method === "GET") return json(await listBooks(env));
@@ -5610,6 +5660,17 @@ export class LibraryDO {
         return json({ ok: true, cleared: Number(before) });
       }
 
+      if (url.pathname === "/zero-cost/status" && request.method === "GET") {
+        const day=new Date().toISOString().slice(0,10);
+        const rows=[...this.sql.exec("SELECT provider,calls FROM zero_cost_usage WHERE day=?",day)];
+        const providers={};
+        for(const row of rows) providers[String(row?.provider||"")]=Number(row?.calls||0);
+        const sourceBytes=Number([...this.sql.exec(
+          "SELECT COALESCE(SUM(size_bytes),0) AS n FROM documents"
+        )][0]?.n || 0);
+        return json({ok:true,day,providers,source_bytes:sourceBytes});
+      }
+
       if (url.pathname === "/zero-cost/consume" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const provider=String(body?.provider||"").trim().slice(0,64);
@@ -5906,6 +5967,8 @@ export default {
         zero_cost_guard: true,
         workers_ai_daily_call_limit: WORKERS_AI_DAILY_CALL_LIMIT,
         workers_ai_daily_neuron_budget: WORKERS_AI_DAILY_NEURON_BUDGET,
+        r2_zero_cost_source_budget_bytes: R2_ZERO_COST_SOURCE_BUDGET_BYTES,
+        r2_documented_free_storage_bytes: R2_DOCUMENTED_FREE_STORAGE_BYTES,
         workers_ai_neuron_budget_headroom: "15% below documented free allocation",
         groq_zdr_required: GROQ_ZDR_REQUIRED,
         groq_zdr_confirmed: groqZdrConfirmed(env),
