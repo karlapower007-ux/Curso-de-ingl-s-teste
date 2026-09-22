@@ -19,7 +19,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-direct-qwen-r3";
+const LOCAL_RUNTIME_BUILD="2026-09-22-lowram-r4";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -336,10 +336,13 @@ async function handleChat(req,res){
     json(res,{...exactPayload(result),evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault"});return;
   }
 
-  const lexical=lexicalCandidates(searchRows,question,Math.min(100,Math.max(20,Number(body.candidate_limit||70))));
-  let evidence=lexical.slice(0,14);
-  if(body.semantic!==false && lexical.length){
-    evidence=await semanticRerank(question,lexical,14);
+  const lowRam=ramGb()<=5;
+  const candidateLimit=lowRam?24:Math.min(100,Math.max(20,Number(body.candidate_limit||70)));
+  const maxEvidence=lowRam?5:14;
+  const lexical=lexicalCandidates(searchRows,question,candidateLimit);
+  let evidence=lexical.slice(0,maxEvidence);
+  if(!lowRam && body.semantic!==false && lexical.length){
+    evidence=await semanticRerank(question,lexical,maxEvidence);
   }
   if(mode==="timeline"){
     evidence=[...evidence].sort((a,b)=>{
@@ -369,8 +372,8 @@ async function handleChat(req,res){
   }
   addCandidate("qwen3:0.6b");
 
-  const preferredContext=contextTokensByHardware();
-  const contexts=preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
+  const preferredContext=lowRam?1024:contextTokensByHardware();
+  const contexts=lowRam?[1024]:preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
   let data=null;
   let model=null;
   let usedContext=preferredContext;
@@ -390,9 +393,9 @@ async function handleChat(req,res){
           body:JSON.stringify({
             model:candidate,stream:false,think:false,
             messages:[{role:"user",content:prompt}],
-            options:{temperature:0.05,num_ctx:ctx,num_predict:ctx<=2048?384:768}
+            options:{temperature:0.05,num_ctx:ctx,num_predict:lowRam?160:(ctx<=2048?384:768)}
           })
-        },300000);
+        },lowRam?180000:300000);
         model=candidate;
         lastError=null;
         break modelLoop;
@@ -403,12 +406,31 @@ async function handleChat(req,res){
           sawMemoryError=true;
           continue;
         }
+        if(error?.name==="AbortError" || message.includes("aborted") || message.includes("abort")){
+          lastError=error;
+          break modelLoop;
+        }
         if(message.includes("model") && (message.includes("not found") || message.includes("does not exist") || Number(error?.status)===404)){
           break;
         }
         throw error;
       }
     }
+  }
+
+  if(!data && lastError && (lastError?.name==="AbortError" || String(lastError?.message||"").toLowerCase().includes("abort"))){
+    const fallback=promptEvidence.slice(0,4).map((r,i)=>
+      "["+(i+1)+"] "+String(r.reference||publicReference(r))+"\n"+String(r.text||"").trim()
+    ).join("\n\n");
+    json(res,{
+      ok:true,
+      answer:"O Qwen local excedeu o tempo seguro neste computador. Abaixo está a resposta de contingência baseada diretamente nas evidências recuperadas:\n\n"+fallback,
+      mode,model:null,provider:"local-deterministic-timeout",embedding_model:EMBED_MODEL,
+      context_tokens:usedContext,evidence_count:promptEvidence.length,
+      evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
+      matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+    });
+    return;
   }
 
   if(!data){
