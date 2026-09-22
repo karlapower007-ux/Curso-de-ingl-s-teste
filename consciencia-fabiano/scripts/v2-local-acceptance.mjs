@@ -60,6 +60,12 @@ assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBE
 assert.ok(ui.includes('["exact","Citação exata • zero LLM"]'));
 assert.ok(ui.includes('["timeline","Linha do tempo"]'));
 assert.ok(ui.includes('["compare","Comparar fontes"]'));
+assert.ok(ui.includes("http://127.0.0.1:8788/api/v2/health"),"UI oficial deve detectar a ponte Ollama local");
+assert.ok(ui.includes("window.__FNS_V2_API_BASE"),"UI deve compartilhar a base local com o motor de embeddings");
+assert.ok(server.includes("LOCAL_BRIDGE_ORIGINS"),"servidor local precisa de allowlist de origem");
+assert.ok(server.includes("https://consciencia-fabiano.focoeepoder2.workers.dev"),"origem oficial deve estar explicitamente autorizada");
+assert.ok(server.includes("Access-Control-Allow-Private-Network"),"ponte local precisa responder ao preflight de rede privada");
+assert.ok(server.includes('res.setHeader("Access-Control-Allow-Origin",origin)'),"CORS deve refletir somente origem previamente autorizada");
 assert.ok(engine.includes('type:"search-fts"'),"v2 deve consultar o índice OPFS FTS5");
 assert.ok(engine.includes('search_backend:"opfs-sqlite-fts5"'),"resultado FTS5 deve ser identificável internamente");
 assert.ok(opfs.includes("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5"),"OPFS deve manter índice SQLite FTS5");
