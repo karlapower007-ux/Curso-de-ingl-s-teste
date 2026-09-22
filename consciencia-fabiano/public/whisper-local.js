@@ -9,6 +9,7 @@
   let worker=null,workerReady=false,busy=false,mode="boot",bootTimer=0;
   let recorder=null,stream=null,chunks=[],requestId=0,lastBlob=null;
   let recognition=null,speechText="";
+  const strictOffline=()=>String(localStorage.getItem("fns_operating_mode_v10")||"auto")==="offline";
 
   const setStatus=t=>{status.textContent=t || "";};
   const enableButton=(label="🎤 Segure para Falar")=>{
@@ -32,6 +33,16 @@
     if(bootTimer) clearTimeout(bootTimer);
     bootTimer=0;
     if(worker && !workerReady){try{worker.terminate();}catch{} worker=null;}
+    if(strictOffline()){
+      mode="offline-unavailable";
+      workerReady=false;
+      busy=false;
+      btn.classList.remove("recording","processing");
+      btn.textContent="🎤 Voz offline não preparada";
+      btn.disabled=true;
+      setStatus(reason+". O modo 100% offline bloqueou qualquer fallback externo. Use texto ou prepare a voz enquanto estiver online.");
+      return;
+    }
     const SpeechRecognition=window.SpeechRecognition || window.webkitSpeechRecognition;
     mode=SpeechRecognition ? "webspeech" : "cloud";
     workerReady=false;
@@ -39,7 +50,7 @@
     setStatus(
       mode==="webspeech"
         ? reason+". Fallback de voz do navegador ativado."
-        : reason+". Fallback STT da Groq ativado."
+        : reason+". Fallback de voz online ativado."
     );
     enableButton();
   }
@@ -92,6 +103,13 @@
   }
 
   async function transcribeCloud(blob){
+    if(strictOffline()){
+      busy=false;
+      setStatus("Modo 100% offline: transcrição externa bloqueada.");
+      if(localStorage.getItem("fns_offline_voice_ready_v10")==="1") initWorker();
+      else {btn.textContent="🎤 Voz offline não preparada";btn.disabled=true;}
+      return;
+    }
     mode="cloud";busy=true;
     btn.classList.add("processing");btn.textContent="⏳ Processando...";btn.disabled=true;
     setStatus("Transcrevendo pelo fallback de nuvem…");
@@ -109,6 +127,10 @@
 
   function startWebSpeech(event){
     event?.preventDefault?.();
+    if(strictOffline()){
+      setStatus("Modo 100% offline: reconhecimento do navegador bloqueado para impedir tráfego externo.");
+      return;
+    }
     if(busy)return;
     const SpeechRecognition=window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SpeechRecognition){mode="cloud";return startRecorder(event);}
@@ -162,11 +184,27 @@
     const blob=new Blob(chunks,{type:recorder?.mimeType || "audio/webm"});lastBlob=blob;chunks=[];
     localStream?.getTracks?.().forEach(t=>{try{t.stop();}catch{}});
     if(blob.size<700){busy=false;setStatus("Áudio muito curto.");enableButton();return;}
-    if(mode!=="local" || !workerReady){await transcribeCloud(blob);return;}
+    if(mode!=="local" || !workerReady){
+      if(strictOffline()){
+        busy=false;
+        setStatus("Whisper local indisponível neste aparelho. Nenhum áudio saiu do dispositivo.");
+        btn.textContent="🎤 Voz offline não preparada";btn.disabled=true;
+        return;
+      }
+      await transcribeCloud(blob);return;
+    }
     try{
       const mono=await decodeToMono16k(blob);requestId++;
       worker.postMessage({type:"transcribe",id:requestId,audio:mono,language:"portuguese",task:"transcribe"},[mono.buffer]);
-    }catch{await transcribeCloud(blob);}
+    }catch{
+      if(strictOffline()){
+        busy=false;
+        setStatus("Falha na transcrição local. Nenhum áudio saiu do dispositivo.");
+        enableButton();
+      }else{
+        await transcribeCloud(blob);
+      }
+    }
   }
 
   btn.addEventListener("pointerdown",e=>mode==="webspeech"?startWebSpeech(e):startRecorder(e));
