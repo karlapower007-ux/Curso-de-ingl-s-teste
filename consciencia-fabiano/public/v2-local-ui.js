@@ -1,5 +1,7 @@
 const V2_KEY_MODEL="fns_v2_local_model";
 const V2_KEY_RESPONSE="fns_v2_response_mode";
+const V2_KEY_SPEAK="fns_v2_speak_answers_v1";
+let v2SpeechSerial=0;
 let localReady=false;
 let browserOnly=false;
 let health=null;
@@ -7,6 +9,89 @@ let apiBase="";
 let dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0};
 
 const $=id=>document.getElementById(id);
+
+function v2SpeakEnabled(){
+  const box=$("v2SpeakAnswers");
+  if(box)return Boolean(box.checked);
+  return localStorage.getItem(V2_KEY_SPEAK)!=="0";
+}
+function cleanV2Speech(text){
+  return String(text||"")
+    .replace(/https?:\/\/\S+/gi," ")
+    .replace(/\[[0-9]+\]/g," ")
+    .replace(/[*_#>~|]/g," ")
+    .replace(/\s*\n+\s*/g,". ")
+    .replace(/\s{2,}/g," ")
+    .trim();
+}
+function splitV2Speech(text,max=280){
+  const sentences=cleanV2Speech(text).split(/(?<=[.!?;:])\s+/u).filter(Boolean);
+  const chunks=[];let current="";
+  for(const sentence of sentences){
+    if((current+" "+sentence).trim().length<=max){current=(current+" "+sentence).trim();continue;}
+    if(current)chunks.push(current);
+    if(sentence.length<=max){current=sentence;continue;}
+    for(let at=0;at<sentence.length;at+=max)chunks.push(sentence.slice(at,at+max));
+    current="";
+  }
+  if(current)chunks.push(current);
+  return chunks;
+}
+async function waitV2Voices(){
+  if(!("speechSynthesis" in window))return [];
+  let voices=speechSynthesis.getVoices();
+  if(voices.length)return voices;
+  await Promise.race([
+    new Promise(resolve=>speechSynthesis.addEventListener("voiceschanged",resolve,{once:true})),
+    new Promise(resolve=>setTimeout(resolve,900))
+  ]).catch(()=>{});
+  return speechSynthesis.getVoices();
+}
+function stopV2Speech(){
+  v2SpeechSerial++;
+  try{window.speechSynthesis?.cancel();}catch{}
+  const stop=$("stopAudioBtn");if(stop)stop.disabled=true;
+  const state=$("avatarState");if(state&&/Falando/i.test(state.textContent||""))state.textContent="Pronto";
+}
+async function speakV2Answer(text){
+  if(!v2SpeakEnabled()||!("speechSynthesis" in window))return;
+  const clean=cleanV2Speech(text);if(!clean)return;
+  const serial=++v2SpeechSerial;
+  try{speechSynthesis.cancel();speechSynthesis.resume();}catch{}
+  const voices=await waitV2Voices();
+  const voice=voices.find(v=>/^pt-BR$/i.test(v.lang))||voices.find(v=>/^pt/i.test(v.lang))||null;
+  const stop=$("stopAudioBtn");if(stop)stop.disabled=false;
+  const state=$("avatarState");if(state)state.textContent="Falando";
+  for(const chunk of splitV2Speech(clean,280)){
+    if(serial!==v2SpeechSerial)break;
+    await new Promise(resolve=>{
+      let settled=false;
+      let timer=0;
+      const done=()=>{if(settled)return;settled=true;clearTimeout(timer);resolve();};
+      const utterance=new SpeechSynthesisUtterance(chunk);
+      utterance.lang="pt-BR";utterance.rate=0.96;utterance.pitch=1;
+      if(voice)utterance.voice=voice;
+      utterance.onend=done;utterance.onerror=done;
+      timer=setTimeout(done,30000);
+      try{speechSynthesis.speak(utterance);}catch{done();}
+    });
+  }
+  if(serial===v2SpeechSerial){
+    if(stop)stop.disabled=true;
+    if(state)state.textContent="Pronto";
+  }
+}
+function initV2Voice(){
+  const box=$("v2SpeakAnswers");
+  if(box){
+    box.checked=localStorage.getItem(V2_KEY_SPEAK)!=="0";
+    box.addEventListener("change",()=>{
+      localStorage.setItem(V2_KEY_SPEAK,box.checked?"1":"0");
+      if(!box.checked)stopV2Speech();
+    });
+  }
+  try{window.speechSynthesis?.getVoices();}catch{}
+}
 function selectedModel(){return String(localStorage.getItem(V2_KEY_MODEL)||"auto");}
 function selectedResponse(){const v=String(localStorage.getItem(V2_KEY_RESPONSE)||"explain");return ["short","explain","compare","timeline","exact"].includes(v)?v:"explain";}
 function resolvedModelForRequest(){
@@ -116,6 +201,28 @@ function appendMessage(role,content,sources=[]){
   }
   host.appendChild(wrap);host.scrollTop=host.scrollHeight;
 }
+
+function appendEvidenceDigest(rows=[]){
+  const items=(rows||[]).filter(x=>String(x?.text||"").trim()).slice(0,8);
+  if(!items.length)return;
+  const host=$("messages");if(!host)return;
+  const messages=host.querySelectorAll(".msg.assistant.v2-msg");
+  const wrap=messages[messages.length-1];if(!wrap)return;
+  const details=document.createElement("details");details.className="sources v2-evidence-digest";details.open=true;
+  const summary=document.createElement("summary");summary.textContent="Evidências adicionais da biblioteca ("+items.length+")";
+  details.appendChild(summary);
+  const seen=new Set();
+  for(const item of items){
+    const ref=String(item?.reference||"Fonte").trim()||"Fonte";
+    const text=String(item?.text||"").replace(/\s+/g," ").trim();
+    const key=ref+"|"+text;if(seen.has(key))continue;seen.add(key);
+    const row=document.createElement("div");row.className="source";
+    const strong=document.createElement("strong");strong.textContent=ref;
+    const excerpt=document.createElement("div");excerpt.textContent=text;
+    row.append(strong,excerpt);details.appendChild(row);
+  }
+  wrap.appendChild(details);host.scrollTop=host.scrollHeight;
+}
 function setBusy(on,label=""){
   const send=$("sendBtn");if(send)send.disabled=on;
   const state=$("avatarState");if(state&&label)state.textContent=label;
@@ -133,7 +240,7 @@ async function call(path,body,timeout=300000){
 async function sendLocal(){
   const input=$("questionInput"),q=String(input?.value||"").trim();if(!q)return;
   const mode=selectedResponse(),model=resolvedModelForRequest();
-  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
+  try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}\n  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
   try{
     let engine=null,localState=null,evidence=[];
     try{
