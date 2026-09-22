@@ -44,6 +44,15 @@ assert(index.includes('externalEgressFetch("https://api.groq.com/openai/v1/audio
 assert(index.includes("const keys = requireGroqKeys(env);"), "Groq STT bypasses ZDR/free-tier gate");
 assert(index.includes('privacy_mode: "strict-private-egress-lock"'), "strict privacy health marker missing");
 assert(index.includes("encyclopedia_fts USING fts5"), "SQLite FTS5 encyclopedia missing");
+assert(index.includes("CREATE TABLE IF NOT EXISTS encyclopedia_concepts"), "concept table missing");
+assert(index.includes("CREATE TABLE IF NOT EXISTS encyclopedia_aliases"), "alias table missing");
+assert(index.includes("CREATE TABLE IF NOT EXISTS encyclopedia_concept_occurrences"), "concept occurrence table missing");
+assert(index.includes("CREATE TABLE IF NOT EXISTS encyclopedia_relations"), "concept relation table missing");
+assert(index.includes("indexEncyclopediaConceptChunk(chunk"), "concept ingestion hook missing");
+assert(index.includes("backfillEncyclopediaConcepts(limit"), "incremental concept backfill missing");
+assert(index.includes('url.pathname === "/api/encyclopedia/concept"'), "public concept summary route missing");
+assert(index.includes('url.pathname === "/api/admin/encyclopedia-concepts/backfill"'), "private concept backfill route missing");
+assert(index.includes('encyclopedia_relation_type: "co_occurs_with"'), "relation type marker missing");
 assert(index.includes("ready_for_search:readyForSearch"), "real PDF ready-for-search stage missing");
 assert(index.includes("encyclopedia:{progress:encyclopediaProgress"), "encyclopedia indexing progress stage missing");
 assert(index.includes("semantic_query_embedding_server_enabled: false"), "server semantic embeddings must stay disabled");
@@ -56,6 +65,9 @@ assert(app.includes('CURRENT_SYSTEM_VERSION = "v10.1-private-egress-offline-onli
 assert(app.includes('return ["auto","offline","online"].includes(value)?value:"auto";'), "offline/online operating modes missing");
 assert(app.includes("async function prepareOfflineMode()"), "offline preparation flow missing");
 assert(app.includes("offlineDictionarySearch"), "local encyclopedia search missing");
+assert(app.includes('api("/api/encyclopedia/concept"'), "concept graph is not wired to dictionary UI");
+assert(app.includes('api("/api/admin/encyclopedia-concepts/backfill"'), "incremental concept backfill is not wired");
+assert(app.includes("Relações por coocorrência"), "concept relation UI missing");
 assert(app.includes("Xenova/paraphrase-multilingual-MiniLM-L12-v2"), "local embedding model missing");
 
 assert(!sw.includes('metaPut("owner_token"'), "service worker persists admin token");
@@ -70,9 +82,12 @@ assert(html.includes('id="settingsTab"'), "settings tab missing");
 assert(html.includes('id="settingsPanel"'), "settings panel missing");
 assert(html.includes('id="settingsOperationMode"'), "settings mode selector missing");
 assert(html.includes('id="settingsPrepareOfflineBtn"'), "settings offline preparation button missing");
+assert(html.includes('id="dictionaryConcept"'), "concept summary surface missing");
+assert(html.includes('id="conceptIndexStatus"'), "concept index progress surface missing");
 assert(app.includes('switchPanel("settings")'), "settings panel is not wired");
 assert(app.includes('settingsModeSelect.addEventListener("change"'), "settings mode selector is not synchronized");
 
+assert(css.includes(".dictionary-concept-card{"), "concept card styling missing");
 for (const width of ["412px","390px","360px"]) {
   assert(css.includes("@media(max-width:" + width + ")"), "responsive breakpoint missing: " + width);
 }
