@@ -31,13 +31,13 @@ jobs:
           node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8")); if(m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20||!m.audit.valid) process.exit(1)'
 
           # Core identity: V8 must preserve every V7.5 cognitive/storage invariant
-          grep -q 'const VERSION = "9.1.0-private-hybrid-encyclopedia"' src/index.js
+          grep -q 'const VERSION = "10.0.0-zero-cost-private-offline-online"' src/index.js
           grep -q 'from "./adaptive-rag-v80.js"' src/index.js
           grep -q 'preserve_legacy_pipeline:true' src/index.js
           grep -q 'llm_calls_before_final:0' src/index.js
           grep -q 'cloudflare-v7.1-fabiano-r2-cross-device' src/index.js
           grep -q 'universal_strict_match_core: "strict-match-core-v4"' src/index.js
-          grep -q 'online_offline_search_symmetry: false' src/index.js
+          grep -q 'online_offline_search_symmetry: true' src/index.js
           grep -q 'strict_exact_path_preserved: true' src/index.js
           grep -q 'same_paragraph_phrase_required_for_exact_mode: true' src/index.js
           grep -q 'hybrid_grounded_retrieval: true' src/index.js
@@ -78,10 +78,17 @@ jobs:
           grep -q '/api/admin/cognitive-v74' src/index.js
           grep -q '/api/admin/cognitive-v74/manifest' src/index.js
           grep -q 'provider:"deterministic-reference-only"' src/index.js
-          grep -q 'provider:"hybrid-private-rag"' src/index.js
+          grep -q 'provider:"v10-private-rag"' src/index.js
           grep -q 'CREATE VIRTUAL TABLE IF NOT EXISTS encyclopedia_fts USING fts5' src/index.js
           grep -q 'encyclopedia_index:"sqlite-fts5"' src/index.js
-          grep -q 'function grokCompletion' src/index.js
+          grep -q 'offlineDictionarySearch' public/rag-cascade.js
+          grep -q 'offlineHybridSearch' public/rag-cascade.js
+          grep -q 'search-strict-page' public/rag-search-worker.js
+          grep -q 'OPERATING_MODE_KEY = "fns_operating_mode_v10"' public/app.js
+          grep -q 'function networkAllowed' public/app.js
+          grep -q '100% offline' public/index.html
+          grep -q 'set-operating-mode' public/sw-v3.js
+          grep -q 'fns-consiencia-v10-offline-online' public/sw-v3.js
           grep -q 'external_models_receive_full_library: false' src/index.js
           grep -q 'external_models_receive_original_files: false' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
@@ -290,11 +297,18 @@ jobs:
           ! grep -q 'consciencia-fabiano.karlapower007.workers.dev' scripts/autonomous-release.sh
           grep -q 'pdfjs-dist@4.10.38' public/app.js
           grep -q 'whisper-large-v3-turbo' src/index.js
-          ! grep -qE 'env\\.AI([^A-Za-z0-9_]|$)' src/index.js
-          ! grep -q '@cf/' src/index.js
-          grep -q 'function geminiCompletion' src/index.js
-          grep -q 'function hybridReasoningCompletion' src/index.js
+          grep -q 'env.AI.run' src/index.js
+          grep -q '@cf/zai-org/glm-4.7-flash' src/index.js
+          grep -q 'function zeroCostReasoningCompletion' src/index.js
+          grep -q 'const DEEP_CHAT_MODEL = "openai/gpt-oss-120b"' src/index.js
+          grep -q 'const ZERO_COST_MODE = true' src/index.js
+          grep -q 'WORKERS_AI_DAILY_CALL_LIMIT = 40' src/index.js
           grep -q 'redactExternalPrompt' src/index.js
+          grep -q '"binding": "AI"' wrangler.jsonc
+          ! grep -qi 'gemini' src/index.js
+          ! grep -qi 'api.x.ai' src/index.js
+          ! grep -q 'GEMINI_API_KEY' src/index.js
+          ! grep -q 'XAI_API_KEY' src/index.js
           ! grep -q 'AI.toMarkdown' src/index.js
           ! grep -q 'request.formData' src/index.js
           ! grep -q 'readPdfBuffer' src/index.js
