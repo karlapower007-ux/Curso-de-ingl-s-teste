@@ -4,7 +4,7 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
   V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,formatGroundedAnswer,buildPrompt,chooseInstalledModel,
-  focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus
+  focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus,focusedEvidenceWindow
 } from "./v2-local-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -34,10 +34,22 @@ const focusRows=[
 const focused=focusEvidence(focusRows,"Explique somente a vida pré-mortal",aliases,10);
 assert.equal(focused.length,1,"Focus Lock deve excluir evidência fora do assunto explícito");
 assert.equal(focused[0].id,"focus-ok");
+const longIrrelevant={
+  text:"Irmãos, quero dizer-vos que vou chamar Doze Apóstolos. Reunimo-nos em conselho e tratamos de muitos assuntos. Esta parte não responde à pergunta. A vida pré-mortal é ensinada aqui como a existência dos filhos de Deus antes do nascimento mortal. Esse ensino pertence diretamente ao assunto pedido.",
+  focus_aliases:["vida pre-mortal"]
+};
+const focusedWindow=focusedEvidenceWindow(longIrrelevant,760);
+assert.equal(focusedWindow.accepted,true,"janela focada deve aceitar o bloco que contém o conceito");
+assert.ok(focusedWindow.text.toLowerCase().includes("vida pré-mortal"),"trecho final precisa conter o assunto solicitado");
+assert.ok(!focusedWindow.text.startsWith("Irmãos, quero dizer-vos"),"trecho exibido não pode começar por contexto irrelevante distante do conceito");
+const missingWindow=focusedEvidenceWindow({text:"Chamamos Doze Apóstolos e encerramos a reunião.",focus_aliases:["vida pre-mortal"]},760);
+assert.equal(missingWindow.accepted,false,"bloco sem o conceito no trecho final deve ser rejeitado");
+
 assert.equal(answerStaysOnFocus("A vida pré-mortal antecede o nascimento mortal.","vida pré-mortal",aliases),true);
 assert.equal(answerStaysOnFocus("O Espírito da Verdade aparece em Hebreus.","vida pré-mortal",aliases),false);
 const grounded=formatGroundedAnswer(focused.map(row=>({
   ...row,
+  focus_verified:true,
   citation_verified:true,
   citation_reference:"Fonte Focada • página 3"
 })),"explain");
@@ -107,6 +119,8 @@ assert.ok(server.includes('provider:"focus-lock-deterministic"'),"servidor deve 
 assert.ok(server.includes('if(body.grounded===true)'),"servidor deve ter caminho Grounded Exact explícito");
 assert.ok(server.includes('provider:"grounded-exact-no-llm"'),"Grounded Exact deve bypassar o LLM na resposta");
 assert.ok(server.includes("applyCitationIntegrity"),"chat deve validar proveniência antes de exibir fonte");
+assert.ok(server.includes("focusedEvidenceWindow"),"chat deve recortar o trecho em torno do conceito realmente encontrado");
+assert.ok(server.includes("focus_verified:true"),"evidência exibida deve carregar selo interno de foco");
 assert.ok(server.includes("citation_verified:true"),"evidências aceitas devem carregar selo interno de verificação");
 assert.ok(server.includes("citation_integrity:true"),"Citação exata também deve passar pelo Citation Integrity Lock");
 assert.ok(server.includes("candidateLimit=lowRam?60"),"perfil 4 GB deve ampliar candidatos lexicais sem embeddings pesados");
