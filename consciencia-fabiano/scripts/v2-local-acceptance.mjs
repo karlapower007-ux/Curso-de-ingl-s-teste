@@ -47,7 +47,12 @@ for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis
   assert.ok(!server.includes(forbidden),"v2 local não pode chamar provedor pago: "+forbidden);
 }
 assert.ok(server.includes('if(mode==="exact")'),"servidor precisa de bypass exato");
-assert.ok(server.indexOf('if(mode==="exact")')<server.indexOf("const models=await installedModels()"),"exact retrieval deve ocorrer antes da seleção/chamada de LLM");
+const chatStart=server.indexOf("async function handleChat");
+const chatEnd=server.indexOf("async function serveStatic",chatStart);
+const chatHandler=server.slice(chatStart,chatEnd);
+assert.ok(chatStart>=0&&chatEnd>chatStart,"handleChat não localizado");
+assert.ok(chatHandler.indexOf('if(mode==="exact")')>=0,"bypass exact ausente no handleChat");
+assert.ok(chatHandler.indexOf('if(mode==="exact")')<chatHandler.indexOf("const models=await installedModels()"),"exact retrieval deve ocorrer antes da seleção/chamada de LLM");
 assert.ok(server.includes('"/api/embed"'),"embeddings devem usar Ollama local");
 assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBED_MODEL"));
 assert.ok(ui.includes('["exact","Citação exata • zero LLM"]'));
