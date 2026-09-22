@@ -5318,34 +5318,34 @@ export class LibraryDO {
         const matches=[];
         const from=(page-1)*pageSize;
         let scanned=0,exactHits=0;
-        const cursor=this.sql.exec(`
-          SELECT c.page,c.text,d.title,d.author
-          FROM chunks c JOIN documents d ON d.id=c.document_id
-          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
-          ORDER BY d.id ASC,c.chunk_index ASC
-        `);
-        for(const row of cursor){
-          scanned++;
-          const match=strictParagraphMatch(row?.text||"",question);
-          if(!match.matched)continue;
-          const evidence=String(match.paragraph||"").trim();
-          const audit=strictIntentAudit(evidence,intent);
-          if(!audit.accepted)continue;
-          const hitIndex=exactHits++;
-          if(hitIndex<from || matches.length>=pageSize)continue;
-          const canonical=extractSemanticReference(evidence);
-          matches.push({
-            page:Number(row.page||0),text:evidence,
-            title:canonical?"":humanDocumentName("",row.title),
-            author:String(row.author||""),reference:canonical,
-            score:100,coverage:audit.coverage
-          });
+        // Read in bounded SQL pages so the Durable Object never holds the whole library cursor.
+        const sqlPageSize=200;
+        for(let offset=0;;offset+=sqlPageSize){
+          const rows=[...this.sql.exec(`
+            SELECT c.page,c.text,d.title,d.author
+            FROM chunks c JOIN documents d ON d.id=c.document_id
+            WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+            ORDER BY d.id ASC,c.chunk_index ASC
+            LIMIT ? OFFSET ?
+          `,sqlPageSize,offset)];
+          if(!rows.length)break;
+          for(const row of rows){
+            scanned++;
+            const match=strictParagraphMatch(row?.text||"",question);
+            if(!match.matched)continue;
+            const evidence=String(match.paragraph||"").trim();
+            const audit=strictIntentAudit(evidence,intent);
+            if(!audit.accepted)continue;
+            const hitIndex=exactHits++;
+            if(hitIndex<from || matches.length>=pageSize)continue;
+            const canonical=extractSemanticReference(evidence);
+            matches.push({page:Number(row.page||0),text:evidence,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,score:100,coverage:audit.coverage});
+          }
+          if(rows.length<sqlPageSize)break;
+          // Yield between bounded pages to avoid one long synchronous SQLite iteration.
+          await Promise.resolve();
         }
-        return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,
-          target,page,page_size:pageSize,pages:Math.ceil(exactHits/pageSize),
-          mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
-          plans:{A:"exact",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
-          or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false});
+        return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,target,page,page_size:pageSize,pages:Math.ceil(exactHits/pageSize),mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,intent_lock:true,evidence_lock:true,plans:{A:"exact",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false,memory_bounded:true});
       }
 
       if (url.pathname === "/search-strict" && request.method === "POST") {
