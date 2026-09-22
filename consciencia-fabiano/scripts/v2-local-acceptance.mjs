@@ -43,7 +43,7 @@ const grounded=formatGroundedAnswer(focused.map(row=>({
 })),"explain");
 assert.ok(grounded.includes("Resposta documental exata"),"Grounded Exact deve identificar resposta documental");
 assert.ok(grounded.includes("vida pré-mortal"),"Grounded Exact deve preservar texto focado da biblioteca");
-assert.ok(grounded.includes("Fonte:"),"Grounded Exact deve citar a fonte em cada ponto");
+assert.ok(grounded.includes("✓ Fonte verificada:"),"Grounded Exact deve citar somente fonte verificada em cada ponto");
 assert.ok(!grounded.includes("Espírito da Verdade"),"Grounded Exact não pode incluir evidência fora do foco");
 const scripturePage="24 E disse: És tu meu filho Esaú mesmo? Ele disse: Eu sou. 27 a Heb. 11:20. GEE Bênçãos Patriarcais. 29 a GEE Amaldiçoar. 47 GÊNESIS 27:23–38";
 assert.equal(extractVerifiedPageReference(scripturePage),"GÊNESIS 27:23–38","rodapé canônico deve vencer referências cruzadas");
