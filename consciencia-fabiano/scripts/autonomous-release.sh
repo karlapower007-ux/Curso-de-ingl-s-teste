@@ -12,7 +12,7 @@ GROQ_API_KEY_CLEAN=$(printf '%s' "$GROQ_API_KEY" | tr -d '\r\n' | sed -e 's/^[[:
 
 BASE="${EXPECTED_WORKERS_BASE:-https://consciencia-fabiano.focoeepoder2.workers.dev}"
 
-log "== Consciência do Fabiano :: v7.5.0-stateful-resilience release =="
+log "== Consciência do Fabiano :: v9.1 private hybrid encyclopedia release =="
 log "1/7 Validate source"
 npm run check
 node scripts/cognitive-v74-acceptance.mjs | tee /tmp/cognitive-v74-acceptance.json
@@ -29,7 +29,8 @@ grep -q 'CHUNK_CONCURRENCY = 50' src/index.js
 grep -q 'EMBED_CONCURRENCY = 50' src/index.js
 grep -q 'pdfjs-dist@4.10.38' public/app.js
 grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
-! grep -q 'generativelanguage.googleapis.com' src/index.js
+grep -q 'generativelanguage.googleapis.com' src/index.js
+! grep -q 'api.x.ai/v1/chat/completions' src/index.js || true
 grep -q 'text/event-stream' src/index.js
 ! grep -q 'env.AI' src/index.js
 ! grep -q '@cf/' src/index.js
@@ -102,6 +103,9 @@ put_optional_secret(){
   fi
 }
 
+put_optional_secret GEMINI_API_KEY
+put_optional_secret XAI_API_KEY
+
 AUTOMATION_SECRET=$(openssl rand -hex 32)
 printf '%s' "$AUTOMATION_SECRET" | npx wrangler secret put AUTOMATION_SECRET >/tmp/automation-secret.log 2>&1 || { cat /tmp/automation-secret.log; die "AUTOMATION_SECRET_FAILED"; }
 log "AUTOMATION_SECRET_INSTALLED=yes"
@@ -145,12 +149,15 @@ log "5/7 Production health"
 for i in $(seq 1 15); do
   body=$(curl -fsS "$BASE/health/deploy" 2>/dev/null || true)
   if echo "$body" | jq -e '.ok == true
-    and .version == "7.5.0-stateful-resilience"
+    and .version == "9.1.0-private-hybrid-encyclopedia"
     and .architecture == "cloudflare-v7.1-fabiano-r2-cross-device"
     and .storage_backend == "durable-object-sqlite"
     and .workers_ai_used == false
-    and .llm_provider == "groq"
+    and .llm_provider == "gemini+grok+groq-hybrid"
     and .provider_auth_surface == "server-side-secrets-only"
+    and .external_privacy_gate == true
+    and .external_models_receive_original_files == false
+    and .external_models_receive_full_library == false
     and .client_provider_keys_exposed == false
     and .server_pdf_parsing == false
     and .exact_match_llm_bypass == true
@@ -177,7 +184,7 @@ for i in $(seq 1 15); do
     and .epistemic_labeling == true
     and .unsupported_claim_policy == "abstain"
     and .reference_only_llm_bypass == true
-    and .groq_final_stage_only == true
+    and .groq_final_stage_only == false
     and .analytic_llm_calls_max == 1
     and .pre_master_llm_calls == 0
     and .semantic_query_embedding_server_enabled == true
