@@ -19,7 +19,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-model-resolution-r2";
+const LOCAL_RUNTIME_BUILD="2026-09-22-direct-qwen-r3";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -353,55 +353,82 @@ async function handleChat(req,res){
   }
 
   const models=await installedModels();
-  const requested=String(body.model||"auto");
-  const model=await resolveResponseModel(models,requested);
-  if(!model){
-    json(res,{
-      ok:false,code:"LOCAL_MODEL_NOT_INSTALLED",
-      error:"Nenhum modelo Qwen de resposta compatível está instalado no Ollama.",
-      installed:models,recommended:recommendedByHardware(),
-      install:["ollama pull qwen3:0.6b","ollama pull qwen3:1.7b","ollama pull qwen3:4b","ollama pull qwen3:8b","ollama pull qwen3.8:27b"]
-    },503);return;
+  const requested=String(body.model||"auto").trim();
+  const allowed=["qwen3:0.6b","qwen3:1.7b","qwen3:4b","qwen3:8b","qwen3.8:27b"];
+  const candidates=[];
+  const addCandidate=name=>{
+    const clean=String(name||"").trim();
+    if(clean && !candidates.includes(clean))candidates.push(clean);
+  };
+
+  if(requested && requested!=="auto")addCandidate(requested);
+  else addCandidate(autoModel(models));
+  addCandidate(recommendedByHardware());
+  for(const name of models){
+    if(allowed.includes(name))addCandidate(name);
   }
+  addCandidate("qwen3:0.6b");
 
   const preferredContext=contextTokensByHardware();
   const contexts=preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
   let data=null;
+  let model=null;
   let usedContext=preferredContext;
   let promptEvidence=fitEvidenceToContext(evidence,preferredContext);
   let lastError=null;
+  let sawMemoryError=false;
 
-  for(const ctx of [...new Set(contexts)]){
-    usedContext=ctx;
-    promptEvidence=fitEvidenceToContext(evidence,ctx);
-    const prompt=buildPrompt({question,mode,evidence:promptEvidence});
-    try{
-      data=await fetchOllama("/api/chat",{
-        method:"POST",
-        body:JSON.stringify({
-          model,stream:false,think:false,
-          messages:[{role:"user",content:prompt}],
-          options:{temperature:0.05,num_ctx:ctx,num_predict:ctx<=2048?384:768}
-        })
-      },300000);
-      lastError=null;
-      break;
-    }catch(error){
-      lastError=error;
-      if(!isMemoryAllocationError(error))throw error;
+  modelLoop:
+  for(const candidate of candidates){
+    for(const ctx of [...new Set(contexts)]){
+      usedContext=ctx;
+      promptEvidence=fitEvidenceToContext(evidence,ctx);
+      const prompt=buildPrompt({question,mode,evidence:promptEvidence});
+      try{
+        data=await fetchOllama("/api/chat",{
+          method:"POST",
+          body:JSON.stringify({
+            model:candidate,stream:false,think:false,
+            messages:[{role:"user",content:prompt}],
+            options:{temperature:0.05,num_ctx:ctx,num_predict:ctx<=2048?384:768}
+          })
+        },300000);
+        model=candidate;
+        lastError=null;
+        break modelLoop;
+      }catch(error){
+        lastError=error;
+        const message=String(error?.message||error||"").toLowerCase();
+        if(isMemoryAllocationError(error)){
+          sawMemoryError=true;
+          continue;
+        }
+        if(message.includes("model") && (message.includes("not found") || message.includes("does not exist") || Number(error?.status)===404)){
+          break;
+        }
+        throw error;
+      }
     }
   }
 
-  if(!data && lastError){
-    throw Object.assign(new Error(
-      "O Qwen local ficou sem memória mesmo no modo econômico. Feche outros programas e tente novamente."
-    ),{status:503,code:"LOCAL_MEMORY_EXHAUSTED",cause:lastError});
+  if(!data){
+    if(sawMemoryError){
+      throw Object.assign(new Error(
+        "O Qwen local ficou sem memória mesmo no modo econômico. Feche outros programas e tente novamente."
+      ),{status:503,code:"LOCAL_MEMORY_EXHAUSTED",cause:lastError});
+    }
+    json(res,{
+      ok:false,code:"LOCAL_MODEL_NOT_INSTALLED",
+      error:"O Ollama está conectado, mas nenhum modelo Qwen de resposta respondeu à chamada direta.",
+      installed:models,attempted:candidates,recommended:recommendedByHardware(),
+      install:["ollama pull qwen3:0.6b"]
+    },503);return;
   }
 
   const answer=String(data?.message?.content||"").trim();
   json(res,{
     ok:true,answer:answer||"A biblioteca recuperada não foi suficiente para produzir uma resposta.",
-    mode,model,provider:"ollama-local",embedding_model:EMBED_MODEL,
+    mode,model,provider:"ollama-local-direct",embedding_model:EMBED_MODEL,
     context_tokens:usedContext,evidence_count:promptEvidence.length,
     evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
     matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
