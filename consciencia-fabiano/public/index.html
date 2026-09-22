@@ -26,6 +26,7 @@
       <button id="chatTab" class="ghost active" type="button">Conversar</button>
       <button id="dictionaryTab" class="ghost" type="button">Dicionário / Enciclopédia</button>
       <button id="libraryTab" class="ghost" type="button">Biblioteca</button>
+      <button id="settingsTab" class="ghost" type="button">Configurações</button>
     </div>
   </header>
 
@@ -97,6 +98,34 @@
           <button id="dictionaryPrev" class="ghost" type="button">Anterior</button>
           <span id="dictionaryPageInfo"></span>
           <button id="dictionaryNext" class="ghost" type="button">Próxima</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="settingsPanel" class="settings hidden">
+      <div class="settings-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PRIVACIDADE • CUSTO ZERO • DISPOSITIVO</p>
+            <h2>Configurações</h2>
+          </div>
+        </div>
+        <p class="settings-note">Escolha como a Consciência funciona neste celular ou PC. O modo 100% offline bloqueia chamadas de API e usa somente o conteúdo já preparado neste aparelho.</p>
+        <div class="settings-grid">
+          <label class="mode-option settings-mode" for="settingsOperationMode">
+            <span>Modo de funcionamento</span>
+            <select id="settingsOperationMode" aria-label="Modo de funcionamento nas configurações">
+              <option value="auto">Automático</option>
+              <option value="offline">100% offline</option>
+              <option value="online">Online</option>
+            </select>
+          </label>
+          <span id="settingsModeStatus" class="mode-status" aria-live="polite">Automático</span>
+          <button id="settingsPrepareOfflineBtn" class="secondary" type="button">Preparar este aparelho para uso offline</button>
+        </div>
+        <div class="privacy-summary">
+          <strong>Regras ativas</strong>
+          <p>PDFs e biblioteca permanecem privados. Provedores externos recebem apenas evidências mínimas já filtradas. Gemini, xAI/Grok, OpenRouter, Cohere e espelhos externos permanecem desativados.</p>
         </div>
       </div>
     </section>
