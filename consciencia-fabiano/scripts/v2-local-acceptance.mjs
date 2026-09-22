@@ -3,7 +3,8 @@ import {readFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
-  V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,buildPrompt,chooseInstalledModel
+  V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,buildPrompt,chooseInstalledModel,
+  focusEvidence,answerStaysOnFocus
 } from "./v2-local-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -26,11 +27,22 @@ const exact=exactAndMatches(rows,"Plano de Salvação e Vida Pré-Mortal",{alias
 assert.equal(exact.total,2,"strict AND deve aceitar somente blocos com ambos os conceitos");
 assert.ok(exact.matches.every(x=>x.text.toLowerCase().includes("plano")||x.text.toLowerCase().includes("plan")));
 assert.ok(!exact.matches.some(x=>x.id==="b"),"conceitos em parágrafos separados não podem ser combinados");
+const focusRows=[
+  {id:"focus-ok",document_id:"f1",title:"Fonte Focada",page:3,chunk_index:1,text:"Na vida pré-mortal, os filhos de Deus viviam antes do nascimento mortal."},
+  {id:"focus-bad",document_id:"f2",title:"Fonte Fora",page:9,chunk_index:2,text:"O Espírito da Verdade é mencionado neste texto, sem tratar da existência pré-mortal."}
+];
+const focused=focusEvidence(focusRows,"Explique somente a vida pré-mortal",aliases,10);
+assert.equal(focused.length,1,"Focus Lock deve excluir evidência fora do assunto explícito");
+assert.equal(focused[0].id,"focus-ok");
+assert.equal(answerStaysOnFocus("A vida pré-mortal antecede o nascimento mortal.","vida pré-mortal",aliases),true);
+assert.equal(answerStaysOnFocus("O Espírito da Verdade aparece em Hebreus.","vida pré-mortal",aliases),false);
 const literal=formatExactAnswer(exact.matches);
 assert.ok(literal.includes("Plano de Salvação"));
 assert.ok(literal.includes("página 10"));
 const prompt=buildPrompt({question:"Explique",mode:"explain",evidence:exact.matches});
 assert.ok(prompt.includes("não use conhecimento externo"));
+assert.ok(prompt.includes("FOCUS LOCK ABSOLUTO"));
+assert.ok(prompt.includes("Não traduza o texto"));
 assert.ok(prompt.includes("EVIDÊNCIA 1"));
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
@@ -59,6 +71,9 @@ assert.ok(server.includes('"/api/embed"'),"embeddings devem usar Ollama local");
 assert.ok(server.includes("function contextTokensByHardware"),"contexto do Qwen deve ser adaptativo por RAM");
 assert.ok(server.includes("return 2048"),"PCs de baixa memória devem usar contexto de 2048 tokens");
 assert.ok(server.includes("isMemoryAllocationError"),"servidor deve detectar falha de alocação/KV cache");
+assert.ok(server.includes("focusEvidence"),"servidor deve filtrar evidências pelo assunto explícito");
+assert.ok(server.includes("answerStaysOnFocus"),"servidor deve bloquear resposta gerada que saia do foco");
+assert.ok(server.includes('provider:"focus-lock-deterministic"'),"servidor deve ter fallback determinístico quando o Qwen desviar do tema");
 assert.ok(server.includes("[preferredContext,1024]"),"PC de baixa memória deve ter retry em 1024 tokens");
 assert.ok(!server.includes("options:{temperature:0.05,num_ctx:32768}"),"contexto fixo de 32768 não pode voltar");
 assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBED_MODEL"));
