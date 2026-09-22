@@ -188,18 +188,29 @@ function libraryStub(env) {
 }
 
 async function libraryCall(env, path, options = {}) {
-  const res = await libraryStub(env).fetch(new Request("https://library.internal" + path, options));
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const message=String(data?.message || ("LibraryDO " + res.status));
-    const error=new Error(message);
-    error.status=res.status;
-    error.code=/Exceeded allowed rows read|free tier|rows read/i.test(message)
-      ? "FREE_TIER_STORAGE_QUOTA"
-      : String(data?.code || "LIBRARY_ERROR");
+  try{
+    const res = await libraryStub(env).fetch(new Request("https://library.internal" + path, options));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const message=String(data?.message || ("LibraryDO " + res.status));
+      const error=new Error(message);
+      error.status=res.status;
+      error.code=/Exceeded allowed rows read|free tier|rows read/i.test(message)
+        ? "FREE_TIER_STORAGE_QUOTA"
+        : String(data?.code || "LIBRARY_ERROR");
+      throw error;
+    }
+    return data;
+  }catch(error){
+    const message=String(error?.message || error);
+    if(/Exceeded allowed rows read|free tier|rows read/i.test(message)){
+      const quota=new Error(message);
+      quota.code="FREE_TIER_STORAGE_QUOTA";
+      quota.status=503;
+      throw quota;
+    }
     throw error;
   }
-  return data;
 }
 
 async function memoryOwner(request, body = null) {
