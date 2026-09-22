@@ -117,9 +117,9 @@ function ramGb(){return Math.max(1,Math.round(os.totalmem()/1024/1024/1024));}
 function recommendedByHardware(){
   const gb=ramGb();
   if(gb>=32)return "qwen3.8:27b";
-  if(gb>=12)return "qwen3:8b";
-  if(gb>=7)return "qwen3:4b";
-  if(gb>=4)return "qwen3:1.7b";
+  if(gb>=16)return "qwen3:8b";
+  if(gb>=10)return "qwen3:4b";
+  if(gb>=6)return "qwen3:1.7b";
   return "qwen3:0.6b";
 }
 function autoModel(installed){
