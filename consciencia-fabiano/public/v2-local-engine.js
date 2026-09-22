@@ -4,7 +4,7 @@ const V2_VECTOR_DB="fns_qwen_vectors_v2";
 const V2_VECTOR_DB_VERSION=1;
 const LEGACY_RAG_DB="fns_rag_resilience_v1";
 const EMBED_MODEL="qwen3-embedding:0.6b";
-const DEFAULT_BATCH=Number(navigator.deviceMemory||4)<=4?2:6;
+const DEFAULT_BATCH=Number(navigator.deviceMemory||4)<=4?8:24;
 const STOPWORDS=new Set("a o as os um uma uns umas de da do das dos e em no na nos nas por para com sem sobre que qual quais como quando onde porque pois ser estar foi eram is the an of to in on for with about what which how when where why me mostre mostrar busque buscar encontre encontrar diga explique".split(/\s+/));
 let aliasPromise=null;
 
