@@ -1949,9 +1949,9 @@
     }
   }
 
-  const dictionaryState={query:"",page:1,pageSize:25,total:0,hits:[]};
+  const dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0,hits:[]};
   function publicSourceLabel(hit){
-    const title=String(hit?.title||hit?.titulo||hit?.filename||hit?.arquivo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+    const title=String(hit?.title||hit?.titulo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim().replace(/^(?:standard works|obras padrão)$/i,"");
     const page=Number(hit?.page||hit?.pagina||0);
     return (title || "Fonte")+(page?" • página "+page:"");
   }
@@ -1960,7 +1960,7 @@
     if(!host||!pager)return;
     host.replaceChildren();
     const start=(dictionaryState.page-1)*dictionaryState.pageSize;
-    const rows=dictionaryState.hits.slice(start,start+dictionaryState.pageSize);
+    const rows=dictionaryState.hits;
     rows.forEach((hit,index)=>{
       const card=document.createElement("article");card.className="dictionary-result";
       const head=document.createElement("div");head.className="dictionary-result-head";
@@ -1969,7 +1969,7 @@
       const body=document.createElement("div");body.className="dictionary-result-text";body.textContent=String(hit?.text||hit?.trecho||"").trim();
       head.append(title,ref);card.append(head,body);host.appendChild(card);
     });
-    const pages=Math.max(1,Math.ceil(dictionaryState.hits.length/dictionaryState.pageSize));
+    const pages=Math.max(1,Number(dictionaryState.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize)));
     $("dictionaryPageInfo").textContent="Página "+dictionaryState.page+" de "+pages+" • "+dictionaryState.total+" ocorrência(s) exata(s)";
     $("dictionaryPrev").disabled=dictionaryState.page<=1;
     $("dictionaryNext").disabled=dictionaryState.page>=pages;
@@ -1982,9 +1982,10 @@
     $("dictionaryStatus").textContent="Pesquisando toda a biblioteca com foco estrito…";
     $("dictionarySearchBtn").disabled=true;
     try{
-      const data=await api("/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,limit:1000})},false);
+      const data=await api("/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})},false);
       dictionaryState.hits=Array.isArray(data?.matches)?data.matches:[];
       dictionaryState.total=Number(data?.total||dictionaryState.hits.length);
+      dictionaryState.pages=Number(data?.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize));
       renderDictionaryPage();
       $("dictionaryStatus").textContent=dictionaryState.total
         ? "Busca concluída • "+Number(data.scanned||0)+" trechos examinados • somente correspondências do assunto solicitado."
