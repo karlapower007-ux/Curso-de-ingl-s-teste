@@ -145,7 +145,11 @@ jobs:
           echo "V10_OFFLINE_ONLINE_UI=visible"
           # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
           DICT_HTTP="$(curl -sS --max-time 45 -o /tmp/v10-dictionary.json -w '%{http_code}' -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}' || true)"
-          test "$DICT_HTTP" = "200"
+          if [ "$DICT_HTTP" != "200" ]; then
+            echo "V10_DICTIONARY_HTTP=$DICT_HTTP"
+            jq -c '{ok,code,message}' /tmp/v10-dictionary.json 2>/dev/null || head -c 1200 /tmp/v10-dictionary.json
+            exit 1
+          fi
           DICT="$(cat /tmp/v10-dictionary.json)"
           printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0) and (.encyclopedia_index == "sqlite-fts5" or .encyclopedia_index == "strict-scan-fallback")' >/dev/null
           if printf '%s' "$DICT" | grep -Eqi '"(filename|document_id|chunk_index)"[[:space:]]*:|Standard Works|Obras Padrão'; then
