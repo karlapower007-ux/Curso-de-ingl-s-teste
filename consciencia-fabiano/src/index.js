@@ -5760,8 +5760,6 @@ export default {
         groq_fast_model: CHAT_MODEL,
         groq_deep_model: DEEP_CHAT_MODEL,
         external_egress_allowlist: ["api.groq.com","cloudflare-workers-ai-binding"],
-        gemini_disabled: true,
-        xai_grok_disabled: true,
         full_offline_mode_supported: true,
         client_provider_keys_exposed: false,
         supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
