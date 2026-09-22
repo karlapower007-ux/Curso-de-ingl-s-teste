@@ -97,11 +97,6 @@ function cosine(a,b){
   for(let i=0;i<n;i++){const x=Number(a[i]||0),y=Number(b[i]||0);dot+=x*y;aa+=x*x;bb+=y*y;}
   return dot/((Math.sqrt(aa)||1)*(Math.sqrt(bb)||1));
 }
-async function vectorExists(key){
-  const db=await openV2(),tx=db.transaction("vectors","readonly");
-  const found=await reqPromise(tx.objectStore("vectors").getKey(String(key))).catch(()=>undefined);db.close();
-  return found!==undefined;
-}
 async function readLegacyBatch(limit=DEFAULT_BATCH,{allowReset=true}={}){
   const db=await openLegacy();
   if(!db.objectStoreNames.contains("chunks")){db.close();throw new Error("Store de chunks local não encontrado.");}
@@ -111,24 +106,23 @@ async function readLegacyBatch(limit=DEFAULT_BATCH,{allowReset=true}={}){
   await new Promise((resolve,reject)=>{
     const range=cursorKey?IDBKeyRange.lowerBound(cursorKey,true):undefined;
     const req=store.openCursor(range);
-    req.onsuccess=async()=>{
+    req.onsuccess=()=>{
       const c=req.result;
       if(!c){exhausted=true;resolve();return;}
       lastKey=String(c.key);
       const row=c.value||{},key=String(row.key||row.id||c.key||"");
-      if(key&&String(row.text||"").trim()&&!(await vectorExists(key)))out.push({...row,key});
+      if(key&&String(row.text||"").trim())out.push({...row,key});
       if(out.length>=Math.max(1,limit)){resolve();return;}
       c.continue();
     };
     req.onerror=()=>reject(req.error);
   });
   db.close();
-  if(lastKey!==cursorKey)await metaPut("legacy_migration_cursor",lastKey);
   if(!out.length&&exhausted&&allowReset){
     const state=await counts();
     if(state.pending>0&&cursorKey){await metaPut("legacy_migration_cursor","");return readLegacyBatch(limit,{allowReset:false});}
   }
-  return {rows:out,exhausted};
+  return {rows:out,exhausted,lastKey,cursorKey};
 }
 async function storeVectors(chunks,vectors){
   const db=await openV2(),tx=db.transaction(["vectors","meta"],"readwrite"),store=tx.objectStore("vectors");
@@ -176,6 +170,7 @@ async function migrateOneBatch(limit=DEFAULT_BATCH,{mirror=true}={}){
   if(!chunks.length)return {ok:true,done:true,count:0,...await counts()};
   const data=await api("/api/v2/embed",{texts:chunks.map(x=>x.text),persist:false});
   await storeVectors(chunks,data.vectors||[]);
+  if(batch.lastKey!==batch.cursorKey)await metaPut("legacy_migration_cursor",batch.lastKey);
   if(mirror){try{await workerCall({type:"persist-chunks",chunks},60000);}catch{}}
   const state=await counts();
   return {ok:true,done:state.pending===0,count:chunks.length,dimensions:Number(data.dimensions||0),...state};
