@@ -2,7 +2,7 @@ name: Deploy Consciência do Fabiano
 
 on:
   push:
-    branches: [consciencia-do-fabiano]
+    branches: [consciencia-cloudflare-native-v1]
     paths:
       - 'consciencia-fabiano/**'
       - '.github/workflows/deploy-consciencia-fabiano.yml'
@@ -43,8 +43,15 @@ jobs:
           test -s public/fabiano-falando.png
           test -s public/fabiano-aberto.png
           grep -q 'Consciência do Fabiano' public/index.html
-          grep -q 'avatar-fabiano-api.onrender.com' src/index.js
+          grep -q '10.1.0-private-egress-offline-online' src/index.js
+          grep -q 'PRIVATE_EGRESS_LOCK = true' src/index.js
+          ! grep -q 'https://api.cohere.com' src/index.js
+          ! grep -q 'generativelanguage.googleapis.com' src/index.js
+          ! grep -q 'openrouter.ai' src/index.js
+          ! grep -q 'api.x.ai' src/index.js
           grep -q 'id="questionInput"' public/index.html
+          grep -q 'id="operationMode"' public/index.html
+          grep -q 'id="prepareOfflineBtn"' public/index.html
           grep -q 'id="micBtn"' public/index.html
           grep -q 'id="sendBtn"' public/index.html
           grep -q 'id="autoSendVoice"' public/index.html
@@ -60,13 +67,13 @@ jobs:
       - name: Smoke production
         run: |
           set -euo pipefail
-          BASE='https://consciencia-fabiano.karlapower007.workers.dev'
+          BASE='https://consciencia-fabiano.focoeepoder2.workers.dev'
           sleep 3
           curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/" | grep -q 'Consciência do Fabiano'
-          curl --retry 5 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/health" | grep -q '"ok":true'
-          code=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/status")
-          test "$code" = "200"
-          grep -q '"ok":true' /tmp/status.json
+          curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/health/deploy" -o /tmp/deploy-health.json
+          grep -q '"ok":true' /tmp/deploy-health.json
+          grep -q '10.1.0-private-egress-offline-online' /tmp/deploy-health.json
+          grep -q 'strict-private-egress-lock' /tmp/deploy-health.json
           admin_code=$(curl -sS -o /tmp/admin.json -w '%{http_code}' "$BASE/api/admin/livros")
           test "$admin_code" = "401"
-          echo "KEYLESS CHAT + PROTECTED ADMIN PASS"
+          echo "V10.1 PRIVATE EGRESS + OFFLINE/ONLINE + PROTECTED ADMIN"
