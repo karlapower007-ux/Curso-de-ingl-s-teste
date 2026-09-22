@@ -146,9 +146,12 @@ assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve con
 assert.ok(!ui.includes('call("/api/v3/dictionary"'),"V3 não pode substituir ou reindexar o Dicionário");
 assert.ok(v3core.includes("buildV3EvidenceIndex"),"núcleo V3 deve existir separado do núcleo V2");
 assert.ok(v3core.includes("searchV3Evidence"),"V3 deve possuir mecanismo próprio de busca");
-assert.ok(v3core.includes('version:"3.0.2-evidence-engine-focus"'),"V3 deve usar o índice leve com Focus Integrity reforçado");
+assert.ok(v3core.includes('version:"3.0.3-evidence-engine-verified-window"'),"V3 deve usar o índice leve com Focus Integrity reforçado");
 assert.ok(v3core.includes("noteAt"),"V3 deve remover aparato editorial/rodapés antes da indexação de Escrituras");
 assert.ok(v3core.includes("minCore"),"V3 deve exigir cobertura do conceito completo quando não houver alias literal");
+assert.ok(v3core.includes('unit.kind==="scripture-page-window"'),"V3 deve reconhecer faixas bíblicas amplas");
+assert.ok(v3core.includes("allowBroadScripture"),"faixas bíblicas amplas só podem entrar mediante permissão explícita");
+assert.ok(v3core.includes("focusedV3Excerpt"),"V3 deve exibir janela documental centrada no conceito");
 assert.ok(!v3core.includes("api/chat"),"núcleo documental V3 não pode depender de geração LLM para validar fontes");
 assert.ok(restart.includes('"scripts/v3-evidence-core.mjs"'),"reiniciador deve baixar o núcleo V3 para o PC");
 assert.ok(server.includes('if(mode==="exact")'),"servidor precisa de bypass exato");
