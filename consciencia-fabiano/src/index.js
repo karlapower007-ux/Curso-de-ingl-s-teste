@@ -10,6 +10,11 @@ const CHAT_MODEL = "openai/gpt-oss-20b";
 const DEEP_CHAT_MODEL = "openai/gpt-oss-120b";
 const WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const WORKERS_AI_DAILY_CALL_LIMIT = 40;
+const WORKERS_AI_DAILY_NEURON_BUDGET = 8500;
+const WORKERS_AI_INPUT_NEURONS_PER_M = 5500;
+const WORKERS_AI_OUTPUT_NEURONS_PER_M = 36400;
+const GROQ_ZDR_REQUIRED = true;
+const GROQ_FREE_ONLY_REQUIRED = true;
 const ZERO_COST_MODE = true;
 const PRIVATE_EGRESS_LOCK = true;
 const LEGACY_EXTERNAL_EMBEDDINGS = false;
@@ -1871,7 +1876,11 @@ function ensureEngagementQuestion(answer, fallback = false) {
 
 let groqRoundRobinCursor = 0;
 
-function groqApiKeys(env) {
+function envFlag(value) {
+  return /^(?:1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+function rawGroqApiKeys(env) {
   const keys = [];
   const push = value => {
     const key = String(value || "").trim();
@@ -1883,10 +1892,40 @@ function groqApiKeys(env) {
   return keys;
 }
 
+function groqZdrConfirmed(env) {
+  return envFlag(env?.GROQ_ZDR_CONFIRMED);
+}
+
+function groqFreeTierConfirmed(env) {
+  return envFlag(env?.GROQ_FREE_TIER_CONFIRMED);
+}
+
+function groqUsageApproved(env) {
+  const zdrOk = !GROQ_ZDR_REQUIRED || groqZdrConfirmed(env);
+  const freeOk = !GROQ_FREE_ONLY_REQUIRED || groqFreeTierConfirmed(env);
+  return zdrOk && freeOk;
+}
+
+function groqApiKeys(env) {
+  return groqUsageApproved(env) ? rawGroqApiKeys(env) : [];
+}
+
+function groqExternalStatus(env) {
+  const raw = rawGroqApiKeys(env);
+  if (!raw.length) return "not-configured";
+  return groqUsageApproved(env) ? "enabled" : "blocked-unverified-zdr-or-free-tier";
+}
+
 function requireGroqKeys(env) {
+  const raw = rawGroqApiKeys(env);
+  if (raw.length && !groqUsageApproved(env)) {
+    const err = new Error("Groq bloqueado: confirme ZDR e Free Tier no ambiente antes de permitir egress.");
+    err.code = "GROQ_PRIVACY_COST_CONFIRMATION_REQUIRED";
+    throw err;
+  }
   const keys = groqApiKeys(env);
   if (!keys.length) {
-    const err = new Error("Nenhuma chave Groq foi configurada no servidor.");
+    const err = new Error("Nenhuma chave Groq aprovada foi configurada no servidor.");
     err.code = "EXTERNAL_AI_NOT_CONFIGURED";
     throw err;
   }
@@ -1900,7 +1939,7 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
   const maxCompletionTokens=Math.max(100,Number(options.max_completion_tokens || GROQ_MAX_COMPLETION_TOKENS));
   const temperature=Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.0;
   const maxRetries=Math.max(0,Math.min(MASSIVE_GROQ_MAX_RETRIES,Number(options.max_retries ?? MASSIVE_GROQ_MAX_RETRIES)));
-  let safeMessages=enforceGroqBudget(messages,inputBudget);
+  let safeMessages=enforceGroqBudget(externalSafeMessages(messages),inputBudget);
   const startIndex=(groqRoundRobinCursor++) % keys.length;
 
   const execute=async(payloadMessages,apiKey)=>{
@@ -1978,6 +2017,9 @@ function reasoningProviderStatus(env) {
   return {
     groq_fast:groqApiKeys(env).length>0,
     groq_deep:groqApiKeys(env).length>0,
+    groq_keys_present:rawGroqApiKeys(env).length>0,
+    groq_zdr_confirmed:groqZdrConfirmed(env),
+    groq_free_tier_confirmed:groqFreeTierConfirmed(env),
     workers_ai:workersAiConfigured(env),
     offline_local:true
   };
@@ -1991,18 +2033,26 @@ function selectGroqModel(question,contract,sources=[]) {
   return deep ? DEEP_CHAT_MODEL : CHAT_MODEL;
 }
 
-async function consumeZeroCostAllowance(env,provider,limit) {
+async function consumeZeroCostAllowance(env,provider,limit,amount=1) {
   if(!ZERO_COST_MODE) return {allowed:false,reason:"zero-cost-disabled"};
   if(!env?.LIBRARY) return {allowed:false,reason:"library-counter-unavailable"};
   try{
     return await libraryCall(env,"/zero-cost/consume",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({provider:String(provider||""),limit:Number(limit||0)})
+      body:JSON.stringify({provider:String(provider||""),limit:Number(limit||0),amount:Number(amount||1)})
     });
   }catch{
     return {allowed:false,reason:"counter-unavailable"};
   }
+}
+
+function estimateWorkersAiNeurons(messages,maxCompletionTokens) {
+  const serialized=JSON.stringify(Array.from(messages || []));
+  const inputTokens=Math.max(1,Math.ceil(serialized.length/3.2));
+  const outputTokens=Math.max(1,Number(maxCompletionTokens || 900));
+  const raw=(inputTokens*WORKERS_AI_INPUT_NEURONS_PER_M + outputTokens*WORKERS_AI_OUTPUT_NEURONS_PER_M)/1_000_000;
+  return Math.max(1,Math.ceil(raw*1.35));
 }
 
 async function workersAiCompletion(env,messages,options={}) {
@@ -2011,17 +2061,27 @@ async function workersAiCompletion(env,messages,options={}) {
     error.code="WORKERS_AI_NOT_CONFIGURED";
     throw error;
   }
-  const allowance=await consumeZeroCostAllowance(env,"workers-ai",WORKERS_AI_DAILY_CALL_LIMIT);
-  if(allowance?.allowed!==true){
-    const error=new Error("Limite gratuito diário do fallback Workers AI protegido pelo ZERO_COST_GUARD.");
+  const maxCompletionTokens=Math.max(200,Math.min(1200,Number(options.max_completion_tokens || 900)));
+  const callAllowance=await consumeZeroCostAllowance(env,"workers-ai-calls",WORKERS_AI_DAILY_CALL_LIMIT,1);
+  if(callAllowance?.allowed!==true){
+    const error=new Error("Limite diário de chamadas do Workers AI bloqueado pelo ZERO_COST_GUARD.");
     error.code="ZERO_COST_LIMIT";
     throw error;
   }
   const safe=externalSafeMessages(messages);
+  const estimatedNeurons=estimateWorkersAiNeurons(safe,maxCompletionTokens);
+  const neuronAllowance=await consumeZeroCostAllowance(
+    env,"workers-ai-neurons",WORKERS_AI_DAILY_NEURON_BUDGET,estimatedNeurons
+  );
+  if(neuronAllowance?.allowed!==true){
+    const error=new Error("Orçamento conservador de neurons do Workers AI atingido; nenhuma chamada paga será iniciada.");
+    error.code="ZERO_COST_NEURON_BUDGET";
+    throw error;
+  }
   const result=await env.AI.run(WORKERS_AI_MODEL,{
     messages:safe,
     temperature:0,
-    max_completion_tokens:Math.max(200,Math.min(1200,Number(options.max_completion_tokens || 900)))
+    max_completion_tokens:maxCompletionTokens
   });
   const text=String(
     result?.response ||
@@ -5553,19 +5613,20 @@ export class LibraryDO {
       if (url.pathname === "/zero-cost/consume" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const provider=String(body?.provider||"").trim().slice(0,64);
-        const limit=Math.max(1,Math.min(500,Number(body?.limit||1)));
+        const limit=Math.max(1,Math.min(1_000_000,Number(body?.limit||1)));
+        const amount=Math.max(1,Math.min(limit,Number(body?.amount||1)));
         if(!provider) return json({ok:false,allowed:false,message:"provider obrigatório"},400);
         const day=new Date().toISOString().slice(0,10);
         const current=Number([...this.sql.exec(
           "SELECT calls FROM zero_cost_usage WHERE day=? AND provider=? LIMIT 1",day,provider
         )][0]?.calls || 0);
-        if(current>=limit) return json({ok:true,allowed:false,provider,day,calls:current,limit});
-        const next=current+1;
+        if(current+amount>limit) return json({ok:true,allowed:false,provider,day,usage_units:current,requested_units:amount,limit});
+        const next=current+amount;
         this.sql.exec(
           "INSERT OR REPLACE INTO zero_cost_usage (day,provider,calls,updated_at) VALUES (?,?,?,?)",
           day,provider,next,new Date().toISOString()
         );
-        return json({ok:true,allowed:true,provider,day,calls:next,limit});
+        return json({ok:true,allowed:true,provider,day,usage_units:next,consumed_units:amount,limit});
       }
 
       if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
@@ -5844,6 +5905,12 @@ export default {
         external_payload_mode: "filtered-evidence-only",
         zero_cost_guard: true,
         workers_ai_daily_call_limit: WORKERS_AI_DAILY_CALL_LIMIT,
+        workers_ai_daily_neuron_budget: WORKERS_AI_DAILY_NEURON_BUDGET,
+        workers_ai_neuron_budget_headroom: "15% below documented free allocation",
+        groq_zdr_required: GROQ_ZDR_REQUIRED,
+        groq_zdr_confirmed: groqZdrConfirmed(env),
+        groq_free_only_required: GROQ_FREE_ONLY_REQUIRED,
+        groq_free_tier_confirmed: groqFreeTierConfirmed(env),
         workers_ai_model: WORKERS_AI_MODEL,
         groq_fast_model: CHAT_MODEL,
         groq_deep_model: DEEP_CHAT_MODEL,
@@ -5854,7 +5921,7 @@ export default {
           openrouter: "disabled",
           cohere: "disabled",
           supabase: "disabled",
-          groq: groqApiKeys(env).length > 0 ? "enabled" : "not-configured",
+          groq: groqExternalStatus(env),
           workers_ai: workersAiConfigured(env) ? "enabled" : "not-configured"
         },
         external_egress_allowlist: ["api.groq.com","cloudflare-workers-ai-binding"],
