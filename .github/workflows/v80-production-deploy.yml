@@ -1,4 +1,4 @@
-name: Deploy Consciência Fabiano V10 Production Safely
+name: Deploy Consciência Fabiano V10.1 Production Safely
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
           test "$(jq -r '.hard_guards.paid_dependency_required' v8-preservation-manifest.json)" = "false"
           test "$(jq -r '.library.reindex_required' v8-preservation-manifest.json)" = "false"
           test "$(jq -r '.hard_guards.pre_final_llm_calls' v8-preservation-manifest.json)" = "0"
-          echo "V10_ZERO_COST_AND_LOAD_GUARD=pass"
+          echo "V10_1_ZERO_COST_AND_LOAD_GUARD=pass"
 
       - name: Arm rollback after all preflight gates pass
         shell: bash
@@ -105,8 +105,15 @@ jobs:
           DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
           test -n "$DISCOVERED_ACCOUNT_ID"
           export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
-          printf '%s' '{"GEMINI_API_KEY":null,"GOOGLE_API_KEY":null,"XAI_API_KEY":null,"GROK_API_KEY":null}' | npx wrangler secret bulk >/dev/null || true
-          echo "RETIRED_PROVIDER_SECRETS=removed-or-absent"
+          printf '%s' '{"GEMINI_API_KEY":null,"GOOGLE_API_KEY":null,"XAI_API_KEY":null,"GROK_API_KEY":null,"OPENROUTER_API_KEY":null,"COHERE_API_KEY":null,"SUPABASE_SERVICE_ROLE_KEY":null,"SUPABASE_RAG_KEY":null,"PINECONE_API_KEY":null,"ASTRA_DB_APPLICATION_TOKEN":null}' | npx wrangler secret bulk >/dev/null
+          SECRET_LIST="$(npx wrangler secret list --format json)"
+          for retired in GEMINI_API_KEY GOOGLE_API_KEY XAI_API_KEY GROK_API_KEY OPENROUTER_API_KEY COHERE_API_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_RAG_KEY PINECONE_API_KEY ASTRA_DB_APPLICATION_TOKEN; do
+            if printf '%s' "$SECRET_LIST" | jq -e --arg k "$retired" '.[] | select(.name == $k)' >/dev/null; then
+              echo "Retired secret still present: $retired"
+              exit 1
+            fi
+          done
+          echo "RETIRED_PROVIDER_SECRETS=verified-absent"
 
       - name: Verify V10 production endpoint
         id: probe
@@ -118,20 +125,27 @@ jobs:
             BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
             VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
             HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
-            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "10.0.0-zero-cost-private-offline-online" ]; then
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "10.1.0-private-egress-offline-online" ]; then
               OK=true
               break
             fi
             sleep 3
           done
           test "$OK" = "true"
-          echo "V10_PRODUCTION_ENDPOINT=healthy"
+          echo "V10_1_PRODUCTION_ENDPOINT=healthy"
           printf '%s' "$BODY" | jq -e '
             .zero_cost_guard == true and
             .external_privacy_gate == true and
+            .privacy_mode == "strict-private-egress-lock" and
             .external_models_receive_original_files == false and
             .external_models_receive_full_library == false and
             .full_offline_mode_supported == true and
+            .semantic_query_embedding_server_enabled == false and
+            .external_providers.gemini == "disabled" and
+            .external_providers.xai_grok == "disabled" and
+            .external_providers.openrouter == "disabled" and
+            .external_providers.cohere == "disabled" and
+            .external_providers.supabase == "disabled" and
             .workers_ai_used == true and
             (.provider_chain|index("groq-20b") != null) and
             (.provider_chain|index("groq-120b") != null) and
@@ -141,18 +155,18 @@ jobs:
           curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ -o /tmp/fabiano-home.html
           grep -Fq 'Dicionário / Enciclopédia' /tmp/fabiano-home.html
           grep -Fq '100% offline' /tmp/fabiano-home.html
-          echo "V10_DICTIONARY_UI=visible"
-          echo "V10_OFFLINE_ONLINE_UI=visible"
+          echo "V10_1_DICTIONARY_UI=visible"
+          echo "V10_1_OFFLINE_ONLINE_UI=visible"
           # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
           DICT_HTTP="$(curl -sS --max-time 45 -o /tmp/v10-dictionary.json -w '%{http_code}' -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}' || true)"
           DICT="$(cat /tmp/v10-dictionary.json)"
           if [ "$DICT_HTTP" = "200" ]; then
             printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0) and (.encyclopedia_index == "sqlite-fts5" or .encyclopedia_index == "strict-scan-fallback")' >/dev/null
-            echo "V10_DICTIONARY_CLOUD=available"
+            echo "V10_1_DICTIONARY_CLOUD=available"
           elif [ "$DICT_HTTP" = "503" ] && printf '%s' "$DICT" | jq -e '.code == "FREE_TIER_STORAGE_QUOTA"' >/dev/null 2>&1; then
-            echo "V10_DICTIONARY_CLOUD=free-tier-quota-local-fallback-required"
+            echo "V10_1_DICTIONARY_CLOUD=free-tier-quota-local-fallback-required"
           else
-            echo "V10_DICTIONARY_HTTP=$DICT_HTTP"
+            echo "V10_1_DICTIONARY_HTTP=$DICT_HTTP"
             jq -c '{ok,code,message}' /tmp/v10-dictionary.json 2>/dev/null || head -c 1200 /tmp/v10-dictionary.json
             exit 1
           fi
@@ -168,7 +182,7 @@ jobs:
           grep -Fq 'v10-encyclopedia-local-first' <<<"$APP_JS"
           grep -Fq 'searchDictionary(false)' <<<"$APP_JS"
           grep -Fq 'prefer_client_context:analyticClientContext.length>=6' <<<"$APP_JS"
-          if grep -Eqi 'gemini|api\.x\.ai' <<<"$APP_JS"; then
+          if grep -Eqi 'gemini|api\.x\.ai|openrouter|api\.cohere|supabase\.co' <<<"$APP_JS"; then
             echo "Retired provider leaked into browser asset"
             exit 1
           fi
@@ -176,8 +190,11 @@ jobs:
             echo "Stale browser dictionary route detected"
             exit 1
           fi
-          echo "V10_DICTIONARY_BROWSER_ROUTE=pass"
-          echo "V10_DICTIONARY_FUNCTIONAL=pass"
+          echo "V10_1_DICTIONARY_BROWSER_ROUTE=pass"
+          echo "V10_1_DICTIONARY_FUNCTIONAL=pass"
+          COST_HTTP="$(curl -sS --max-time 20 -o /tmp/v10-cost.json -w '%{http_code}' https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/cost-status || true)"
+          test "$COST_HTTP" = "401"
+          echo "V10_1_COST_GUARD_ADMIN_PROTECTED=pass"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'
@@ -197,4 +214,4 @@ jobs:
           test -n "$DISCOVERED_ACCOUNT_ID"
           export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
           npx wrangler deploy
-          echo "V10_AUTOMATIC_WORKER_ROLLBACK=executed"
+          echo "V10_1_AUTOMATIC_WORKER_ROLLBACK=executed"
