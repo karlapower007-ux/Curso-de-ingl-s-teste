@@ -428,6 +428,32 @@ async function omniAgentSearch(question,{onProgress}={}){
   };
 }
 
+async function offlineDictionarySearch(question,page=1,pageSize=50){
+  await ready;
+  const safePage=Math.max(1,Number(page||1));
+  const safeSize=Math.max(1,Math.min(100,Number(pageSize||50)));
+  const offset=(safePage-1)*safeSize;
+  try{
+    const r=await rpc(searchWorker,"search-strict-page",{
+      question:String(question||""),offset,limit:safeSize
+    },45000);
+    return {
+      ok:true,
+      matches:Array.isArray(r.matches)?r.matches:[],
+      scanned:Number(r.scanned||0),
+      total:Number(r.total||0),
+      page:safePage,
+      page_size:safeSize,
+      pages:Math.ceil(Number(r.total||0)/safeSize),
+      target:String(r.target||""),
+      mode:"offline-encyclopedia-v10",
+      local_only:true
+    };
+  }catch(error){
+    return {ok:false,matches:[],scanned:0,total:0,page:safePage,page_size:safeSize,pages:0,error:String(error?.message||error),local_only:true};
+  }
+}
+
 async function getDocumentChunks(documentId,offset=0,limit=20){
   await ready;
   try{
@@ -474,5 +500,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,offlineSearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,offlineSearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,offlineSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,offlineSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
