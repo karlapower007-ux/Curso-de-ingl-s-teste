@@ -230,7 +230,7 @@ function setBusy(on,label=""){
 }
 async function call(path,body,timeout=300000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
-  const target=(apiBase&&String(path).startsWith("/api/v2/"))?apiBase+path:path;
+  const target=(apiBase&&/^\/api\/v[23]\//.test(String(path)))?apiBase+path:path;
   try{
     const res=await fetch(target,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:controller.signal,mode:"cors"});
     const data=await res.json().catch(()=>({}));
@@ -258,6 +258,22 @@ async function sendLocal(){
       appendMessage("assistant",answer,exact.matches||[]);
       speakV2Answer(answer).catch(()=>{});
       const backend=$("backendText");if(backend)backend.textContent="v2 local • Citação exata no acervo deste aparelho • zero LLM";
+      const dot=$("backendDot");if(dot)dot.className="dot ok";
+      const state=$("avatarState");if(state)state.textContent="Pronto";
+      return;
+    }
+
+    if(apiBase){
+      const data=await call("/api/v3/chat",{
+        question:q,
+        mode,
+        model,
+        allow_query_expansion:true
+      },300000);
+      appendMessage("assistant",data.answer||"",data.matches||[]);
+      speakV2Answer(data.speech_text||data.answer||"").catch(()=>{});
+      const backend=$("backendText");
+      if(backend)backend.textContent="v3 Evidence Engine • índice paralelo • Dicionário congelado • Qwen só expande a busca";
       const dot=$("backendDot");if(dot)dot.className="dot ok";
       const state=$("avatarState");if(state)state.textContent="Pronto";
       return;
