@@ -7,7 +7,8 @@ import {createHash} from "node:crypto";
 import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
   exactAndMatches, lexicalCandidates, chooseInstalledModel,
-  formatExactAnswer, buildPrompt, cosine, publicReference, extractTimelineYear
+  formatExactAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
+  focusEvidence, answerStaysOnFocus
 } from "./v2-local-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -19,7 +20,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-lowram-r4";
+const LOCAL_RUNTIME_BUILD="2026-09-22-focus-lock-r5";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -340,9 +341,13 @@ async function handleChat(req,res){
   const candidateLimit=lowRam?24:Math.min(100,Math.max(20,Number(body.candidate_limit||70)));
   const maxEvidence=lowRam?5:14;
   const lexical=lexicalCandidates(searchRows,question,candidateLimit);
-  let evidence=lexical.slice(0,maxEvidence);
-  if(!lowRam && body.semantic!==false && lexical.length){
-    evidence=await semanticRerank(question,lexical,maxEvidence);
+  let evidence=focusEvidence(lexical,question,aliases,maxEvidence);
+  if(!evidence.length){
+    evidence=focusEvidence(searchRows,question,aliases,maxEvidence);
+  }
+  if(!lowRam && body.semantic!==false && evidence.length){
+    evidence=await semanticRerank(question,evidence,maxEvidence);
+    evidence=focusEvidence(evidence,question,aliases,maxEvidence);
   }
   if(mode==="timeline"){
     evidence=[...evidence].sort((a,b)=>{
@@ -448,6 +453,20 @@ async function handleChat(req,res){
   }
 
   const answer=String(data?.message?.content||"").trim();
+  if(answer && !answerStaysOnFocus(answer,question,aliases)){
+    const fallback=promptEvidence.slice(0,4).map((r,i)=>
+      "["+(i+1)+"] "+String(r.reference||publicReference(r))+"\n"+String(r.text||"").trim()
+    ).join("\n\n");
+    json(res,{
+      ok:true,
+      answer:"O Qwen desviou do assunto solicitado, então a resposta foi bloqueada pelo Focus Lock. Evidências diretamente relacionadas à pergunta:\n\n"+fallback,
+      mode,model:null,provider:"focus-lock-deterministic",embedding_model:EMBED_MODEL,
+      context_tokens:usedContext,evidence_count:promptEvidence.length,
+      evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
+      matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+    });
+    return;
+  }
   json(res,{
     ok:true,answer:answer||"A biblioteca recuperada não foi suficiente para produzir uma resposta.",
     mode,model,provider:"ollama-local-direct",embedding_model:EMBED_MODEL,
