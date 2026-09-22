@@ -48,6 +48,15 @@ function overlapRatio(a,b){
   for(const x of a)if(set.has(x))hit++;
   return hit/Math.max(1,a.length);
 }
+function compactStemText(text){
+  return " "+tokenStems(text).join(" ")+" ";
+}
+function stemCoverage(queryStems,stemText){
+  if(!queryStems.length||!stemText)return 0;
+  let hit=0;
+  for(const stem of queryStems)if(stemText.includes(" "+stem+" "))hit++;
+  return hit/Math.max(1,queryStems.length);
+}
 
 function aliasFamilies(aliasObject={}){
   return Object.entries(aliasObject||{}).map(([key,value])=>{
@@ -169,7 +178,7 @@ export function buildV3EvidenceIndex(rows=[]){
         source_chunk_id:String(row.id||row.key||""),
         title,author:String(row.author||""),language:String(row.language||""),
         page,reference:[title,page?"página "+page:""].filter(Boolean).join(" • "),
-        text,normalized:v3Fold(text),stems:tokenStems(text),verified:true
+        text,stem_text:compactStemText(text),verified:true
       });
     });
   }
@@ -195,7 +204,7 @@ export function buildV3EvidenceIndex(rows=[]){
           title:footer.book,author:"",language:String(group[0].language||"pt"),
           page:Number(group[0].page||0)||null,
           reference:footer.book+" "+footer.chapter+":"+current.verse,
-          text:body,normalized:v3Fold(body),stems:tokenStems(body),verified:true
+          text:body,stem_text:compactStemText(body),verified:true
         });
       }
     }else{
@@ -209,14 +218,14 @@ export function buildV3EvidenceIndex(rows=[]){
           title:footer.book,author:"",language:String(group[0].language||"pt"),
           page:Number(group[0].page||0)||null,
           reference:footer.reference,
-          text,normalized:v3Fold(text),stems:tokenStems(text),verified:true
+          text,stem_text:compactStemText(text),verified:true
         });
       }
     }
   }
 
   return {
-    version:"3.0.0-evidence-engine",
+    version:"3.0.1-evidence-engine-light",
     generated_at:new Date().toISOString(),
     source_rows:Number(rows?.length||0),
     units,
@@ -243,16 +252,17 @@ export function searchV3Evidence(index,query,aliasObject={},options={}){
   const out=[];
 
   for(const unit of index?.units||[]){
-    const normalized=unit.normalized||v3Fold(unit.text);
-    const stems=unit.stems||tokenStems(unit.text);
+    const stemText=unit.stem_text||compactStemText(unit.text);
+    const coreCoverage=stemCoverage(qStems,stemText);
+    const broadCoverage=stemCoverage(expansionStems,stemText);
+    if(!strict && coreCoverage<0.34 && broadCoverage<0.24)continue;
+    const normalized=v3Fold(unit.text);
     const direct=phraseScore(normalized,expansions);
-    const coreCoverage=overlapRatio(qStems,stems);
-    const broadCoverage=overlapRatio(expansionStems,stems);
     const exactOriginal=original.length>=4&&normalized.includes(original);
     if(strict && !exactOriginal)continue;
     if(!strict && direct.hits===0 && coreCoverage<0.5 && broadCoverage<0.35)continue;
     let freq=0;
-    for(const stem of qStems)if(stems.includes(stem))freq++;
+    for(const stem of qStems)if(stemText.includes(" "+stem+" "))freq++;
     const score=(exactOriginal?14:0)+direct.score+coreCoverage*10+broadCoverage*5+Math.min(3,freq*0.7);
     if(score<3.2)continue;
     out.push({...unit,score,query_core_coverage:coreCoverage,query_broad_coverage:broadCoverage});
