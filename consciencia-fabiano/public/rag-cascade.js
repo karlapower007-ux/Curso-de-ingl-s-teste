@@ -428,6 +428,46 @@ async function omniAgentSearch(question,{onProgress}={}){
   };
 }
 
+async function offlineHybridSearch(question,{onProgress}={}){
+  await ready;
+  const q=String(question||"").trim();
+  if(!q)return {ok:false,cards:[],strict_empty:true,local_only:true};
+  let strict={matches:[],scanned:0,exact_hits:0,documents_hit:0};
+  try{strict=await rpc(searchWorker,"search-strict",{question:q,top_k:OFFLINE_TOP_K},30000);}catch{}
+  let bm25Matches=[];
+  try{
+    const bm=await rpc(searchWorker,"search-bm25",{question:q,top_k:Math.min(500,OFFLINE_TOP_K)},20000);
+    bm25Matches=(bm.matches||[]).map(x=>normalizeMatch(x,"offline-bm25-v10"));
+  }catch{}
+  let semanticMatches=[];
+  try{
+    const embedded=await embedQuery(q);
+    if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
+      const sem=await rpc(searchWorker,"search-semantic",{query:embedded.vector,top_k:Math.min(500,OFFLINE_TOP_K),min_score:0.62},20000);
+      semanticMatches=(sem.matches||[]).map(x=>normalizeMatch(x,"offline-semantic-v10"));
+    }
+  }catch{}
+  const strictMatches=(strict.matches||[]).map(x=>normalizeMatch(x,"offline-strict-v10"));
+  const literalMatches=mergeSearchMatches(strictMatches,bm25Matches);
+  const swarm=await import("/agent-swarm.js?v=10.0.0");
+  const result=await swarm.runAgentSwarm({
+    question:q,
+    literalMatches,
+    semanticMatches,
+    onProgress
+  });
+  return {
+    ...result,
+    ok:Boolean(result?.ok || result?.cards?.length),
+    provider:"offline-local-hybrid-v10",
+    local_only:true,
+    local_scanned:Number(strict.scanned||0),
+    local_exact_hits:Number(strict.exact_hits||0),
+    semantic_expansion_used:semanticMatches.length>0,
+    library_coverage_known:Boolean(Number(strict.scanned||0)>0||literalMatches.length||semanticMatches.length)
+  };
+}
+
 async function offlineDictionarySearch(question,page=1,pageSize=50){
   await ready;
   const safePage=Math.max(1,Number(page||1));
@@ -500,5 +540,5 @@ async function deleteDocument(documentId){
   return true;
 }
 
-window.FNSRagCascade={ready,search,offlineSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
-export {ready,search,offlineSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
+window.FNSRagCascade={ready,search,offlineSearch,offlineHybridSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,levels:LEVELS};
+export {ready,search,offlineSearch,offlineHybridSearch,offlineDictionarySearch,omniAgentSearch,embedQuery,directRetrieve,persistExtracted,persistVectors,getDocumentChunks,listDocuments,localStats,exportVectors,deleteDocument,hydrateStaticBackup,LEVELS};
