@@ -30,7 +30,7 @@ grep -q 'EMBED_CONCURRENCY = 50' src/index.js
 grep -q 'pdfjs-dist@4.10.38' public/app.js
 grep -q 'api.groq.com/openai/v1/chat/completions' src/index.js
 grep -q 'generativelanguage.googleapis.com' src/index.js
-! grep -q 'api.x.ai/v1/chat/completions' src/index.js || true
+grep -q 'api.x.ai/v1/chat/completions' src/index.js
 grep -q 'text/event-stream' src/index.js
 ! grep -q 'env.AI' src/index.js
 ! grep -q '@cf/' src/index.js
@@ -695,7 +695,7 @@ fi
 log "6.25/7 V7.4 cognitive catalog and router probes"
 catalog_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74" || echo 000)
 [ "$catalog_http" = "200" ] || die "COGNITIVE_V74_ADMIN_HTTP_$catalog_http"
-jq -e '.ok == true and .version == "7.5.0-stateful-resilience" and .audit.valid == true and .audit.total == 1000 and .audit.unique_ids == 1000 and .audit.family_count == 20 and ([.audit.families[]] | all(. == 50)) and .performance.workerConcurrency == 8 and .performance.executeAll1000 == false and .performance.allowTurbineToCallGroq == false' /tmp/cognitive-v74.json >/dev/null || die "COGNITIVE_V74_CATALOG_BAD"
+jq -e '.ok == true and .version == "9.1.0-private-hybrid-encyclopedia" and .audit.valid == true and .audit.total == 1000 and .audit.unique_ids == 1000 and .audit.family_count == 20 and ([.audit.families[]] | all(. == 50)) and .performance.workerConcurrency == 8 and .performance.executeAll1000 == false and .performance.allowTurbineToCallGroq == false' /tmp/cognitive-v74.json >/dev/null || die "COGNITIVE_V74_CATALOG_BAD"
 log "COGNITIVE_V74_CATALOG_PASS=yes"
 
 router_http=$(curl -sS --max-time 20 -o /tmp/cognitive-v74-router.json -w '%{http_code}' "${HDR[@]}" "$BASE/api/admin/cognitive-v74?q=Compare%20os%20autores%20e%20depois%20fa%C3%A7a%20uma%20reflex%C3%A3o" || echo 000)
