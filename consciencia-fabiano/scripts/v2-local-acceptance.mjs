@@ -6,6 +6,9 @@ import {
   V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,formatGroundedAnswer,buildPrompt,chooseInstalledModel,
   focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus,focusedEvidenceWindow
 } from "./v2-local-core.mjs";
+import {
+  buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer,expandV3Query,parseScriptureFooter
+} from "./v3-evidence-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
@@ -76,6 +79,35 @@ assert.equal(bookCitation.verified,true);
 assert.equal(bookCitation.reference,"Discursos de Brigham Young • página 97");
 const unsafeScripture=citationIntegrity({filename:"standard-works-83806-por.pdf",page:500,text:"Jó 26:10 é apenas uma referência cruzada."},"Jó 26:10 é apenas uma referência cruzada.");
 assert.equal(unsafeScripture.verified,false,"referência solta no texto não pode ser tratada como origem");
+
+const v3Aliases={
+  "mundo dos espíritos":["spirit world","world of spirits","mundo espiritual"],
+  "vida pré-mortal":["premortal life","preexistência"]
+};
+const v3Rows=[
+  {
+    id:"v3-book-1",document_id:"book1",filename:"Livro_Teste.pdf",title:"Livro Teste",author:"Autor",
+    language:"pt",page:42,chunk_index:42000,
+    text:"Depois da morte, os espíritos entram no mundo dos espíritos, onde aguardam a ressurreição."
+  },
+  {
+    id:"v3-book-2",document_id:"book2",filename:"Premortal.pdf",title:"Doutrina Teste",author:"Autor",
+    language:"en",page:10,chunk_index:10000,
+    text:"The premortal life preceded mortal birth and formed part of God's plan for His children."
+  }
+];
+const v3Index=buildV3EvidenceIndex(v3Rows);
+assert.equal(v3Index.source_rows,2,"V3 deve construir índice paralelo sem depender do Dicionário");
+assert.ok(v3Index.units.length>=2,"V3 deve produzir unidades documentais próprias");
+const expandedWorld=expandV3Query("Explica sobre o mundo espiritual",v3Aliases);
+assert.ok(expandedWorld.some(x=>x.includes("mundo dos espiritos")),"V3 deve expandir mundo espiritual para mundo dos espíritos");
+const worldSearch=searchV3Evidence(v3Index,"Explica sobre o mundo espiritual",v3Aliases,{limit:10});
+assert.ok(worldSearch.results.length>=1,"V3 deve encontrar mundo dos espíritos mesmo com formulação diferente");
+assert.ok(worldSearch.results[0].reference.includes("Livro Teste"),"V3 deve preservar título e página reais do livro");
+const v3Answer=formatV3EvidenceAnswer(worldSearch,"explain");
+assert.ok(v3Answer.includes("✓ Fonte verificada:"),"V3 deve responder apenas com evidência marcada como verificada");
+assert.ok(v3Answer.includes("mundo dos espíritos"),"V3 deve manter o texto documental encontrado");
+assert.ok(!v3Answer.includes("Jó 26:10"),"V3 não pode inventar referência que não pertença à evidência");
 const literal=formatExactAnswer(exact.matches);
 assert.ok(literal.includes("Plano de Salvação"));
 assert.ok(literal.includes("página 10"));
@@ -87,7 +119,7 @@ assert.ok(prompt.includes("EVIDÊNCIA 1"));
 assert.ok(prompt.includes("4 a 8 pontos substantivos"),"modo Explicação deve pedir resposta mais rica sem sair do foco");
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
-const [server,ui,engine,opfs,index,css,sw,pkg,whisper]=await Promise.all([
+const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart]=await Promise.all([
   readFile(path.join(root,"scripts","v2-local-server.mjs"),"utf8"),
   readFile(path.join(root,"public","v2-local-ui.js"),"utf8"),
   readFile(path.join(root,"public","v2-local-engine.js"),"utf8"),
@@ -96,12 +128,26 @@ const [server,ui,engine,opfs,index,css,sw,pkg,whisper]=await Promise.all([
   readFile(path.join(root,"public","style.css"),"utf8"),
   readFile(path.join(root,"public","sw-v3.js"),"utf8"),
   readFile(path.join(root,"package.json"),"utf8"),
-  readFile(path.join(root,"public","whisper-local.js"),"utf8")
+  readFile(path.join(root,"public","whisper-local.js"),"utf8"),
+  readFile(path.join(root,"scripts","v3-evidence-core.mjs"),"utf8"),
+  readFile(path.join(root,"scripts","reiniciar-cerebro-v2.ps1"),"utf8")
 ]);
 
 for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis.com"]){
   assert.ok(!server.includes(forbidden),"v2 local não pode chamar provedor pago: "+forbidden);
 }
+
+assert.ok(server.includes('url.pathname==="/api/v3/health"'),"servidor deve expor health separado da V3");
+assert.ok(server.includes('url.pathname==="/api/v3/chat"'),"servidor deve expor Chat V3 separado");
+assert.ok(server.includes('url.pathname==="/api/v2/dictionary"'),"Dicionário aprovado deve permanecer na rota V2");
+assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
+assert.ok(ui.includes('call("/api/v3/chat"'),"Chat oficial deve usar o Evidence Engine V3");
+assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve continuar usando exatamente a rota V2");
+assert.ok(!ui.includes('call("/api/v3/dictionary"'),"V3 não pode substituir ou reindexar o Dicionário");
+assert.ok(v3core.includes("buildV3EvidenceIndex"),"núcleo V3 deve existir separado do núcleo V2");
+assert.ok(v3core.includes("searchV3Evidence"),"V3 deve possuir mecanismo próprio de busca");
+assert.ok(!v3core.includes("api/chat"),"núcleo documental V3 não pode depender de geração LLM para validar fontes");
+assert.ok(restart.includes('"scripts/v3-evidence-core.mjs"'),"reiniciador deve baixar o núcleo V3 para o PC");
 assert.ok(server.includes('if(mode==="exact")'),"servidor precisa de bypass exato");
 const chatStart=server.indexOf("async function handleChat");
 const chatEnd=server.indexOf("async function serveStatic",chatStart);
@@ -183,6 +229,8 @@ console.log(JSON.stringify({
   richer_low_ram_chat:true,
   grounded_exact_chat:true,
   citation_integrity_lock:true,
+  evidence_engine_v3:true,
+  dictionary_frozen_v2:true,
   browser_tts:true,
   modes:["short","explain","compare","timeline","exact"],
   responsive:[360,390,412,1366]
