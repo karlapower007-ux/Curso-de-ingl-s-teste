@@ -36,7 +36,11 @@ assert.equal(focused.length,1,"Focus Lock deve excluir evidência fora do assunt
 assert.equal(focused[0].id,"focus-ok");
 assert.equal(answerStaysOnFocus("A vida pré-mortal antecede o nascimento mortal.","vida pré-mortal",aliases),true);
 assert.equal(answerStaysOnFocus("O Espírito da Verdade aparece em Hebreus.","vida pré-mortal",aliases),false);
-const grounded=formatGroundedAnswer(focused,"explain");
+const grounded=formatGroundedAnswer(focused.map(row=>({
+  ...row,
+  citation_verified:true,
+  citation_reference:"Fonte Focada • página 3"
+})),"explain");
 assert.ok(grounded.includes("Resposta documental exata"),"Grounded Exact deve identificar resposta documental");
 assert.ok(grounded.includes("vida pré-mortal"),"Grounded Exact deve preservar texto focado da biblioteca");
 assert.ok(grounded.includes("Fonte:"),"Grounded Exact deve citar a fonte em cada ponto");
