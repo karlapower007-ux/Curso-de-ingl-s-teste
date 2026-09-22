@@ -5,6 +5,8 @@ const index = read("src/index.js");
 const stateful = read("src/stateful-rag-v75.js");
 const app = read("public/app.js");
 const sw = read("public/sw-v3.js");
+const ragCascade = read("public/rag-cascade.js");
+const ragWorker = read("public/rag-search-worker.js");
 const html = read("public/index.html");
 const css = read("public/style.css");
 
@@ -70,6 +72,18 @@ assert(app.includes('CURRENT_SYSTEM_VERSION = "v10.1-private-egress-offline-onli
 assert(app.includes('return ["auto","offline","online"].includes(value)?value:"auto";'), "offline/online operating modes missing");
 assert(app.includes("async function prepareOfflineMode()"), "offline preparation flow missing");
 assert(app.includes("offlineDictionarySearch"), "local encyclopedia search missing");
+assert(ragWorker.includes("OFFLINE_CONCEPT_ALIAS_GROUPS"), "offline concept aliases missing");
+assert(ragWorker.includes('{key:"adam",label:"Adão"'), "Adam ↔ Adão offline alias missing");
+assert(ragWorker.includes('{key:"michael",label:"Miguel"'), "Michael ↔ Miguel offline alias missing");
+assert(ragWorker.includes('{key:"second-anointing",label:"Segunda Unção"'), "Second Anointing ↔ Segunda Unção offline alias missing");
+assert(ragWorker.includes('{key:"tithing",label:"Dízimo"'), "Tithing ↔ Dízimo offline alias missing");
+assert(ragWorker.includes("strict-alias-indexeddb-page-v10-1"), "alias-aware offline pagination missing");
+assert(ragWorker.includes('source:"indexeddb-local-derived"'), "offline concept summary source marker missing");
+assert(ragWorker.includes('predicate:"co_occurs_with"'), "offline deterministic co-occurrence relations missing");
+assert(ragCascade.includes("concept:r.concept||null"), "offline concept card is not returned to UI");
+assert(ragCascade.includes("alias_expanded:r.alias_expanded===true"), "offline alias expansion metadata missing");
+assert(app.includes("dictionaryState.concept=data?.concept||null;"), "UI does not use local concept cards offline");
+assert(sw.includes('fns-consiencia-v10-1-private-offline-online-alias-v2'), "offline cache was not refreshed for alias search");
 assert(app.includes('api("/api/encyclopedia/concept"'), "concept graph is not wired to dictionary UI");
 assert(app.includes('api("/api/admin/encyclopedia-concepts/backfill"'), "incremental concept backfill is not wired");
 assert(app.includes("Relações por coocorrência"), "concept relation UI missing");
