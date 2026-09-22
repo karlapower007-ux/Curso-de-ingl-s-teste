@@ -4634,6 +4634,11 @@ export class LibraryDO {
           INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
           INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
         END;
+        CREATE TABLE IF NOT EXISTS system_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS conversation_messages (
           id TEXT PRIMARY KEY,
           owner_id TEXT NOT NULL,
@@ -5435,9 +5440,8 @@ export class LibraryDO {
 
       if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
         const chunks=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
-        let indexed=0;
-        try{indexed=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);}catch{}
-        return json({ok:true,engine:"sqlite-fts5",chunks,indexed,synced:indexed===chunks});
+        const marker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
+        return json({ok:true,engine:"sqlite-fts5",chunks,ready:marker==="v1",version:String(marker||"")});
       }
 
       if (url.pathname === "/dictionary/search" && request.method === "POST") {
@@ -5450,11 +5454,14 @@ export class LibraryDO {
         if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"encyclopedia-fts5-v9.1"});
 
         const chunkTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
-        let indexedTotal=0;
-        try{indexedTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);}catch{}
-        if(indexedTotal!==chunkTotal){
+        let ftsMarker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
+        if(ftsMarker!=="v1"){
           this.sql.exec("INSERT INTO encyclopedia_fts(encyclopedia_fts) VALUES('rebuild')");
-          indexedTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);
+          this.sql.exec(
+            "INSERT OR REPLACE INTO system_meta (key,value,updated_at) VALUES ('encyclopedia_fts_version','v1',?)",
+            new Date().toISOString()
+          );
+          ftsMarker="v1";
         }
 
         const ftsQuery='"'+target.replace(/"/g,'""')+'"';
@@ -5504,7 +5511,7 @@ export class LibraryDO {
           ok:true,matches:accepted,scanned,total:candidateTotal,returned:accepted.length,
           target,page,page_size:pageSize,pages:Math.ceil(candidateTotal/pageSize),
           mode:"encyclopedia-fts5-v9.1",encyclopedia_index:"sqlite-fts5",
-          encyclopedia_index_synced:indexedTotal===chunkTotal,strict_focus_lock:true,intent_lock:true,evidence_lock:true,
+          encyclopedia_index_synced:ftsMarker==="v1",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
           plans:{A:"fts5-exact-phrase",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
           or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false
         });
