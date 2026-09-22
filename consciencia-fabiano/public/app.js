@@ -1984,7 +1984,7 @@
     $("dictionaryStatus").textContent="Pesquisando toda a biblioteca com foco estrito…";
     $("dictionarySearchBtn").disabled=true;
     try{
-      const data=await api("/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})},false);
+      const data=await api("/api/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})},false);
       dictionaryState.hits=Array.isArray(data?.matches)?data.matches:[];
       dictionaryState.total=Number(data?.total||dictionaryState.hits.length);
       dictionaryState.pages=Number(data?.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize));
