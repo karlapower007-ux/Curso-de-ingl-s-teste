@@ -107,7 +107,67 @@ jobs:
               if(!modes.some(x=>x.includes("100% offline"))||!modes.some(x=>x.includes("Online"))) {
                 throw new Error("Modos offline/online ausentes em "+width);
               }
-              report.push({width,layout,modes});
+
+              // Canonical local-first proof at every supported viewport. Seed only
+              // this isolated browser profile; production PDFs/R2/DO are untouched.
+              const seeded=await page.evaluate(async()=>{
+                const engine=await import("/rag-cascade.js?v=10.1.1");
+                await engine.ready;
+                const result=await engine.persistExtracted({
+                  content_sha256:"qa-canonical-alias-"+window.innerWidth,
+                  filename:"QA canônico local",
+                  title:"QA canônico local",
+                  pages:[
+                    {page:1,text:"Adam conversou com Michael sobre sua missão."},
+                    {page:2,text:"Adão aparece novamente neste registro."},
+                    {page:3,text:"The Second Anointing is discussed in this passage."},
+                    {page:4,text:"Tithing is described as a covenant practice."}
+                  ]
+                });
+                return result;
+              });
+              if(Number(seeded?.count||0)!==4) throw new Error("Falha ao semear QA local em "+width+": "+JSON.stringify(seeded));
+
+              await page.locator("#chatTab").click();
+              await page.locator("#operationMode").selectOption("offline");
+              await page.waitForFunction(()=>localStorage.getItem("fns_operating_mode_v10")==="offline",null,{timeout:5000});
+              const apiRequests=[];
+              const captureApi=req=>{try{if(new URL(req.url()).pathname.startsWith("/api/"))apiRequests.push(req.url());}catch{}};
+              page.on("request",captureApi);
+
+              await page.locator("#dictionaryTab").click();
+              const canonical=[
+                {query:"Adão",minTotal:2,concept:"Adão",mustContain:"Adam",related:"Miguel"},
+                {query:"Miguel",minTotal:1,concept:"Miguel",mustContain:"Michael"},
+                {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",mustContain:"Second Anointing"},
+                {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"Tithing"}
+              ];
+              const canonicalReport=[];
+              for(const test of canonical){
+                await page.locator("#dictionaryInput").fill(test.query);
+                await page.locator("#dictionarySearchBtn").click();
+                await page.waitForFunction(
+                  q=>document.querySelector("#dictionaryStatus")?.textContent?.includes("Enciclopédia local"),
+                  test.query,{timeout:12000}
+                );
+                const state=await page.evaluate(()=>({
+                  status:document.querySelector("#dictionaryStatus")?.textContent||"",
+                  pageInfo:document.querySelector("#dictionaryPageInfo")?.textContent||"",
+                  concept:document.querySelector("#dictionaryConcept")?.textContent||"",
+                  results:[...document.querySelectorAll(".dictionary-result-text")].map(x=>x.textContent||"")
+                }));
+                const totalMatch=state.pageInfo.match(/•\s*(\d+)\s*ocorrência/i);
+                const total=Number(totalMatch?.[1]||0);
+                if(total<test.minTotal) throw new Error("Alias offline não expandiu "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(!state.concept.includes(test.concept)) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(!state.results.some(x=>x.includes(test.mustContain))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(test.related && !state.concept.includes(test.related)) throw new Error("Relação conceitual offline ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                canonicalReport.push({query:test.query,total,concept:state.concept,results:state.results.length});
+              }
+              page.off("request",captureApi);
+              if(apiRequests.length) throw new Error("Busca canônica offline tentou acessar API em "+width+": "+JSON.stringify(apiRequests));
+
+              report.push({width,layout,modes,canonical:canonicalReport});
               await context.close();
             }
 
