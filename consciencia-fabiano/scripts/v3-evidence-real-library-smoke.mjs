@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import {readFile,readdir} from "node:fs/promises";
+import path from "node:path";
+import {fileURLToPath} from "node:url";
+import {buildV3EvidenceIndex,searchV3Evidence} from "./v3-evidence-core.mjs";
+
+const __dirname=path.dirname(fileURLToPath(import.meta.url));
+const root=path.resolve(__dirname,"..");
+const backupDir=path.join(root,"public","biblioteca_backup");
+const names=(await readdir(backupDir)).filter(x=>/^part-\d+\.json$/i.test(x)).sort();
+
+const rows=[];
+for(const name of names){
+  const parsed=JSON.parse(await readFile(path.join(backupDir,name),"utf8"));
+  const chunks=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.chunks)?parsed.chunks:[]);
+  for(const row of chunks){
+    if(String(row?.text||"").trim())rows.push(row);
+  }
+}
+
+assert.ok(rows.length>=25000,"biblioteca real deve preservar pelo menos 25 mil registros");
+
+const aliases=JSON.parse(await readFile(path.join(root,"public","v2-aliases.json"),"utf8"));
+const started=Date.now();
+const index=buildV3EvidenceIndex(rows);
+const buildMs=Date.now()-started;
+const heapMb=Math.round(process.memoryUsage().heapUsed/1024/1024);
+
+assert.equal(index.source_rows,rows.length,"V3 deve derivar do backup real sem alterar o Dicionário");
+assert.ok(index.units.length>=10000,"V3 deve produzir um índice documental substancial");
+
+const queries=[
+  "Explica sobre o mundo espiritual",
+  "Explique detalhadamente o que aconteceu na vida pré-mortal"
+];
+
+const report=[];
+for(const query of queries){
+  const result=searchV3Evidence(index,query,aliases,{limit:20,strict:false});
+  assert.ok(result.results.length>0,"V3 deve encontrar evidência real para: "+query);
+  assert.ok(result.results.every(x=>x.verified===true),"toda evidência V3 precisa estar marcada como verificada");
+  assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes(".pdf")),"referência pública não pode vazar nome físico de PDF");
+  assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes("standard-works")),"Obras Padrão não podem vazar nome técnico do arquivo");
+  report.push({
+    query,
+    total_candidates:result.total,
+    returned:result.results.length,
+    top:result.results.slice(0,5).map(x=>({reference:x.reference,kind:x.kind,score:Number(x.score||0).toFixed(2),text:String(x.text||"").slice(0,180)}))
+  });
+}
+
+console.log(JSON.stringify({
+  ok:true,
+  source_rows:rows.length,
+  evidence_units:index.units.length,
+  counts:index.counts,
+  build_ms:buildMs,
+  heap_mb:heapMb,
+  queries:report
+},null,2));
