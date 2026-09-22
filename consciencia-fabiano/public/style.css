@@ -582,3 +582,8 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 .dictionary-source{display:block;margin-top:8px;padding-top:7px;border-top:1px solid #2a2a2a;color:#94a3b8;font-size:.76rem;line-height:1.35}
 @media(max-width:780px){.dictionary-result-text{font-size:.9rem}.dictionary-source{font-size:.74rem}}
 @media(max-width:560px){.dictionary-result{padding:12px}.dictionary-result-text{font-size:.88rem;line-height:1.44}.dictionary-source{font-size:.72rem}.dictionary-pager{flex-wrap:wrap}}
+
+/* Explicit viewport hardening for requested mobile widths */
+@media(max-width:412px){.app{padding-left:10px;padding-right:10px}.dictionary-card{padding:12px}.dictionary-search input{min-width:0}.dictionary-result{width:100%;box-sizing:border-box}}
+@media(max-width:390px){.site-header{gap:10px}.dictionary-result-text{font-size:.87rem}.dictionary-source{font-size:.71rem}}
+@media(max-width:360px){.app{padding-left:8px;padding-right:8px}.dictionary-card{padding:10px}.dictionary-pager{gap:8px}.dictionary-pager span{font-size:.78rem;text-align:center}}
