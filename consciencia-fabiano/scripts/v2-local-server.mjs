@@ -20,7 +20,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-focus-lock-r5";
+const LOCAL_RUNTIME_BUILD="2026-09-22-rich-chat-voice-r6";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -156,9 +156,10 @@ function contextTokensByHardware(){
 }
 function evidenceBudgetForContext(numCtx){
   const ctx=Math.max(1024,Number(numCtx)||2048);
+  if(ctx<=1536)return {max_rows:8,max_chars:4200};
   return {
-    max_rows:ctx<=2048?6:ctx<=4096?8:ctx<=8192?10:14,
-    max_chars:ctx<=2048?5200:ctx<=4096?11000:ctx<=8192?22000:48000
+    max_rows:ctx<=2048?8:ctx<=4096?10:ctx<=8192?12:14,
+    max_chars:ctx<=2048?6200:ctx<=4096?12000:ctx<=8192?24000:48000
   };
 }
 function fitEvidenceToContext(evidence,numCtx){
@@ -177,6 +178,31 @@ function fitEvidenceToContext(evidence,numCtx){
   }
   return out;
 }
+function compactLowRamEvidence(evidence,maxRows=10){
+  return (evidence||[]).slice(0,maxRows).map(row=>{
+    const raw=String(row?.text||"").replace(/\s+/g," ").trim();
+    const aliases=Array.isArray(row?.focus_aliases)?row.focus_aliases.filter(Boolean):[];
+    const sentences=raw.split(/(?<=[.!?;:])\s+/u).map(x=>x.trim()).filter(Boolean);
+    let picked=raw;
+    if(sentences.length>1 && aliases.length){
+      const norm=value=>String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+      const index=sentences.findIndex(sentence=>{
+        const folded=norm(sentence);
+        return aliases.some(alias=>folded.includes(norm(alias)));
+      });
+      if(index>=0)picked=sentences.slice(Math.max(0,index-1),Math.min(sentences.length,index+2)).join(" ");
+    }
+    if(picked.length>560)picked=picked.slice(0,557).replace(/\s+\S*$/,"")+"…";
+    return {...row,text:picked};
+  });
+}
+function evidenceDigest(evidence,maxRows=8){
+  return (evidence||[]).slice(0,maxRows).map(row=>({
+    reference:String(row?.reference||publicReference(row)||"Fonte"),
+    text:String(row?.text||"").replace(/\s+/g," ").trim().slice(0,420)
+  })).filter(row=>row.text);
+}
+
 function isMemoryAllocationError(error){
   const msg=String(error?.message||error||"").toLowerCase();
   return msg.includes("failed to allocate") ||
@@ -338,8 +364,8 @@ async function handleChat(req,res){
   }
 
   const lowRam=ramGb()<=5;
-  const candidateLimit=lowRam?24:Math.min(100,Math.max(20,Number(body.candidate_limit||70)));
-  const maxEvidence=lowRam?5:14;
+  const candidateLimit=lowRam?60:Math.min(100,Math.max(20,Number(body.candidate_limit||70)));
+  const maxEvidence=lowRam?10:14;
   const lexical=lexicalCandidates(searchRows,question,candidateLimit);
   let evidence=focusEvidence(lexical,question,aliases,maxEvidence);
   if(!evidence.length){
@@ -355,6 +381,7 @@ async function handleChat(req,res){
       if(ay==null&&by==null)return 0;if(ay==null)return 1;if(by==null)return -1;return ay-by;
     });
   }
+  if(lowRam)evidence=compactLowRamEvidence(evidence,10);
   if(!evidence.length){
     json(res,{ok:true,answer:"A biblioteca local não encontrou evidência suficiente para responder a essa pergunta.",matches:[],mode,provider:"local-strict-empty",model:null});
     return;
@@ -377,8 +404,8 @@ async function handleChat(req,res){
   }
   addCandidate("qwen3:0.6b");
 
-  const preferredContext=lowRam?1024:contextTokensByHardware();
-  const contexts=lowRam?[1024]:preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
+  const preferredContext=lowRam?1536:contextTokensByHardware();
+  const contexts=lowRam?[1536,1024]:preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
   let data=null;
   let model=null;
   let usedContext=preferredContext;
@@ -398,9 +425,9 @@ async function handleChat(req,res){
           body:JSON.stringify({
             model:candidate,stream:false,think:false,
             messages:[{role:"user",content:prompt}],
-            options:{temperature:0.05,num_ctx:ctx,num_predict:lowRam?160:(ctx<=2048?384:768)}
+            options:{temperature:0.05,num_ctx:ctx,num_predict:lowRam?(ctx<=1024?180:260):(ctx<=2048?384:768)}
           })
-        },lowRam?180000:300000);
+        },lowRam?240000:300000);
         model=candidate;
         lastError=null;
         break modelLoop;
@@ -469,6 +496,8 @@ async function handleChat(req,res){
   }
   json(res,{
     ok:true,answer:answer||"A biblioteca recuperada não foi suficiente para produzir uma resposta.",
+    speech_text:answer||"",
+    evidence_digest:evidenceDigest(evidence,lowRam?8:6),
     mode,model,provider:"ollama-local-direct",embedding_model:EMBED_MODEL,
     context_tokens:usedContext,evidence_count:promptEvidence.length,
     evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
