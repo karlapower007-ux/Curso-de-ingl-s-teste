@@ -44,9 +44,10 @@ assert.ok(prompt.includes("não use conhecimento externo"));
 assert.ok(prompt.includes("FOCUS LOCK ABSOLUTO"));
 assert.ok(prompt.includes("Não traduza o texto"));
 assert.ok(prompt.includes("EVIDÊNCIA 1"));
+assert.ok(prompt.includes("4 a 8 pontos substantivos"),"modo Explicação deve pedir resposta mais rica sem sair do foco");
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
-const [server,ui,engine,opfs,index,css,sw,pkg]=await Promise.all([
+const [server,ui,engine,opfs,index,css,sw,pkg,whisper]=await Promise.all([
   readFile(path.join(root,"scripts","v2-local-server.mjs"),"utf8"),
   readFile(path.join(root,"public","v2-local-ui.js"),"utf8"),
   readFile(path.join(root,"public","v2-local-engine.js"),"utf8"),
@@ -54,7 +55,8 @@ const [server,ui,engine,opfs,index,css,sw,pkg]=await Promise.all([
   readFile(path.join(root,"public","index.html"),"utf8"),
   readFile(path.join(root,"public","style.css"),"utf8"),
   readFile(path.join(root,"public","sw-v3.js"),"utf8"),
-  readFile(path.join(root,"package.json"),"utf8")
+  readFile(path.join(root,"package.json"),"utf8"),
+  readFile(path.join(root,"public","whisper-local.js"),"utf8")
 ]);
 
 for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis.com"]){
@@ -74,6 +76,11 @@ assert.ok(server.includes("isMemoryAllocationError"),"servidor deve detectar fal
 assert.ok(server.includes("focusEvidence"),"servidor deve filtrar evidências pelo assunto explícito");
 assert.ok(server.includes("answerStaysOnFocus"),"servidor deve bloquear resposta gerada que saia do foco");
 assert.ok(server.includes('provider:"focus-lock-deterministic"'),"servidor deve ter fallback determinístico quando o Qwen desviar do tema");
+assert.ok(server.includes("candidateLimit=lowRam?60"),"perfil 4 GB deve ampliar candidatos lexicais sem embeddings pesados");
+assert.ok(server.includes("maxEvidence=lowRam?10"),"perfil 4 GB deve usar mais evidências focadas");
+assert.ok(server.includes("preferredContext=lowRam?1536"),"perfil 4 GB deve usar contexto compacto de 1536");
+assert.ok(server.includes("compactLowRamEvidence"),"evidências devem ser compactadas antes do Qwen em pouca RAM");
+assert.ok(server.includes("evidence_digest"),"chat deve devolver evidências adicionais sem exigir mais memória do Qwen");
 assert.ok(server.includes("[preferredContext,1024]"),"PC de baixa memória deve ter retry em 1024 tokens");
 assert.ok(!server.includes("options:{temperature:0.05,num_ctx:32768}"),"contexto fixo de 32768 não pode voltar");
 assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBED_MODEL"));
@@ -82,6 +89,11 @@ assert.ok(ui.includes('["timeline","Linha do tempo"]'));
 assert.ok(ui.includes('["compare","Comparar fontes"]'));
 assert.ok(ui.includes("http://127.0.0.1:8788/api/v2/health"),"UI oficial deve detectar a ponte Ollama local");
 assert.ok(ui.includes("window.__FNS_V2_API_BASE"),"UI deve compartilhar a base local com o motor de embeddings");
+assert.ok(ui.includes("function speakV2Answer"),"v2 deve falar respostas diretamente pelo navegador");
+assert.ok(ui.includes("speechSynthesis"),"v2 deve ter fallback TTS nativo sem API externa");
+assert.ok(ui.includes("appendEvidenceDigest"),"chat deve mostrar evidências adicionais da biblioteca");
+assert.ok(ui.includes("data.evidence_digest"),"UI deve renderizar o complemento rico devolvido pelo servidor");
+assert.ok(ui.includes('id==="stopAudioBtn"'),"botão Parar áudio deve interromper a fala v2");
 assert.ok(server.includes("LOCAL_BRIDGE_ORIGINS"),"servidor local precisa de allowlist de origem");
 assert.ok(server.includes("https://consciencia-fabiano.focoeepoder2.workers.dev"),"origem oficial deve estar explicitamente autorizada");
 assert.ok(server.includes("Access-Control-Allow-Private-Network"),"ponte local precisa responder ao preflight de rede privada");
@@ -91,6 +103,10 @@ assert.ok(engine.includes('search_backend:"opfs-sqlite-fts5"'),"resultado FTS5 d
 assert.ok(opfs.includes("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5"),"OPFS deve manter índice SQLite FTS5");
 assert.ok(opfs.includes('d.type==="search-fts"'),"worker OPFS deve expor busca FTS5 local");
 assert.ok(index.includes("/v2-local-ui.js"));
+assert.ok(index.includes('id="v2SpeakAnswers"'),"interface deve oferecer leitura automática das respostas");
+assert.ok(index.includes('id="micBtn" class="whisper-btn" type="button">🎤 Segure para Falar</button>'),"microfone não pode nascer travado em Carregando IA de Voz");
+assert.ok(whisper.includes("lowMemory"),"entrada de voz deve usar modo leve em aparelhos de 4 GB");
+assert.ok(whisper.includes('mode="webspeech"'),"modo leve deve ativar reconhecimento de voz do navegador quando permitido");
 assert.ok(css.includes("@media(max-width:360px)"));
 assert.ok(css.includes("@media(max-width:390px)"));
 assert.ok(css.includes("@media(max-width:412px)"));
@@ -105,6 +121,8 @@ console.log(JSON.stringify({
   strict_and_same_block:true,
   exact_zero_llm:true,
   qwen_embeddings:true,
+  richer_low_ram_chat:true,
+  browser_tts:true,
   modes:["short","explain","compare","timeline","exact"],
   responsive:[360,390,412,1366]
 },null,2));
