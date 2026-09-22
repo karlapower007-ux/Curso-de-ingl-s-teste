@@ -29,6 +29,16 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Refuse v2 through legacy v10 release path
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f consciencia-fabiano/public/v2-local-ui.js ]; then
+            echo "V2_HEAD_DETECTED=true"
+            echo "Refusing legacy v10 deployment path. Use the dedicated v2 production workflow."
+            exit 1
+          fi
+
       - name: Preserve library data and migration boundaries
         shell: bash
         env:
