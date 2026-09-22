@@ -1,17 +1,10 @@
-name: Deploy Consciência Fabiano V9.1 Production Safely
+name: Deploy Consciência Fabiano V10 Production Safely
 
 on:
   push:
     branches: [consciencia-cloudflare-native-v1]
     paths:
-      - "consciencia-fabiano/src/index.js"
-      - "consciencia-fabiano/public/index.html"
-      - "consciencia-fabiano/public/app.js"
-      - "consciencia-fabiano/public/style.css"
-      - "consciencia-fabiano/src/adaptive-rag-v80.js"
-      - "consciencia-fabiano/package.json"
-      - "consciencia-fabiano/scripts/adaptive-v80-acceptance.mjs"
-      - "consciencia-fabiano/v8-preservation-manifest.json"
+      - "consciencia-fabiano/**"
       - ".github/workflows/qa-cloudflare-native-rag.yml"
       - ".github/workflows/v80-production-deploy.yml"
 
@@ -74,7 +67,7 @@ jobs:
           test "$(jq -r '.hard_guards.paid_dependency_required' v8-preservation-manifest.json)" = "false"
           test "$(jq -r '.library.reindex_required' v8-preservation-manifest.json)" = "false"
           test "$(jq -r '.hard_guards.pre_final_llm_calls' v8-preservation-manifest.json)" = "0"
-          echo "V8_FREE_TIER_AND_LOAD_GUARD=pass"
+          echo "V10_ZERO_COST_AND_LOAD_GUARD=pass"
 
       - name: Arm rollback after all preflight gates pass
         shell: bash
@@ -100,7 +93,22 @@ jobs:
           echo "CLOUDFLARE_ACCOUNT_DISCOVERY=pass"
           npx wrangler deploy
 
-      - name: Verify V8 production endpoint
+      - name: Remove retired external-provider secrets
+        working-directory: consciencia-fabiano
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNTS="$(curl -fsS "https://api.cloudflare.com/client/v4/accounts?per_page=50" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")"
+          DISCOVERED_ACCOUNT_ID="$(printf '%s' "$ACCOUNTS" | jq -r '.result[0].id // empty')"
+          test -n "$DISCOVERED_ACCOUNT_ID"
+          export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
+          printf '%s' '{"GEMINI_API_KEY":null,"GOOGLE_API_KEY":null,"XAI_API_KEY":null,"GROK_API_KEY":null}' | npx wrangler secret bulk >/dev/null || true
+          echo "RETIRED_PROVIDER_SECRETS=removed-or-absent"
+
+      - name: Verify V10 production endpoint
         id: probe
         shell: bash
         run: |
@@ -110,17 +118,31 @@ jobs:
             BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
             VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
             HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
-            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "9.1.0-private-hybrid-encyclopedia" ]; then
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "10.0.0-zero-cost-private-offline-online" ]; then
               OK=true
               break
             fi
             sleep 3
           done
           test "$OK" = "true"
-          echo "V9_1_PRODUCTION_ENDPOINT=healthy"
+          echo "V10_PRODUCTION_ENDPOINT=healthy"
+          printf '%s' "$BODY" | jq -e '
+            .zero_cost_guard == true and
+            .external_privacy_gate == true and
+            .external_models_receive_original_files == false and
+            .external_models_receive_full_library == false and
+            .full_offline_mode_supported == true and
+            .workers_ai_used == true and
+            (.provider_chain|index("groq-20b") != null) and
+            (.provider_chain|index("groq-120b") != null) and
+            (.provider_chain|index("workers-ai") != null) and
+            (.provider_chain|index("offline-local") != null)
+          ' >/dev/null
           curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ -o /tmp/fabiano-home.html
           grep -Fq 'Dicionário / Enciclopédia' /tmp/fabiano-home.html
-          echo "V9_1_DICTIONARY_UI=visible"
+          grep -Fq '100% offline' /tmp/fabiano-home.html
+          echo "V10_DICTIONARY_UI=visible"
+          echo "V10_OFFLINE_ONLINE_UI=visible"
           # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
           DICT="$(curl -fsS --max-time 30 -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}')"
           printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0) and .encyclopedia_index == "sqlite-fts5" and .encyclopedia_index_synced == true' >/dev/null
@@ -131,12 +153,18 @@ jobs:
           # Verify the browser-facing asset itself calls the public /api route.
           APP_JS="$(curl -fsS --max-time 20 "https://consciencia-fabiano.focoeepoder2.workers.dev/app.js?v=${GITHUB_SHA}")"
           grep -Fq 'api("/api/dictionary/search"' <<<"$APP_JS"
+          grep -Fq 'OPERATING_MODE_KEY = "fns_operating_mode_v10"' <<<"$APP_JS"
+          grep -Fq 'offlineDictionarySearch' <<<"$APP_JS"
+          if grep -Eqi 'gemini|api\.x\.ai' <<<"$APP_JS"; then
+            echo "Retired provider leaked into browser asset"
+            exit 1
+          fi
           if grep -Fq 'api("/dictionary/search"' <<<"$APP_JS"; then
             echo "Stale browser dictionary route detected"
             exit 1
           fi
-          echo "V9_1_DICTIONARY_BROWSER_ROUTE=pass"
-          echo "V9_1_DICTIONARY_FUNCTIONAL=pass"
+          echo "V10_DICTIONARY_BROWSER_ROUTE=pass"
+          echo "V10_DICTIONARY_FUNCTIONAL=pass"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'
@@ -156,4 +184,4 @@ jobs:
           test -n "$DISCOVERED_ACCOUNT_ID"
           export CLOUDFLARE_ACCOUNT_ID="$DISCOVERED_ACCOUNT_ID"
           npx wrangler deploy
-          echo "V8_AUTOMATIC_WORKER_ROLLBACK=executed"
+          echo "V10_AUTOMATIC_WORKER_ROLLBACK=executed"
