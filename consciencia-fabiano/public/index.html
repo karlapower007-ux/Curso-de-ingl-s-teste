@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/fabiano-fechado.png">
-  <title>Consciência do Fabiano - v10.1</title>
+  <title>Consciência do Fabiano v2 • Local-first</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
@@ -19,7 +19,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">v10.1 • Privacidade estrita • Zero custo • Offline/Online</span>
+      <span class="header-kicker">v2 • Local-first • Privacidade estrita • Zero custo</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -42,7 +42,7 @@
           <span id="backendDot" class="dot"></span>
           <span id="backendText">Verificando biblioteca…</span>
         </div>
-        <p class="avatar-note">Biblioteca privada no centro. No modo 100% offline, nenhuma chamada externa é feita. Online usa somente evidências filtradas, nunca o PDF inteiro.</p>
+        <p class="avatar-note">Biblioteca privada no centro. Na v2, busca e raciocínio podem permanecer no próprio dispositivo. Citação exata ignora completamente o LLM.</p>
       </aside>
 
       <section class="chat-section">
@@ -126,7 +126,7 @@
         </div>
         <div class="privacy-summary">
           <strong>Regras ativas</strong>
-          <p>PDFs e biblioteca permanecem privados. Provedores externos recebem apenas evidências mínimas já filtradas. Gemini, xAI/Grok, OpenRouter, Cohere e espelhos externos permanecem desativados.</p>
+          <p>PDFs, chunks, perguntas e respostas da v2 podem permanecer locais. Ollama é o cérebro padrão e gratuito. Grok, Groq, Gemini, Workers AI, OpenRouter e Cohere não participam do caminho local v2.</p>
         </div>
       </div>
     </section>
@@ -177,6 +177,12 @@
       const app = document.createElement("script");
       app.src = "/app.js?v=" + buildStamp;
       app.async = false;
+      app.onload = () => {
+        const v2 = document.createElement("script");
+        v2.type = "module";
+        v2.src = "/v2-local-ui.js?v=" + buildStamp;
+        document.body.appendChild(v2);
+      };
       document.body.appendChild(app);
 
       const loadVoice = () => {
