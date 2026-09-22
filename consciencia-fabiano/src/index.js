@@ -4370,10 +4370,12 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/dictionary/search" && request.method === "POST") {
       const body=await request.json().catch(()=>({}));
       const question=String(body?.query||"").trim();
-      const limit=Math.max(1,Math.min(1000,Number(body?.limit||1000)));
+      const limit=Math.max(1,Math.min(50,Number(body?.limit||body?.page_size||50)));
+      const page=Math.max(1,Number(body?.page||1));
+      const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
       const data=await libraryCall(env,"/dictionary/search",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({query:question,limit})
+        body:JSON.stringify({query:question,limit,page,page_size:pageSize})
       });
       return json({...data,strict_focus_plan:"A",fallback_plans:["B-semantic-restricted","C-cross-language","D-context-controlled","E-local-contingency","F-final-audit"]});
     }
