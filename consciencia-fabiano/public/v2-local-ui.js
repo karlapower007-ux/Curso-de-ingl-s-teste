@@ -253,6 +253,7 @@ async function sendLocal(){
       const exact=await engine.exactSearch(q,{page:1,pageSize:25});
       const answer=engine.formatExact(exact.matches||[]);
       appendMessage("assistant",answer,exact.matches||[]);
+      speakV2Answer(answer).catch(()=>{});
       const backend=$("backendText");if(backend)backend.textContent="v2 local • Citação exata no acervo deste aparelho • zero LLM";
       const dot=$("backendDot");if(dot)dot.className="dot ok";
       const state=$("avatarState");if(state)state.textContent="Pronto";
@@ -277,6 +278,7 @@ async function sendLocal(){
     if(browserOnly||health?.ollama?.reachable===false){
       const answer=browserDeterministicAnswer(mode,q,evidence);
       appendMessage("assistant",answer,evidence);
+      speakV2Answer(answer).catch(()=>{});
       const backend=$("backendText");if(backend)backend.textContent="v2 navegador • resposta determinística local • zero LLM";
       const dot=$("backendDot");if(dot)dot.className="dot ok";
       const state=$("avatarState");if(state)state.textContent="Pronto";
@@ -294,6 +296,8 @@ async function sendLocal(){
       }))
     },lowRam?210000:300000);
     appendMessage("assistant",data.answer||"",data.matches||[]);
+    appendEvidenceDigest(data.evidence_digest||[]);
+    speakV2Answer(data.speech_text||data.answer||"").catch(()=>{});
     const backend=$("backendText");if(backend)backend.textContent=mode==="exact"
       ?"v2 local • Citação exata • zero LLM"
       :"v2 local • "+String(data.model||"Qwen")+" • "+String(data.embedding_model||"busca lexical")+" • "+(evidence.length?"acervo deste aparelho":"cofre local");
@@ -304,7 +308,9 @@ async function sendLocal(){
     const timedOut=/abort|aborted|timeout|tempo/i.test(msg);
     if(timedOut && evidence.length){
       const answer=browserDeterministicAnswer(mode,q,evidence.slice(0,8));
-      appendMessage("assistant","O Qwen demorou além do limite neste computador. Usei a contingência local com as evidências recuperadas:\n\n"+answer,evidence.slice(0,8));
+      const fallbackText="O Qwen demorou além do limite neste computador. Usei a contingência local com as evidências recuperadas:\n\n"+answer;
+      appendMessage("assistant",fallbackText,evidence.slice(0,8));
+      speakV2Answer(fallbackText).catch(()=>{});
       const state=$("avatarState");if(state)state.textContent="Pronto • contingência local";
       const backend=$("backendText");if(backend)backend.textContent="v2 local • contingência determinística após timeout do Qwen";
     }else{
@@ -439,8 +445,9 @@ async function prepareBrain(){
 }
 function installCapture(){
   document.addEventListener("click",event=>{
-    if(!localReady)return;
     const id=event.target?.id;
+    if(id==="stopAudioBtn"){event.preventDefault();event.stopImmediatePropagation();stopV2Speech();return;}
+    if(!localReady)return;
     if(id==="sendBtn"){event.preventDefault();event.stopImmediatePropagation();sendLocal();return;}
     if(id==="dictionarySearchBtn"){event.preventDefault();event.stopImmediatePropagation();searchDictionary(true);return;}
     if(id==="dictionaryPrev"&&dictionaryState.page>1){event.preventDefault();event.stopImmediatePropagation();dictionaryState.page--;searchDictionary(false);return;}
@@ -454,6 +461,7 @@ function installCapture(){
 }
 
 addControls();
+initV2Voice();
 installCapture();
 probe();
 setInterval(probe,15000);
