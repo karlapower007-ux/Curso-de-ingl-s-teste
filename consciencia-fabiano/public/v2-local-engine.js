@@ -86,7 +86,9 @@ async function metaPut(key,value){
   tx.objectStore("meta").put({key,value,updated_at:Date.now()});await txDone(tx);db.close();
 }
 async function api(path,body){
-  const res=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const base=String(window.__FNS_V2_API_BASE||"");
+  const target=(base&&String(path).startsWith("/api/v2/"))?base+path:path;
+  const res=await fetch(target,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),mode:"cors"});
   const data=await res.json().catch(()=>({}));
   if(!res.ok||data?.ok===false)throw new Error(data?.error||("HTTP "+res.status));
   return data;
