@@ -336,21 +336,21 @@ export function formatExactAnswer(matches=[]){
 export function formatGroundedAnswer(evidence=[],mode="explain"){
   const safeMode=RESPONSE_MODES.has(mode)?mode:"explain";
   const maxRows=safeMode==="short"?3:10;
-  const rows=(evidence||[]).filter(row=>row?.citation_verified===true && String(row?.text||"").trim()).slice(0,maxRows);
+  const rows=(evidence||[]).filter(row=>row?.citation_verified===true && row?.focus_verified===true && String(row?.text||"").trim()).slice(0,maxRows);
   if(!rows.length)return "A biblioteca local não encontrou evidência suficiente para responder a essa pergunta.";
 
-  const clipExact=text=>{
-    const raw=String(text||"").replace(/\s+/g," ").trim();
+  const clipExact=row=>{
+    const raw=String(row?.text||"").replace(/\s+/g," ").trim();
     if(raw.length<=760)return raw;
-    const cut=raw.slice(0,760);
-    const boundary=Math.max(cut.lastIndexOf(". "),cut.lastIndexOf("; "),cut.lastIndexOf(": "));
-    return (boundary>240?cut.slice(0,boundary+1):cut).trim();
+    const focused=focusedEvidenceWindow(row,760);
+    if(focused.accepted&&focused.text)return focused.text;
+    return "";
   };
   const ref=row=>String(row?.citation_reference||row?.reference||publicReference(row)||"Fonte").trim()||"Fonte";
   const unique=[];
   const seen=new Set();
   for(const row of rows){
-    const text=clipExact(row.text);
+    const text=clipExact(row);
     const key=fold(ref(row)+"|"+text);
     if(!text||seen.has(key))continue;
     seen.add(key);
@@ -360,14 +360,14 @@ export function formatGroundedAnswer(evidence=[],mode="explain"){
 
   if(safeMode==="compare"){
     return "Comparação documental — somente evidências da biblioteca:\n\n"+
-      unique.map((row,i)=>"["+(i+1)+"] "+row._ref+"\n"+row._exact).join("\n\n");
+      unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\n✓ Fonte verificada: "+row._ref).join("\n\n");
   }
   if(safeMode==="timeline"){
     return "Linha do tempo documental — somente evidências da biblioteca:\n\n"+
-      unique.map((row,i)=>"["+(i+1)+"] "+row._ref+"\n"+row._exact).join("\n\n");
+      unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\n✓ Fonte verificada: "+row._ref).join("\n\n");
   }
   if(safeMode==="short"){
-    return unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\nFonte: "+row._ref).join("\n\n");
+    return unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\n✓ Fonte verificada: "+row._ref).join("\n\n");
   }
   return "Resposta documental exata — cada ponto abaixo vem diretamente da biblioteca:\n\n"+
     unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\n✓ Fonte verificada: "+row._ref).join("\n\n");
