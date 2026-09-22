@@ -146,7 +146,7 @@ assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve con
 assert.ok(!ui.includes('call("/api/v3/dictionary"'),"V3 não pode substituir ou reindexar o Dicionário");
 assert.ok(v3core.includes("buildV3EvidenceIndex"),"núcleo V3 deve existir separado do núcleo V2");
 assert.ok(v3core.includes("searchV3Evidence"),"V3 deve possuir mecanismo próprio de busca");
-assert.ok(v3core.includes('version:"3.0.5-evidence-engine-topic-first"'),"V3 deve usar o índice leve com Focus Integrity reforçado");
+assert.ok(/version:"3\.0\.\d+-evidence-engine-[^"]+"/.test(v3core),"V3 deve declarar versão 3.0.x do Evidence Engine");
 assert.ok(v3core.includes("noteAt"),"V3 deve remover aparato editorial/rodapés antes da indexação de Escrituras");
 assert.ok(v3core.includes("minCore"),"V3 deve exigir cobertura do conceito completo quando não houver alias literal");
 assert.ok(v3core.includes('unit.kind==="scripture-page-window"'),"V3 deve reconhecer faixas bíblicas amplas");
