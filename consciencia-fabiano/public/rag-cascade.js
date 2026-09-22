@@ -428,7 +428,7 @@ async function omniAgentSearch(question,{onProgress}={}){
   };
 }
 
-async function offlineHybridSearch(question,{onProgress}={}){
+async function offlineHybridSearch(question,{onProgress,allowSemantic=false}={}){
   await ready;
   const q=String(question||"").trim();
   if(!q)return {ok:false,cards:[],strict_empty:true,local_only:true};
@@ -440,13 +440,15 @@ async function offlineHybridSearch(question,{onProgress}={}){
     bm25Matches=(bm.matches||[]).map(x=>normalizeMatch(x,"offline-bm25-v10"));
   }catch{}
   let semanticMatches=[];
-  try{
-    const embedded=await embedQuery(q);
-    if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
-      const sem=await rpc(searchWorker,"search-semantic",{query:embedded.vector,top_k:Math.min(500,OFFLINE_TOP_K),min_score:0.62},20000);
-      semanticMatches=(sem.matches||[]).map(x=>normalizeMatch(x,"offline-semantic-v10"));
-    }
-  }catch{}
+  if(allowSemantic===true){
+    try{
+      const embedded=await embedQuery(q);
+      if(Array.isArray(embedded?.vector)&&embedded.vector.length>=64){
+        const sem=await rpc(searchWorker,"search-semantic",{query:embedded.vector,top_k:Math.min(500,OFFLINE_TOP_K),min_score:0.62},20000);
+        semanticMatches=(sem.matches||[]).map(x=>normalizeMatch(x,"offline-semantic-v10"));
+      }
+    }catch{}
+  }
   const strictMatches=(strict.matches||[]).map(x=>normalizeMatch(x,"offline-strict-v10"));
   const literalMatches=mergeSearchMatches(strictMatches,bm25Matches);
   const swarm=await import("/agent-swarm.js?v=10.0.0");
