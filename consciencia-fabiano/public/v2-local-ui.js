@@ -176,13 +176,16 @@ async function sendLocal(){
       return;
     }
 
+    const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;
+    const outboundEvidence=evidence.slice(0,lowRam?10:90);
     const data=await call("/api/v2/chat",{
-      question:q,mode,model,semantic:mode!=="exact",page_size:25,
-      evidence:evidence.map(r=>({
+      question:q,mode,model,semantic:mode!=="exact"&&!lowRam,page_size:25,
+      candidate_limit:lowRam?24:70,
+      evidence:outboundEvidence.map(r=>({
         id:r.id||r.key,document_id:r.document_id||r.doc_key,title:r.title||"",
         page:r.page||null,chunk_index:r.chunk_index||0,text:r.text||"",reference:r.reference||""
       }))
-    });
+    },lowRam?210000:300000);
     appendMessage("assistant",data.answer||"",data.matches||[]);
     const backend=$("backendText");if(backend)backend.textContent=mode==="exact"
       ?"v2 local • Citação exata • zero LLM"
@@ -190,10 +193,19 @@ async function sendLocal(){
     const dot=$("backendDot");if(dot)dot.className="dot ok";
     const state=$("avatarState");if(state)state.textContent="Pronto";
   }catch(error){
-    const info=error?.data;
-    const extra=Array.isArray(info?.install)&&info.install.length?"\n\nInstale um modelo local:\n"+info.install.join("\n"):"";
-    appendMessage("assistant","Não foi possível usar o cérebro local: "+String(error?.message||error)+extra,[]);
-    const state=$("avatarState");if(state)state.textContent="Cérebro local indisponível";
+    const msg=String(error?.message||error);
+    const timedOut=/abort|aborted|timeout|tempo/i.test(msg);
+    if(timedOut && evidence.length){
+      const answer=browserDeterministicAnswer(mode,q,evidence.slice(0,8));
+      appendMessage("assistant","O Qwen demorou além do limite neste computador. Usei a contingência local com as evidências recuperadas:\n\n"+answer,evidence.slice(0,8));
+      const state=$("avatarState");if(state)state.textContent="Pronto • contingência local";
+      const backend=$("backendText");if(backend)backend.textContent="v2 local • contingência determinística após timeout do Qwen";
+    }else{
+      const info=error?.data;
+      const extra=Array.isArray(info?.install)&&info.install.length?"\n\nInstale um modelo local:\n"+info.install.join("\n"):"";
+      appendMessage("assistant","Não foi possível usar o cérebro local: "+msg+extra,[]);
+      const state=$("avatarState");if(state)state.textContent="Cérebro local indisponível";
+    }
   }finally{setBusy(false);}
 }
 function renderDictionary(data){
