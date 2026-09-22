@@ -131,7 +131,11 @@ async function installedModels(){
     return (Array.isArray(data?.models)?data.models:[]).map(x=>String(x?.name||x?.model||"")).filter(Boolean);
   }catch{return [];}
 }
-function ramGb(){return Math.max(1,Math.round(os.totalmem()/1024/1024/1024));}
+function ramGb(){
+  const override=Number(process.env.FNS_RAM_GB||0);
+  if(Number.isFinite(override)&&override>0)return Math.max(1,Math.round(override));
+  return Math.max(1,Math.round(os.totalmem()/1024/1024/1024));
+}
 function recommendedByHardware(){
   const gb=ramGb();
   if(gb>=32)return "qwen3.8:27b";
