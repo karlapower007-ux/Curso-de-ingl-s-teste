@@ -240,7 +240,8 @@ async function call(path,body,timeout=300000){
 async function sendLocal(){
   const input=$("questionInput"),q=String(input?.value||"").trim();if(!q)return;
   const mode=selectedResponse(),model=resolvedModelForRequest();
-  try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}\n  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
+  try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}
+  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
   try{
     let engine=null,localState=null,evidence=[];
     try{
