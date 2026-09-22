@@ -30,7 +30,7 @@ http.createServer(async(req,res)=>{
   }
   if(req.method==="POST"&&req.url==="/api/chat"){
     const b=await body(req);
-    json(res,{model:String(b.model||"qwen3:0.6b"),message:{role:"assistant",content:"MOCK_QWEN_LOCAL_OK — resposta gerada pelo cérebro local de teste usando somente as evidências recebidas."},done:true});return;
+    json(res,{model:String(b.model||"qwen3:0.6b"),message:{role:"assistant",content:"MOCK_QWEN_LOCAL_OK — O Plano de Salvação inclui a Vida Pré-Mortal, conforme a evidência recebida."},done:true});return;
   }
   json(res,{error:"not found"},404);
 }).listen(PORT,"127.0.0.1",()=>console.log("MOCK_OLLAMA=http://127.0.0.1:"+PORT));
