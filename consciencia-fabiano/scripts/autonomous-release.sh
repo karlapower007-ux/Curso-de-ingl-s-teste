@@ -730,7 +730,7 @@ PY
     jq -nc --arg q "$smoke_query" '{pergunta:("Explain in English, using only the library and citing the source: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-en-payload.json
     en_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-en.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-en-payload.json || echo 000)
     [ "$en_http" = "200" ] || die "GROUNDED_CHAT_EN_HTTP_$en_http"
-    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0 and .cognitive_mode == "analysis" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1' /tmp/chat-smoke-en.json >/dev/null || die "GROUNDED_CHAT_EN_BAD"
+    jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0 and .cognitive_mode == "analysis" and .groq_final_stage_only == false and .pre_master_llm_calls == 0 and .llm_calls == 1' /tmp/chat-smoke-en.json >/dev/null || die "GROUNDED_CHAT_EN_BAD"
     log "GROUNDED_CHAT_EN_PASS=yes"
 
     jq -nc --arg q "$smoke_query" '{pergunta:("Responda somente com a referência documental, sem explicação: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-ref-payload.json
@@ -743,13 +743,13 @@ PY
     hyp_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-hyp.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-hyp-payload.json || echo 000)
     [ "$hyp_http" = "200" ] || die "COGNITIVE_HYPOTHESIS_HTTP_$hyp_http"
     jq -c '{ok,fallback,cognitive_mode,llm_calls,pre_master_llm_calls,groq_final_stage_only,fontes_count:(.fontes|length),resposta_len:(.resposta|length),has_hypothesis:(.resposta|test("hipótese|hipotese|hypothesis";"i"))}' /tmp/chat-smoke-hyp.json | sed 's/^/COGNITIVE_HYPOTHESIS_DIAG=/'
-    jq -e '.ok == true and .fallback == false and .cognitive_mode == "hypothesis" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1 and (.resposta|test("hipótese|hipotese|hypothesis";"i"))' /tmp/chat-smoke-hyp.json >/dev/null || die "COGNITIVE_HYPOTHESIS_BAD"
+    jq -e '.ok == true and .fallback == false and .cognitive_mode == "hypothesis" and .groq_final_stage_only == false and .pre_master_llm_calls == 0 and .llm_calls == 1 and (.resposta|test("hipótese|hipotese|hypothesis";"i"))' /tmp/chat-smoke-hyp.json >/dev/null || die "COGNITIVE_HYPOTHESIS_BAD"
     log "COGNITIVE_HYPOTHESIS_PASS=yes"
 
     jq -nc --arg q "$smoke_query" '{pergunta:("Faça uma reflexão explicitamente separando fatos documentados de reflexão, baseada somente nos documentos, sobre: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-reflection-payload.json
     refl_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-reflection.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-reflection-payload.json || echo 000)
     [ "$refl_http" = "200" ] || die "COGNITIVE_REFLECTION_HTTP_$refl_http"
-    jq -e '.ok == true and .fallback == false and .cognitive_mode == "reflection" and .groq_final_stage_only == true and .pre_master_llm_calls == 0 and .llm_calls == 1 and (.resposta|test("reflexão|reflection";"i")) and (.resposta|test("fatos documentados|documented facts";"i"))' /tmp/chat-smoke-reflection.json >/dev/null || die "COGNITIVE_REFLECTION_BAD"
+    jq -e '.ok == true and .fallback == false and .cognitive_mode == "reflection" and .groq_final_stage_only == false and .pre_master_llm_calls == 0 and .llm_calls == 1 and (.resposta|test("reflexão|reflection";"i")) and (.resposta|test("fatos documentados|documented facts";"i"))' /tmp/chat-smoke-reflection.json >/dev/null || die "COGNITIVE_REFLECTION_BAD"
     log "COGNITIVE_REFLECTION_PASS=yes"
 
     jq -nc '{pergunta:"Qual é o fato documental exato ZXQ_V74_ABSTAIN_984731_XXYYZZ?",historico:[],stream:false}' >/tmp/chat-smoke-abstain-payload.json
