@@ -3,7 +3,7 @@ import {readFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
-  V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,buildPrompt,chooseInstalledModel,
+  V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,formatGroundedAnswer,buildPrompt,chooseInstalledModel,
   focusEvidence,answerStaysOnFocus
 } from "./v2-local-core.mjs";
 
@@ -36,6 +36,11 @@ assert.equal(focused.length,1,"Focus Lock deve excluir evidência fora do assunt
 assert.equal(focused[0].id,"focus-ok");
 assert.equal(answerStaysOnFocus("A vida pré-mortal antecede o nascimento mortal.","vida pré-mortal",aliases),true);
 assert.equal(answerStaysOnFocus("O Espírito da Verdade aparece em Hebreus.","vida pré-mortal",aliases),false);
+const grounded=formatGroundedAnswer(focused,"explain");
+assert.ok(grounded.includes("Resposta documental exata"),"Grounded Exact deve identificar resposta documental");
+assert.ok(grounded.includes("vida pré-mortal"),"Grounded Exact deve preservar texto focado da biblioteca");
+assert.ok(grounded.includes("Fonte:"),"Grounded Exact deve citar a fonte em cada ponto");
+assert.ok(!grounded.includes("Espírito da Verdade"),"Grounded Exact não pode incluir evidência fora do foco");
 const literal=formatExactAnswer(exact.matches);
 assert.ok(literal.includes("Plano de Salvação"));
 assert.ok(literal.includes("página 10"));
@@ -76,6 +81,8 @@ assert.ok(server.includes("isMemoryAllocationError"),"servidor deve detectar fal
 assert.ok(server.includes("focusEvidence"),"servidor deve filtrar evidências pelo assunto explícito");
 assert.ok(server.includes("answerStaysOnFocus"),"servidor deve bloquear resposta gerada que saia do foco");
 assert.ok(server.includes('provider:"focus-lock-deterministic"'),"servidor deve ter fallback determinístico quando o Qwen desviar do tema");
+assert.ok(server.includes('if(body.grounded===true)'),"servidor deve ter caminho Grounded Exact explícito");
+assert.ok(server.includes('provider:"grounded-exact-no-llm"'),"Grounded Exact deve bypassar o LLM na resposta");
 assert.ok(server.includes("candidateLimit=lowRam?60"),"perfil 4 GB deve ampliar candidatos lexicais sem embeddings pesados");
 assert.ok(server.includes("maxEvidence=lowRam?10"),"perfil 4 GB deve usar mais evidências focadas");
 assert.ok(server.includes("preferredContext=lowRam?1536"),"perfil 4 GB deve usar contexto compacto de 1536");
@@ -87,6 +94,10 @@ assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBE
 assert.ok(ui.includes('["exact","Citação exata • zero LLM"]'));
 assert.ok(ui.includes('["timeline","Linha do tempo"]'));
 assert.ok(ui.includes('["compare","Comparar fontes"]'));
+assert.ok(ui.includes('["explain","Explicação exata"]'),"modo Explicação deve indicar fidelidade documental");
+assert.ok(ui.includes('grounded:mode!=="exact"'),"chat padrão deve pedir Grounded Exact ao servidor");
+assert.ok(ui.includes('browserOnly&&!apiBase'),"queda do Ollama não pode forçar fallback frouxo quando o servidor local está disponível");
+assert.ok(ui.includes("Grounded Exact • somente evidências da biblioteca • zero invenções"),"status deve deixar claro o caminho exato");
 assert.ok(ui.includes("http://127.0.0.1:8788/api/v2/health"),"UI oficial deve detectar a ponte Ollama local");
 assert.ok(ui.includes("window.__FNS_V2_API_BASE"),"UI deve compartilhar a base local com o motor de embeddings");
 assert.ok(ui.includes('const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;'),"sendLocal deve inicializar lowRam antes de usar o perfil de pouca memória");
@@ -127,6 +138,7 @@ console.log(JSON.stringify({
   exact_zero_llm:true,
   qwen_embeddings:true,
   richer_low_ram_chat:true,
+  grounded_exact_chat:true,
   browser_tts:true,
   modes:["short","explain","compare","timeline","exact"],
   responsive:[360,390,412,1366]
