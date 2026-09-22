@@ -76,7 +76,7 @@ for(const query of queries){
     }))));
     assert.ok(top.length>=5,"vida pré-mortal deve ter fluxo documental suficiente");
     assert.ok(top.every(x=>!v3Fold(x.text).includes("gee vida pre-mortal")),"nota GEE não pode ser evidência de vida pré-mortal");
-    assert.ok(top.filter(x=>premortalRelevant(x.text)).length>=5,"vida pré-mortal deve retornar conteúdo substantivo, não aparato editorial");
+    assert.ok(top.slice(0,5).every(x=>premortalRelevant(x.text)),"os cinco primeiros resultados de vida pré-mortal devem começar em conteúdo substantivo do tema");
   }
   report.push({
     query,
