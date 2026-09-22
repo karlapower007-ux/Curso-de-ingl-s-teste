@@ -45,12 +45,14 @@ function worldRelevant(text){
 function premortalRelevant(text){
   const f=v3Fold(text);
   return f.includes("vida pre-mortal") ||
-    f.includes("premortal life") ||
-    f.includes("pre-mortal life") ||
+    f.includes("premortal") ||
+    f.includes("pre-mortal") ||
     f.includes("preexist") ||
     f.includes("pre-exist") ||
     f.includes("before we came") ||
-    f.includes("before the world");
+    f.includes("before the world") ||
+    f.includes("before mortal") ||
+    f.includes("before birth");
 }
 
 const report=[];
