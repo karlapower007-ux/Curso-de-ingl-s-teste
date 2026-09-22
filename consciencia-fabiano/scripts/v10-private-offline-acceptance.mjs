@@ -1,3 +1,4 @@
+// V10.1 compound alias release gate: strict AND, offline-first, no library mutation.
 import { readFileSync } from "node:fs";
 
 const read = rel => readFileSync(new URL("../" + rel, import.meta.url), "utf8");
