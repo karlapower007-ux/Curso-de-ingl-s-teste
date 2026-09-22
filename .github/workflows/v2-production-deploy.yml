@@ -103,7 +103,7 @@ jobs:
           ! grep -Fiq 'Access-Control-Allow-Origin:' /tmp/blocked.headers
 
           curl -fsS -X POST http://127.0.0.1:8788/api/v2/chat             -H 'Origin: https://consciencia-fabiano.focoeepoder2.workers.dev'             -H 'Content-Type: application/json'             --data '{"question":"Explique o Plano de Salvação","mode":"explain","model":"qwen3:0.6b","semantic":false,"evidence":[{"id":"bridge:1","document_id":"qa","title":"QA","page":1,"chunk_index":1,"text":"O Plano de Salvação inclui a Vida Pré-Mortal.","reference":"QA • página 1"}]}'             >/tmp/v2-bridge-chat.json
-          node -e 'const d=require("/tmp/v2-bridge-chat.json"); if(!d.ok||d.provider!=="ollama-local"||!String(d.answer||"").includes("MOCK_QWEN_LOCAL_OK")) process.exit(1)'
+          node -e 'const d=require("/tmp/v2-bridge-chat.json"); if(!d.ok||d.provider!=="ollama-local-direct"||!String(d.answer||"").includes("MOCK_QWEN_LOCAL_OK")) process.exit(1)'
 
           echo "V2_LOCAL_BRIDGE=pass"
 
