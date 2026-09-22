@@ -212,7 +212,17 @@
   btn.addEventListener("pointercancel",e=>mode==="webspeech"?stopWebSpeech(e):stopRecorder(e));
   btn.addEventListener("lostpointercapture",e=>{if(mode!=="webspeech" && recorder?.state==="recording")stopRecorder(e);});
 
-  btn.disabled=true;
-  setStatus("Carregando Whisper local; fallback automático em até 8 segundos…");
-  initWorker();
+  const SpeechRecognition=window.SpeechRecognition || window.webkitSpeechRecognition;
+  const lowMemory=Number(navigator.deviceMemory || 4) <= 4;
+  if(lowMemory && !strictOffline() && SpeechRecognition){
+    mode="webspeech";
+    workerReady=false;
+    busy=false;
+    setStatus("Voz do navegador pronta • modo leve para este computador.");
+    enableButton("🎤 Segure para Falar");
+  }else{
+    btn.disabled=true;
+    setStatus("Carregando Whisper local; fallback automático em até 8 segundos…");
+    initWorker();
+  }
 })();
