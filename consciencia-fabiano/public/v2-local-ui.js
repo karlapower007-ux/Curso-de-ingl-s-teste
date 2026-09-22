@@ -262,9 +262,9 @@ async function sendLocal(){
 
     if(engine&&Number(localState?.chunks||0)>0){
       try{
-        const lexical=await engine.lexicalSearch(q,70);
+        const lexical=await engine.lexicalSearch(q,lowRam?90:70);
         let semantic=[];
-        if(Number(localState?.qwen_vectors||0)>0){
+        if(!lowRam&&Number(localState?.qwen_vectors||0)>0){
           try{semantic=await engine.semanticSearch(q,30);}catch{}
         }
         const merged=new Map();
@@ -285,11 +285,10 @@ async function sendLocal(){
       return;
     }
 
-    const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;
-    const outboundEvidence=evidence.slice(0,lowRam?10:90);
+    const outboundEvidence=evidence.slice(0,lowRam?24:90);
     const data=await call("/api/v2/chat",{
       question:q,mode,model,semantic:mode!=="exact"&&!lowRam,page_size:25,
-      candidate_limit:lowRam?24:70,
+      candidate_limit:lowRam?60:70,
       evidence:outboundEvidence.map(r=>({
         id:r.id||r.key,document_id:r.document_id||r.doc_key,title:r.title||"",
         page:r.page||null,chunk_index:r.chunk_index||0,text:r.text||"",reference:r.reference||""
