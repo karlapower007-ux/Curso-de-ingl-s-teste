@@ -71,8 +71,8 @@ jobs:
               if(pageErrors.length) throw new Error("Page errors em "+width+": "+pageErrors.join(" | "));
 
               await page.locator("#dictionaryTab").click();
-              await page.locator("#dictionaryQuery").waitFor({state:"visible",timeout:5000});
-              await page.locator("#settingsTab").click();
+              await page.locator("#dictionaryInput").waitFor({state:"visible",timeout:5000});
+              await page.locator("#chatTab").click();
               await page.locator("#operationMode").waitFor({state:"visible",timeout:5000});
               const modes=await page.locator("#operationMode option").allTextContents();
               if(!modes.some(x=>x.includes("100% offline"))||!modes.some(x=>x.includes("Online"))) {
@@ -90,7 +90,6 @@ jobs:
               if(!("serviceWorker" in navigator)) throw new Error("Service Worker indisponível");
               await navigator.serviceWorker.ready;
             });
-            await page.locator("#settingsTab").click();
             await page.locator("#operationMode").selectOption("offline");
             await page.waitForTimeout(1200);
             await context.setOffline(true);
