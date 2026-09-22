@@ -8,7 +8,7 @@ import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
   exactAndMatches, lexicalCandidates, chooseInstalledModel,
   formatExactAnswer, formatGroundedAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
-  focusEvidence, answerStaysOnFocus
+  focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus
 } from "./v2-local-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-grounded-exact-r7";
+const LOCAL_RUNTIME_BUILD="2026-09-22-citation-integrity-r8";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -29,6 +29,8 @@ const LOCAL_BRIDGE_ORIGINS=new Set([
   ...String(process.env.FNS_ALLOWED_ORIGINS||"").split(",").map(x=>x.trim()).filter(Boolean)
 ]);
 const rows=[];
+const authoritativeRows=new Map();
+const authoritativePages=new Map();
 let libraryPromise=null;
 let aliasesPromise=null;
 const embedCache=new Map();
@@ -39,6 +41,54 @@ const MIME={
   ".jpg":"image/jpeg",".jpeg":"image/jpeg",".svg":"image/svg+xml",".webmanifest":"application/manifest+json; charset=utf-8",
   ".wasm":"application/wasm",".gz":"application/gzip",".txt":"text/plain; charset=utf-8",".md":"text/markdown; charset=utf-8"
 };
+
+function authoritativeIdentity(row={}){
+  return String(row.id||row.key||"").trim() ||
+    [String(row.document_id||row.doc_key||""),String(row.chunk_index??"")].join(":");
+}
+function authoritativePageKey(row={}){
+  const doc=String(row.document_id||row.doc_key||"").trim();
+  const page=Number(row.page||0)||0;
+  return doc&&page?doc+"|"+page:"";
+}
+function indexAuthoritativeRow(row={}){
+  const id=authoritativeIdentity(row);
+  if(id)authoritativeRows.set(id,row);
+  const pageKey=authoritativePageKey(row);
+  if(pageKey){
+    const list=authoritativePages.get(pageKey)||[];
+    list.push(row);
+    authoritativePages.set(pageKey,list);
+  }
+}
+function enrichFromAuthority(row={}){
+  const exact=authoritativeRows.get(authoritativeIdentity(row));
+  return exact?{...exact,...row}:row;
+}
+function authoritativePageText(row={}){
+  const key=authoritativePageKey(row);
+  if(!key)return String(row.text||"");
+  const pageRows=authoritativePages.get(key)||[];
+  return pageRows.length?pageRows.sort((a,b)=>Number(a.chunk_index||0)-Number(b.chunk_index||0)).map(x=>String(x.text||"")).join(" "):String(row.text||"");
+}
+function applyCitationIntegrity(evidence=[]){
+  const out=[];
+  for(const candidate of evidence||[]){
+    const row=enrichFromAuthority(candidate);
+    if(!hasSubstantiveFocus(row))continue;
+    const check=citationIntegrity(row,authoritativePageText(row));
+    if(!check.verified)continue;
+    out.push({
+      ...row,
+      reference:check.reference,
+      citation_reference:check.reference,
+      citation_verified:true,
+      citation_kind:check.kind,
+      citation_reason:check.reason
+    });
+  }
+  return out;
+}
 
 function json(res,data,status=200,extra={}){
   res.statusCode=status;
@@ -98,7 +148,9 @@ async function loadLibrary(){
         const key=String(row?.id||row?.key||row?.document_id+":"+String(row?.chunk_index||0));
         if(seen.has(key))continue;
         seen.add(key);
-        rows.push({...row,key});
+        const stored={...row,key};
+        rows.push(stored);
+        indexAuthoritativeRow(stored);
       }
     }
     const rawDir=path.join(ROOT,"raw-vault","generated");
@@ -375,6 +427,7 @@ async function handleChat(req,res){
     evidence=await semanticRerank(question,evidence,maxEvidence);
     evidence=focusEvidence(evidence,question,aliases,maxEvidence);
   }
+  evidence=applyCitationIntegrity(evidence);
   if(mode==="timeline"){
     evidence=[...evidence].sort((a,b)=>{
       const ay=extractTimelineYear(a.text),by=extractTimelineYear(b.text);
@@ -401,7 +454,9 @@ async function handleChat(req,res){
       evidence_count:evidence.length,
       evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
       matches:evidence.map(r=>({
-        reference:r.reference||publicReference(r),
+        reference:r.citation_reference||r.reference||"",
+        citation_verified:r.citation_verified===true,
+        citation_kind:r.citation_kind||"",
         title:r.public_title||"",
         page:r.page||null,
         text:r.text||""
