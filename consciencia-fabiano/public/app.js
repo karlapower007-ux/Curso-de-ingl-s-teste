@@ -2012,6 +2012,42 @@
     }finally{$("dictionarySearchBtn").disabled=false;}
   }
 
+  function formatBytes(value){
+    const n=Math.max(0,Number(value||0));
+    if(n>=1_000_000_000)return (n/1_000_000_000).toFixed(2)+" GB";
+    if(n>=1_000_000)return (n/1_000_000).toFixed(1)+" MB";
+    if(n>=1_000)return (n/1_000).toFixed(1)+" KB";
+    return n+" B";
+  }
+
+  async function loadCostGuardStatus(){
+    const node=$("costGuardStatus");
+    if(!node)return;
+    if(isOfflineOnly() || !navigator.onLine){
+      node.textContent="R$0 Guard • modo offline: nenhuma IA externa ou upload R2 será iniciado.";
+      return;
+    }
+    if(!ownerToken()){
+      node.textContent="R$0 Guard • entre na Biblioteca para consultar o uso protegido.";
+      return;
+    }
+    try{
+      const data=await api("/api/admin/cost-status",{},false);
+      const r2=data?.r2||{},wai=data?.workers_ai||{},groq=data?.groq||{};
+      const groqText=groq.status==="enabled"
+        ?"Groq ZDR + Free confirmados"
+        :groq.status==="blocked-unverified-zdr-or-free-tier"
+          ?"Groq bloqueado até confirmar ZDR + Free"
+          :"Groq não configurado";
+      node.textContent=
+        "R$0 Guard • PDFs registrados "+formatBytes(r2.source_bytes)+" / "+formatBytes(r2.source_budget_bytes)+
+        " • Workers AI "+Number(wai.estimated_neurons||0)+" / "+Number(wai.daily_neuron_budget||0)+" neurons hoje"+
+        " • "+groqText+".";
+    }catch(error){
+      node.textContent="R$0 Guard • não foi possível confirmar uso agora; novas operações pagáveis permanecem bloqueadas.";
+    }
+  }
+
   function switchPanel(name) {
     const lib=name==="library", dict=name==="dictionary", chat=!lib&&!dict;
     if(lib && !ensureLocalAdminAccess()) return;
@@ -2021,7 +2057,7 @@
     $("chatTab").classList.toggle("active",chat);
     $("dictionaryTab")?.classList.toggle("active",dict);
     $("libraryTab").classList.toggle("active",lib);
-    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();maybeAutoOmniSync();}
+    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadCostGuardStatus();maybeAutoOmniSync();}
     if(dict) $("dictionaryInput")?.focus();
   }
 
@@ -3030,7 +3066,9 @@
   }
 
   async function loadBooks() {
-    return ensureLibraryAlwaysAvailable();
+    const result=await ensureLibraryAlwaysAvailable();
+    loadCostGuardStatus().catch(()=>{});
+    return result;
   }
 
   async function reindex() {
