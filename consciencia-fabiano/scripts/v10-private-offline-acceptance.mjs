@@ -66,6 +66,12 @@ assert(sw.includes('if(mode==="offline") return cached || Response.error();'), "
 assert(html.includes('<option value="offline">100% offline</option>'), "100% offline UI option missing");
 assert(html.includes('<option value="online">Online</option>'), "online UI option missing");
 assert(html.includes('id="prepareOfflineBtn"'), "offline preparation button missing");
+assert(html.includes('id="settingsTab"'), "settings tab missing");
+assert(html.includes('id="settingsPanel"'), "settings panel missing");
+assert(html.includes('id="settingsOperationMode"'), "settings mode selector missing");
+assert(html.includes('id="settingsPrepareOfflineBtn"'), "settings offline preparation button missing");
+assert(app.includes('switchPanel("settings")'), "settings panel is not wired");
+assert(app.includes('settingsModeSelect.addEventListener("change"'), "settings mode selector is not synchronized");
 
 for (const width of ["412px","390px","360px"]) {
   assert(css.includes("@media(max-width:" + width + ")"), "responsive breakpoint missing: " + width);
