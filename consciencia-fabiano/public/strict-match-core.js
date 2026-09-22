@@ -49,14 +49,30 @@ export function extractSemanticReference(text){
   return "";
 }
 
+
+const STRICT_STOPWORDS=new Set("a o as os um uma uns umas de da do das dos e em no na nos nas por para com sem sobre que qual quais como quando onde porque pois ser estar foi eram is the a an of to in on for with about what which how when where why".split(/\s+/));
+export function buildStrictIntent(question){
+  const phrase=deriveStrictPhrase(question);
+  const anchors=[...new Set(phrase.split(/[^\p{L}\p{N}]+/u).filter(t=>t.length>=3&&!STRICT_STOPWORDS.has(t)))];
+  return {phrase,anchors,required_anchors:anchors.slice(0,8),allow_relaxation:false};
+}
+export function strictIntentAudit(text,intentOrQuestion){
+  const intent=typeof intentOrQuestion==="string"?buildStrictIntent(intentOrQuestion):(intentOrQuestion||{phrase:"",required_anchors:[]});
+  const normalized=normalizeStrictText(text);
+  const required=Array.isArray(intent.required_anchors)?intent.required_anchors:[];
+  const matched=required.filter(a=>normalized.includes(normalizeStrictText(a)));
+  return {accepted:required.length===0?!!normalized:matched.length===required.length,matched,required,coverage:required.length?matched.length/required.length:0};
+}
+
 export function strictParagraphMatch(text,question){
   const target=deriveStrictPhrase(question);
   if(!target)return {matched:false,target:"",paragraph:"",paragraph_index:-1};
   const blocks=paragraphBlocks(text);
   for(let i=0;i<blocks.length;i++){
     const normalized=normalizeStrictText(blocks[i]);
-    if(normalized.includes(target)){
-      return {matched:true,target,paragraph:blocks[i],paragraph_index:i};
+    const audit=strictIntentAudit(blocks[i],question);
+    if(normalized.includes(target) || audit.accepted){
+      return {matched:true,target,paragraph:blocks[i],paragraph_index:i,intent_audit:audit};
     }
   }
   return {matched:false,target,paragraph:"",paragraph_index:-1};
