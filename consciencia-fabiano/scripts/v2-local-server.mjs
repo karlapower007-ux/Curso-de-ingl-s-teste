@@ -233,13 +233,25 @@ async function handleChat(req,res){
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
   await loadLibrary();
   const aliases=await loadAliases();
+  const suppliedEvidence=Array.isArray(body.evidence)
+    ? body.evidence.slice(0,100).map((row,index)=>({
+        id:String(row?.id||("browser:"+index)),
+        document_id:String(row?.document_id||"browser-local"),
+        title:String(row?.title||row?.public_title||""),
+        page:Number(row?.page||0)||null,
+        chunk_index:Number(row?.chunk_index||index),
+        text:String(row?.text||"").slice(0,16000),
+        reference:String(row?.reference||"")
+      })).filter(row=>row.text.trim())
+    : [];
+  const searchRows=suppliedEvidence.length?suppliedEvidence:rows;
 
   if(mode==="exact"){
-    const result=exactAndMatches(rows,question,{aliases,page:1,pageSize:Math.min(100,Number(body.page_size||25))});
-    json(res,exactPayload(result));return;
+    const result=exactAndMatches(searchRows,question,{aliases,page:1,pageSize:Math.min(100,Number(body.page_size||25))});
+    json(res,{...exactPayload(result),evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault"});return;
   }
 
-  const lexical=lexicalCandidates(rows,question,Math.min(100,Math.max(20,Number(body.candidate_limit||70))));
+  const lexical=lexicalCandidates(searchRows,question,Math.min(100,Math.max(20,Number(body.candidate_limit||70))));
   let evidence=lexical.slice(0,14);
   if(body.semantic!==false && lexical.length){
     evidence=await semanticRerank(question,lexical,14);
@@ -280,6 +292,7 @@ async function handleChat(req,res){
   json(res,{
     ok:true,answer:answer||"A biblioteca recuperada não foi suficiente para produzir uma resposta.",
     mode,model,provider:"ollama-local",embedding_model:EMBED_MODEL,
+    evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
     matches:evidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
   });
 }
