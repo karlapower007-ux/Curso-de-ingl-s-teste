@@ -29,7 +29,9 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
 $ramBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
 $ramGB = [math]::Round($ramBytes / 1GB)
 
-if ($ramGB -ge 32) {
+if ($env:FNS_BRAIN_MODEL) {
+  $brain = $env:FNS_BRAIN_MODEL
+} elseif ($ramGB -ge 32) {
   $brain = "qwen3.8:27b"
 } elseif ($ramGB -ge 16) {
   $brain = "qwen3:8b"
@@ -92,5 +94,7 @@ for ($i=0; $i -lt 30; $i++) {
 }
 if (-not $ready) { throw "O servidor local não respondeu na porta 8788." }
 
-Write-Host "Pronto. Abrindo a Consciência Fabiano v2." -ForegroundColor Green
-Start-Process "http://127.0.0.1:8788"
+Write-Host "Pronto. Consciência Fabiano v2 disponível em http://127.0.0.1:8788" -ForegroundColor Green
+if ($env:CI -ne "true" -and $env:FNS_NO_OPEN -ne "1") {
+  Start-Process "http://127.0.0.1:8788"
+}
