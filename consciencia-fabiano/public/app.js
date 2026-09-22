@@ -237,6 +237,15 @@
       req.onerror=()=>{const e=req.error;db.close();reject(e);};
     });
   }
+  async function idbGet(storeName,key){
+    const db=await openEmbeddingDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(storeName,"readonly");
+      const req=tx.objectStore(storeName).get(key);
+      req.onsuccess=()=>{const v=req.result || null;db.close();resolve(v);};
+      req.onerror=()=>{const e=req.error;db.close();reject(e);};
+    });
+  }
   async function idbDelete(storeName,key){
     const db=await openEmbeddingDb();
     return new Promise((resolve,reject)=>{
@@ -2448,6 +2457,7 @@
   async function saveLocalCatalogEntry(entry){
     const documentId=String(entry?.document_id || "").trim();
     if(!documentId) return;
+    const previous=await idbGet("library_catalog",documentId).catch(()=>null);
     await idbPut("library_catalog",{
       document_id:documentId,
       cloud_document_id:String(entry?.cloud_document_id || ""),
@@ -2461,8 +2471,12 @@
       content_sha256:String(entry?.content_sha256 || entry?.sha256 || "").toLowerCase(),
       r2_generation:String(entry?.r2_generation || ""),
       original_r2_key:String(entry?.original_r2_key || entry?.r2_key || ""),
-      embedding_model:String(entry?.embedding_model || ""),
-      embedding_dimensions:Number(entry?.embedding_dimensions || 0),
+      embedding_model:String(entry?.embedding_model || previous?.embedding_model || ""),
+      embedding_dimensions:Number(entry?.embedding_dimensions || previous?.embedding_dimensions || 0),
+      last_job_id:String(entry?.last_job_id || previous?.last_job_id || ""),
+      ready_for_search:entry?.ready_for_search===true || (entry?.ready_for_search===undefined && previous?.ready_for_search===true),
+      pipeline_stages:entry?.pipeline_stages || previous?.pipeline_stages || null,
+      sync_status:String(entry?.sync_status || previous?.sync_status || ""),
       source:"indexeddb-catalog",
       updated_at:Number(entry?.updated_at || Date.now())
     });
@@ -2515,6 +2529,36 @@
         };
         const key=bookIdentity(normalized);
         if(key) map.set(key,{...(map.get(key)||{}),...normalized});
+      }
+    }catch{}
+
+    try{
+      for(const job of await idbGetAll("sync_queue")){
+        const key=bookIdentity(job);
+        if(!key) continue;
+        const existing=map.get(key)||{};
+        map.set(key,{
+          ...existing,
+          sync_status:String(job.status||"pending"),
+          last_job_id:String(job.cloud_job_id||existing.last_job_id||""),
+          sync_received_pages:Number(job.received_pages||0),
+          sync_expected_pages:Number(job.expected_pages||job.page_count||0),
+          sync_chunks:Number(job.cloud_chunks||0)
+        });
+      }
+    }catch{}
+
+    try{
+      for(const job of await idbGetAll("offline_vector_jobs")){
+        const key=bookIdentity(job);
+        if(!key) continue;
+        const existing=map.get(key)||{};
+        map.set(key,{
+          ...existing,
+          vector_state:String(job.state||"queued"),
+          vector_count:Number(job.vector_count||0),
+          vector_offset:Number(job.offset||0)
+        });
       }
     }catch{}
 
@@ -2589,6 +2633,50 @@
       bits.push(item.status || (cloudAvailable?"pronto":"local"));
       small.textContent=bits.join(" • ");
       info.append(strong,small);
+
+      const stages=item.pipeline_stages;
+      if(stages && typeof stages==="object"){
+        const progress=document.createElement("div");
+        progress.className="pdf-pipeline";
+        const stageRows=[
+          ["Extração",Number(stages?.extraction?.progress||0),stages?.extraction?.expected_pages
+            ? Number(stages.extraction.received_pages||0)+"/"+Number(stages.extraction.expected_pages||0)+" páginas"
+            : ""],
+          ["Indexação",Number(stages?.indexing?.progress||0),Number(stages?.indexing?.chunks||0)
+            ? Number(stages.indexing.chunks)+" trechos"
+            : ""],
+          ["Enciclopédia",Number(stages?.encyclopedia?.progress||0),Number(stages?.encyclopedia?.total_chunks||0)
+            ? Number(stages.encyclopedia.indexed_chunks||0)+"/"+Number(stages.encyclopedia.total_chunks||0)+" indexados"
+            : ""],
+          ["Pesquisa",stages?.search?.status==="ready"?100:0,stages?.search?.status==="ready"?"pronta":"aguardando"]
+        ];
+        for(const [label,value,detail] of stageRows){
+          const line=document.createElement("div");
+          line.className="pdf-pipeline-row";
+          const name=document.createElement("span");
+          name.textContent=label;
+          const bar=document.createElement("progress");
+          bar.max=100;bar.value=Math.max(0,Math.min(100,Number(value||0)));
+          const pct=document.createElement("span");
+          pct.textContent=label==="Pesquisa" ? String(detail||"") : Math.round(bar.value)+"%"+(detail?" • "+detail:"");
+          line.append(name,bar,pct);
+          progress.appendChild(line);
+        }
+        info.appendChild(progress);
+      }else if(item.sync_status || item.vector_state){
+        const live=document.createElement("div");
+        live.className="pdf-pipeline-live";
+        const liveBits=[];
+        if(item.sync_status){
+          const expected=Number(item.sync_expected_pages||0),received=Number(item.sync_received_pages||0);
+          liveBits.push("Nuvem: "+(item.sync_status==="pending"?"aguardando":"sincronizando")+(expected?" • "+received+"/"+expected+" páginas":""));
+        }
+        if(item.vector_state){
+          liveBits.push("Embeddings locais: "+(item.vector_state==="done"?"prontos":item.vector_state)+(Number(item.vector_count||0)?" • "+Number(item.vector_count)+" trechos":""));
+        }
+        live.textContent=liveBits.join(" • ");
+        info.appendChild(live);
+      }
 
       const del=document.createElement("button");
       del.className="ghost danger";
@@ -2775,8 +2863,28 @@
             })
           },false);
 
+          await idbPut("sync_queue",{
+            ...item,
+            status:"syncing",
+            cloud_job_id:String(start.job_id||""),
+            cloud_document_id:String(start.document_id||""),
+            expected_pages:Number(start.expected_pages||item.page_count||0),
+            received_pages:0,
+            updated_at:Date.now()
+          });
+          await saveLocalCatalogEntry({
+            ...item,
+            arquivo:item.filename,titulo:item.title,paginas:item.page_count,
+            last_job_id:String(start.job_id||""),
+            sync_status:"syncing"
+          });
+
           if(start.duplicate){
-            await saveLocalCatalogEntry({...item,cloud_document_id:String(start.document_id||""),arquivo:item.filename,titulo:item.title,paginas:item.page_count,status:"local+cloud"});
+            await saveLocalCatalogEntry({
+              ...item,cloud_document_id:String(start.document_id||""),arquivo:item.filename,titulo:item.title,
+              paginas:item.page_count,chunks:Number(start.chunks||0),status:"local+cloud",
+              ready_for_search:true,sync_status:"synced"
+            });
             await idbDelete("sync_queue",item.id);
             continue;
           }
@@ -2785,7 +2893,7 @@
           while(true){
             const rows=await window.FNSRagCascade.getDocumentChunks(item.document_id,offset,20);
             if(!rows.length) break;
-            await api("/api/admin/local-ingest-append",{
+            const appended=await api("/api/admin/local-ingest-append",{
               method:"POST",headers:{"Content-Type":"application/json"},
               body:JSON.stringify({
                 job_id:start.job_id,
@@ -2793,6 +2901,16 @@
               })
             },false);
             offset+=rows.length;
+            await idbPut("sync_queue",{
+              ...item,
+              status:"syncing",
+              cloud_job_id:String(start.job_id||""),
+              cloud_document_id:String(start.document_id||""),
+              expected_pages:Number(appended.expected_pages||item.page_count||0),
+              received_pages:Number(appended.received_pages||offset),
+              cloud_chunks:Number(appended.chunks||0),
+              updated_at:Date.now()
+            });
           }
 
           const committed=await api("/api/admin/local-ingest-commit",{
@@ -2800,6 +2918,10 @@
             body:JSON.stringify({job_id:start.job_id})
           },false);
 
+          let jobStatus=null;
+          try{
+            jobStatus=await api("/api/index-status?job_id="+encodeURIComponent(start.job_id),{method:"GET"},false);
+          }catch{}
           await saveLocalCatalogEntry({
             ...item,
             cloud_document_id:String(committed.document_id || start.document_id || ""),
@@ -2807,7 +2929,11 @@
             titulo:item.title,
             paginas:item.page_count,
             chunks:Number(committed.chunks || 0),
-            status:"local+cloud"
+            status:"local+cloud",
+            last_job_id:String(start.job_id||""),
+            ready_for_search:jobStatus?.ready_for_search===true,
+            pipeline_stages:jobStatus?.stages || null,
+            sync_status:"synced"
           });
           await idbDelete("sync_queue",item.id);
           backendLibraryChanged=true;
