@@ -2,13 +2,15 @@ import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAu
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "9.1.0-private-hybrid-encyclopedia";
-const GEMINI_MODEL = "gemini-3.8-flash";
-const GROK_MODEL = "grok-4.7";
+const VERSION = "10.0.0-zero-cost-private-offline-online";
 const FAST_MEMORY_MESSAGES = 8;
-// Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
+// v10: private library + local/offline retrieval + zero-cost cloud fallbacks.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
+const DEEP_CHAT_MODEL = "openai/gpt-oss-120b";
+const WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+const WORKERS_AI_DAILY_CALL_LIMIT = 40;
+const ZERO_COST_MODE = true;
 const STT_MODEL = "whisper-large-v3-turbo";
 const TTS_MODEL = "browser-local-pt-BR";
 const MAX_TEXT_CHARS = 30_000_000;
@@ -1909,6 +1911,8 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
         temperature,
         max_completion_tokens: maxCompletionTokens,
         stream,
+        store:false,
+        citation_options:"disabled",
       }),
     });
   };
@@ -1937,17 +1941,13 @@ async function groqCompletion(env, messages, stream = false, options = {}) {
 }
 
 
-function geminiApiKey(env) {
-  return String(env?.GEMINI_API_KEY || env?.GOOGLE_API_KEY || "").trim();
-}
-
-function grokApiKey(env) {
-  return String(env?.XAI_API_KEY || env?.GROK_API_KEY || "").trim();
+function workersAiConfigured(env) {
+  return Boolean(env?.AI && typeof env.AI.run === "function");
 }
 
 function redactExternalPrompt(text) {
   return String(text || "")
-    .replace(/\b(?:filename|document_id|chunk_index|storage_key|r2_key)\s*[:=]\s*[^\s,;]+/giu,"")
+    .replace(/\b(?:filename|document_id|chunk_index|storage_key|r2_key|cloud_document_id)\s*[:=]\s*[^\s,;]+/giu,"")
     .replace(/\b[^\s/\\]+\.pdf\b/giu,"[arquivo]")
     .replace(/\b[a-f0-9]{32,64}\b/giu,"[id]")
     .replace(/\b(?:standard works|obras padrão)\b/giu,"")
@@ -1956,72 +1956,119 @@ function redactExternalPrompt(text) {
 }
 
 function externalSafeMessages(messages) {
-  return Array.from(messages || []).map(m=>({role:String(m?.role || "user"),content:redactExternalPrompt(m?.content || "")}));
-}
-
-async function geminiCompletion(env,messages,options={}) {
-  const key=geminiApiKey(env);
-  if(!key){const error=new Error("Gemini não configurado.");error.code="GEMINI_NOT_CONFIGURED";throw error;}
-  const safe=externalSafeMessages(messages);
-  const system=safe.filter(m=>m.role==="system").map(m=>m.content).filter(Boolean).join("\n\n");
-  const conversation=safe.filter(m=>m.role!=="system").map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
-  const model=String(env?.GEMINI_MODEL || GEMINI_MODEL).trim() || GEMINI_MODEL;
-  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({system_instruction:system?{parts:[{text:system}]}:undefined,contents:conversation,generationConfig:{maxOutputTokens:Math.max(200,Number(options.max_completion_tokens || MASTER_NODE_MAX_COMPLETION_TOKENS))}})});
-  if(!res.ok){const body=await res.json().catch(()=>({}));const error=new Error(body?.error?.message || ("Gemini HTTP "+res.status));error.status=res.status;throw error;}
-  const data=await res.json();
-  const text=Array.from(data?.candidates?.[0]?.content?.parts || []).map(p=>String(p?.text || "")).join("").trim();
-  if(!text) throw new Error("Gemini retornou resposta vazia.");
-  return new Response(JSON.stringify({choices:[{message:{content:text}}],_provider:"gemini"}),{headers:{"Content-Type":"application/json"}});
-}
-
-async function grokCompletion(env,messages,options={}) {
-  const key=grokApiKey(env);
-  if(!key){const error=new Error("Grok não configurado.");error.code="GROK_NOT_CONFIGURED";throw error;}
-  const safe=externalSafeMessages(messages);
-  const model=String(env?.GROK_MODEL || GROK_MODEL).trim() || GROK_MODEL;
-  const res=await fetch("https://api.x.ai/v1/chat/completions",{
-    method:"POST",
-    headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model,
-      messages:safe,
-      temperature:0,
-      max_tokens:Math.max(200,Number(options.max_completion_tokens || MASTER_NODE_MAX_COMPLETION_TOKENS))
-    })
-  });
-  if(!res.ok){const body=await res.json().catch(()=>({}));const error=new Error(body?.error?.message || ("Grok HTTP "+res.status));error.status=res.status;throw error;}
-  const data=await res.json();
-  return new Response(JSON.stringify({...data,_provider:"grok"}),{headers:{"Content-Type":"application/json"}});
+  const safe=Array.from(messages || []).map(m=>({
+    role:String(m?.role || "user"),
+    content:redactExternalPrompt(m?.content || "")
+  }));
+  const serialized=JSON.stringify(safe);
+  if(/(?:document_id|chunk_index|storage_key|r2_key|cloud_document_id|\.pdf\b)/iu.test(serialized)){
+    const error=new Error("Privacy Gate bloqueou metadados técnicos antes do provedor externo.");
+    error.code="PRIVACY_GATE_BLOCKED";
+    throw error;
+  }
+  return safe;
 }
 
 function reasoningProviderStatus(env) {
   return {
-    gemini:Boolean(geminiApiKey(env)),
-    grok:Boolean(grokApiKey(env)),
-    groq:groqApiKeys(env).length>0
+    groq_fast:groqApiKeys(env).length>0,
+    groq_deep:groqApiKeys(env).length>0,
+    workers_ai:workersAiConfigured(env),
+    offline_local:true
   };
 }
 
-function requireReasoningProvider(env) {
-  const providers=reasoningProviderStatus(env);
-  if(!providers.gemini && !providers.grok && !providers.groq){
-    const error=new Error("Nenhum provedor de raciocínio foi configurado no servidor.");
-    error.code="EXTERNAL_AI_NOT_CONFIGURED";
-    throw error;
-  }
-  return providers;
+function selectGroqModel(question,contract,sources=[]) {
+  const mode=String(contract?.mode || "factual");
+  const deep=["analysis","comparison","reflection","hypothesis"].includes(mode) ||
+    String(question||"").length>280 ||
+    Array.from(sources||[]).length>=10;
+  return deep ? DEEP_CHAT_MODEL : CHAT_MODEL;
 }
 
-async function hybridReasoningCompletion(env,messages,options={}) {
-  const providers=reasoningProviderStatus(env);
-  if(providers.gemini){try{return await geminiCompletion(env,messages,options);}catch{}}
-  if(providers.grok){try{return await grokCompletion(env,messages,options);}catch{}}
-  if(providers.groq){
-    const res=await groqCompletion(env,externalSafeMessages(messages),false,options);
-    const data=await res.clone().json().catch(()=>({}));
-    return new Response(JSON.stringify({...data,_provider:"groq"}),{status:res.status,headers:{"Content-Type":"application/json"}});
+async function consumeZeroCostAllowance(env,provider,limit) {
+  if(!ZERO_COST_MODE) return {allowed:false,reason:"zero-cost-disabled"};
+  if(!env?.LIBRARY) return {allowed:false,reason:"library-counter-unavailable"};
+  try{
+    return await libraryCall(env,"/zero-cost/consume",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({provider:String(provider||""),limit:Number(limit||0)})
+    });
+  }catch{
+    return {allowed:false,reason:"counter-unavailable"};
   }
-  requireReasoningProvider(env);
+}
+
+async function workersAiCompletion(env,messages,options={}) {
+  if(!workersAiConfigured(env)){
+    const error=new Error("Workers AI não configurado.");
+    error.code="WORKERS_AI_NOT_CONFIGURED";
+    throw error;
+  }
+  const allowance=await consumeZeroCostAllowance(env,"workers-ai",WORKERS_AI_DAILY_CALL_LIMIT);
+  if(allowance?.allowed!==true){
+    const error=new Error("Limite gratuito diário do fallback Workers AI protegido pelo ZERO_COST_GUARD.");
+    error.code="ZERO_COST_LIMIT";
+    throw error;
+  }
+  const safe=externalSafeMessages(messages);
+  const result=await env.AI.run(WORKERS_AI_MODEL,{
+    messages:safe,
+    temperature:0,
+    max_completion_tokens:Math.max(200,Math.min(1200,Number(options.max_completion_tokens || 900)))
+  });
+  const text=String(
+    result?.response ||
+    result?.result?.response ||
+    result?.choices?.[0]?.message?.content ||
+    result?.output_text ||
+    ""
+  ).trim();
+  if(!text){
+    const error=new Error("Workers AI retornou resposta vazia.");
+    error.code="WORKERS_AI_EMPTY";
+    throw error;
+  }
+  return new Response(JSON.stringify({
+    choices:[{message:{content:text}}],
+    _provider:"workers-ai",
+    _model:WORKERS_AI_MODEL,
+    _zero_cost:true
+  }),{headers:{"Content-Type":"application/json"}});
+}
+
+async function zeroCostReasoningCompletion(env,messages,options={}) {
+  const safe=externalSafeMessages(messages);
+  const keys=groqApiKeys(env);
+  const requestedModel=String(options.model || CHAT_MODEL);
+  if(keys.length){
+    const models=requestedModel===DEEP_CHAT_MODEL
+      ? [DEEP_CHAT_MODEL,CHAT_MODEL]
+      : [CHAT_MODEL];
+    for(const model of models){
+      try{
+        const res=await groqCompletion(env,safe,false,{...options,model});
+        const data=await res.clone().json().catch(()=>({}));
+        return new Response(JSON.stringify({
+          ...data,
+          _provider:model===DEEP_CHAT_MODEL ? "groq-120b" : "groq-20b",
+          _model:model,
+          _zero_cost:true
+        }),{status:res.status,headers:{"Content-Type":"application/json"}});
+      }catch(error){
+        if(error?.code==="PRIVACY_GATE_BLOCKED") throw error;
+      }
+    }
+  }
+  if(workersAiConfigured(env)){
+    try{return await workersAiCompletion(env,safe,options);}catch(error){
+      if(error?.code==="PRIVACY_GATE_BLOCKED") throw error;
+    }
+  }
+  const error=new Error("Provedores gratuitos indisponíveis; resposta externa bloqueada pelo ZERO_COST_GUARD.");
+  error.code="ZERO_COST_PROVIDERS_UNAVAILABLE";
+  throw error;
 }
 
 async function mapExtractReferences(env, question, batch, batchIndex) {
@@ -2391,7 +2438,9 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
   ];
   const groqStarted=Date.now();
   try{
-    const res=await hybridReasoningCompletion(env,messages,{
+    const selectedModel=selectGroqModel(question,contract,sources);
+    const res=await zeroCostReasoningCompletion(env,messages,{
+      model:selectedModel,
       input_budget:9200,
       max_completion_tokens:MASTER_NODE_MAX_COMPLETION_TOKENS,
       temperature:0.0,
@@ -2399,7 +2448,12 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
     });
     const data=await res.json().catch(()=>({}));
     const text=String(data?.choices?.[0]?.message?.content || "").trim();
-    if(text && !isEmptyGroundedFailure(text)) return {ok:true,text,provider:String(data?._provider || "groq"),groq_ms:Date.now()-groqStarted};
+    if(text && !isEmptyGroundedFailure(text)) return {
+      ok:true,text,
+      provider:String(data?._provider || "local-deterministic"),
+      model:String(data?._model || selectedModel),
+      groq_ms:Date.now()-groqStarted
+    };
   }catch(error){
     return {ok:false,text:deterministicSynthesisFromSources(sources),error:String(error?.message||error),groq_ms:Date.now()-groqStarted};
   }
@@ -2471,8 +2525,9 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     relay_mode:"async-worker-pool",
     active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
     master_node:"final-fusion",
-    reasoning_provider:String(master.provider || "groq"),
-    llm_calls:1,
+    reasoning_provider:String(master.provider || "local-deterministic"),
+    reasoning_model:String(master.model || ""),
+    llm_calls:master.ok===true ? 1 : 0,
     pre_master_llm_calls:0,
     reducer_ms:reducerMs,
     groq_ms:Number(master.groq_ms || 0),
@@ -2497,7 +2552,7 @@ async function massivePipelineStreamResponse(env,meta) {
         emit("meta",{
           fontes:meta.sources,
           fallback:false,
-          provider:"hybrid-private-rag",
+          provider:"v10-private-rag",
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
           cognitive_contract_version:"1.0",
           cognitive_v74:true,
@@ -2545,8 +2600,9 @@ async function massivePipelineStreamResponse(env,meta) {
           fontes:usedSources,
           fallback:false,
           memory_persisted:memoryPersisted,
-          provider:"hybrid-private-rag",
-          reasoning_provider:String(reduced.reasoning_provider || "groq"),
+          provider:"v10-private-rag",
+          reasoning_provider:String(reduced.reasoning_provider || "local-deterministic"),
+          reasoning_model:String(reduced.reasoning_model || ""),
           cognitive_mode:String(meta.cognitiveContract?.mode || "analysis"),
           cognitive_contract_version:"1.0",
           cognitive_memory_used:Boolean(meta.cognitiveContract?.use_history),
@@ -4076,8 +4132,6 @@ async function chat(request, env) {
     return json(payload);
   }
 
-  requireReasoningProvider(env);
-
   if (wantsStream) {
     return massivePipelineStreamResponse(env,{
       ownerId,body,question,sources,history,retrievalLevel,
@@ -4107,8 +4161,9 @@ async function chat(request, env) {
     fontes: usedSources,
     fallback: false,
     memory_persisted: memoryPersisted,
-    provider: "hybrid-private-rag",
-    reasoning_provider:String(reduced.reasoning_provider || "groq"),
+    provider: "v10-private-rag",
+    reasoning_provider:String(reduced.reasoning_provider || "local-deterministic"),
+    reasoning_model:String(reduced.reasoning_model || ""),
     cognitive_mode: cognitiveContract.mode,
     cognitive_contract_version: cognitiveContract.version,
     cognitive_memory_used: cognitiveContract.use_history,
@@ -4184,7 +4239,7 @@ async function tts(request, env) {
 async function status(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
-  if (!geminiApiKey(env) && !grokApiKey(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER");
+  if (!workersAiConfigured(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER_OPTIONAL");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   let storageProbe = missing.length ? "missing-binding" : "not-started";
   if (!missing.length) {
@@ -4447,7 +4502,7 @@ async function status(env) {
     groq_max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
     r2_direct_ready: Boolean(env.PDFS),
     vector_backend: "durable-object-cosine",
-    llm_provider: "gemini+grok+groq-hybrid",
+    llm_provider: "groq20+groq120+workers-ai+offline-local",
     provider_configured: reasoningProviderStatus(env),
     external_privacy_gate: true,
     external_models_receive_original_files: false,
@@ -4456,7 +4511,7 @@ async function status(env) {
     legacy_embedding_provider: "cohere-disabled",
     local_embedding_model: LOCAL_EMBEDDING_MODEL,
     local_embedding_dimensions: LOCAL_EMBEDDING_DIMENSIONS,
-    workers_ai_used: false,
+    workers_ai_used: workersAiConfigured(env),
     render_dependency: false,
     r2_bucket: "consciencia-fabiano-pdfs",
     official_workers_host: "consciencia-fabiano.focoeepoder2.workers.dev",
@@ -4645,6 +4700,13 @@ export class LibraryDO {
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL,
           updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS zero_cost_usage (
+          day TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(day, provider)
         );
         CREATE TABLE IF NOT EXISTS conversation_messages (
           id TEXT PRIMARY KEY,
@@ -5445,6 +5507,24 @@ export class LibraryDO {
         return json({ ok: true, cleared: Number(before) });
       }
 
+      if (url.pathname === "/zero-cost/consume" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const provider=String(body?.provider||"").trim().slice(0,64);
+        const limit=Math.max(1,Math.min(500,Number(body?.limit||1)));
+        if(!provider) return json({ok:false,allowed:false,message:"provider obrigatório"},400);
+        const day=new Date().toISOString().slice(0,10);
+        const current=Number([...this.sql.exec(
+          "SELECT calls FROM zero_cost_usage WHERE day=? AND provider=? LIMIT 1",day,provider
+        )][0]?.calls || 0);
+        if(current>=limit) return json({ok:true,allowed:false,provider,day,calls:current,limit});
+        const next=current+1;
+        this.sql.exec(
+          "INSERT OR REPLACE INTO zero_cost_usage (day,provider,calls,updated_at) VALUES (?,?,?,?)",
+          day,provider,next,new Date().toISOString()
+        );
+        return json({ok:true,allowed:true,provider,day,calls:next,limit});
+      }
+
       if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
         const chunks=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
         const marker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
@@ -5657,7 +5737,7 @@ export default {
     if (url.pathname === "/health/deploy") {
       const missing=[];
       if(!env.LIBRARY) missing.push("LIBRARY");
-      if(!geminiApiKey(env) && !grokApiKey(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER");
+      if(!workersAiConfigured(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER_OPTIONAL");
       return json({
         ok: missing.length===0,
         service: "Consciência do Fabiano",
@@ -5665,15 +5745,24 @@ export default {
         architecture: "cloudflare-v7.1-fabiano-r2-cross-device",
         storage_backend: "durable-object-sqlite",
     cross_device_storage: "r2-native-binding",
-        workers_ai_used: false,
-        llm_provider: "gemini+grok+groq-hybrid",
+        workers_ai_used: workersAiConfigured(env),
+        llm_provider: "groq20+groq120+workers-ai+offline-local",
         provider_auth_surface: "server-side-secrets-only",
-        provider_chain: ["gemini","grok","groq"],
+        provider_chain: ["groq-20b","groq-120b","workers-ai","offline-local"],
         provider_configured: reasoningProviderStatus(env),
         external_privacy_gate: true,
         external_models_receive_original_files: false,
         external_models_receive_full_library: false,
         external_payload_mode: "filtered-evidence-only",
+        zero_cost_guard: true,
+        workers_ai_daily_call_limit: WORKERS_AI_DAILY_CALL_LIMIT,
+        workers_ai_model: WORKERS_AI_MODEL,
+        groq_fast_model: CHAT_MODEL,
+        groq_deep_model: DEEP_CHAT_MODEL,
+        external_egress_allowlist: ["api.groq.com","cloudflare-workers-ai-binding"],
+        gemini_disabled: true,
+        xai_grok_disabled: true,
+        full_offline_mode_supported: true,
         client_provider_keys_exposed: false,
         supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
         direct_postgres_connections: 0,
