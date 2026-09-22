@@ -149,6 +149,8 @@ function cleanScriptureSegment(text,footer){
 
   raw=raw.replace(/\s+[a-z]\s+GEE\b[^.;]{0,220}/giu," ");
   raw=raw.replace(/\s+\d{1,3}\s+[a-z]\s+GEE\b[^.;]{0,220}/giu," ");
+  raw=raw.replace(/\bGEE\b[^.;]{0,220}[.;]?/giu," ");
+  raw=raw.replace(/\bTJS\b[^.;]{0,220}[.;]?/giu," ");
   return raw.replace(/\s+/g," ").trim();
 }
 
@@ -240,12 +242,41 @@ export function buildV3EvidenceIndex(rows=[]){
   }
 
   return {
-    version:"3.0.2-evidence-engine-focus",
+    version:"3.0.3-evidence-engine-verified-window",
     generated_at:new Date().toISOString(),
     source_rows:Number(rows?.length||0),
     units,
     counts:units.reduce((acc,u)=>{acc[u.kind]=(acc[u.kind]||0)+1;return acc;},{})
   };
+}
+
+export function focusedV3Excerpt(text,expansions=[],queryStems=[],maxChars=760){
+  const raw=String(text||"").replace(/\s+/g," ").trim();
+  if(!raw)return {accepted:false,text:"",reason:"empty"};
+  const sentences=raw.split(/(?<=[.!?;:])\s+/u).map(x=>x.trim()).filter(Boolean);
+  if(!sentences.length)return {accepted:false,text:"",reason:"no-sentences"};
+
+  const phrases=[...new Set((expansions||[]).map(v3Fold).filter(x=>x.length>=4))]
+    .sort((a,b)=>b.length-a.length);
+
+  for(let i=0;i<sentences.length;i++){
+    const folded=v3Fold(sentences[i]);
+    const phrase=phrases.find(p=>folded.includes(p));
+    if(!phrase)continue;
+    let picked=sentences.slice(Math.max(0,i-1),Math.min(sentences.length,i+2)).join(" ").trim();
+    if(picked.length>maxChars)picked=sentences[i].slice(0,maxChars).trim();
+    return {accepted:true,text:picked,reason:"alias-phrase",matched:phrase};
+  }
+
+  const minCore=queryStems.length<=1?1:(queryStems.length===2?1:0.67);
+  for(let size=1;size<=3;size++){
+    for(let i=0;i<=sentences.length-size;i++){
+      const picked=sentences.slice(i,i+size).join(" ").trim();
+      if(stemCoverage(queryStems,compactStemText(picked))<minCore)continue;
+      return {accepted:true,text:picked.slice(0,maxChars).trim(),reason:"core-proximity",matched:""};
+    }
+  }
+  return {accepted:false,text:"",reason:"concept-not-localized"};
 }
 
 function phraseScore(normalized,phrases){
@@ -267,6 +298,7 @@ export function searchV3Evidence(index,query,aliasObject={},options={}){
   const out=[];
 
   for(const unit of index?.units||[]){
+    if(unit.kind==="scripture-page-window" && options.allowBroadScripture!==true)continue;
     const stemText=unit.stem_text||compactStemText(unit.text);
     const coreCoverage=stemCoverage(qStems,stemText);
     const broadCoverage=stemCoverage(expansionStems,stemText);
@@ -281,7 +313,17 @@ export function searchV3Evidence(index,query,aliasObject={},options={}){
     for(const stem of qStems)if(stemText.includes(" "+stem+" "))freq++;
     const score=(exactOriginal?14:0)+direct.score+coreCoverage*10+broadCoverage*5+Math.min(3,freq*0.7);
     if(score<3.2)continue;
-    out.push({...unit,score,query_core_coverage:coreCoverage,query_broad_coverage:broadCoverage});
+    const focused=focusedV3Excerpt(unit.text,expansions,qStems,760);
+    if(!focused.accepted)continue;
+    out.push({
+      ...unit,
+      text:focused.text,
+      score,
+      focus_verified:true,
+      focus_reason:focused.reason,
+      query_core_coverage:coreCoverage,
+      query_broad_coverage:broadCoverage
+    });
   }
 
   out.sort((a,b)=>b.score-a.score||String(a.reference).localeCompare(String(b.reference)));
