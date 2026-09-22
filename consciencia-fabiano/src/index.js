@@ -5551,7 +5551,39 @@ export class LibraryDO {
           id
         )][0] || null;
         if (!row) return json({ ok: false, message: "Job não encontrado." }, 404);
-        return json({ ok: true, ...row });
+
+        const expected=Math.max(0,Number(row.expected_pages || row.paginas || 0));
+        const received=Math.max(0,Number(row.received_pages || 0));
+        const chunks=Math.max(0,Number(row.chunks || 0));
+        const extractionProgress=expected>0?Math.min(100,Math.round((received/expected)*100)):(received>0?100:0);
+        let ftsIndexed=0;
+        if(row.document_id && this.ftsReady===true){
+          try{
+            ftsIndexed=Number([...this.sql.exec(
+              "SELECT COUNT(*) AS n FROM encyclopedia_fts e JOIN chunks c ON c.rowid=e.rowid WHERE c.document_id=?",
+              row.document_id
+            )][0]?.n || 0);
+          }catch{ftsIndexed=0;}
+        }
+        const encyclopediaProgress=chunks>0
+          ? (this.ftsReady===true?Math.min(100,Math.round((ftsIndexed/chunks)*100)):0)
+          : 0;
+        const indexingProgress=chunks>0 && received>=expected && expected>0
+          ? 100
+          : Math.min(99,Math.max(0,Number(row.progress || 0)));
+        const sampleSearchable=chunks>0 && (ftsIndexed>0 || this.ftsReady!==true);
+        const readyForSearch=Boolean(expected>0 && received>=expected && chunks>0 && sampleSearchable);
+        return json({
+          ok:true,
+          ...row,
+          ready_for_search:readyForSearch,
+          stages:{
+            extraction:{progress:extractionProgress,received_pages:received,expected_pages:expected},
+            indexing:{progress:indexingProgress,chunks},
+            encyclopedia:{progress:encyclopediaProgress,fts_ready:this.ftsReady===true,indexed_chunks:ftsIndexed,total_chunks:chunks},
+            search:{status:readyForSearch?"ready":"waiting",sample_searchable:sampleSearchable}
+          }
+        });
       }
 
       if (url.pathname === "/jobs/requeue" && request.method === "POST") {
@@ -5826,7 +5858,7 @@ export class LibraryDO {
           const clean=cleanNarrativeText(evidence);
           const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
           const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
-          return {page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage};
+          return {page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName(row.filename,row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage};
         };
 
         // Primary: FTS5 derived index. If anything about the derived index fails,
@@ -5857,7 +5889,7 @@ export class LibraryDO {
             const batchSize=200;
             while(accepted.length<pageSize && candidateOffset<candidateTotal){
               const rows=[...this.sql.exec(`
-                SELECT c.page,c.text,d.title,d.author
+                SELECT c.page,c.text,d.filename,d.title,d.author
                 FROM encyclopedia_fts e
                 JOIN chunks c ON c.rowid=e.rowid
                 JOIN documents d ON d.id=c.document_id
@@ -5895,7 +5927,7 @@ export class LibraryDO {
         const sqlPageSize=200;
         for(let offset=0;;offset+=sqlPageSize){
           const rows=[...this.sql.exec(`
-            SELECT c.page,c.text,d.title,d.author
+            SELECT c.page,c.text,d.filename,d.title,d.author
             FROM chunks c JOIN documents d ON d.id=c.document_id
             WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
             ORDER BY c.rowid ASC
