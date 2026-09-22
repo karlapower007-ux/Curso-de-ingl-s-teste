@@ -58,6 +58,11 @@ jobs:
               });
               await page.locator("#questionInput").waitFor({state:"visible",timeout:10000});
               await page.locator("#dictionaryTab").waitFor({state:"visible",timeout:10000});
+              await page.waitForFunction(()=>{
+                const tab=document.querySelector("#dictionaryTab");
+                const chat=document.querySelector("#chatTab");
+                return typeof tab?.onclick==="function" && typeof chat?.onclick==="function";
+              },null,{timeout:15000});
               const layout=await page.evaluate(()=>({
                 innerWidth:window.innerWidth,
                 scrollWidth:document.documentElement.scrollWidth,
@@ -71,8 +76,10 @@ jobs:
               if(pageErrors.length) throw new Error("Page errors em "+width+": "+pageErrors.join(" | "));
 
               await page.locator("#dictionaryTab").click();
-              await page.locator("#dictionaryInput").waitFor({state:"visible",timeout:5000});
+              await page.locator("#dictionaryPanel").waitFor({state:"visible",timeout:10000});
+              await page.locator("#dictionaryInput").waitFor({state:"visible",timeout:10000});
               await page.locator("#chatTab").click();
+              await page.locator("#chatPanel").waitFor({state:"visible",timeout:10000});
               await page.locator("#operationMode").waitFor({state:"visible",timeout:5000});
               const modes=await page.locator("#operationMode option").allTextContents();
               if(!modes.some(x=>x.includes("100% offline"))||!modes.some(x=>x.includes("Online"))) {
