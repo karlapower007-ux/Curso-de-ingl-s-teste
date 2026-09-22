@@ -4,7 +4,7 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
   V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,formatGroundedAnswer,buildPrompt,chooseInstalledModel,
-  focusEvidence,answerStaysOnFocus
+  focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus
 } from "./v2-local-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +41,25 @@ assert.ok(grounded.includes("Resposta documental exata"),"Grounded Exact deve id
 assert.ok(grounded.includes("vida pré-mortal"),"Grounded Exact deve preservar texto focado da biblioteca");
 assert.ok(grounded.includes("Fonte:"),"Grounded Exact deve citar a fonte em cada ponto");
 assert.ok(!grounded.includes("Espírito da Verdade"),"Grounded Exact não pode incluir evidência fora do foco");
+const scripturePage="24 E disse: És tu meu filho Esaú mesmo? Ele disse: Eu sou. 27 a Heb. 11:20. GEE Bênçãos Patriarcais. 29 a GEE Amaldiçoar. 47 GÊNESIS 27:23–38";
+assert.equal(extractVerifiedPageReference(scripturePage),"GÊNESIS 27:23–38","rodapé canônico deve vencer referências cruzadas");
+const scriptureCitation=citationIntegrity({
+  filename:"standard-works-83806-por.pdf",title:"",page:55,text:"27 a Heb. 11:20. GEE Bênçãos Patriarcais."
+},scripturePage);
+assert.equal(scriptureCitation.verified,true);
+assert.equal(scriptureCitation.reference,"GÊNESIS 27:23–38");
+assert.notEqual(scriptureCitation.reference,"Hebreus 11:20");
+const apparatusOnly={
+  filename:"standard-works-83806-por.pdf",
+  text:"5 a GEE Vida Pré-mortal. b GEE Criação, Criar.",
+  focus_aliases:["vida pré-mortal"]
+};
+assert.equal(hasSubstantiveFocus(apparatusOnly),false,"GEE isolado não pode virar evidência substantiva");
+const bookCitation=citationIntegrity({title:"Discursos de Brigham Young",page:97,text:"Trecho real do livro."},"");
+assert.equal(bookCitation.verified,true);
+assert.equal(bookCitation.reference,"Discursos de Brigham Young • página 97");
+const unsafeScripture=citationIntegrity({filename:"standard-works-83806-por.pdf",page:500,text:"Jó 26:10 é apenas uma referência cruzada."},"Jó 26:10 é apenas uma referência cruzada.");
+assert.equal(unsafeScripture.verified,false,"referência solta no texto não pode ser tratada como origem");
 const literal=formatExactAnswer(exact.matches);
 assert.ok(literal.includes("Plano de Salvação"));
 assert.ok(literal.includes("página 10"));
@@ -83,6 +102,9 @@ assert.ok(server.includes("answerStaysOnFocus"),"servidor deve bloquear resposta
 assert.ok(server.includes('provider:"focus-lock-deterministic"'),"servidor deve ter fallback determinístico quando o Qwen desviar do tema");
 assert.ok(server.includes('if(body.grounded===true)'),"servidor deve ter caminho Grounded Exact explícito");
 assert.ok(server.includes('provider:"grounded-exact-no-llm"'),"Grounded Exact deve bypassar o LLM na resposta");
+assert.ok(server.includes("applyCitationIntegrity"),"chat deve validar proveniência antes de exibir fonte");
+assert.ok(server.includes("citation_verified:true"),"evidências aceitas devem carregar selo interno de verificação");
+assert.ok(server.includes("citation_integrity:true"),"Citação exata também deve passar pelo Citation Integrity Lock");
 assert.ok(server.includes("candidateLimit=lowRam?60"),"perfil 4 GB deve ampliar candidatos lexicais sem embeddings pesados");
 assert.ok(server.includes("maxEvidence=lowRam?10"),"perfil 4 GB deve usar mais evidências focadas");
 assert.ok(server.includes("preferredContext=lowRam?1536"),"perfil 4 GB deve usar contexto compacto de 1536");
@@ -98,6 +120,9 @@ assert.ok(ui.includes('["explain","Explicação exata"]'),"modo Explicação dev
 assert.ok(ui.includes('grounded:mode!=="exact"'),"chat padrão deve pedir Grounded Exact ao servidor");
 assert.ok(ui.includes('browserOnly&&!apiBase'),"queda do Ollama não pode forçar fallback frouxo quando o servidor local está disponível");
 assert.ok(ui.includes("Grounded Exact • somente evidências da biblioteca • zero invenções"),"status deve deixar claro o caminho exato");
+assert.ok(ui.includes("✓ Fonte verificada — "),"UI deve identificar visualmente fontes validadas");
+assert.ok(ui.includes('mode==="exact"&&engine&&Number(localState?.chunks||0)>0&&!apiBase'),"Citação exata só pode bypassar o servidor quando a ponte local não existir");
+assert.ok(ui.includes("canonical_reference:r.canonical_reference"),"UI deve preservar metadado canônico ao enviar evidências");
 assert.ok(ui.includes("http://127.0.0.1:8788/api/v2/health"),"UI oficial deve detectar a ponte Ollama local");
 assert.ok(ui.includes("window.__FNS_V2_API_BASE"),"UI deve compartilhar a base local com o motor de embeddings");
 assert.ok(ui.includes('const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;'),"sendLocal deve inicializar lowRam antes de usar o perfil de pouca memória");
@@ -139,6 +164,7 @@ console.log(JSON.stringify({
   qwen_embeddings:true,
   richer_low_ram_chat:true,
   grounded_exact_chat:true,
+  citation_integrity_lock:true,
   browser_tts:true,
   modes:["short","explain","compare","timeline","exact"],
   responsive:[360,390,412,1366]
