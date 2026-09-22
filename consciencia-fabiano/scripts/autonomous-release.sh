@@ -726,6 +726,10 @@ PY
     [ "$pt_http" = "200" ] || die "GROUNDED_CHAT_PT_HTTP_$pt_http"
     jq -e '.ok == true and .fallback == false and (.resposta|type) == "string" and (.resposta|length) > 30 and (.fontes|length) > 0 and .cognitive_v74 == true and .cognitive_catalog_size == 1000 and .turbine_selected_count > 0 and .turbine_selected_count <= 96 and .turbine_executed_count == .turbine_selected_count and .turbine_concurrency == 8 and .llm_calls == 1' /tmp/chat-smoke-pt.json >/dev/null || die "GROUNDED_CHAT_PT_BAD"
     log "GROUNDED_CHAT_PT_PASS=yes"
+    if jq -e '.provider_configured.gemini == true' /tmp/health.json >/dev/null 2>&1; then
+      jq -e '.reasoning_provider == "gemini"' /tmp/chat-smoke-pt.json >/dev/null || die "GEMINI_REASONING_NOT_ACTIVE"
+      log "GEMINI_REASONING_ACTIVE=yes"
+    fi
 
     jq -nc --arg q "$smoke_query" '{pergunta:("Explain in English, using only the library and citing the source: " + $q),historico:[],stream:false}' >/tmp/chat-smoke-en-payload.json
     en_http=$(curl -sS --max-time 60 -o /tmp/chat-smoke-en.json -w '%{http_code}' "$BASE/api/chat" -H 'Content-Type: application/json' --data-binary @/tmp/chat-smoke-en-payload.json || echo 000)
