@@ -82,6 +82,16 @@ jobs:
               await page.locator("#chatPanel").waitFor({state:"visible",timeout:10000});
               await page.locator("#operationMode").waitFor({state:"visible",timeout:5000});
               const modes=await page.locator("#operationMode option").allTextContents();
+
+              await page.locator("#settingsTab").click();
+              await page.locator("#settingsPanel").waitFor({state:"visible",timeout:10000});
+              await page.locator("#settingsOperationMode").waitFor({state:"visible",timeout:10000});
+              const settingsModes=await page.locator("#settingsOperationMode option").allTextContents();
+              if(!settingsModes.some(x=>x.includes("100% offline"))||!settingsModes.some(x=>x.includes("Online"))) {
+                throw new Error("Modos offline/online ausentes em Configurações em "+width);
+              }
+              await page.locator("#chatTab").click();
+              await page.locator("#chatPanel").waitFor({state:"visible",timeout:10000});
               if(!modes.some(x=>x.includes("100% offline"))||!modes.some(x=>x.includes("Online"))) {
                 throw new Error("Modos offline/online ausentes em "+width);
               }
