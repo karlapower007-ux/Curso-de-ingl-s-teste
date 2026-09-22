@@ -2,7 +2,9 @@ const STOP=new Set([
   "a","o","as","os","um","uma","uns","umas","de","da","do","das","dos","e","em","no","na","nos","nas",
   "por","para","com","sem","sobre","que","qual","quais","como","quando","onde","porque","pois","ser","estar",
   "foi","eram","me","diga","explique","explica","detalhe","detalhadamente","mostre","mostrar","busque","buscar",
-  "encontre","encontrar","biblioteca","minha","segundo","somente","apenas","the","a","an","of","to","in","on",
+  "encontre","encontrar","aconteceu","acontece","ocorreu","ocorre","ensina","ensinam","fala","falam","diz","dizem",
+  "existe","existem","existia","significa","quero","saber","conte","descreva","descrever",
+  "biblioteca","minha","segundo","somente","apenas","the","a","an","of","to","in","on",
   "for","with","about","what","which","how","when","where","why","tell","explain","show","find","search"
 ]);
 
@@ -19,17 +21,20 @@ export function v3Fold(text){
 function stemToken(token){
   let t=v3Fold(token);
   if(!t)return "";
-  if(t.startsWith("espirit"))return "espirit";
+  if(t.startsWith("espirit")||t.startsWith("spirit"))return "espirit";
+  if(t==="world"||t.startsWith("world"))return "mundo";
+  if(t==="life"||t.startsWith("life"))return "vida";
+  if(t.startsWith("death"))return "mort";
   if(t.startsWith("premort"))return "premort";
   if(t.startsWith("preexist"))return "preexist";
   if(t.startsWith("mort"))return "mort";
-  if(t.startsWith("salva"))return "salv";
-  if(t.startsWith("redenc"))return "redenc";
-  if(t.startsWith("ressur"))return "ressur";
+  if(t.startsWith("salva")||t.startsWith("salvation"))return "salv";
+  if(t.startsWith("redenc")||t.startsWith("redemption"))return "redenc";
+  if(t.startsWith("ressur")||t.startsWith("resurrection"))return "ressur";
   if(t.startsWith("satan"))return "satan";
   if(t.startsWith("lucif"))return "lucif";
   if(t.startsWith("demon"))return "demon";
-  if(t.startsWith("diab"))return "diab";
+  if(t.startsWith("diab")||t.startsWith("devil"))return "diab";
   if(t.startsWith("sacerd"))return "sacerd";
   if(t.startsWith("exalt"))return "exalt";
   if(t.length>6)t=t.replace(/(?:mente|ções|coes|ção|cao|ais|al|ico|ica|icos|icas|osos|osas|oso|osa)$/u,"");
@@ -96,24 +101,29 @@ export function parseScriptureFooter(pageText=""){
   const raw=String(pageText||"").replace(/\s+/g," ").trim();
   if(!raw)return null;
   const tail=raw.slice(-1800);
-  const re=/\b\d{1,4}\s+((?:(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*(?:\s+(?:E|DE|DO|DA|DOS|DAS|[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*)){0,5}))\s+(\d{1,4}):(\d{1,4})(?:\s*[–-]\s*(\d{1,4}))?\b/gu;
+  const re=/\b\d{1,4}\s+((?:(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*(?:\s+(?:E|DE|DO|DA|DOS|DAS|[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*)){0,5}))\s+(\d{1,4}):(\d{1,4})(?:\s*[–-]\s*(?:(\d{1,4}):)?(\d{1,4}))?\b/gu;
   let m,last=null;
   while((m=re.exec(tail))){
+    const chapter=Number(m[2]||0);
+    const start=Number(m[3]||0);
+    const endChapter=Number(m[4]||chapter);
+    const end=Number(m[5]||start);
     last={
       book:String(m[1]||"").replace(/\s+/g," ").trim(),
-      chapter:Number(m[2]||0),
-      start:Number(m[3]||0),
-      end:Number(m[4]||m[3]||0)
+      chapter,start,endChapter,end,
+      crossChapter:endChapter!==chapter
     };
   }
   if(!last?.book||!last.chapter||!last.start)return null;
-  last.reference=last.book+" "+last.chapter+":"+last.start+(last.end&&last.end!==last.start?"–"+last.end:"");
+  last.reference=last.book+" "+last.chapter+":"+last.start+
+    (last.crossChapter?"–"+last.endChapter+":"+last.end:(last.end!==last.start?"–"+last.end:""));
   return last;
 }
 
 function verseStarts(text,footer){
   const raw=String(text||"");
   const out=[];
+  if(footer?.crossChapter)return out;
   const re=/(^|[.!?;:]\s+|\n|\s)(\d{1,3})\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ“"(\[])/gu;
   let m;
   while((m=re.exec(raw))){
@@ -130,10 +140,15 @@ function verseStarts(text,footer){
 function cleanScriptureSegment(text,footer){
   let raw=String(text||"").replace(/\s+/g," ").trim();
   const escapedBook=footer.book.replace(/[.*+?^$()|[\]\\]/g,"\\$&");
-  raw=raw.replace(new RegExp("\\b\\d{1,4}\\s+"+escapedBook+"\\s+"+footer.chapter+":"+footer.start+"(?:\\s*[–-]\\s*"+footer.end+")?\\b.*$","iu"),"").trim();
-  const noteAt=raw.search(/\s+\d{1,3}\s+[a-z]\s+(?:GEE\b|(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][^.;]{0,80}\d{1,3}:\d{1,3})/u);
-  if(noteAt>40)raw=raw.slice(0,noteAt).trim();
-  raw=raw.replace(/\s+[a-z]\s+GEE\b[^.;]{0,180}/giu," ");
+  const footerStart=new RegExp("\\b\\d{1,4}\\s+"+escapedBook+"\\s+"+footer.chapter+":"+footer.start+"\\b","iu");
+  const footerAt=raw.search(footerStart);
+  if(footerAt>20)raw=raw.slice(0,footerAt).trim();
+
+  const noteAt=raw.search(/\s+\d{1,3}\s+[a-z]\s+(?=(?:GEE\b|TJS\b|JS—|(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ]))/u);
+  if(noteAt>20)raw=raw.slice(0,noteAt).trim();
+
+  raw=raw.replace(/\s+[a-z]\s+GEE\b[^.;]{0,220}/giu," ");
+  raw=raw.replace(/\s+\d{1,3}\s+[a-z]\s+GEE\b[^.;]{0,220}/giu," ");
   return raw.replace(/\s+/g," ").trim();
 }
 
@@ -225,7 +240,7 @@ export function buildV3EvidenceIndex(rows=[]){
   }
 
   return {
-    version:"3.0.1-evidence-engine-light",
+    version:"3.0.2-evidence-engine-focus",
     generated_at:new Date().toISOString(),
     source_rows:Number(rows?.length||0),
     units,
@@ -255,12 +270,13 @@ export function searchV3Evidence(index,query,aliasObject={},options={}){
     const stemText=unit.stem_text||compactStemText(unit.text);
     const coreCoverage=stemCoverage(qStems,stemText);
     const broadCoverage=stemCoverage(expansionStems,stemText);
-    if(!strict && coreCoverage<0.34 && broadCoverage<0.24)continue;
+    if(!strict && coreCoverage<0.5 && broadCoverage<0.20)continue;
     const normalized=v3Fold(unit.text);
     const direct=phraseScore(normalized,expansions);
     const exactOriginal=original.length>=4&&normalized.includes(original);
+    const minCore=qStems.length<=1?1:(qStems.length===2?1:0.67);
     if(strict && !exactOriginal)continue;
-    if(!strict && direct.hits===0 && coreCoverage<0.5 && broadCoverage<0.35)continue;
+    if(!strict && direct.hits===0 && coreCoverage<minCore)continue;
     let freq=0;
     for(const stem of qStems)if(stemText.includes(" "+stem+" "))freq++;
     const score=(exactOriginal?14:0)+direct.score+coreCoverage*10+broadCoverage*5+Math.min(3,freq*0.7);
