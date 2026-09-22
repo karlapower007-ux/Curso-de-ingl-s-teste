@@ -78,8 +78,13 @@ export function expandV3Query(query,aliasObject={},extra=[]){
   for(const family of aliasFamilies(aliasObject)){
     let matched=family.phrases.some(p=>p && (q.includes(p)||p.includes(q)));
     if(!matched){
-      const ratio=overlapRatio(family.stems,qStems);
-      matched=ratio>=0.66 && Math.min(family.stems.length,qStems.length)>=1;
+      const overlap=family.stems.filter(stem=>qStems.includes(stem)).length;
+      const ratio=family.stems.length?overlap/family.stems.length:0;
+      if(family.stems.length===1){
+        matched=overlap===1 && family.phrases.some(p=>q.includes(p)||p.includes(q));
+      }else{
+        matched=overlap>=2 && ratio>=0.66;
+      }
     }
     if(matched)phrases.push(...family.phrases);
   }
