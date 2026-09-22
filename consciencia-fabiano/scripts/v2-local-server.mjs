@@ -7,7 +7,7 @@ import {createHash} from "node:crypto";
 import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
   exactAndMatches, lexicalCandidates, chooseInstalledModel,
-  formatExactAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
+  formatExactAnswer, formatGroundedAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
   focusEvidence, answerStaysOnFocus
 } from "./v2-local-core.mjs";
 
@@ -20,7 +20,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-rich-chat-voice-r6";
+const LOCAL_RUNTIME_BUILD="2026-09-22-grounded-exact-r7";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -384,6 +384,29 @@ async function handleChat(req,res){
   if(lowRam)evidence=compactLowRamEvidence(evidence,10);
   if(!evidence.length){
     json(res,{ok:true,answer:"A biblioteca local não encontrou evidência suficiente para responder a essa pergunta.",matches:[],mode,provider:"local-strict-empty",model:null});
+    return;
+  }
+
+  if(body.grounded===true){
+    const answer=formatGroundedAnswer(evidence,mode);
+    json(res,{
+      ok:true,
+      answer,
+      speech_text:answer,
+      evidence_digest:evidenceDigest(evidence,lowRam?10:8),
+      mode,
+      model:null,
+      provider:"grounded-exact-no-llm",
+      embedding_model:EMBED_MODEL,
+      evidence_count:evidence.length,
+      evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
+      matches:evidence.map(r=>({
+        reference:r.reference||publicReference(r),
+        title:r.public_title||"",
+        page:r.page||null,
+        text:r.text||""
+      }))
+    });
     return;
   }
 
