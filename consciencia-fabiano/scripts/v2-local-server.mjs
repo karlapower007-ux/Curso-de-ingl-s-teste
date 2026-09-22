@@ -197,6 +197,29 @@ function autoModel(installed){
   const set=new Set(installed);
   return safeOrder.find(x=>set.has(x))||null;
 }
+async function resolveResponseModel(installed,requested){
+  const clean=[...new Set((installed||[]).map(x=>String(x||"").trim()).filter(Boolean))];
+  const allowed=["qwen3:0.6b","qwen3:1.7b","qwen3:4b","qwen3:8b","qwen3.8:27b"];
+  if(requested&&requested!=="auto"){
+    const exact=clean.find(x=>x===requested);
+    if(exact)return exact;
+    const sameBase=clean.find(x=>allowed.includes(x)&&x.split(":")[0]===String(requested).split(":")[0]);
+    if(sameBase)return sameBase;
+    try{
+      await fetchOllama("/api/show",{method:"POST",body:JSON.stringify({model:requested})},5000);
+      return requested;
+    }catch{return null;}
+  }
+  const auto=autoModel(clean);
+  if(auto)return auto;
+  for(const candidate of allowed){
+    try{
+      await fetchOllama("/api/show",{method:"POST",body:JSON.stringify({model:candidate})},5000);
+      return candidate;
+    }catch{}
+  }
+  return null;
+}
 function hashText(text){return createHash("sha256").update(String(text||"")).digest("hex");}
 async function embedTexts(texts,{persist=false}={}){
   const input=(Array.isArray(texts)?texts:[texts]).map(x=>String(x||"")).filter(Boolean);
@@ -330,13 +353,13 @@ async function handleChat(req,res){
 
   const models=await installedModels();
   const requested=String(body.model||"auto");
-  const model=requested==="auto"?autoModel(models):chooseInstalledModel(models,requested);
+  const model=await resolveResponseModel(models,requested);
   if(!model){
     json(res,{
       ok:false,code:"LOCAL_MODEL_NOT_INSTALLED",
       error:"Nenhum modelo Qwen de resposta compatível está instalado no Ollama.",
       installed:models,recommended:recommendedByHardware(),
-      install:["ollama pull qwen3:1.7b","ollama pull qwen3:4b","ollama pull qwen3:8b","ollama pull qwen3.8:27b"]
+      install:["ollama pull qwen3:0.6b","ollama pull qwen3:1.7b","ollama pull qwen3:4b","ollama pull qwen3:8b","ollama pull qwen3.8:27b"]
     },503);return;
   }
 
