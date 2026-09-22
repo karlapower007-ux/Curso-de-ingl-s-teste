@@ -69,6 +69,44 @@ function cosine(a,b){
 }
 function fold(text){return String(text||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu," ").replace(/\s+/g," ").trim();}
 function terms(q){const stop=new Set(["a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","que","sobre","para","por","com","como","quero","saber","saiba","conhecer","conheca","informacao","informação","versiculo","versículo","passagem","citacao","citação","referencia","referência"]);return [...new Set(fold(q).split(" ").filter(x=>x.length>=3&&!stop.has(x)))].slice(0,18);}
+const OFFLINE_CONCEPT_ALIAS_GROUPS=Object.freeze([
+  {key:"adam",label:"Adão",kind:"person",aliases:["adão","adao","adam"]},
+  {key:"michael",label:"Miguel",kind:"person",aliases:["miguel","michael","miguel arcanjo","michael archangel"]},
+  {key:"elohim",label:"Elohim",kind:"deity",aliases:["elohim"]},
+  {key:"jehovah",label:"Jeová",kind:"deity",aliases:["jeová","jeova","jehovah"]},
+  {key:"jesus-christ",label:"Jesus Cristo",kind:"person",aliases:["jesus cristo","jesus christ"]},
+  {key:"holy-ghost",label:"Espírito Santo",kind:"deity",aliases:["espírito santo","espirito santo","holy ghost","holy spirit"]},
+  {key:"satan",label:"Satanás",kind:"entity",aliases:["satanás","satanas","satan"]},
+  {key:"lucifer",label:"Lúcifer",kind:"entity",aliases:["lúcifer","lucifer"]},
+  {key:"joseph-smith",label:"Joseph Smith",kind:"person",aliases:["joseph smith","josé smith","jose smith"]},
+  {key:"brigham-young",label:"Brigham Young",kind:"person",aliases:["brigham young"]},
+  {key:"second-anointing",label:"Segunda Unção",kind:"concept",aliases:["segunda unção","segunda uncao","second anointing"]},
+  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]}
+]);
+const OFFLINE_ALIAS_CANONICAL=new Map();
+for(const group of OFFLINE_CONCEPT_ALIAS_GROUPS){
+  for(const alias of group.aliases)OFFLINE_ALIAS_CANONICAL.set(fold(alias),group);
+}
+function offlineConceptForQuestion(question){
+  const strict=fold(deriveStrictPhrase(question)||"");
+  if(strict && OFFLINE_ALIAS_CANONICAL.has(strict))return OFFLINE_ALIAS_CANONICAL.get(strict);
+  const raw=fold(question);
+  if(OFFLINE_ALIAS_CANONICAL.has(raw))return OFFLINE_ALIAS_CANONICAL.get(raw);
+  return null;
+}
+function offlineAliasParagraphMatch(text,question,concept){
+  if(!concept)return strictParagraphMatch(text,question);
+  for(const alias of concept.aliases){
+    const match=strictParagraphMatch(text,alias);
+    if(match?.matched)return {...match,matched_alias:alias};
+  }
+  return {matched:false,target:concept.label,paragraph:"",paragraph_index:-1};
+}
+function offlineParagraphContainsConcept(paragraph,concept){
+  const hay=" "+fold(paragraph)+" ";
+  return concept.aliases.some(alias=>hay.includes(" "+fold(alias)+" "));
+}
+
 async function semantic(query,topK,minScore){
   const rows=await all("vectors"),out=[];
   for(const r of rows){const score=cosine(query,r.vector);if(score>=minScore)out.push({...r,score});}
@@ -149,8 +187,9 @@ async function strictSearchAll(question,topK=STRICT_LOGICAL_TASK_CAP){
 }
 
 async function strictSearchPage(question,offset=0,limit=50){
-  const target=deriveStrictPhrase(question);
-  if(!target)return {matches:[],scanned:0,total:0,target:"",offset:0,limit:Number(limit||50)};
+  const concept=offlineConceptForQuestion(question);
+  const target=concept?.label || deriveStrictPhrase(question);
+  if(!target)return {matches:[],scanned:0,total:0,target:"",offset:0,limit:Number(limit||50),concept:null,alias_expanded:false};
   const start=Math.max(0,Number(offset||0));
   const pageSize=Math.max(1,Math.min(100,Number(limit||50)));
   const db=await openDb();
@@ -159,28 +198,53 @@ async function strictSearchPage(question,offset=0,limit=50){
     const store=tx.objectStore("chunks");
     const req=store.openCursor();
     const matches=[];
+    const documents=new Set();
+    const relatedCounts=new Map();
     let scanned=0,total=0;
     req.onsuccess=()=>{
       const cursor=req.result;
       if(!cursor){
+        const related=concept?[...relatedCounts.entries()]
+          .map(([key,occurrences])=>{
+            const group=OFFLINE_CONCEPT_ALIAS_GROUPS.find(x=>x.key===key);
+            return group?{key,label:group.label,kind:group.kind,predicate:"co_occurs_with",occurrences}:null;
+          })
+          .filter(Boolean)
+          .sort((a,b)=>b.occurrences-a.occurrences||a.label.localeCompare(b.label))
+          .slice(0,8):[];
+        const conceptSummary=concept?{
+          key:concept.key,label:concept.label,kind:concept.kind,aliases:[...concept.aliases],
+          occurrences:total,documents:documents.size,related,source:"indexeddb-local-derived"
+        }:null;
         db.close();
-        resolve({matches,scanned,total,target,offset:start,limit:pageSize});
+        resolve({matches,scanned,total,target,offset:start,limit:pageSize,concept:conceptSummary,alias_expanded:Boolean(concept)});
         return;
       }
       const row=cursor.value||{};
       scanned++;
-      const match=strictParagraphMatch(row.text||"",question);
+      const match=offlineAliasParagraphMatch(row.text||"",question,concept);
       if(match.matched){
         const hitIndex=total++;
+        documents.add(String(row.document_id||row.doc_key||"local"));
+        const paragraph=String(match.paragraph||row.text||"").trim();
+        if(concept){
+          for(const candidate of OFFLINE_CONCEPT_ALIAS_GROUPS){
+            if(candidate.key===concept.key)continue;
+            if(offlineParagraphContainsConcept(paragraph,candidate)){
+              relatedCounts.set(candidate.key,(relatedCounts.get(candidate.key)||0)+1);
+            }
+          }
+        }
         if(hitIndex>=start && matches.length<pageSize){
           matches.push({
             ...row,
-            text:String(match.paragraph||row.text||"").trim(),
+            text:paragraph,
             score:100,
             coverage:1,
             strict_phrase:match.target,
+            strict_alias:match.matched_alias||"",
             strict_paragraph_index:match.paragraph_index,
-            retrieval_mode:"strict-phrase-indexeddb-page-v10"
+            retrieval_mode:concept?"strict-alias-indexeddb-page-v10-1":"strict-phrase-indexeddb-page-v10"
           });
         }
       }
