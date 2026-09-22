@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
+  <meta name="application-name" content="Consciência do Fabiano">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/fabiano-fechado.png">
   <title>Consciência do Fabiano - v10</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
@@ -53,6 +59,8 @@
               </select>
             </label>
             <span id="modeStatus" class="mode-status" aria-live="polite">Automático</span>
+            <button id="prepareOfflineBtn" class="ghost small-btn" type="button">Preparar offline</button>
+            <span id="offlinePrepStatus" class="mode-status" aria-live="polite">Para usar sem Internet, prepare uma vez enquanto estiver conectado.</span>
             <label class="check-option">
               <input id="autoSendVoice" type="checkbox" checked>
               <span>Enviar automaticamente ao terminar de falar</span>
