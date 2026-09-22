@@ -5240,6 +5240,7 @@ export class LibraryDO {
   }
 
   indexEncyclopediaConceptChunk(chunk, now = new Date().toISOString()) {
+    try {
     const id=String(chunk?.id||"").trim();
     const documentId=String(chunk?.document_id||"").trim();
     const text=String(chunk?.text||"");
@@ -5279,6 +5280,9 @@ export class LibraryDO {
       }
     }
     return {concepts:concepts.length,relations};
+    } catch {
+      return {concepts:0,relations:0,derived_index_error:true};
+    }
   }
 
   backfillEncyclopediaConcepts(limit = 100) {
@@ -6350,6 +6354,7 @@ export default {
         encyclopedia_alias_index: true,
         encyclopedia_relation_type: "co_occurs_with",
         encyclopedia_concept_backfill: "incremental-derived-no-reindex",
+        encyclopedia_concept_fail_open: true,
         dictionary_r2_max_shards_per_query: R2_DICTIONARY_MAX_SHARDS,
         workers_ai_neuron_budget_headroom: "15% below documented free allocation",
         groq_zdr_required: GROQ_ZDR_REQUIRED,
