@@ -5,7 +5,6 @@ on:
     branches: [consciencia-cloudflare-native-v1]
     paths:
       - "consciencia-fabiano/**"
-      - ".github/workflows/qa-cloudflare-native-rag.yml"
       - ".github/workflows/v80-production-deploy.yml"
 
 permissions:
@@ -161,7 +160,7 @@ jobs:
           DICT_HTTP="$(curl -sS --max-time 45 -o /tmp/v10-dictionary.json -w '%{http_code}' -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}' || true)"
           DICT="$(cat /tmp/v10-dictionary.json)"
           if [ "$DICT_HTTP" = "200" ]; then
-            printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0) and (.encyclopedia_index == "sqlite-fts5" or .encyclopedia_index == "strict-scan-fallback")' >/dev/null
+            printf '%s' "$DICT" | jq -e '.ok == true and .strict_focus_lock == true and .intent_lock == true and .evidence_lock == true and .page == 1 and .page_size == 50 and (.matches|type=="array") and (.total > 0) and ((.matches|length) > 0) and (.encyclopedia_index == "sqlite-fts5" or .encyclopedia_index == "strict-scan-fallback" or .encyclopedia_index == "r2-strict-scan")' >/dev/null
             echo "V10_1_DICTIONARY_CLOUD=available"
           elif [ "$DICT_HTTP" = "503" ] && printf '%s' "$DICT" | jq -e '.code == "FREE_TIER_STORAGE_QUOTA"' >/dev/null 2>&1; then
             echo "V10_1_DICTIONARY_CLOUD=free-tier-quota-local-fallback-required"

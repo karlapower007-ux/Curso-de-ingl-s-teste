@@ -31,7 +31,7 @@ jobs:
           node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8")); if(m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20||!m.audit.valid) process.exit(1)'
 
           # Core identity: V8 must preserve every V7.5 cognitive/storage invariant
-          grep -q 'const VERSION = "10.0.0-zero-cost-private-offline-online"' src/index.js
+          grep -q 'const VERSION = "10.1.0-private-egress-offline-online"' src/index.js
           grep -q 'from "./adaptive-rag-v80.js"' src/index.js
           grep -q 'preserve_legacy_pipeline:true' src/index.js
           grep -q 'llm_calls_before_final:0' src/index.js
@@ -41,7 +41,7 @@ jobs:
           grep -q 'strict_exact_path_preserved: true' src/index.js
           grep -q 'same_paragraph_phrase_required_for_exact_mode: true' src/index.js
           grep -q 'hybrid_grounded_retrieval: true' src/index.js
-          grep -q 'semantic_query_embedding_server_enabled: true' src/index.js
+          grep -q 'semantic_query_embedding_server_enabled: false' src/index.js
           grep -q 'HYBRID_SEMANTIC_MIN_SCORE = 0.62' src/index.js
           grep -q 'HYBRID_CONTEXT_LIMIT = 120' src/index.js
 
@@ -56,7 +56,7 @@ jobs:
           grep -q 'epistemic_labeling: true' src/index.js
           grep -q 'unsupported_claim_policy: "abstain"' src/index.js
           grep -q 'reference_only_llm_bypass: true' src/index.js
-          grep -q 'groq_final_stage_only: false' src/index.js
+          grep -q 'groq_final_stage_only: true' src/index.js
           grep -q 'analytic_llm_calls_max: 1' src/index.js
           grep -q 'pre_master_llm_calls: 0' src/index.js
 
@@ -88,7 +88,7 @@ jobs:
           grep -q 'function networkAllowed' public/app.js
           grep -q '100% offline' public/index.html
           grep -q 'set-operating-mode' public/sw-v3.js
-          grep -q 'fns-consiencia-v10-offline-online' public/sw-v3.js
+          grep -q 'fns-consiencia-v10-1-private-offline-online' public/sw-v3.js
           grep -q 'external_models_receive_full_library: false' src/index.js
           grep -q 'external_models_receive_original_files: false' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
@@ -261,7 +261,7 @@ jobs:
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
           # Service-worker cache and V7 manifest
-          grep -q 'CACHE_NAME="fns-consiencia-v10-offline-online"' public/sw-v3.js
+          grep -q 'CACHE_NAME="fns-consiencia-v10-1-private-offline-online"' public/sw-v3.js
           grep -q '"/strict-match-core.js"' public/sw-v3.js
           grep -q '"/omni-sync-worker.js"' public/sw-v3.js
           grep -q '"version": "7.1.0"' public/failover-manifest.json
@@ -302,11 +302,17 @@ jobs:
           grep -q 'function zeroCostReasoningCompletion' src/index.js
           grep -q 'const DEEP_CHAT_MODEL = "openai/gpt-oss-120b"' src/index.js
           grep -q 'const ZERO_COST_MODE = true' src/index.js
+          grep -q 'const PRIVATE_EGRESS_LOCK = true' src/index.js
+          grep -q 'const GROQ_ZDR_REQUIRED = true' src/index.js
+          grep -q 'WORKERS_AI_DAILY_NEURON_BUDGET = 8500' src/index.js
+          grep -q 'dictionary_r2_quota_fallback: true' src/index.js
           grep -q 'WORKERS_AI_DAILY_CALL_LIMIT = 40' src/index.js
           grep -q 'redactExternalPrompt' src/index.js
           grep -q '"binding": "AI"' wrangler.jsonc
-          ! grep -qi 'gemini' src/index.js
+          ! grep -qi 'generativelanguage.googleapis.com' src/index.js
           ! grep -qi 'api.x.ai' src/index.js
+          ! grep -qi 'https://api.cohere.com' src/index.js
+          ! grep -qi 'openrouter.ai' src/index.js
           ! grep -q 'GEMINI_API_KEY' src/index.js
           ! grep -q 'XAI_API_KEY' src/index.js
           ! grep -q 'AI.toMarkdown' src/index.js

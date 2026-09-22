@@ -17,6 +17,8 @@ const GROQ_ZDR_REQUIRED = true;
 const GROQ_FREE_ONLY_REQUIRED = true;
 const R2_ZERO_COST_SOURCE_BUDGET_BYTES = 6_000_000_000;
 const R2_DOCUMENTED_FREE_STORAGE_BYTES = 10_000_000_000;
+const R2_DICTIONARY_MAX_SHARDS = 400;
+const R2_DICTIONARY_PARALLEL_READS = 8;
 const ZERO_COST_MODE = true;
 const PRIVATE_EGRESS_LOCK = true;
 const LEGACY_EXTERNAL_EMBEDDINGS = false;
@@ -1326,6 +1328,79 @@ async function r2LibraryManifestResponse(env){
     sync:manifest.sync||{},source:String(manifest.source||""),
     updated_at:String(manifest.updated_at||""),batch_size:200
   });
+}
+
+async function r2DictionaryStrictSearch(env,question,page=1,pageSize=50){
+  if(!env.PDFS)return {ok:false,code:"R2_LIBRARY_BINDING_MISSING"};
+  const target=deriveStrictPhrase(question);
+  const intent=buildStrictIntent(question);
+  const safePage=Math.max(1,Number(page||1));
+  const safePageSize=Math.max(1,Math.min(50,Number(pageSize||50)));
+  if(!target)return {
+    ok:true,matches:[],scanned:0,total:0,returned:0,target:"",page:safePage,page_size:safePageSize,pages:0,
+    mode:"encyclopedia-r2-strict-v10",encyclopedia_index:"r2-strict-scan",
+    strict_focus_lock:true,intent_lock:true,evidence_lock:true,or_disabled:true,fuzzy_disabled:true,
+    technical_metadata_exposed:false,cloud_fallback:"cloudflare-r2"
+  };
+
+  const pointer=await r2JsonGet(env.PDFS,R2_LIBRARY_POINTER_KEY);
+  const generation=String(pointer?.generation||"");
+  if(!generation)return {ok:false,code:"R2_LIBRARY_SNAPSHOT_UNAVAILABLE"};
+
+  const prefix="library/generations/"+r2LibrarySegment(generation)+"/shards/";
+  let cursor=undefined,objects=[];
+  do{
+    const listed=await env.PDFS.list({prefix,limit:100,cursor});
+    objects.push(...(Array.isArray(listed.objects)?listed.objects:[]));
+    if(objects.length>R2_DICTIONARY_MAX_SHARDS){
+      return {ok:false,code:"R2_DICTIONARY_SHARD_GUARD",shards:objects.length,max_shards:R2_DICTIONARY_MAX_SHARDS};
+    }
+    cursor=listed.truncated?listed.cursor:undefined;
+  }while(cursor);
+  objects.sort((a,b)=>String(a?.key||"").localeCompare(String(b?.key||"")));
+
+  const makeHit=raw=>{
+    const match=strictParagraphMatch(raw?.text||"",question);
+    if(!match.matched)return null;
+    const evidence=String(match.paragraph||"").trim();
+    const audit=strictIntentAudit(evidence,intent);
+    if(!audit.accepted)return null;
+    const canonical=extractSemanticReference(evidence);
+    const clean=cleanNarrativeText(evidence);
+    const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+    const compact=(sentences.slice(0,2).join(" ")||clean).slice(0,420).trim();
+    let title=canonical?"":humanDocumentName(raw?.filename||"",raw?.title||"");
+    if(/^(?:documento|fonte|standard works|obras padrão)$/iu.test(String(title||"")))title="";
+    return {
+      page:Number(raw?.page||0),text:compact,title,author:String(raw?.author||""),
+      reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage
+    };
+  };
+
+  const from=(safePage-1)*safePageSize;
+  let scanned=0,total=0;
+  const matches=[];
+  for(let offset=0;offset<objects.length;offset+=R2_DICTIONARY_PARALLEL_READS){
+    const group=objects.slice(offset,offset+R2_DICTIONARY_PARALLEL_READS);
+    const shards=await Promise.all(group.map(object=>r2JsonGet(env.PDFS,object.key)));
+    for(const shard of shards){
+      const rows=Array.isArray(shard?.rows)?shard.rows:[];
+      for(const row of rows){
+        scanned++;
+        const hit=makeHit(row);
+        if(!hit)continue;
+        const hitIndex=total++;
+        if(hitIndex>=from && matches.length<safePageSize)matches.push(hit);
+      }
+    }
+  }
+  return {
+    ok:true,matches,scanned,total,returned:matches.length,target,page:safePage,page_size:safePageSize,
+    pages:Math.ceil(total/safePageSize),mode:"encyclopedia-r2-strict-v10",encyclopedia_index:"r2-strict-scan",
+    encyclopedia_index_synced:true,strict_focus_lock:true,intent_lock:true,evidence_lock:true,
+    or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false,cloud_fallback:"cloudflare-r2",
+    r2_shards_scanned:objects.length
+  };
 }
 
 async function r2ManifestDocumentByHash(env,hash){
@@ -4651,11 +4726,20 @@ async function handleApi(request, env, url, ctx) {
       const limit=Math.max(1,Math.min(50,Number(body?.limit||body?.page_size||50)));
       const page=Math.max(1,Number(body?.page||1));
       const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
-      const data=await libraryCall(env,"/dictionary/search",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({query:question,limit,page,page_size:pageSize})
-      });
-      return json({...data,strict_focus_plan:"A",fallback_plans:["B-semantic-restricted","C-cross-language","D-context-controlled","E-local-contingency","F-final-audit"]});
+      let data;
+      try{
+        data=await libraryCall(env,"/dictionary/search",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({query:question,limit,page,page_size:pageSize})
+        });
+      }catch(error){
+        if(String(error?.code||"")==="FREE_TIER_STORAGE_QUOTA"){
+          const r2=await r2DictionaryStrictSearch(env,question,page,pageSize);
+          if(r2?.ok===true)data={...r2,durable_object_quota_fallback:true};
+          else throw error;
+        }else throw error;
+      }
+      return json({...data,strict_focus_plan:"A",fallback_plans:["B-r2-private-strict","C-cross-language-local","D-context-controlled","E-local-contingency","F-final-audit"]});
     }
     if (url.pathname === "/api/admin/ping" && request.method === "GET") return json({ok:true,authorized:true,version:VERSION});
     if (url.pathname === "/api/admin/cognitive-v74" && request.method === "GET") {
@@ -5969,6 +6053,8 @@ export default {
         workers_ai_daily_neuron_budget: WORKERS_AI_DAILY_NEURON_BUDGET,
         r2_zero_cost_source_budget_bytes: R2_ZERO_COST_SOURCE_BUDGET_BYTES,
         r2_documented_free_storage_bytes: R2_DOCUMENTED_FREE_STORAGE_BYTES,
+        dictionary_r2_quota_fallback: true,
+        dictionary_r2_max_shards_per_query: R2_DICTIONARY_MAX_SHARDS,
         workers_ai_neuron_budget_headroom: "15% below documented free allocation",
         groq_zdr_required: GROQ_ZDR_REQUIRED,
         groq_zdr_confirmed: groqZdrConfirmed(env),
