@@ -93,6 +93,7 @@
           <button id="dictionarySearchBtn" class="primary" type="button">Pesquisar</button>
         </div>
         <p id="dictionaryStatus" class="status" aria-live="polite"></p>
+        <div id="dictionaryConcept" class="dictionary-concept-card hidden" aria-live="polite"></div>
         <div id="dictionaryResults" class="dictionary-results"></div>
         <div id="dictionaryPager" class="dictionary-pager hidden">
           <button id="dictionaryPrev" class="ghost" type="button">Anterior</button>
@@ -152,6 +153,7 @@
         </div>
         <p id="adminStatus" class="status"></p>
         <p id="costGuardStatus" class="status" aria-live="polite">R$0 Guard • aguardando leitura de uso.</p>
+        <p id="conceptIndexStatus" class="status" aria-live="polite">Índice conceitual • aguardando atualização incremental.</p>
         <div id="omniSyncProgress" class="omni-sync-progress hidden" aria-live="polite">
           <div class="omni-sync-progress-bar"><span id="omniSyncProgressFill"></span></div>
           <small id="omniSyncProgressText">Phantom Daemon ativo em segundo plano.</small>
