@@ -140,6 +140,45 @@ function recommendedByHardware(){
   if(gb>=6)return "qwen3:1.7b";
   return "qwen3:0.6b";
 }
+function contextTokensByHardware(){
+  const gb=ramGb();
+  if(gb>=32)return 32768;
+  if(gb>=16)return 16384;
+  if(gb>=10)return 8192;
+  if(gb>=6)return 4096;
+  return 2048;
+}
+function evidenceBudgetForContext(numCtx){
+  const ctx=Math.max(1024,Number(numCtx)||2048);
+  return {
+    max_rows:ctx<=2048?6:ctx<=4096?8:ctx<=8192?10:14,
+    max_chars:ctx<=2048?5200:ctx<=4096?11000:ctx<=8192?22000:48000
+  };
+}
+function fitEvidenceToContext(evidence,numCtx){
+  const budget=evidenceBudgetForContext(numCtx);
+  const out=[];
+  let used=0;
+  for(const row of evidence||[]){
+    if(out.length>=budget.max_rows)break;
+    const remaining=budget.max_chars-used;
+    if(remaining<240)break;
+    const text=String(row?.text||"").trim();
+    if(!text)continue;
+    const clipped=text.slice(0,Math.min(text.length,remaining));
+    out.push({...row,text:clipped});
+    used+=clipped.length;
+  }
+  return out;
+}
+function isMemoryAllocationError(error){
+  const msg=String(error?.message||error||"").toLowerCase();
+  return msg.includes("failed to allocate") ||
+    msg.includes("kv cache") ||
+    msg.includes("llama_init_from_model") ||
+    msg.includes("alloc_tensor_range") ||
+    msg.includes("llama-server process has terminated");
+}
 function autoModel(installed){
   const rec=recommendedByHardware();
   const safeOrder=rec==="qwen3.8:27b"
@@ -224,7 +263,7 @@ async function handleHealth(req,res){
     ok:true,version:V2_VERSION,service:"Consciência Fabiano v2 Local",
     local_only:true,external_paid_providers:false,
     ollama:{url:"localhost:11434",reachable:models.length>0,installed:models},
-    hardware:{ram_gb:ramGb(),recommended:recommendedByHardware(),selected:autoModel(models)},
+    hardware:{ram_gb:ramGb(),recommended:recommendedByHardware(),selected:autoModel(models),context_tokens:contextTokensByHardware()},
     embeddings:{model:EMBED_MODEL,installed:models.includes(EMBED_MODEL)},
     library:lib
   });
@@ -297,21 +336,47 @@ async function handleChat(req,res){
     },503);return;
   }
 
-  const prompt=buildPrompt({question,mode,evidence});
-  const data=await fetchOllama("/api/chat",{
-    method:"POST",
-    body:JSON.stringify({
-      model,stream:false,think:false,
-      messages:[{role:"user",content:prompt}],
-      options:{temperature:0.05,num_ctx:32768}
-    })
-  },300000);
+  const preferredContext=contextTokensByHardware();
+  const contexts=preferredContext<=2048?[preferredContext,1024]:[preferredContext,Math.max(2048,Math.floor(preferredContext/2))];
+  let data=null;
+  let usedContext=preferredContext;
+  let promptEvidence=fitEvidenceToContext(evidence,preferredContext);
+  let lastError=null;
+
+  for(const ctx of [...new Set(contexts)]){
+    usedContext=ctx;
+    promptEvidence=fitEvidenceToContext(evidence,ctx);
+    const prompt=buildPrompt({question,mode,evidence:promptEvidence});
+    try{
+      data=await fetchOllama("/api/chat",{
+        method:"POST",
+        body:JSON.stringify({
+          model,stream:false,think:false,
+          messages:[{role:"user",content:prompt}],
+          options:{temperature:0.05,num_ctx:ctx,num_predict:ctx<=2048?384:768}
+        })
+      },300000);
+      lastError=null;
+      break;
+    }catch(error){
+      lastError=error;
+      if(!isMemoryAllocationError(error))throw error;
+    }
+  }
+
+  if(!data && lastError){
+    throw Object.assign(new Error(
+      "O Qwen local ficou sem memória mesmo no modo econômico. Feche outros programas e tente novamente."
+    ),{status:503,code:"LOCAL_MEMORY_EXHAUSTED",cause:lastError});
+  }
+
   const answer=String(data?.message?.content||"").trim();
   json(res,{
     ok:true,answer:answer||"A biblioteca recuperada não foi suficiente para produzir uma resposta.",
     mode,model,provider:"ollama-local",embedding_model:EMBED_MODEL,
+    context_tokens:usedContext,evidence_count:promptEvidence.length,
     evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
-    matches:evidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+    matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
   });
 }
 async function serveStatic(req,res){
