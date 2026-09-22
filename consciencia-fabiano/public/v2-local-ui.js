@@ -243,8 +243,24 @@ async function sendLocal(){
   const mode=selectedResponse(),model=resolvedModelForRequest();
   const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;
   try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}
-  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando cérebro local…");
+  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando Evidence Engine V3…");
   try{
+    if(apiBase){
+      const data=await call("/api/v3/chat",{
+        question:q,
+        mode,
+        model,
+        allow_query_expansion:true
+      },300000);
+      appendMessage("assistant",data.answer||"",data.matches||[]);
+      speakV2Answer(data.speech_text||data.answer||"").catch(()=>{});
+      const backend=$("backendText");
+      if(backend)backend.textContent="v3 Evidence Engine • índice paralelo • Dicionário V2 congelado • Qwen só amplia a busca";
+      const dot=$("backendDot");if(dot)dot.className="dot ok";
+      const state=$("avatarState");if(state)state.textContent="Pronto";
+      return;
+    }
+
     let engine=null,localState=null,evidence=[];
     try{
       const mod=await import("/v2-local-engine.js");
@@ -263,21 +279,6 @@ async function sendLocal(){
       return;
     }
 
-    if(apiBase){
-      const data=await call("/api/v3/chat",{
-        question:q,
-        mode,
-        model,
-        allow_query_expansion:true
-      },300000);
-      appendMessage("assistant",data.answer||"",data.matches||[]);
-      speakV2Answer(data.speech_text||data.answer||"").catch(()=>{});
-      const backend=$("backendText");
-      if(backend)backend.textContent="v3 Evidence Engine • índice paralelo • Dicionário congelado • Qwen só expande a busca";
-      const dot=$("backendDot");if(dot)dot.className="dot ok";
-      const state=$("avatarState");if(state)state.textContent="Pronto";
-      return;
-    }
 
     if(engine&&Number(localState?.chunks||0)>0){
       try{
