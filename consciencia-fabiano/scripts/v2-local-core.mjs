@@ -251,7 +251,7 @@ export function buildPrompt({question,mode,evidence=[]}){
   }).join("\n\n---\n\n");
   const modeInstruction={
     short:"Responda em português brasileiro de forma curta e direta, usando somente as evidências.",
-    explain:"Explique em português brasileiro com profundidade, mas use somente afirmações sustentadas pelas evidências.",
+    explain:"Explique em português brasileiro com profundidade e riqueza, em 4 a 8 pontos substantivos quando as evidências permitirem. Cada ponto deve responder diretamente à pergunta e permanecer sustentado pelas evidências recuperadas.",
     compare:"Compare as fontes recuperadas. Mostre convergências e diferenças somente quando elas estiverem presentes nas evidências.",
     timeline:"Organize as evidências cronologicamente. Use apenas datas explicitamente presentes nas evidências; itens sem data devem ficar em 'Data não identificada'.",
     exact:""
