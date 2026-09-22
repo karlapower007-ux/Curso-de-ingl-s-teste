@@ -31,7 +31,9 @@ jobs:
           node-version: "22"
 
       - name: Install
-        run: npm install --ignore-scripts
+        run: |
+          npm install --ignore-scripts
+          npm install --no-save --ignore-scripts playwright-core
 
       - name: V2 invariant gate
         run: |
@@ -41,6 +43,8 @@ jobs:
           node --check scripts/v2-local-server.mjs
           node --check public/v2-local-ui.js
           node --check public/v2-local-engine.js
+          node --check scripts/v2-local-browser-smoke.mjs
+          node --check scripts/v2-mock-ollama.mjs
           grep -q 'qwen3-embedding:0.6b' scripts/v2-local-core.mjs
           grep -q 'local-exact-no-llm' scripts/v2-local-server.mjs
           grep -q 'if(mode==="exact")' scripts/v2-local-server.mjs
@@ -77,6 +81,23 @@ jobs:
           node -e 'const d=require("/tmp/v2-exact.json"); if(d.provider!=="local-exact-no-llm"||d.bypass_llm!==true||d.exact_retrieval!==true) process.exit(1)'
 
           echo "V2_LOCAL_SERVER_SMOKE=pass"
+
+      - name: Browser E2E with local Ollama mock
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/v2-mock-ollama.mjs >/tmp/mock-ollama.log 2>&1 &
+          OLLAMA_PID=$!
+          node scripts/v2-local-server.mjs >/tmp/consciencia-v2-browser.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" "$OLLAMA_PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null && curl -fsS http://127.0.0.1:8788/api/v2/health >/dev/null; then break; fi
+            sleep 1
+          done
+
+          node scripts/v2-local-browser-smoke.mjs
 
       - name: Confirm validation cannot publish
         run: |
