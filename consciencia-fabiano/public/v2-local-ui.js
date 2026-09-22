@@ -217,7 +217,8 @@ function appendEvidenceDigest(rows=[]){
     const text=String(item?.text||"").replace(/\s+/g," ").trim();
     const key=ref+"|"+text;if(seen.has(key))continue;seen.add(key);
     const row=document.createElement("div");row.className="source";
-    const strong=document.createElement("strong");strong.textContent=ref;
+    const strong=document.createElement("strong");
+    strong.textContent=(item?.citation_verified===true?"✓ Fonte verificada — ":"")+ref;
     const excerpt=document.createElement("div");excerpt.textContent=text;
     row.append(strong,excerpt);details.appendChild(row);
   }
@@ -251,7 +252,7 @@ async function sendLocal(){
       localState=await engine.counts();
     }catch{}
 
-    if(mode==="exact"&&engine&&Number(localState?.chunks||0)>0){
+    if(mode==="exact"&&engine&&Number(localState?.chunks||0)>0&&!apiBase){
       const exact=await engine.exactSearch(q,{page:1,pageSize:25});
       const answer=engine.formatExact(exact.matches||[]);
       appendMessage("assistant",answer,exact.matches||[]);
@@ -292,8 +293,16 @@ async function sendLocal(){
       question:q,mode,model,grounded:mode!=="exact",semantic:false,page_size:25,
       candidate_limit:lowRam?60:70,
       evidence:outboundEvidence.map(r=>({
-        id:r.id||r.key,document_id:r.document_id||r.doc_key,title:r.title||"",
-        page:r.page||null,chunk_index:r.chunk_index||0,text:r.text||"",reference:r.reference||""
+        id:r.id||r.key,
+        document_id:r.document_id||r.doc_key,
+        title:r.title||"",
+        source_title:r.source_title||"",
+        filename:r.filename||"",
+        canonical_reference:r.canonical_reference||"",
+        page:r.page||null,
+        chunk_index:r.chunk_index||0,
+        text:r.text||"",
+        reference:r.reference||""
       }))
     },lowRam?210000:300000);
     appendMessage("assistant",data.answer||"",data.matches||[]);
