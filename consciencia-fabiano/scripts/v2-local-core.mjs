@@ -225,6 +225,44 @@ export function focusEvidence(rows,query,aliasObject={},limit=20){
   return uniq(partial.sort((a,b)=>Number(b.focus_coverage||0)-Number(a.focus_coverage||0)));
 }
 
+export function focusedEvidenceWindow(row={},maxChars=900){
+  const raw=String(row?.text||"").replace(/\s+/g," ").trim();
+  if(!raw)return {accepted:false,text:"",matched_alias:"",reason:"empty"};
+  const aliases=[...new Set((Array.isArray(row?.focus_aliases)?row.focus_aliases:[]).map(fold).filter(Boolean))];
+  if(!aliases.length)return {accepted:false,text:"",matched_alias:"",reason:"missing-focus-alias"};
+
+  const sentences=raw.split(/(?<=[.!?;:])\s+/u).map(x=>x.trim()).filter(Boolean);
+  if(!sentences.length)return {accepted:false,text:"",matched_alias:"",reason:"no-sentences"};
+
+  let hit=-1,matched="";
+  for(let i=0;i<sentences.length;i++){
+    const hay=fold(sentences[i]);
+    const alias=aliases.find(a=>a&&hay.includes(a));
+    if(alias){hit=i;matched=alias;break;}
+  }
+  if(hit<0)return {accepted:false,text:"",matched_alias:"",reason:"alias-not-in-final-block"};
+
+  let start=Math.max(0,hit-1),end=Math.min(sentences.length,hit+2);
+  let picked=sentences.slice(start,end).join(" ").trim();
+  if(!aliases.some(a=>fold(picked).includes(a))){
+    picked=sentences[hit];
+  }
+  if(picked.length>maxChars){
+    const hitSentence=sentences[hit];
+    if(hitSentence.length<=maxChars)picked=hitSentence;
+    else{
+      const folded=fold(hitSentence);
+      const pos=Math.max(0,folded.indexOf(matched));
+      const ratio=folded.length?pos/folded.length:0;
+      const rawPos=Math.floor(hitSentence.length*ratio);
+      const left=Math.max(0,rawPos-Math.floor(maxChars*0.35));
+      picked=hitSentence.slice(left,left+maxChars).trim();
+    }
+  }
+  const accepted=aliases.some(a=>fold(picked).includes(a));
+  return {accepted,text:accepted?picked:"",matched_alias:matched,reason:accepted?"focused-window":"alias-lost"};
+}
+
 export function answerStaysOnFocus(answer,query,aliasObject={}){
   const q=fold(query),a=fold(answer);
   const aliasMap=normalizeAliases(aliasObject);
