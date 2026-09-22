@@ -108,50 +108,74 @@ async function preloadRam(){
   }catch{}
 }
 
+async function persistStaticBackupPayload(data){
+  const chunks=Array.isArray(data?.chunks)?data.chunks:[];
+  const vectors=Array.isArray(data?.vectors)?data.vectors:[];
+  let chunkCount=0,vectorCount=0;
+  for(let i=0;i<chunks.length;i+=200){
+    const batch=chunks.slice(i,i+200).map(c=>normalizeMatch(c,"static-backup"));
+    if(batch.length){
+      const stored=batch.map((c,j)=>({...c,key:String(c.id || c.document_id || "backup")+":"+String(c.page || (i+j))}));
+      await rpc(searchWorker,"persist-chunks",{chunks:stored},5000);
+      rpc(opfsWorker,"persist-chunks",{chunks:stored},5000).catch(()=>{});
+      const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
+      if(room)ramCorpus.push(...batch.slice(0,room));
+      chunkCount+=batch.length;
+    }
+    await Promise.resolve();
+  }
+  for(let i=0;i<vectors.length;i+=200){
+    const records=vectors.slice(i,i+200).filter(v=>Array.isArray(v?.vector) && v.vector.length>=64);
+    if(records.length){
+      await rpc(searchWorker,"persist-vectors",{records},8000);
+      vectorCount+=records.length;
+    }
+    await Promise.resolve();
+  }
+  return {chunks:chunkCount,vectors:vectorCount};
+}
+
 async function hydrateStaticBackup(force=false){
-  if(staticBackupHydrated && !force) return {chunks:0,vectors:0};
+  if(staticBackupHydrated && !force) return {chunks:0,vectors:0,already_ready:true};
   try{
-    const res=await fetch("/biblioteca_backup.json?v=17",{cache:"no-store"});
+    const res=await fetch("/biblioteca_backup.json?v=10",{cache:"no-store"});
     if(!res.ok) return {chunks:0,vectors:0};
     const manifest=await res.json();
-    let totalChunks=0,totalVectors=0;
-    const payloads=[];
+    let totalChunks=0,totalVectors=0,partsLoaded=0;
 
     if(Array.isArray(manifest?.parts) && manifest.parts.length){
-      for(const part of manifest.parts.slice(0,250)){
+      // Stream one shard at a time. Do not retain hundreds of JSON payloads in
+      // memory simultaneously; this keeps preparation viable on low-memory phones.
+      for(const part of manifest.parts){
         try{
           const pRes=await fetch(String(part.url || part),{cache:"no-store"});
-          if(pRes.ok) payloads.push(await pRes.json());
+          if(!pRes.ok)continue;
+          const data=await pRes.json();
+          const persisted=await persistStaticBackupPayload(data);
+          totalChunks+=persisted.chunks;
+          totalVectors+=persisted.vectors;
+          partsLoaded++;
         }catch{}
+        if(partsLoaded%8===0) await new Promise(resolve=>setTimeout(resolve,0));
       }
     }else{
-      payloads.push(manifest);
-    }
-
-    for(const data of payloads){
-      const chunks=Array.isArray(data?.chunks)?data.chunks:[];
-      const vectors=Array.isArray(data?.vectors)?data.vectors:[];
-      totalChunks+=chunks.length; totalVectors+=vectors.length;
-      for(let i=0;i<chunks.length;i+=200){
-        const batch=chunks.slice(i,i+200).map(c=>normalizeMatch(c,"static-backup"));
-        if(batch.length){
-          const stored=batch.map((c,j)=>({...c,key:String(c.id || c.document_id || "backup")+":"+String(c.page || (i+j))}));
-          await rpc(searchWorker,"persist-chunks",{chunks:stored},5000);
-          rpc(opfsWorker,"persist-chunks",{chunks:stored},5000).catch(()=>{});
-          const room=Math.max(0,RAM_LIMIT-ramCorpus.length);
-          if(room)ramCorpus.push(...batch.slice(0,room));
-        }
-      }
-      for(let i=0;i<vectors.length;i+=200){
-        const records=vectors.slice(i,i+200).filter(v=>Array.isArray(v?.vector) && v.vector.length>=64);
-        if(records.length) await rpc(searchWorker,"persist-vectors",{records},8000);
-      }
+      const persisted=await persistStaticBackupPayload(manifest);
+      totalChunks+=persisted.chunks;
+      totalVectors+=persisted.vectors;
+      partsLoaded=1;
     }
 
     staticBackupHydrated=true;
-    return {chunks:totalChunks,vectors:totalVectors};
+    return {
+      chunks:totalChunks,
+      vectors:totalVectors,
+      parts_loaded:partsLoaded,
+      parts_expected:Array.isArray(manifest?.parts)?manifest.parts.length:1,
+      expected_records:Number(manifest?.total_records||totalChunks)
+    };
   }catch{return {chunks:0,vectors:0};}
 }
+
 const ready=Promise.all([preloadRam(),hydrateStaticBackup(false)]);
 
 async function persistExtracted(extracted){
