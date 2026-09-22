@@ -94,7 +94,11 @@ assert(ragWorker.includes('predicate:"co_occurs_with"'), "offline deterministic 
 assert(ragCascade.includes("concept:r.concept||null"), "offline concept card is not returned to UI");
 assert(ragCascade.includes("alias_expanded:r.alias_expanded===true"), "offline alias expansion metadata missing");
 assert(app.includes("dictionaryState.concept=data?.concept||null;"), "UI does not use local concept cards offline");
-assert(sw.includes('fns-consiencia-v10-1-private-offline-online-alias-v2'), "offline cache was not refreshed for alias search");
+assert(
+  sw.includes('fns-consiencia-v10-1-private-offline-online-alias-v2') ||
+  sw.includes('fns-consiencia-v2-local-first-20260922'),
+  "offline cache marker missing for v10.1 baseline or v2 local-first"
+);
 assert(app.includes('api("/api/encyclopedia/concept"'), "concept graph is not wired to dictionary UI");
 assert(app.includes('api("/api/admin/encyclopedia-concepts/backfill"'), "incremental concept backfill is not wired");
 assert(app.includes("Relações por coocorrência"), "concept relation UI missing");
