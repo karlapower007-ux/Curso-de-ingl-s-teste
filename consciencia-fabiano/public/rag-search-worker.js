@@ -1,4 +1,4 @@
-import {strictParagraphMatch,pushStrictHit,roundRobinStrictHits,deriveStrictPhrase,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "/strict-match-core.js?v=4.0.0";
+import {strictParagraphMatch,paragraphBlocks,pushStrictHit,roundRobinStrictHits,deriveStrictPhrase,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "/strict-match-core.js?v=4.0.0";
 const DB_NAME="fns_rag_resilience_v1";
 const DB_VERSION=1;
 function openDb(){
@@ -76,35 +76,75 @@ const OFFLINE_CONCEPT_ALIAS_GROUPS=Object.freeze([
   {key:"jehovah",label:"Jeová",kind:"deity",aliases:["jeová","jeova","jehovah"]},
   {key:"jesus-christ",label:"Jesus Cristo",kind:"person",aliases:["jesus cristo","jesus christ"]},
   {key:"holy-ghost",label:"Espírito Santo",kind:"deity",aliases:["espírito santo","espirito santo","holy ghost","holy spirit"]},
+  {key:"heavenly-father",label:"Pai Celestial",kind:"deity",aliases:["pai celestial","heavenly father"]},
   {key:"satan",label:"Satanás",kind:"entity",aliases:["satanás","satanas","satan"]},
   {key:"lucifer",label:"Lúcifer",kind:"entity",aliases:["lúcifer","lucifer"]},
   {key:"joseph-smith",label:"Joseph Smith",kind:"person",aliases:["joseph smith","josé smith","jose smith"]},
   {key:"brigham-young",label:"Brigham Young",kind:"person",aliases:["brigham young"]},
   {key:"second-anointing",label:"Segunda Unção",kind:"concept",aliases:["segunda unção","segunda uncao","second anointing"]},
-  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]}
+  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]},
+  {key:"priesthood",label:"Sacerdócio",kind:"concept",aliases:["sacerdócio","sacerdocio","priesthood"]},
+  {key:"melchizedek-priesthood",label:"Sacerdócio de Melquisedeque",kind:"concept",aliases:["sacerdócio de melquisedeque","sacerdocio de melquisedeque","melchizedek priesthood"]},
+  {key:"aaronic-priesthood",label:"Sacerdócio Aarônico",kind:"concept",aliases:["sacerdócio aarônico","sacerdocio aaronico","aaronic priesthood"]},
+  {key:"temple",label:"Templo",kind:"concept",aliases:["templo","temple"]},
+  {key:"sealing",label:"Selamento",kind:"concept",aliases:["selamento","sealing"]},
+  {key:"eternal-marriage",label:"Casamento Eterno",kind:"concept",aliases:["casamento eterno","eternal marriage"]},
+  {key:"exaltation",label:"Exaltação",kind:"concept",aliases:["exaltação","exaltacao","exaltation"]},
+  {key:"premortal-life",label:"Vida Pré-Mortal",kind:"concept",aliases:["vida pré mortal","vida pre mortal","vida pré-mortal","vida pre-mortal","premortal life","pre-mortal life"]},
+  {key:"atonement",label:"Expiação",kind:"concept",aliases:["expiação","expiacao","atonement"]},
+  {key:"resurrection",label:"Ressurreição",kind:"concept",aliases:["ressurreição","ressurreicao","resurrection"]},
+  {key:"baptism",label:"Batismo",kind:"concept",aliases:["batismo","baptism"]},
+  {key:"sacrament",label:"Sacramento",kind:"concept",aliases:["sacramento","sacrament"]},
+  {key:"book-of-mormon",label:"Livro de Mórmon",kind:"work",aliases:["livro de mórmon","livro de mormon","book of mormon"]},
+  {key:"doctrine-and-covenants",label:"Doutrina e Convênios",kind:"work",aliases:["doutrina e convênios","doutrina e convenios","doctrine and covenants","d&c"]},
+  {key:"pearl-of-great-price",label:"Pérola de Grande Valor",kind:"work",aliases:["pérola de grande valor","perola de grande valor","pearl of great price"]},
+  {key:"first-vision",label:"Primeira Visão",kind:"event",aliases:["primeira visão","primeira visao","first vision"]},
+  {key:"plan-of-salvation",label:"Plano de Salvação",kind:"concept",aliases:["plano de salvação","plano de salvacao","plan of salvation"]},
+  {key:"celestial-kingdom",label:"Reino Celestial",kind:"concept",aliases:["reino celestial","celestial kingdom"]}
 ]);
 const OFFLINE_ALIAS_CANONICAL=new Map();
 for(const group of OFFLINE_CONCEPT_ALIAS_GROUPS){
   for(const alias of group.aliases)OFFLINE_ALIAS_CANONICAL.set(fold(alias),group);
 }
-function offlineConceptForQuestion(question){
-  const strict=fold(deriveStrictPhrase(question)||"");
-  if(strict && OFFLINE_ALIAS_CANONICAL.has(strict))return OFFLINE_ALIAS_CANONICAL.get(strict);
-  const raw=fold(question);
-  if(OFFLINE_ALIAS_CANONICAL.has(raw))return OFFLINE_ALIAS_CANONICAL.get(raw);
-  return null;
-}
-function offlineAliasParagraphMatch(text,question,concept){
-  if(!concept)return strictParagraphMatch(text,question);
-  for(const alias of concept.aliases){
-    const match=strictParagraphMatch(text,alias);
-    if(match?.matched)return {...match,matched_alias:alias};
+function offlineConceptsForQuestion(question){
+  const hay=" "+fold(question)+" ";
+  const found=[];
+  for(const group of OFFLINE_CONCEPT_ALIAS_GROUPS){
+    const matched=(group.aliases||[]).map(alias=>fold(alias)).filter(alias=>alias&&hay.includes(" "+alias+" ")).sort((a,b)=>b.length-a.length)[0]||"";
+    if(matched)found.push({group,matched});
   }
-  return {matched:false,target:concept.label,paragraph:"",paragraph_index:-1};
+  found.sort((a,b)=>b.matched.length-a.matched.length);
+  const kept=[];
+  for(const item of found){
+    if(kept.some(existing=>existing.matched!==item.matched&&existing.matched.includes(item.matched)))continue;
+    kept.push(item);
+  }
+  return kept.map(item=>item.group);
+}
+function offlineConceptForQuestion(question){
+  const concepts=offlineConceptsForQuestion(question);
+  return concepts.length===1?concepts[0]:null;
 }
 function offlineParagraphContainsConcept(paragraph,concept){
   const hay=" "+fold(paragraph)+" ";
-  return concept.aliases.some(alias=>hay.includes(" "+fold(alias)+" "));
+  return (concept?.aliases||[]).some(alias=>hay.includes(" "+fold(alias)+" "));
+}
+function offlineAliasParagraphMatch(text,question,concepts){
+  const list=Array.isArray(concepts)?concepts.filter(Boolean):(concepts?[concepts]:[]);
+  if(!list.length)return strictParagraphMatch(text,question);
+  const target=list.map(x=>x.label).join(" + ");
+  const blocks=paragraphBlocks(text);
+  for(let i=0;i<blocks.length;i++){
+    const matchedAliases=[];
+    let accepted=true;
+    for(const concept of list){
+      const alias=(concept.aliases||[]).find(candidate=>offlineParagraphContainsConcept(blocks[i],{aliases:[candidate]}));
+      if(!alias){accepted=false;break;}
+      matchedAliases.push(alias);
+    }
+    if(accepted)return {matched:true,target,paragraph:blocks[i],paragraph_index:i,matched_aliases:matchedAliases,compound:list.length>1};
+  }
+  return {matched:false,target,paragraph:"",paragraph_index:-1,matched_aliases:[],compound:list.length>1};
 }
 
 async function semantic(query,topK,minScore){
@@ -187,9 +227,10 @@ async function strictSearchAll(question,topK=STRICT_LOGICAL_TASK_CAP){
 }
 
 async function strictSearchPage(question,offset=0,limit=50){
-  const concept=offlineConceptForQuestion(question);
-  const target=concept?.label || deriveStrictPhrase(question);
-  if(!target)return {matches:[],scanned:0,total:0,target:"",offset:0,limit:Number(limit||50),concept:null,alias_expanded:false};
+  const concepts=offlineConceptsForQuestion(question);
+  const concept=concepts.length===1?concepts[0]:null;
+  const target=concepts.length?concepts.map(x=>x.label).join(" + "):deriveStrictPhrase(question);
+  if(!target)return {matches:[],scanned:0,total:0,target:"",offset:0,limit:Number(limit||50),concept:null,alias_expanded:false,compound_alias_lock:false};
   const start=Math.max(0,Number(offset||0));
   const pageSize=Math.max(1,Math.min(100,Number(limit||50)));
   const db=await openDb();
@@ -204,7 +245,9 @@ async function strictSearchPage(question,offset=0,limit=50){
     req.onsuccess=()=>{
       const cursor=req.result;
       if(!cursor){
-        const related=concept?[...relatedCounts.entries()]
+        const requestedKeys=new Set(concepts.map(x=>x.key));
+        const related=concepts.length?[...relatedCounts.entries()]
+          .filter(([key])=>!requestedKeys.has(key))
           .map(([key,occurrences])=>{
             const group=OFFLINE_CONCEPT_ALIAS_GROUPS.find(x=>x.key===key);
             return group?{key,label:group.label,kind:group.kind,predicate:"co_occurs_with",occurrences}:null;
@@ -212,24 +255,32 @@ async function strictSearchPage(question,offset=0,limit=50){
           .filter(Boolean)
           .sort((a,b)=>b.occurrences-a.occurrences||a.label.localeCompare(b.label))
           .slice(0,8):[];
-        const conceptSummary=concept?{
-          key:concept.key,label:concept.label,kind:concept.kind,aliases:[...concept.aliases],
+        const conceptSummary=concepts.length?{
+          key:concepts.map(x=>x.key).join("+"),
+          label:target,
+          kind:concepts.length>1?"compound":concept.kind,
+          aliases:[...new Set(concepts.flatMap(x=>x.aliases||[]))],
+          components:concepts.map(x=>({key:x.key,label:x.label,kind:x.kind})),
           occurrences:total,documents:documents.size,related,source:"indexeddb-local-derived"
         }:null;
         db.close();
-        resolve({matches,scanned,total,target,offset:start,limit:pageSize,concept:conceptSummary,alias_expanded:Boolean(concept)});
+        resolve({
+          matches,scanned,total,target,offset:start,limit:pageSize,concept:conceptSummary,
+          alias_expanded:concepts.length>0,compound_alias_lock:concepts.length>1,
+          mode:concepts.length>1?"strict-alias-and-indexeddb-page-v10-1":concepts.length?"strict-alias-indexeddb-page-v10-1":"strict-phrase-indexeddb-page-v10"
+        });
         return;
       }
       const row=cursor.value||{};
       scanned++;
-      const match=offlineAliasParagraphMatch(row.text||"",question,concept);
+      const match=offlineAliasParagraphMatch(row.text||"",question,concepts);
       if(match.matched){
         const hitIndex=total++;
         documents.add(String(row.document_id||row.doc_key||"local"));
         const paragraph=String(match.paragraph||row.text||"").trim();
-        if(concept){
+        if(concepts.length){
           for(const candidate of OFFLINE_CONCEPT_ALIAS_GROUPS){
-            if(candidate.key===concept.key)continue;
+            if(concepts.some(x=>x.key===candidate.key))continue;
             if(offlineParagraphContainsConcept(paragraph,candidate)){
               relatedCounts.set(candidate.key,(relatedCounts.get(candidate.key)||0)+1);
             }
@@ -242,9 +293,10 @@ async function strictSearchPage(question,offset=0,limit=50){
             score:100,
             coverage:1,
             strict_phrase:match.target,
-            strict_alias:match.matched_alias||"",
+            strict_alias:Array.isArray(match.matched_aliases)?match.matched_aliases.join(" + "):"",
+            strict_aliases:Array.isArray(match.matched_aliases)?match.matched_aliases:[],
             strict_paragraph_index:match.paragraph_index,
-            retrieval_mode:concept?"strict-alias-indexeddb-page-v10-1":"strict-phrase-indexeddb-page-v10"
+            retrieval_mode:concepts.length>1?"strict-alias-and-indexeddb-page-v10-1":concepts.length?"strict-alias-indexeddb-page-v10-1":"strict-phrase-indexeddb-page-v10"
           });
         }
       }
@@ -419,7 +471,7 @@ self.onmessage=async e=>{
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||500),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="search-strict"){const result=await strictSearchAll(d.question||"",Number(d.top_k||STRICT_LOGICAL_TASK_CAP));self.postMessage({id,ok:true,...result,mode:"strict-phrase-v4"});return;}
-    if(d.type==="search-strict-page"){const result=await strictSearchPage(d.question||"",Number(d.offset||0),Number(d.limit||50));self.postMessage({id,ok:true,...result,mode:"strict-phrase-indexeddb-page-v10"});return;}
+    if(d.type==="search-strict-page"){const result=await strictSearchPage(d.question||"",Number(d.offset||0),Number(d.limit||50));self.postMessage({id,ok:true,...result,mode:result.mode||"strict-phrase-indexeddb-page-v10"});return;}
     if(d.type==="search-bm25"){const topK=Number(d.top_k||500);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
     if(d.type==="local-stats"){
       const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);

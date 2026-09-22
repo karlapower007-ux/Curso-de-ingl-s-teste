@@ -119,7 +119,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=10.1.1").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=10.1.2").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -2050,7 +2050,7 @@
           const conceptData=await api("/api/encyclopedia/concept",{
             method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q})
           },false);
-          dictionaryState.concept=conceptData?.found===true ? conceptData.concept : null;
+          if(conceptData?.found===true) dictionaryState.concept=conceptData.concept;
         }catch{}
       }
 

@@ -514,7 +514,8 @@ async function offlineDictionarySearch(question,page=1,pageSize=50){
       target:String(r.target||""),
       concept:r.concept||null,
       alias_expanded:r.alias_expanded===true,
-      mode:r.alias_expanded===true?"offline-encyclopedia-alias-v10-1":"offline-encyclopedia-v10",
+      compound_alias_lock:r.compound_alias_lock===true,
+      mode:String(r.mode|| (r.alias_expanded===true?"offline-encyclopedia-alias-v10-1":"offline-encyclopedia-v10")),
       local_only:true
     };
   }catch(error){

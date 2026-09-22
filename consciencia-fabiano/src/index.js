@@ -1,4 +1,4 @@
-import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAudit,extractSemanticReference,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
+import {strictParagraphMatch,paragraphBlocks,deriveStrictPhrase,buildStrictIntent,strictIntentAudit,extractSemanticReference,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
@@ -776,16 +776,71 @@ const ENCYCLOPEDIA_ALIAS_GROUPS = Object.freeze([
   {key:"jehovah",label:"Jeová",kind:"deity",aliases:["jeová","jeova","jehovah"]},
   {key:"jesus-christ",label:"Jesus Cristo",kind:"person",aliases:["jesus cristo","jesus christ"]},
   {key:"holy-ghost",label:"Espírito Santo",kind:"deity",aliases:["espírito santo","espirito santo","holy ghost","holy spirit"]},
+  {key:"heavenly-father",label:"Pai Celestial",kind:"deity",aliases:["pai celestial","heavenly father"]},
   {key:"satan",label:"Satanás",kind:"entity",aliases:["satanás","satanas","satan"]},
   {key:"lucifer",label:"Lúcifer",kind:"entity",aliases:["lúcifer","lucifer"]},
   {key:"joseph-smith",label:"Joseph Smith",kind:"person",aliases:["joseph smith","josé smith","jose smith"]},
   {key:"brigham-young",label:"Brigham Young",kind:"person",aliases:["brigham young"]},
   {key:"second-anointing",label:"Segunda Unção",kind:"concept",aliases:["segunda unção","segunda uncao","second anointing"]},
-  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]}
+  {key:"tithing",label:"Dízimo",kind:"concept",aliases:["dízimo","dizimo","tithing"]},
+  {key:"priesthood",label:"Sacerdócio",kind:"concept",aliases:["sacerdócio","sacerdocio","priesthood"]},
+  {key:"melchizedek-priesthood",label:"Sacerdócio de Melquisedeque",kind:"concept",aliases:["sacerdócio de melquisedeque","sacerdocio de melquisedeque","melchizedek priesthood"]},
+  {key:"aaronic-priesthood",label:"Sacerdócio Aarônico",kind:"concept",aliases:["sacerdócio aarônico","sacerdocio aaronico","aaronic priesthood"]},
+  {key:"temple",label:"Templo",kind:"concept",aliases:["templo","temple"]},
+  {key:"sealing",label:"Selamento",kind:"concept",aliases:["selamento","sealing"]},
+  {key:"eternal-marriage",label:"Casamento Eterno",kind:"concept",aliases:["casamento eterno","eternal marriage"]},
+  {key:"exaltation",label:"Exaltação",kind:"concept",aliases:["exaltação","exaltacao","exaltation"]},
+  {key:"premortal-life",label:"Vida Pré-Mortal",kind:"concept",aliases:["vida pré mortal","vida pre mortal","vida pré-mortal","vida pre-mortal","premortal life","pre-mortal life"]},
+  {key:"atonement",label:"Expiação",kind:"concept",aliases:["expiação","expiacao","atonement"]},
+  {key:"resurrection",label:"Ressurreição",kind:"concept",aliases:["ressurreição","ressurreicao","resurrection"]},
+  {key:"baptism",label:"Batismo",kind:"concept",aliases:["batismo","baptism"]},
+  {key:"sacrament",label:"Sacramento",kind:"concept",aliases:["sacramento","sacrament"]},
+  {key:"book-of-mormon",label:"Livro de Mórmon",kind:"work",aliases:["livro de mórmon","livro de mormon","book of mormon"]},
+  {key:"doctrine-and-covenants",label:"Doutrina e Convênios",kind:"work",aliases:["doutrina e convênios","doutrina e convenios","doctrine and covenants","d&c"]},
+  {key:"pearl-of-great-price",label:"Pérola de Grande Valor",kind:"work",aliases:["pérola de grande valor","perola de grande valor","pearl of great price"]},
+  {key:"first-vision",label:"Primeira Visão",kind:"event",aliases:["primeira visão","primeira visao","first vision"]},
+  {key:"plan-of-salvation",label:"Plano de Salvação",kind:"concept",aliases:["plano de salvação","plano de salvacao","plan of salvation"]},
+  {key:"celestial-kingdom",label:"Reino Celestial",kind:"concept",aliases:["reino celestial","celestial kingdom"]}
 ]);
 const ENCYCLOPEDIA_ALIAS_CANONICAL = new Map();
 for (const group of ENCYCLOPEDIA_ALIAS_GROUPS) {
   for (const alias of group.aliases) ENCYCLOPEDIA_ALIAS_CANONICAL.set(foldSearchText(alias),group);
+}
+function encyclopediaConceptsForQuestion(question){
+  const hay=" "+foldSearchText(question)+" ";
+  const found=[];
+  for(const group of ENCYCLOPEDIA_ALIAS_GROUPS){
+    const matched=(group.aliases||[]).map(alias=>foldSearchText(alias)).filter(alias=>alias&&hay.includes(" "+alias+" ")).sort((a,b)=>b.length-a.length)[0]||"";
+    if(matched)found.push({group,matched});
+  }
+  found.sort((a,b)=>b.matched.length-a.matched.length);
+  const kept=[];
+  for(const item of found){
+    if(kept.some(existing=>existing.matched!==item.matched&&existing.matched.includes(item.matched)))continue;
+    kept.push(item);
+  }
+  return kept.map(item=>item.group);
+}
+function encyclopediaParagraphContainsConcept(paragraph,concept){
+  const hay=" "+foldSearchText(paragraph)+" ";
+  return (concept?.aliases||[]).some(alias=>hay.includes(" "+foldSearchText(alias)+" "));
+}
+function encyclopediaAliasParagraphMatch(text,question,concepts){
+  const list=Array.isArray(concepts)?concepts.filter(Boolean):[];
+  if(!list.length)return strictParagraphMatch(text,question);
+  const target=list.map(x=>x.label).join(" + ");
+  const blocks=paragraphBlocks(text);
+  for(let i=0;i<blocks.length;i++){
+    const matchedAliases=[];
+    let accepted=true;
+    for(const concept of list){
+      const alias=(concept.aliases||[]).find(candidate=>encyclopediaParagraphContainsConcept(blocks[i],{aliases:[candidate]}));
+      if(!alias){accepted=false;break;}
+      matchedAliases.push(alias);
+    }
+    if(accepted)return {matched:true,target,paragraph:blocks[i],paragraph_index:i,matched_aliases:matchedAliases,compound:list.length>1};
+  }
+  return {matched:false,target,paragraph:"",paragraph_index:-1,matched_aliases:[],compound:list.length>1};
 }
 const ENCYCLOPEDIA_GENERIC_STOP = new Set([
   "assim","ainda","agora","alem","antes","aqui","cada","capitulo","como","contudo","depois","deus","dessa","deste",
@@ -6116,15 +6171,16 @@ export class LibraryDO {
         const question=String(body?.query||"").trim();
         const page=Math.max(1,Number(body?.page||1));
         const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
-        const target=deriveStrictPhrase(question);
-        const intent=buildStrictIntent(question);
+        const concepts=encyclopediaConceptsForQuestion(question);
+        const target=concepts.length?concepts.map(x=>x.label).join(" + "):deriveStrictPhrase(question);
+        const intent=concepts.length?null:buildStrictIntent(question);
         if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"encyclopedia-v10"});
 
         const makeHit=row=>{
-          const match=strictParagraphMatch(row?.text||"",question);
+          const match=encyclopediaAliasParagraphMatch(row?.text||"",question,concepts);
           if(!match.matched)return null;
           const evidence=String(match.paragraph||"").trim();
-          const audit=strictIntentAudit(evidence,intent);
+          const audit=concepts.length?{accepted:true,coverage:1}:strictIntentAudit(evidence,intent);
           if(!audit.accepted)return null;
           const canonical=extractSemanticReference(evidence);
           const clean=cleanNarrativeText(evidence);
@@ -6147,7 +6203,9 @@ export class LibraryDO {
               );
               ftsMarker="v1";
             }
-            const ftsQuery='"'+target.replace(/"/g,'""')+'"';
+            const ftsQuery=concepts.length
+              ? concepts.map(concept=>"("+[...new Set(concept.aliases||[])].map(alias=>'"'+foldSearchText(alias).replace(/"/g,'""')+'"').join(" OR ")+")").join(" AND ")
+              : '"'+target.replace(/"/g,'""')+'"';
             const candidateTotal=Number([...this.sql.exec(`
               SELECT COUNT(*) AS n
               FROM encyclopedia_fts e
@@ -6156,6 +6214,42 @@ export class LibraryDO {
               WHERE encyclopedia_fts MATCH ?
                 AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
             `,ftsQuery)][0]?.n || 0);
+            if(concepts.length){
+              const accepted=[];
+              const from=Math.max(0,(page-1)*pageSize);
+              let acceptedTotal=0,candidateOffset=0,scanned=0;
+              const batchSize=200;
+              while(candidateOffset<candidateTotal){
+                const rows=[...this.sql.exec(`
+                  SELECT c.page,c.text,d.filename,d.title,d.author
+                  FROM encyclopedia_fts e
+                  JOIN chunks c ON c.rowid=e.rowid
+                  JOIN documents d ON d.id=c.document_id
+                  WHERE encyclopedia_fts MATCH ?
+                    AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+                  ORDER BY c.rowid ASC
+                  LIMIT ? OFFSET ?
+                `,ftsQuery,batchSize,candidateOffset)];
+                if(!rows.length)break;
+                candidateOffset+=rows.length;
+                for(const row of rows){
+                  scanned++;
+                  const hit=makeHit(row);
+                  if(!hit)continue;
+                  const hitIndex=acceptedTotal++;
+                  if(hitIndex>=from && accepted.length<pageSize)accepted.push(hit);
+                }
+              }
+              return json({
+                ok:true,matches:accepted,scanned,total:acceptedTotal,returned:accepted.length,
+                target,page,page_size:pageSize,pages:Math.ceil(acceptedTotal/pageSize),
+                mode:concepts.length>1?"encyclopedia-alias-and-fts5-v10-1":"encyclopedia-alias-fts5-v10-1",
+                encyclopedia_index:"sqlite-fts5",encyclopedia_index_synced:ftsMarker==="v1",
+                strict_focus_lock:true,intent_lock:true,evidence_lock:true,compound_alias_lock:concepts.length>1,
+                alias_expanded:true,or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false
+              });
+            }
+
             const accepted=[];
             let candidateOffset=Math.max(0,(page-1)*pageSize),scanned=0;
             const batchSize=200;

@@ -121,12 +121,16 @@ jobs:
                     {page:1,text:"Adam conversou com Michael sobre sua missão."},
                     {page:2,text:"Adão aparece novamente neste registro."},
                     {page:3,text:"The Second Anointing is discussed in this passage."},
-                    {page:4,text:"Tithing is described as a covenant practice."}
+                    {page:4,text:"Tithing is described as a covenant practice."},
+                    {page:5,text:"Heavenly Father bestowed the Melchizedek Priesthood in this synthetic QA paragraph."},
+                    {page:6,text:"The plan of salvation includes premortal life and exaltation in this synthetic QA paragraph."},
+                    {page:7,text:"Joseph Smith described the First Vision in this synthetic QA paragraph."},
+                    {page:8,text:"Baptism and the sacrament are named together in this synthetic QA paragraph."}
                   ]
                 });
                 return result;
               });
-              if(Number(seeded?.count||0)!==4) throw new Error("Falha ao semear QA local em "+width+": "+JSON.stringify(seeded));
+              if(Number(seeded?.count||0)!==8) throw new Error("Falha ao semear QA local em "+width+": "+JSON.stringify(seeded));
 
               await page.locator("#chatTab").click();
               await page.locator("#operationMode").selectOption("offline");
@@ -140,7 +144,11 @@ jobs:
                 {query:"Adão",minTotal:2,concept:"Adão",mustContain:"Adam",related:"Miguel"},
                 {query:"Miguel",minTotal:1,concept:"Miguel",mustContain:"Michael"},
                 {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",mustContain:"Second Anointing"},
-                {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"Tithing"}
+                {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"Tithing"},
+                {query:"Pai Celestial",minTotal:1,concept:"Pai Celestial",mustContain:"Heavenly Father"},
+                {query:"Sacerdócio de Melquisedeque",minTotal:1,concept:"Sacerdócio de Melquisedeque",mustContain:"Melchizedek Priesthood"},
+                {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,concept:"Plano de Salvação + Vida Pré-Mortal",mustContain:"plan of salvation",mustContainAlso:"premortal life",compound:true},
+                {query:"Batismo e Sacramento",minTotal:1,concept:"Batismo + Sacramento",mustContain:"Baptism",mustContainAlso:"sacrament",compound:true}
               ];
               const canonicalReport=[];
               for(const test of canonical){
@@ -160,9 +168,22 @@ jobs:
                 const total=Number(totalMatch?.[1]||0);
                 if(total<test.minTotal) throw new Error("Alias offline não expandiu "+test.query+" em "+width+": "+JSON.stringify(state));
                 if(!state.concept.includes(test.concept)) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
-                if(!state.results.some(x=>x.includes(test.mustContain))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(!state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase()))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(test.mustContainAlso && !state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase())&&x.toLowerCase().includes(test.mustContainAlso.toLowerCase()))) {
+                  throw new Error("AND composto não manteve os conceitos no mesmo parágrafo para "+test.query+" em "+width+": "+JSON.stringify(state));
+                }
+                if(test.compound){
+                  const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+                  const groups=test.query.startsWith("Plano")
+                    ? [["plano de salvacao","plan of salvation"],["vida pre mortal","vida pre-mortal","premortal life","pre-mortal life"]]
+                    : [["batismo","baptism"],["sacramento","sacrament"]];
+                  for(const row of state.results){
+                    const f=fold(row);
+                    if(!groups.every(g=>g.some(a=>f.includes(fold(a))))) throw new Error("Resultado OR indevido em busca composta "+test.query+" / "+width+": "+row);
+                  }
+                }
                 if(test.related && !state.concept.includes(test.related)) throw new Error("Relação conceitual offline ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
-                canonicalReport.push({query:test.query,total,concept:state.concept,results:state.results.length});
+                canonicalReport.push({query:test.query,total,concept:state.concept,results:state.results.length,compound:Boolean(test.compound)});
               }
               page.off("request",captureApi);
               if(apiRequests.length) throw new Error("Busca canônica offline tentou acessar API em "+width+": "+JSON.stringify(apiRequests));
