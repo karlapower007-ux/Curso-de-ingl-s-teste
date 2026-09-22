@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {readFile,readdir} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {buildV3EvidenceIndex,searchV3Evidence} from "./v3-evidence-core.mjs";
+import {buildV3EvidenceIndex,searchV3Evidence,v3Fold} from "./v3-evidence-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
@@ -34,6 +34,25 @@ const queries=[
   "Explique detalhadamente o que aconteceu na vida pré-mortal"
 ];
 
+function worldRelevant(text){
+  const f=v3Fold(text);
+  return f.includes("mundo dos espirit") ||
+    f.includes("mundo de los espirit") ||
+    f.includes("spirit world") ||
+    f.includes("world of spirit") ||
+    (f.includes("mundo")&&f.includes("espirit"));
+}
+function premortalRelevant(text){
+  const f=v3Fold(text);
+  return f.includes("vida pre-mortal") ||
+    f.includes("premortal life") ||
+    f.includes("pre-mortal life") ||
+    f.includes("preexist") ||
+    f.includes("pre-exist") ||
+    f.includes("before we came") ||
+    f.includes("before the world");
+}
+
 const report=[];
 for(const query of queries){
   const result=searchV3Evidence(index,query,aliases,{limit:20,strict:false});
@@ -41,6 +60,16 @@ for(const query of queries){
   assert.ok(result.results.every(x=>x.verified===true),"toda evidência V3 precisa estar marcada como verificada");
   assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes(".pdf")),"referência pública não pode vazar nome físico de PDF");
   assert.ok(result.results.every(x=>!String(x.reference||"").toLowerCase().includes("standard-works")),"Obras Padrão não podem vazar nome técnico do arquivo");
+  const top=result.results.slice(0,10);
+  if(query.includes("mundo espiritual")){
+    assert.ok(top.length>=5,"mundo espiritual deve ter fluxo documental suficiente");
+    assert.ok(top.every(x=>worldRelevant(x.text)),"mundo espiritual não pode aceitar evidência com apenas a palavra espírito");
+  }
+  if(query.includes("vida pré-mortal")){
+    assert.ok(top.length>=5,"vida pré-mortal deve ter fluxo documental suficiente");
+    assert.ok(top.every(x=>!v3Fold(x.text).includes("gee vida pre-mortal")),"nota GEE não pode ser evidência de vida pré-mortal");
+    assert.ok(top.filter(x=>premortalRelevant(x.text)).length>=5,"vida pré-mortal deve retornar conteúdo substantivo, não aparato editorial");
+  }
   report.push({
     query,
     total_candidates:result.total,
