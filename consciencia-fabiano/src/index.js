@@ -5315,7 +5315,8 @@ export class LibraryDO {
         const target=deriveStrictPhrase(question);
         const intent=buildStrictIntent(question);
         if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"strict-focus-dictionary-v8.2"});
-        const hits=[];
+        const matches=[];
+        const from=(page-1)*pageSize;
         let scanned=0,exactHits=0;
         const cursor=this.sql.exec(`
           SELECT c.page,c.text,d.title,d.author
@@ -5327,20 +5328,19 @@ export class LibraryDO {
           scanned++;
           const match=strictParagraphMatch(row?.text||"",question);
           if(!match.matched)continue;
-          exactHits++;
           const evidence=String(match.paragraph||"").trim();
           const audit=strictIntentAudit(evidence,intent);
           if(!audit.accepted)continue;
+          const hitIndex=exactHits++;
+          if(hitIndex<from || matches.length>=pageSize)continue;
           const canonical=extractSemanticReference(evidence);
-          hits.push({
+          matches.push({
             page:Number(row.page||0),text:evidence,
             title:canonical?"":humanDocumentName("",row.title),
             author:String(row.author||""),reference:canonical,
             score:100,coverage:audit.coverage
           });
         }
-        const from=(page-1)*pageSize;
-        const matches=hits.slice(from,from+pageSize);
         return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,
           target,page,page_size:pageSize,pages:Math.ceil(exactHits/pageSize),
           mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
