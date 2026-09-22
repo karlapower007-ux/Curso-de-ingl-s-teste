@@ -1169,8 +1169,9 @@
 
     const sourceSubtitle=document.createElement("div");
     sourceSubtitle.className="offline-turbine-source-subtitle";
-    sourceSubtitle.textContent=String(item?.filename||item?.source_title||"Documento");
-    card.appendChild(sourceSubtitle);
+    const publicSource=String(item?.canonical_reference||item?.semantic_title||item?.source_title||"").replace(/\.pdf$/i,"").replace(/^(?:standard works|obras padrão)$/i,"").trim();
+    sourceSubtitle.textContent=publicSource;
+    if(publicSource) card.appendChild(sourceSubtitle);
 
     const meta=document.createElement("div");
     meta.className="offline-turbine-meta";
@@ -1178,8 +1179,6 @@
     if(item?.author) bits.push("autor: "+item.author);
     if(item?.page) bits.push("página "+item.page);
     if(Number.isFinite(Number(item?.score))) bits.push("relevância "+Number(item.score).toFixed(2));
-    if(Number(item?.chunk_end)>Number(item?.chunk_start)) bits.push("chunks "+item.chunk_start+"–"+item.chunk_end);
-    else if(item?.chunk_index!=null) bits.push("chunk "+item.chunk_index);
     if(Array.isArray(item?.references)&&item.references.length>1) bits.push(item.references.join(" • "));
     meta.textContent=bits.join(" • ");
     if(bits.length) card.appendChild(meta);
@@ -1208,12 +1207,8 @@
     const logical=Math.max(0,Number(data?.logical_tasks||0));
     const agents=Math.max(0,Number(data?.logical_agents||0));
     const mergedCount=Math.max(0,rawCards.length-cards.length);
-    status.textContent=agents
-      ? CURRENT_SYSTEM_VERSION+" • Fabiano Grounded Hybrid RAG • "+cards.length+" hits validados • "+agents+" agentes lógicos • "+physical+" Web Workers"+
-        (data?.semantic_expansion_used?" • literal + semântica em paralelo":data?.semantic_fallback_used?" • fallback semântico Transformers.js":" • literal")+
-        (mergedCount?" • "+mergedCount+" chunks costurados":"")
-      : (navigator.onLine?"Contingência local":"Modo offline")+" • "+cards.length+" blocos • "+logical+" tarefas lógicas • "+physical+" Web Workers"+
-        (mergedCount?" • "+mergedCount+" resultados sequenciais costurados":"");
+    status.textContent=(navigator.onLine?"Busca local de contingência":"Modo offline")+" • "+cards.length+" resultado(s) verificado(s)"+
+      (data?.semantic_expansion_used?" • busca literal + semântica":data?.semantic_fallback_used?" • busca semântica":" • busca literal");
     wrap.appendChild(status);
 
     const viewport=document.createElement("div");
