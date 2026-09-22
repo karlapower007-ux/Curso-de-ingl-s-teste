@@ -4680,22 +4680,6 @@ export class LibraryDO {
           text TEXT NOT NULL, embedding TEXT NOT NULL, created_at TEXT NOT NULL,
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
-        CREATE VIRTUAL TABLE IF NOT EXISTS encyclopedia_fts USING fts5(
-          text,
-          content='chunks',
-          content_rowid='rowid',
-          tokenize='unicode61 remove_diacritics 2'
-        );
-        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ai AFTER INSERT ON chunks BEGIN
-          INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ad AFTER DELETE ON chunks BEGIN
-          INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_au AFTER UPDATE OF text ON chunks BEGIN
-          INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
-          INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
-        END;
         CREATE TABLE IF NOT EXISTS system_meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL,
@@ -4746,6 +4730,32 @@ export class LibraryDO {
         CREATE INDEX IF NOT EXISTS idx_index_jobs_status_updated ON index_jobs(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_job_text_pages_job ON job_text_pages(job_id, page);
       `);
+      // Encyclopedia acceleration is derived and optional. Never let its setup
+      // make the primary document/chunk library unavailable.
+      this.ftsReady=false;
+      try{
+        this.sql.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS encyclopedia_fts USING fts5(
+            text,
+            content='chunks',
+            content_rowid='rowid',
+            tokenize='unicode61 remove_diacritics 2'
+          );
+          CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
+          END;
+          CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ad AFTER DELETE ON chunks BEGIN
+            INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+          END;
+          CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_au AFTER UPDATE OF text ON chunks BEGIN
+            INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+            INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
+          END;
+        `);
+        this.ftsReady=true;
+      }catch{
+        this.ftsReady=false;
+      }
       initStage = "jobs";
       let jobColumns=[...this.sql.exec("PRAGMA table_info(index_jobs)")].map(row=>String(row.name || ""));
 
@@ -5527,8 +5537,12 @@ export class LibraryDO {
 
       if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
         const chunks=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
-        const marker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
-        return json({ok:true,engine:"sqlite-fts5",chunks,ready:marker==="v1",version:String(marker||"")});
+        let marker="",ftsReady=this.ftsReady===true;
+        try{
+          marker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
+          if(ftsReady) [...this.sql.exec("SELECT rowid FROM encyclopedia_fts LIMIT 1")];
+        }catch{ftsReady=false;}
+        return json({ok:true,engine:ftsReady?"sqlite-fts5":"strict-scan-fallback",chunks,ready:true,fts_ready:ftsReady,version:String(marker||"")});
       }
 
       if (url.pathname === "/dictionary/search" && request.method === "POST") {
@@ -5538,68 +5552,109 @@ export class LibraryDO {
         const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
         const target=deriveStrictPhrase(question);
         const intent=buildStrictIntent(question);
-        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"encyclopedia-fts5-v9.1"});
+        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"encyclopedia-v10"});
 
-        const chunkTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
-        let ftsMarker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
-        if(ftsMarker!=="v1"){
-          this.sql.exec("INSERT INTO encyclopedia_fts(encyclopedia_fts) VALUES('rebuild')");
-          this.sql.exec(
-            "INSERT OR REPLACE INTO system_meta (key,value,updated_at) VALUES ('encyclopedia_fts_version','v1',?)",
-            new Date().toISOString()
-          );
-          ftsMarker="v1";
-        }
+        const makeHit=row=>{
+          const match=strictParagraphMatch(row?.text||"",question);
+          if(!match.matched)return null;
+          const evidence=String(match.paragraph||"").trim();
+          const audit=strictIntentAudit(evidence,intent);
+          if(!audit.accepted)return null;
+          const canonical=extractSemanticReference(evidence);
+          const clean=cleanNarrativeText(evidence);
+          const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+          const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
+          return {page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage};
+        };
 
-        const ftsQuery='"'+target.replace(/"/g,'""')+'"';
-        const candidateTotal=Number([...this.sql.exec(`
-          SELECT COUNT(*) AS n
-          FROM encyclopedia_fts e
-          JOIN chunks c ON c.rowid=e.rowid
-          JOIN documents d ON d.id=c.document_id
-          WHERE encyclopedia_fts MATCH ?
-            AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
-        `,ftsQuery)][0]?.n || 0);
-
-        const from=(page-1)*pageSize;
-        const accepted=[];
-        let candidateOffset=Math.max(0,from),scanned=0;
-        const batchSize=200;
-        while(accepted.length<pageSize && candidateOffset<candidateTotal){
-          const rows=[...this.sql.exec(`
-            SELECT c.page,c.text,d.title,d.author
-            FROM encyclopedia_fts e
-            JOIN chunks c ON c.rowid=e.rowid
-            JOIN documents d ON d.id=c.document_id
-            WHERE encyclopedia_fts MATCH ?
-              AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
-            ORDER BY c.rowid ASC
-            LIMIT ? OFFSET ?
-          `,ftsQuery,batchSize,candidateOffset)];
-          if(!rows.length)break;
-          candidateOffset+=rows.length;
-          for(const row of rows){
-            scanned++;
-            const match=strictParagraphMatch(row?.text||"",question);
-            if(!match.matched)continue;
-            const evidence=String(match.paragraph||"").trim();
-            const audit=strictIntentAudit(evidence,intent);
-            if(!audit.accepted)continue;
-            const canonical=extractSemanticReference(evidence);
-            const clean=cleanNarrativeText(evidence);
-            const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
-            const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
-            accepted.push({page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage});
-            if(accepted.length>=pageSize)break;
+        // Primary: FTS5 derived index. If anything about the derived index fails,
+        // fall back to the immutable chunk library instead of returning HTTP 500.
+        if(this.ftsReady===true){
+          try{
+            const chunkTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
+            let ftsMarker=[...this.sql.exec("SELECT value FROM system_meta WHERE key='encyclopedia_fts_version' LIMIT 1")][0]?.value || "";
+            if(ftsMarker!=="v1"){
+              this.sql.exec("INSERT INTO encyclopedia_fts(encyclopedia_fts) VALUES('rebuild')");
+              this.sql.exec(
+                "INSERT OR REPLACE INTO system_meta (key,value,updated_at) VALUES ('encyclopedia_fts_version','v1',?)",
+                new Date().toISOString()
+              );
+              ftsMarker="v1";
+            }
+            const ftsQuery='"'+target.replace(/"/g,'""')+'"';
+            const candidateTotal=Number([...this.sql.exec(`
+              SELECT COUNT(*) AS n
+              FROM encyclopedia_fts e
+              JOIN chunks c ON c.rowid=e.rowid
+              JOIN documents d ON d.id=c.document_id
+              WHERE encyclopedia_fts MATCH ?
+                AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+            `,ftsQuery)][0]?.n || 0);
+            const accepted=[];
+            let candidateOffset=Math.max(0,(page-1)*pageSize),scanned=0;
+            const batchSize=200;
+            while(accepted.length<pageSize && candidateOffset<candidateTotal){
+              const rows=[...this.sql.exec(`
+                SELECT c.page,c.text,d.title,d.author
+                FROM encyclopedia_fts e
+                JOIN chunks c ON c.rowid=e.rowid
+                JOIN documents d ON d.id=c.document_id
+                WHERE encyclopedia_fts MATCH ?
+                  AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+                ORDER BY c.rowid ASC
+                LIMIT ? OFFSET ?
+              `,ftsQuery,batchSize,candidateOffset)];
+              if(!rows.length)break;
+              candidateOffset+=rows.length;
+              for(const row of rows){
+                scanned++;
+                const hit=makeHit(row);
+                if(hit)accepted.push(hit);
+                if(accepted.length>=pageSize)break;
+              }
+            }
+            return json({
+              ok:true,matches:accepted,scanned,total:candidateTotal,returned:accepted.length,
+              target,page,page_size:pageSize,pages:Math.ceil(candidateTotal/pageSize),
+              mode:"encyclopedia-fts5-v10",encyclopedia_index:"sqlite-fts5",
+              encyclopedia_index_synced:ftsMarker==="v1",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
+              or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false
+            });
+          }catch{
+            this.ftsReady=false;
           }
         }
 
+        // Contingency: bounded-memory full-library strict scan. It reads the same
+        // primary chunks without mutating, deleting, reindexing, or migrating them.
+        const from=(page-1)*pageSize;
+        const matches=[];
+        let scanned=0,total=0;
+        const sqlPageSize=200;
+        for(let offset=0;;offset+=sqlPageSize){
+          const rows=[...this.sql.exec(`
+            SELECT c.page,c.text,d.title,d.author
+            FROM chunks c JOIN documents d ON d.id=c.document_id
+            WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+            ORDER BY c.rowid ASC
+            LIMIT ? OFFSET ?
+          `,sqlPageSize,offset)];
+          if(!rows.length)break;
+          for(const row of rows){
+            scanned++;
+            const hit=makeHit(row);
+            if(!hit)continue;
+            const hitIndex=total++;
+            if(hitIndex>=from && matches.length<pageSize)matches.push(hit);
+          }
+          if(rows.length<sqlPageSize)break;
+          await Promise.resolve();
+        }
         return json({
-          ok:true,matches:accepted,scanned,total:candidateTotal,returned:accepted.length,
-          target,page,page_size:pageSize,pages:Math.ceil(candidateTotal/pageSize),
-          mode:"encyclopedia-fts5-v9.1",encyclopedia_index:"sqlite-fts5",
-          encyclopedia_index_synced:ftsMarker==="v1",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
-          plans:{A:"fts5-exact-phrase",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
+          ok:true,matches,scanned,total,returned:matches.length,target,page,page_size:pageSize,
+          pages:Math.ceil(total/pageSize),mode:"encyclopedia-strict-scan-v10",
+          encyclopedia_index:"strict-scan-fallback",encyclopedia_index_synced:false,
+          strict_focus_lock:true,intent_lock:true,evidence_lock:true,
           or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false
         });
       }
