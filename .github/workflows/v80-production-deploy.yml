@@ -110,16 +110,16 @@ jobs:
             BODY="$(curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/health/deploy || true)"
             VERSION="$(printf '%s' "$BODY" | jq -r '.version // ""' 2>/dev/null || true)"
             HEALTH="$(printf '%s' "$BODY" | jq -r '.ok // false' 2>/dev/null || true)"
-            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.1.0-strict-focus-dictionary" ]; then
+            if [ "$HEALTH" = "true" ] && [ "$VERSION" = "8.2.0-strict-focus-lock" ]; then
               OK=true
               break
             fi
             sleep 3
           done
           test "$OK" = "true"
-          echo "V8_1_PRODUCTION_ENDPOINT=healthy"
+          echo "V8_2_PRODUCTION_ENDPOINT=healthy"
           curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ | grep -q 'Dicionário / Enciclopédia'
-          echo "V8_1_DICTIONARY_UI=visible"
+          echo "V8_2_DICTIONARY_UI=visible"
 
       - name: Roll back Worker to previous production commit on failure
         if: failure() && env.DEPLOY_ARMED == 'true'
