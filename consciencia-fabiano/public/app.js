@@ -1091,7 +1091,7 @@
     wrap.appendChild(text);
 
     const displayContent = role === "assistant" ? sanitizeResponseForUI(content) : String(content || "");
-    const hasDeterministicReferenceSection = role === "assistant" && /FONTES\s+E\s+REFER[ÊE]NCIAS/i.test(displayContent);
+    const hasDeterministicReferenceSection = role === "assistant" && /(^|\n)\s*(?:Fontes|FONTES\s+E\s+REFER[ÊE]NCIAS)\b/i.test(displayContent);
     if (role === "assistant" && !hasDeterministicReferenceSection && (sources?.length || fallback)) {
       const src = document.createElement("div");
       src.className = "sources";
@@ -1106,15 +1106,14 @@
       (sources || []).forEach(item => {
         const row = document.createElement("div");
         row.className = "source";
+        const label=publicSourceLabel(item);
+        if(!label) return;
         const strong = document.createElement("strong");
-        strong.textContent = item.titulo || item.arquivo || "Documento";
+        strong.textContent = label;
         row.appendChild(strong);
 
         const meta = [];
         if (item.autor) meta.push("autor: " + item.autor);
-        if (item.pagina) meta.push("página " + item.pagina);
-        if (item.idioma && item.idioma !== "unknown") meta.push("idioma: " + item.idioma);
-        if (item.arquivo && item.titulo && item.arquivo !== item.titulo && !/\.pdf$/i.test(item.arquivo)) meta.push(item.arquivo);
         if (meta.length) {
           const details = document.createElement("div");
           details.className = "source-meta";
@@ -1758,7 +1757,7 @@
     setAvatar("thinking");
     try {
       const turnId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(16).slice(2)));
-      const recentHistory=history.slice(-20).map(x=>({
+      const recentHistory=history.slice(-8).map(x=>({
         role:x.role,
         content:x.role==="assistant" ? sanitizeResponseForUI(x.content) : String(x.content || "")
       }));
@@ -1909,7 +1908,8 @@
           turn_id:turnId,
           historico:recentHistory,
           query_embedding:analyticQueryEmbedding,
-          client_context:analyticClientContext
+          client_context:analyticClientContext,
+          prefer_client_context:analyticClientContext.length>=6
         });
       }catch(error){
         primaryError=error;
@@ -2036,11 +2036,11 @@
 
   const dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0,hits:[]};
   function publicSourceLabel(hit){
-    const title=String(hit?.title||hit?.titulo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim().replace(/^(?:standard works|obras padrão)$/i,"");
+    const title=String(hit?.title||hit?.titulo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim().replace(/^(?:standard works|obras padrão|documento|fonte)$/i,"");
     const page=Number(hit?.page||hit?.pagina||0);
-    const canonical=String(hit?.reference||"").trim();
+    const canonical=String(hit?.reference||hit?.referencia||hit?.canonical_reference||"").trim();
     if(canonical)return canonical;
-    return (title || "Fonte")+(page?" • página "+page:"");
+    return title+(page?" • página "+page:"");
   }
   function renderDictionaryPage(){
     const host=$("dictionaryResults"), pager=$("dictionaryPager");
@@ -2060,39 +2060,55 @@
     $("dictionaryNext").disabled=dictionaryState.page>=pages;
     pager.classList.toggle("hidden",dictionaryState.hits.length===0);
   }
-  async function searchDictionary(){
+  async function searchDictionary(resetPage=true){
     const q=String($("dictionaryInput")?.value||"").trim();
     if(!q)return;
-    dictionaryState.query=q;if(!dictionaryState.page)dictionaryState.page=1;dictionaryState.hits=[];
-    $("dictionaryStatus").textContent=isOfflineOnly()||!navigator.onLine
-      ? "Consultando a enciclopédia local deste aparelho…"
-      : "Consultando a enciclopédia privada…";
+    if(resetPage || q!==dictionaryState.query) dictionaryState.page=1;
+    dictionaryState.query=q;
+    dictionaryState.hits=[];
+    $("dictionaryStatus").textContent="Consultando a enciclopédia local…";
     $("dictionarySearchBtn").disabled=true;
     try{
       let data=null;
-      if(isOfflineOnly() || !navigator.onLine){
-        const engine=await ensureRagCascade("v10-offline-encyclopedia");
-        data=await engine.offlineDictionarySearch(q,dictionaryState.page,dictionaryState.pageSize);
-      }else{
-        data=await api("/api/dictionary/search",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})
-        },false);
+      let localAvailable=false;
+      try{
+        const engine=await ensureRagCascade("v10-encyclopedia-local-first");
+        const stats=await engine.localStats();
+        localAvailable=Number(stats?.chunks||0)>0;
+        if(localAvailable){
+          data=await engine.offlineDictionarySearch(q,dictionaryState.page,dictionaryState.pageSize);
+        }
+      }catch{}
+
+      // Cloud is only a fallback when this device has no local encyclopedia or
+      // the local library produced no result. Forced offline never reaches network.
+      if((!data || Number(data.total||0)===0) && networkAllowed()){
+        try{
+          data=await api("/api/dictionary/search",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})
+          },false);
+        }catch(error){
+          if(!localAvailable) throw error;
+        }
       }
+
+      data=data||{matches:[],total:0,pages:0,local_only:true};
       dictionaryState.hits=Array.isArray(data?.matches)?data.matches:[];
       dictionaryState.total=Number(data?.total||dictionaryState.hits.length);
       dictionaryState.pages=Number(data?.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize));
       renderDictionaryPage();
       $("dictionaryStatus").textContent=dictionaryState.total
-        ? (isOfflineOnly()||!navigator.onLine
-            ? "Enciclopédia offline • "+dictionaryState.total+" ocorrência(s) locais."
-            : "Enciclopédia privada • "+dictionaryState.total+" ocorrência(s) na biblioteca.")
+        ? (data?.local_only===true
+            ? "Enciclopédia local • "+dictionaryState.total+" ocorrência(s)."
+            : "Enciclopédia privada • "+dictionaryState.total+" ocorrência(s).")
         : "Nenhuma correspondência exata encontrada para este assunto.";
     }catch(error){
-      $("dictionaryStatus").textContent=isOfflineOnly()
-        ? "Enciclopédia offline indisponível neste aparelho: "+String(error?.message||error)
-        : "Busca indisponível agora: "+String(error?.message||error);
+      const code=String(error?.code||"");
+      $("dictionaryStatus").textContent=code==="FREE_TIER_STORAGE_QUOTA"
+        ? "Nuvem no limite gratuito. A enciclopédia local deste aparelho continua disponível."
+        : "Enciclopédia indisponível neste aparelho agora: "+String(error?.message||error);
     }finally{$("dictionarySearchBtn").disabled=false;}
   }
 
@@ -3032,10 +3048,10 @@
   $("chatTab").onclick = () => switchPanel("chat");
   $("dictionaryTab").onclick = () => switchPanel("dictionary");
   $("libraryTab").onclick = () => switchPanel("library");
-  $("dictionarySearchBtn").onclick=searchDictionary;
-  $("dictionaryInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();searchDictionary();}});
-  $("dictionaryPrev").onclick=()=>{if(dictionaryState.page>1){dictionaryState.page--;renderDictionaryPage();$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
-  $("dictionaryNext").onclick=()=>{const pages=Math.ceil(dictionaryState.hits.length/dictionaryState.pageSize);if(dictionaryState.page<pages){dictionaryState.page++;renderDictionaryPage();$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
+  $("dictionarySearchBtn").onclick=()=>searchDictionary(true);
+  $("dictionaryInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();searchDictionary(true);}});
+  $("dictionaryPrev").onclick=()=>{if(dictionaryState.page>1){dictionaryState.page--;searchDictionary(false);$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
+  $("dictionaryNext").onclick=()=>{const pages=Math.max(1,Number(dictionaryState.pages||0));if(dictionaryState.page<pages){dictionaryState.page++;searchDictionary(false);$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
   $("sendBtn").onclick = sendQuestion;
   $("questionInput").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
@@ -3071,7 +3087,7 @@
 
   loadHistory();
   renderFreshChat();
-  syncPersistentHistory({render:false});
+  if(networkAllowed()) syncPersistentHistory({render:false});
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
   enforcePersistentStorage().catch(()=>false);
