@@ -5650,7 +5650,7 @@ export default {
     if (url.pathname === "/health/deploy") {
       const missing=[];
       if(!env.LIBRARY) missing.push("LIBRARY");
-      if(!groqApiKeys(env).length) missing.push("GROQ_API_KEY_POOL");
+      if(!geminiApiKey(env) && !grokApiKey(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER");
       return json({
         ok: missing.length===0,
         service: "Consciência do Fabiano",
@@ -5659,7 +5659,7 @@ export default {
         storage_backend: "durable-object-sqlite",
     cross_device_storage: "r2-native-binding",
         workers_ai_used: false,
-        llm_provider: "groq",
+        llm_provider: "gemini+grok+groq-hybrid",
         provider_auth_surface: "server-side-secrets-only",
         provider_chain: ["gemini","grok","groq"],
         provider_configured: reasoningProviderStatus(env),
@@ -5694,7 +5694,7 @@ export default {
         epistemic_labeling: true,
         unsupported_claim_policy: "abstain",
         reference_only_llm_bypass: true,
-        groq_final_stage_only: true,
+        groq_final_stage_only: false,
         analytic_llm_calls_max: 1,
         pre_master_llm_calls: 0,
         rag_map_reduce: true,
