@@ -1,4 +1,4 @@
-name: Deploy Consciência do Fabiano
+name: Validate Consciência Fabiano V10.1
 
 on:
   push:
@@ -8,8 +8,15 @@ on:
       - '.github/workflows/deploy-consciencia-fabiano.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-fabiano-validation
+  cancel-in-progress: true
+
 jobs:
-  deploy:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -23,57 +30,24 @@ jobs:
           node-version: '22'
 
       - name: Install
-        run: npm install
+        run: npm install --ignore-scripts
 
-      - name: Build third Fabiano frame
+      - name: Validate v10.1 without publishing
         run: |
-          python3 -m pip install --quiet pillow
-          python3 - <<'PY'
-          from PIL import Image, ImageFile
-          ImageFile.LOAD_TRUNCATED_IMAGES=True
-          a=Image.open('public/fabiano-fechado.png').convert('RGBA')
-          b=Image.open('public/fabiano-aberto.png').convert('RGBA').resize(a.size)
-          Image.blend(a,b,0.48).save('public/fabiano-falando.png',optimize=True)
-          PY
-
-      - name: Validate
-        run: |
+          set -euo pipefail
           npm run check
-          test -s public/fabiano-fechado.png
-          test -s public/fabiano-falando.png
-          test -s public/fabiano-aberto.png
-          grep -q 'Consciência do Fabiano' public/index.html
           grep -q '10.1.0-private-egress-offline-online' src/index.js
           grep -q 'PRIVATE_EGRESS_LOCK = true' src/index.js
           ! grep -q 'https://api.cohere.com' src/index.js
           ! grep -q 'generativelanguage.googleapis.com' src/index.js
           ! grep -q 'openrouter.ai' src/index.js
           ! grep -q 'api.x.ai' src/index.js
-          grep -q 'id="questionInput"' public/index.html
           grep -q 'id="operationMode"' public/index.html
           grep -q 'id="prepareOfflineBtn"' public/index.html
-          grep -q 'id="micBtn"' public/index.html
-          grep -q 'id="sendBtn"' public/index.html
-          grep -q 'id="autoSendVoice"' public/index.html
-          grep -q 'sendQuestion' public/app.js
-          npx wrangler deploy --dry-run --outdir /tmp/consciencia-dist
+          grep -q 'id="costGuardStatus"' public/index.html
+          echo "VALIDATION_ONLY=pass"
 
-      - name: Deploy
-        run: npx wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Smoke production
+      - name: Confirm this workflow cannot deploy
         run: |
-          set -euo pipefail
-          BASE='https://consciencia-fabiano.focoeepoder2.workers.dev'
-          sleep 3
-          curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/" | grep -q 'Consciência do Fabiano'
-          curl --retry 8 --retry-delay 2 --retry-all-errors --fail --silent --show-error "$BASE/health/deploy" -o /tmp/deploy-health.json
-          grep -q '"ok":true' /tmp/deploy-health.json
-          grep -q '10.1.0-private-egress-offline-online' /tmp/deploy-health.json
-          grep -q 'strict-private-egress-lock' /tmp/deploy-health.json
-          admin_code=$(curl -sS -o /tmp/admin.json -w '%{http_code}' "$BASE/api/admin/livros")
-          test "$admin_code" = "401"
-          echo "V10.1 PRIVATE EGRESS + OFFLINE/ONLINE + PROTECTED ADMIN"
+          echo "DEPLOYMENT_DISABLED_HERE=true"
+          echo "Authoritative production workflow: .github/workflows/v80-production-deploy.yml"
