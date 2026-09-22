@@ -83,14 +83,16 @@ jobs:
           set -euo pipefail
           node scripts/v2-mock-ollama.mjs >/tmp/v2-mock-ollama.log 2>&1 &
           OLLAMA_PID=$!
-          node scripts/v2-local-server.mjs >/tmp/v2-local-server.log 2>&1 &
+          FNS_RAM_GB=4 node scripts/v2-local-server.mjs >/tmp/v2-local-server.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" "$OLLAMA_PID" 2>/dev/null || true' EXIT
 
           for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8788/api/v2/health >/dev/null 2>&1 && break
+            curl -fsS http://127.0.0.1:8788/api/v2/health >/tmp/v2-lowram-health.json 2>/dev/null && break
             sleep 1
           done
+          node -e 'const d=require("/tmp/v2-lowram-health.json"); if(d.hardware?.ram_gb!==4||d.hardware?.context_tokens!==2048||d.hardware?.recommended!=="qwen3:0.6b") process.exit(1)'
+          echo "V2_LOW_RAM_4GB_CONTEXT=2048"
 
           curl -sS -D /tmp/allowed.headers -o /dev/null -X OPTIONS             -H 'Origin: https://consciencia-fabiano.focoeepoder2.workers.dev'             -H 'Access-Control-Request-Method: POST'             -H 'Access-Control-Request-Headers: content-type'             -H 'Access-Control-Request-Private-Network: true'             http://127.0.0.1:8788/api/v2/chat
 
