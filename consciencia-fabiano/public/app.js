@@ -12,7 +12,56 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v9.1-private-hybrid-encyclopedia";
+  const CURRENT_SYSTEM_VERSION = "v10-zero-cost-private-offline-online";
+  const OPERATING_MODE_KEY = "fns_operating_mode_v10";
+  function operatingMode(){
+    const value=String(localStorage.getItem(OPERATING_MODE_KEY)||"auto");
+    return ["auto","offline","online"].includes(value)?value:"auto";
+  }
+  function isOfflineOnly(){return operatingMode()==="offline";}
+  function networkAllowed(){return !isOfflineOnly() && navigator.onLine;}
+  function effectiveMode(){
+    if(isOfflineOnly()) return "offline";
+    if(operatingMode()==="online") return navigator.onLine?"online":"offline-unavailable";
+    return navigator.onLine?"online":"offline";
+  }
+  async function notifyServiceWorkerMode(){
+    if(!("serviceWorker" in navigator)) return;
+    try{
+      const reg=await navigator.serviceWorker.ready;
+      const target=reg.active||reg.waiting||reg.installing;
+      target?.postMessage({type:"set-operating-mode",mode:operatingMode()});
+    }catch{}
+  }
+  function updateOperatingModeUi(){
+    const select=$("operationMode");
+    if(select) select.value=operatingMode();
+    const status=$("modeStatus");
+    const mode=effectiveMode();
+    if(status){
+      status.textContent=mode==="offline"
+        ? "100% offline • nenhuma chamada externa"
+        : mode==="online"
+          ? "Online • RAG privado + fallback local"
+          : mode==="offline-unavailable"
+            ? "Online solicitado, mas sem conexão • usando local"
+            : "Automático";
+    }
+  }
+  async function setOperatingMode(mode){
+    const safe=["auto","offline","online"].includes(String(mode))?String(mode):"auto";
+    localStorage.setItem(OPERATING_MODE_KEY,safe);
+    updateOperatingModeUi();
+    await notifyServiceWorkerMode();
+    if(safe==="offline"){
+      activateHeavyLocalSubsystems("forced-offline");
+      if($("backendDot")) $("backendDot").className="dot ok";
+      if($("backendText")) $("backendText").textContent="100% offline • biblioteca local";
+    }else{
+      checkBackend();
+    }
+  }
+
 
   function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
     return {
@@ -54,7 +103,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=7.4.2").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=10.0.0").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -69,7 +118,7 @@
 
   async function ensureFailoverV3(){
     if(!failoverModulePromise){
-      failoverModulePromise=import("/failover-v3.js?v=4.0.0").catch(error=>{
+      failoverModulePromise=import("/failover-v3.js?v=10.0.0").catch(error=>{
         failoverModulePromise=null;
         throw error;
       });
@@ -84,10 +133,12 @@
     setTimeout(()=>resumeLocalEmbeddingJobs(false).catch(()=>{}),250);
     setTimeout(()=>resumeOfflineVectorJobs().catch(()=>{}),500);
     setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),800);
-    setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
-    setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
-    setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
-    setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),1900);
+    if(networkAllowed()){
+      setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
+      setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
+      setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
+      setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),1900);
+    }
   }
 
   let history = [];
@@ -405,6 +456,12 @@
   }
   function isPrivateApi(path){return /\/api\/(admin\/|v1\/r2\/library-manifest|trigger-index|index-status)/.test(String(path || ""));}
   async function api(path,options={},canPrompt=true){
+    if(isOfflineOnly()){
+      const err=new Error("Modo 100% offline ativo: chamadas de rede estão bloqueadas.");
+      err.code="OFFLINE_ONLY";
+      err.status=503;
+      throw err;
+    }
     if(isPrivateApi(path) && !ownerToken()){
       if(!ensureLocalAdminAccess()){
         const err=new Error("Acesso administrativo cancelado.");
@@ -449,7 +506,7 @@
   }
 
   async function processMirrorQueue(){
-    if(mirrorQueueRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    if(mirrorQueueRunning || !networkAllowed() || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
     mirrorQueueRunning=true;
     try{
       const now=Date.now();
@@ -534,7 +591,7 @@
   }
 
   async function reconcileBackendLibraryToR2({force=false}={}){
-    if(backendR2ReconcileRunning || !navigator.onLine || !ownerToken())return;
+    if(backendR2ReconcileRunning || !networkAllowed() || !ownerToken())return;
     backendR2ReconcileRunning=true;
     try{
       const authoritative=await api("/api/admin/r2-reconcile-state",{},false);
@@ -591,7 +648,7 @@
   }
 
   async function backfillLibraryChunksToCloud(){
-    if(libraryChunkBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    if(libraryChunkBackfillRunning || !networkAllowed() || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
     libraryChunkBackfillRunning=true;
     try{
       await ensureRagCascade("cross-device-r2-backfill");
@@ -1276,6 +1333,42 @@
     return {wrap,viewport,cards};
   }
 
+  function offlineSourceLabel(item){
+    const canonical=String(item?.canonical_reference||item?.reference||"").trim();
+    if(canonical) return canonical;
+    const title=String(item?.semantic_title||item?.title||item?.source_title||"")
+      .replace(/\.pdf$/i,"")
+      .replace(/[_-]+/g," ")
+      .replace(/^(?:standard works|obras padrão)$/i,"")
+      .replace(/\s+/g," ")
+      .trim();
+    const page=Number(item?.page||0);
+    return [title,page?"p. "+page:""].filter(Boolean).join(" — ") || "Fonte local";
+  }
+
+  function compactOfflineEvidence(text){
+    const clean=String(text||"").replace(/\s+/g," ").trim();
+    const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+    return (sentences.slice(0,2).join(" ")||clean).slice(0,520).trim();
+  }
+
+  function buildOfflineDeterministicAnswer(cards){
+    const rows=mergeSequentialOfflineCards(cards).slice(0,10);
+    if(!rows.length) return "";
+    const blocks=[];
+    const seen=new Set();
+    for(const row of rows){
+      const evidence=compactOfflineEvidence(row?.text||"");
+      const source=offlineSourceLabel(row);
+      const key=(evidence+"|"+source).toLowerCase();
+      if(!evidence||seen.has(key)) continue;
+      seen.add(key);
+      blocks.push(evidence+"\n\n"+source);
+      if(blocks.length>=8) break;
+    }
+    return blocks.join("\n\n");
+  }
+
   function appendElegantSilence(message="Nenhuma correspondência exata encontrada na biblioteca total.") {
     const wrap=document.createElement("div");
     wrap.className="msg assistant strict-empty-msg";
@@ -1670,64 +1763,48 @@
         content:x.role==="assistant" ? sanitizeResponseForUI(x.content) : String(x.content || "")
       }));
 
-      // V7.2: a malha local fica como fallback/offline. Online, a pergunta segue
-      // primeiro para o RAG híbrido do servidor para produzir síntese inteligente.
-      if(!navigator.onLine){
-      try{
-        const engine=await ensureRagCascade("v6-omni-agent-query");
-        if(engine?.omniAgentSearch){
-          const swarmResult=await engine.omniAgentSearch(q,{
-            onProgress:progress=>{
-              if($("backendText")){
-                $("backendText").textContent="V6.0 • agente "+Number(progress?.agent||0)+"/20 • "+String(progress?.name||"analisando");
-              }
-            }
-          });
-          if(swarmResult?.ok && Array.isArray(swarmResult.cards) && swarmResult.cards.length){
-            const rendered=appendOfflineTurbineResults(swarmResult);
-            const renderedCards=Array.isArray(rendered?.cards)?rendered.cards:swarmResult.cards;
-            const persisted=[
-              CURRENT_SYSTEM_VERSION+" • Fabiano Grounded Hybrid RAG: "+renderedCards.length+" evidência(s) aprovadas pelo Agent 20.",
-              ...renderedCards.slice(0,24).map((card,i)=>
-                "[A"+String(i+1).padStart(2,"0")+"] "+canonicalHeader(card)+
-                (card.page?" — página "+card.page:"")+"\n"+String(card.text||"")
-              )
-            ].join("\n\n");
-            const sources=renderedCards.slice(0,24).map(card=>({
-              arquivo:card.filename||card.source_title||"Documento",
-              titulo:canonicalHeader(card),
-              autor:card.author||"",
-              pagina:card.page||null,
-              chunk_index:card.chunk_index,
-              document_id:card.document_id,
-              score:card.score
-            }));
+      // v10: modo offline é uma rota principal, não um fallback degradado.
+      if(isOfflineOnly() || !navigator.onLine){
+        try{
+          const engine=await ensureRagCascade("v10-offline-query");
+          const localResult=engine?.offlineHybridSearch
+            ? await engine.offlineHybridSearch(q,{
+                onProgress:()=>{if($("backendText")) $("backendText").textContent="100% offline • analisando biblioteca local";}
+              })
+            : await engine.offlineSearch(q);
+          const cards=Array.isArray(localResult?.cards)
+            ? localResult.cards
+            : (Array.isArray(localResult?.matches)?localResult.matches:[]);
+          if(cards.length){
+            const answer=buildOfflineDeterministicAnswer(cards);
+            appendMessage("assistant",answer,[],false);
             history.push({
-              role:"assistant",content:persisted,sources,fallback:false,
-              omni_agent_swarm:true,logical_agents:20,
-              semantic_fallback:Boolean(swarmResult.semantic_fallback_used),ts:Date.now()
+              role:"assistant",content:answer,sources:[],fallback:false,
+              offline_only:true,provider:"offline-local-deterministic",ts:Date.now()
             });
             saveHistory();
-            if($("backendText")){
-              $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • 20 agentes • "+Number(swarmResult.physical_workers||0)+" workers físicos • Agent 20 finalizou";
-            }
+            if($("backendDot")) $("backendDot").className="dot ok";
+            if($("backendText")) $("backendText").textContent="100% offline • resposta gerada somente neste aparelho";
             setAvatar("closed");
             return;
           }
-          if(swarmResult?.strict_empty===true && swarmResult?.library_coverage_known===true){
-            const silence="Nenhuma correspondência exata encontrada na biblioteca total.";
-            appendElegantSilence(silence);
-            history.push({
-              role:"assistant",content:silence,sources:[],fallback:false,
-              omni_agent_swarm:true,strict_empty:true,zero_noise:true,ts:Date.now()
-            });
-            saveHistory();
-            if($("backendText")) $("backendText").textContent=CURRENT_SYSTEM_VERSION+" • Agent 10 • zero evidências aprovadas";
-            setAvatar("closed");
-            return;
-          }
+          const silence=localResult?.library_coverage_known===false
+            ? "A biblioteca local ainda não está disponível neste aparelho. Conecte uma vez no modo Automático para sincronizar os livros e depois o modo 100% offline funcionará sem rede."
+            : "Nenhuma correspondência suficiente foi encontrada na biblioteca local para esta pergunta.";
+          appendElegantSilence(silence);
+          history.push({role:"assistant",content:silence,sources:[],fallback:true,offline_only:true,ts:Date.now()});
+          saveHistory();
+          if($("backendText")) $("backendText").textContent="100% offline • biblioteca local consultada";
+          setAvatar("closed");
+          return;
+        }catch(error){
+          const message="Modo 100% offline ativo. O motor local não conseguiu concluir esta busca: "+String(error?.message||error);
+          appendMessage("assistant",message,[],true);
+          history.push({role:"assistant",content:message,sources:[],fallback:true,offline_only:true,ts:Date.now()});
+          saveHistory();
+          setAvatar("closed");
+          return;
         }
-      }catch{}
       }
 
       // V3.3: referências diretas nunca passam por fuzzy/LLM antes do filtro booleano local.
@@ -1935,19 +2012,25 @@
   }
 
   async function checkBackend() {
+    updateOperatingModeUi();
+    if(isOfflineOnly() || !navigator.onLine){
+      $("backendDot").className="dot ok";
+      $("backendText").textContent=isOfflineOnly()
+        ? "100% offline • nenhuma chamada externa"
+        : "Offline • biblioteca local ativa";
+      return;
+    }
     try {
       const res=await fetch("/health/deploy",{cache:"no-store"});
       const data=await res.json();
       const up=data?.ok===true;
       $("backendDot").className="dot "+(up?"ok":"bad");
       $("backendText").textContent=up
-        ? renderSystemBadge().text
-        : (navigator.onLine?"Nuvem indisponível • contingência local pronta":"Offline • biblioteca local ativa");
+        ? CURRENT_SYSTEM_VERSION+" • online privado • custo zero protegido"
+        : "Nuvem indisponível • contingência local pronta";
     } catch {
       $("backendDot").className="dot ok";
-      $("backendText").textContent=navigator.onLine
-        ? "Nuvem indisponível • contingência local pronta"
-        : "Offline • biblioteca local ativa";
+      $("backendText").textContent="Nuvem indisponível • contingência local pronta";
     }
   }
 
@@ -1981,19 +2064,35 @@
     const q=String($("dictionaryInput")?.value||"").trim();
     if(!q)return;
     dictionaryState.query=q;if(!dictionaryState.page)dictionaryState.page=1;dictionaryState.hits=[];
-    $("dictionaryStatus").textContent="Consultando a enciclopédia privada…";
+    $("dictionaryStatus").textContent=isOfflineOnly()||!navigator.onLine
+      ? "Consultando a enciclopédia local deste aparelho…"
+      : "Consultando a enciclopédia privada…";
     $("dictionarySearchBtn").disabled=true;
     try{
-      const data=await api("/api/dictionary/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})},false);
+      let data=null;
+      if(isOfflineOnly() || !navigator.onLine){
+        const engine=await ensureRagCascade("v10-offline-encyclopedia");
+        data=await engine.offlineDictionarySearch(q,dictionaryState.page,dictionaryState.pageSize);
+      }else{
+        data=await api("/api/dictionary/search",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize,limit:50})
+        },false);
+      }
       dictionaryState.hits=Array.isArray(data?.matches)?data.matches:[];
       dictionaryState.total=Number(data?.total||dictionaryState.hits.length);
       dictionaryState.pages=Number(data?.pages||Math.ceil(dictionaryState.total/dictionaryState.pageSize));
       renderDictionaryPage();
       $("dictionaryStatus").textContent=dictionaryState.total
-        ? "Verbete localizado • "+dictionaryState.total+" ocorrência(s) na biblioteca."
+        ? (isOfflineOnly()||!navigator.onLine
+            ? "Enciclopédia offline • "+dictionaryState.total+" ocorrência(s) locais."
+            : "Enciclopédia privada • "+dictionaryState.total+" ocorrência(s) na biblioteca.")
         : "Nenhuma correspondência exata encontrada para este assunto.";
     }catch(error){
-      $("dictionaryStatus").textContent="Busca indisponível agora: "+String(error?.message||error);
+      $("dictionaryStatus").textContent=isOfflineOnly()
+        ? "Enciclopédia offline indisponível neste aparelho: "+String(error?.message||error)
+        : "Busca indisponível agora: "+String(error?.message||error);
     }finally{$("dictionarySearchBtn").disabled=false;}
   }
 
@@ -2963,6 +3062,13 @@
     } catch {}
   };
 
+  const modeSelect=$("operationMode");
+  if(modeSelect){
+    modeSelect.value=operatingMode();
+    modeSelect.addEventListener("change",()=>setOperatingMode(modeSelect.value));
+  }
+  updateOperatingModeUi();
+
   loadHistory();
   renderFreshChat();
   syncPersistentHistory({render:false});
@@ -2974,16 +3080,19 @@
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("/sw-v3.js",{scope:"/"}).then(async()=>{
       bindPhantomDaemonMessages();
-      await configurePhantomDaemon({force:false}).catch(()=>{});
-      tickPhantomDaemon();
+      await notifyServiceWorkerMode();
+      if(networkAllowed()){
+        await configurePhantomDaemon({force:false}).catch(()=>{});
+        tickPhantomDaemon();
+      }
     }).catch(()=>{});
   }
 
   // Heartbeat exato enquanto a página está ativa; o Service Worker também usa Periodic Background Sync quando o navegador permite.
-  setInterval(()=>tickPhantomDaemon(),PHANTOM_DAEMON_INTERVAL_MS);
+  setInterval(()=>{if(networkAllowed())tickPhantomDaemon();},PHANTOM_DAEMON_INTERVAL_MS);
 
   setInterval(()=>{
-    if(!heavyLocalSubsystemsActivated) return;
+    if(!heavyLocalSubsystemsActivated || !networkAllowed()) return;
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
@@ -2991,11 +3100,15 @@
   },20*60*1000);
 
   window.addEventListener("offline",()=>{
+    updateOperatingModeUi();
+    notifyServiceWorkerMode().catch(()=>{});
     activateHeavyLocalSubsystems("offline-event");
     if($("backendText")) $("backendText").textContent="Offline detectado • contingência local pronta";
   });
   window.addEventListener("online",()=>{
-    if(!heavyLocalSubsystemsActivated) return;
+    updateOperatingModeUi();
+    notifyServiceWorkerMode().catch(()=>{});
+    if(!heavyLocalSubsystemsActivated || !networkAllowed()) return;
     processSyncQueue().catch(()=>{});
     processMirrorQueue().catch(()=>{});
     backfillLocalVectorMirror().catch(()=>{});
@@ -3003,7 +3116,7 @@
     requestR2Hydration(false).catch(()=>{});
   });
   document.addEventListener("visibilitychange",()=>{
-    if(document.visibilityState==="visible" && heavyLocalSubsystemsActivated){
+    if(document.visibilityState==="visible" && heavyLocalSubsystemsActivated && networkAllowed()){
       processSyncQueue().catch(()=>{});
       processMirrorQueue().catch(()=>{});
     }
