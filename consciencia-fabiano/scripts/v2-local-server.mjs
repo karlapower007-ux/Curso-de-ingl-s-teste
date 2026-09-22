@@ -124,17 +124,17 @@ function recommendedByHardware(){
 }
 function autoModel(installed){
   const rec=recommendedByHardware();
-  const ordered=rec==="qwen3.8:27b"
+  const safeOrder=rec==="qwen3.8:27b"
     ? ["qwen3.8:27b","qwen3:8b","qwen3:4b","qwen3:1.7b","qwen3:0.6b"]
     : rec==="qwen3:8b"
-      ? ["qwen3:8b","qwen3:4b","qwen3:1.7b","qwen3:0.6b","qwen3.8:27b"]
+      ? ["qwen3:8b","qwen3:4b","qwen3:1.7b","qwen3:0.6b"]
       : rec==="qwen3:4b"
-        ? ["qwen3:4b","qwen3:1.7b","qwen3:0.6b","qwen3:8b","qwen3.8:27b"]
+        ? ["qwen3:4b","qwen3:1.7b","qwen3:0.6b"]
         : rec==="qwen3:1.7b"
-          ? ["qwen3:1.7b","qwen3:0.6b","qwen3:4b","qwen3:8b","qwen3.8:27b"]
-          : ["qwen3:0.6b","qwen3:1.7b","qwen3:4b","qwen3:8b","qwen3.8:27b"];
+          ? ["qwen3:1.7b","qwen3:0.6b"]
+          : ["qwen3:0.6b"];
   const set=new Set(installed);
-  return ordered.find(x=>set.has(x))||chooseInstalledModel(installed,"auto");
+  return safeOrder.find(x=>set.has(x))||null;
 }
 function hashText(text){return createHash("sha256").update(String(text||"")).digest("hex");}
 async function embedTexts(texts,{persist=false}={}){
