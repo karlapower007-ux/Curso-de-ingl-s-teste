@@ -670,3 +670,47 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
   .settings-card{padding:12px}
   .settings-note,.privacy-summary p{font-size:.86rem}
 }
+
+
+/* v2 local-first controls */
+.v2-control select{min-width:190px}
+.v2-local-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:34px;
+  padding:6px 10px;
+  border:1px solid rgba(148,163,184,.22);
+  border-radius:999px;
+  background:rgba(15,23,42,.55);
+}
+.v2-local-status.ok{border-color:rgba(34,197,94,.45);color:#bbf7d0}
+.v2-settings-card{
+  grid-column:1/-1;
+  padding:14px 16px;
+  border:1px solid rgba(56,189,248,.24);
+  border-radius:10px;
+  background:rgba(14,116,144,.08);
+}
+.v2-settings-card strong{display:block;margin-bottom:6px;color:#e0f2fe}
+.v2-settings-card p{margin:0;color:var(--muted);line-height:1.5}
+.v2-answer-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.62}
+.v2-msg.assistant{border-left-color:#22c55e}
+.v2-dictionary-result .dictionary-result-head{align-items:baseline}
+.v2-dictionary-result .dictionary-source{color:#a7f3d0}
+@media(max-width:780px){
+  .v2-control{display:grid;grid-template-columns:1fr;gap:6px}
+  .v2-control select{width:100%;min-width:0}
+  .v2-local-status{width:100%;border-radius:10px;box-sizing:border-box}
+  #v2PrepareBrain{width:100%}
+}
+@media(max-width:412px){
+  .v2-control select{width:100%}
+  .v2-answer-text{font-size:.91rem;line-height:1.55}
+}
+@media(max-width:390px){
+  .v2-local-status{font-size:.72rem}
+}
+@media(max-width:360px){
+  .v2-control{font-size:.76rem}
+  .v2-answer-text{font-size:.88rem}
+}
