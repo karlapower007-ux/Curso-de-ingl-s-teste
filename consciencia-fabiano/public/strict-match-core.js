@@ -70,8 +70,8 @@ export function strictParagraphMatch(text,question){
   const blocks=paragraphBlocks(text);
   for(let i=0;i<blocks.length;i++){
     const normalized=normalizeStrictText(blocks[i]);
-    const audit=strictIntentAudit(blocks[i],question);
-    if(normalized.includes(target) || audit.accepted){
+    if(normalized.includes(target)){
+      const audit=strictIntentAudit(blocks[i],question);
       return {matched:true,target,paragraph:blocks[i],paragraph_index:i,intent_audit:audit};
     }
   }
