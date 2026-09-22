@@ -54,7 +54,7 @@ jobs:
       - name: Confirm no production deployment in homologation
         shell: pwsh
         run: |
-          $workflow = Get-Content "..\.github\workflows\v2-windows-real-ollama-homologation.yml" -Raw
-          if ($workflow -match "wrangler deploy") { throw "Homologation workflow must not deploy production." }
+          if ($env:CLOUDFLARE_API_TOKEN) { throw "Cloudflare deploy credentials must not be present in homologation." }
+          if ($env:CLOUDFLARE_ACCOUNT_ID) { throw "Cloudflare account credentials must not be present in homologation." }
           Write-Host "PRODUCTION_DEPLOYMENT=false"
           Write-Host "WINDOWS_REAL_OLLAMA_HOMOLOGATION=true"
