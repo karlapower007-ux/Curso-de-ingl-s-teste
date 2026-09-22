@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v10-responsive-smoke.mjs <<'NODE'
+          cat > .v10-responsive-smoke.mjs <<'NODE'
           import fs from "node:fs";
           import { chromium } from "playwright-core";
 
@@ -115,4 +115,5 @@ jobs:
             await browser.close();
           }
           NODE
-          node /tmp/v10-responsive-smoke.mjs
+          node .v10-responsive-smoke.mjs
+          rm -f .v10-responsive-smoke.mjs
