@@ -1953,6 +1953,8 @@
   function publicSourceLabel(hit){
     const title=String(hit?.title||hit?.titulo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim().replace(/^(?:standard works|obras padrão)$/i,"");
     const page=Number(hit?.page||hit?.pagina||0);
+    const canonical=String(hit?.reference||"").trim();
+    if(canonical)return canonical;
     return (title || "Fonte")+(page?" • página "+page:"");
   }
   function renderDictionaryPage(){
@@ -1978,7 +1980,7 @@
   async function searchDictionary(){
     const q=String($("dictionaryInput")?.value||"").trim();
     if(!q)return;
-    dictionaryState.query=q;dictionaryState.page=1;dictionaryState.hits=[];
+    dictionaryState.query=q;if(!dictionaryState.page)dictionaryState.page=1;dictionaryState.hits=[];
     $("dictionaryStatus").textContent="Pesquisando toda a biblioteca com foco estrito…";
     $("dictionarySearchBtn").disabled=true;
     try{
