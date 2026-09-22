@@ -1,0 +1,60 @@
+name: Consciência Fabiano v2 — Windows Real Ollama Homologation
+
+on:
+  push:
+    branches:
+      - consciencia-v2-local-first-staging-20260922
+    paths:
+      - "consciencia-fabiano/scripts/setup-v2-windows.ps1"
+      - "consciencia-fabiano/scripts/v2-real-ollama-homologation.ps1"
+      - "consciencia-fabiano/scripts/v2-local-server.mjs"
+      - "consciencia-fabiano/scripts/v2-local-core.mjs"
+      - "consciencia-fabiano/public/**"
+      - ".github/workflows/v2-windows-real-ollama-homologation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-fabiano-v2-windows-real-ollama
+  cancel-in-progress: true
+
+jobs:
+  real-windows-ollama:
+    runs-on: windows-latest
+    timeout-minutes: 50
+
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run the real Windows initializer
+        shell: pwsh
+        env:
+          CI: "true"
+          FNS_BRAIN_MODEL: "qwen3:0.6b"
+          FNS_NO_OPEN: "1"
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          .\scripts\setup-v2-windows.ps1
+
+      - name: Prove real Ollama inference and embeddings
+        shell: pwsh
+        run: |
+          .\scripts\v2-real-ollama-homologation.ps1
+
+      - name: Confirm no production deployment in homologation
+        shell: pwsh
+        run: |
+          if ($env:CLOUDFLARE_API_TOKEN) { throw "Cloudflare deploy credentials must not be present in homologation." }
+          if ($env:CLOUDFLARE_ACCOUNT_ID) { throw "Cloudflare account credentials must not be present in homologation." }
+          Write-Host "PRODUCTION_DEPLOYMENT=false"
+          Write-Host "WINDOWS_REAL_OLLAMA_HOMOLOGATION=true"

@@ -1,7 +1,7 @@
-// V6.0 PHANTOM DAEMON + resilience service worker.
+// V7.0 LOCAL-FIRST V2 + PHANTOM DAEMON resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-consiencia-v10-1-private-offline-online-alias-v2";
+const CACHE_NAME="fns-consiencia-v2-local-first-20260922";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const OFFLINE_ASSET_HOSTS=new Set([
   "cdn.jsdelivr.net",
@@ -34,6 +34,9 @@ const CORE=[
   "/rag-cascade.js",
   "/rag-search-worker.js",
   "/embedding-worker.js",
+  "/v2-local-ui.js",
+  "/v2-local-engine.js",
+  "/v2-aliases.json",
   "/whisper-local.js",
   "/whisper-worker.js",
   "/failover-manifest.json",
@@ -355,6 +358,16 @@ self.addEventListener("fetch",event=>{
   if(url.pathname.startsWith("/api/") || url.pathname.startsWith("/health")){
     event.respondWith((async()=>{
       const mode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
+      // v2 local API is same-origin when the PWA is served by scripts/v2-local-server.mjs.
+      // It remains available in forced offline mode because it never leaves this device.
+      if(url.pathname.startsWith("/api/v2/")){
+        try{return await fetch(req);}
+        catch{
+          return new Response(JSON.stringify({ok:false,local_only:true,code:"LOCAL_V2_UNAVAILABLE",message:"Servidor local v2 indisponível."}),{
+            status:503,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}
+          });
+        }
+      }
       if(mode==="offline"){
         return new Response(JSON.stringify({ok:false,offline:true,code:"OFFLINE_ONLY",message:"Modo 100% offline ativo."}),{
           status:503,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}
@@ -391,7 +404,7 @@ self.addEventListener("fetch",event=>{
   const isSteel=url.pathname.startsWith("/steel/");
   const isResilienceAsset=isSteel || [
     "/failover-v3.js","/local-turbine-pool.js","/local-turbine-worker.js","/strict-match-core.js","/omni-sync-worker.js",
-    "/agent-swarm.js","/agent-node-worker.js","/embedding-worker.js",
+    "/agent-swarm.js","/agent-node-worker.js","/embedding-worker.js","/v2-local-ui.js","/v2-local-engine.js","/v2-aliases.json",
     "/failover-manifest.json","/rag-cascade.js","/rag-search-worker.js","/opfs-sqlite-worker.js"
   ].includes(url.pathname);
 
