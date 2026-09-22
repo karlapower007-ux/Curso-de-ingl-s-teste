@@ -1,4 +1,5 @@
 const STATEFUL_WINDOW_MESSAGES = 20;
+const SECONDARY_PRIVACY_LOCK = true;
 const SECONDARY_TIMEOUT_MS = 3500;
 const SECONDARY_FAILURE_THRESHOLD = 3;
 const SECONDARY_BASE_PAUSE_MS = 3000;
@@ -86,6 +87,7 @@ export function resolveStatefulQuery(question, history, contract = {}) {
 }
 
 export function secondarySupabaseConfigured(env) {
+  if (SECONDARY_PRIVACY_LOCK) return false;
   const base = String(env?.SUPABASE_URL || "").trim();
   const key = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   return Boolean(base && key);
@@ -124,6 +126,11 @@ function circuitRecover() {
 }
 
 async function secondaryFetch(env, path, body = {}) {
+  if (SECONDARY_PRIVACY_LOCK) {
+    const error = new Error("Secondary external storage is disabled by the v10.1 privacy lock.");
+    error.code = "PRIVATE_EGRESS_BLOCKED";
+    throw error;
+  }
   if (!secondarySupabaseConfigured(env)) {
     const error = new Error("Secondary Supabase is not configured.");
     error.code = "SECONDARY_NOT_CONFIGURED";
