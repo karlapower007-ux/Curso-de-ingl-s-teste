@@ -118,7 +118,8 @@ jobs:
           done
           test "$OK" = "true"
           echo "V9_1_PRODUCTION_ENDPOINT=healthy"
-          curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ | grep -q 'Dicionário / Enciclopédia'
+          curl -fsS --max-time 20 https://consciencia-fabiano.focoeepoder2.workers.dev/ -o /tmp/fabiano-home.html
+          grep -Fq 'Dicionário / Enciclopédia' /tmp/fabiano-home.html
           echo "V9_1_DICTIONARY_UI=visible"
           # Functional dictionary acceptance: real production route, strict lock, paging contract, no technical metadata.
           DICT="$(curl -fsS --max-time 30 -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/dictionary/search -H 'Content-Type: application/json' --data '{"query":"Adão","page":1,"page_size":50}')"
