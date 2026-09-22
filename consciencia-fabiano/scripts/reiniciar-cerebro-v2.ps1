@@ -57,6 +57,7 @@ $files = @(
   "public/v2-local-ui.js",
   "public/v2-local-engine.js",
   "public/v2-aliases.json",
+  "public/whisper-local.js",
   "public/index.html",
   "public/style.css"
 )
