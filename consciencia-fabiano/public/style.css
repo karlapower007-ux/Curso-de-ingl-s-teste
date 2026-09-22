@@ -611,3 +611,45 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
   .mode-option{gap:6px}
   .mode-status{font-size:.72rem}
 }
+
+
+/* v10.1 dedicated settings panel */
+.settings{width:min(980px,100%);margin:0 auto}
+.settings-card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:20px;
+  box-shadow:0 18px 50px rgba(2,8,23,.18);
+}
+.settings-note{margin:0 0 18px;color:var(--muted);line-height:1.55}
+.settings-grid{
+  display:grid;
+  grid-template-columns:minmax(220px,1fr) minmax(220px,1fr);
+  gap:12px 16px;
+  align-items:center;
+}
+.settings-grid .settings-mode{width:100%;justify-content:space-between}
+.settings-grid .settings-mode select{min-width:170px}
+.settings-grid #settingsModeStatus{justify-self:start}
+.settings-grid #settingsPrepareOfflineBtn{justify-self:start}
+.privacy-summary{
+  margin-top:18px;
+  padding:14px 16px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(15,23,42,.55);
+}
+.privacy-summary strong{display:block;margin-bottom:6px}
+.privacy-summary p{margin:0;color:var(--muted);line-height:1.5}
+@media(max-width:780px){
+  .settings-card{padding:16px}
+  .settings-grid{grid-template-columns:1fr}
+  .settings-grid .settings-mode{align-items:flex-start;flex-direction:column}
+  .settings-grid .settings-mode select{width:100%;min-width:0}
+  .settings-grid #settingsPrepareOfflineBtn{width:100%}
+}
+@media(max-width:412px){
+  .settings-card{padding:12px}
+  .settings-note,.privacy-summary p{font-size:.86rem}
+}
