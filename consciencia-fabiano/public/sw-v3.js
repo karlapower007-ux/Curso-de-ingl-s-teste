@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-consiencia-v10-offline-online";
+const CACHE_NAME="fns-consiencia-v10-1-private-offline-online";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const OFFLINE_ASSET_HOSTS=new Set([
   "cdn.jsdelivr.net",
@@ -46,6 +46,7 @@ const CORE=[
 let daemonRunning=false;
 let lastDaemonAttempt=0;
 let daemonTimer=0;
+let sessionOwnerToken="";
 
 function openDaemonDb(){
   return new Promise((resolve,reject)=>{
@@ -188,7 +189,7 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
   if(daemonRunning)return {ok:false,busy:true};
   const operatingMode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
   if(operatingMode==="offline")return {ok:true,skipped:"offline-mode"};
-  const token=String(await metaGet("owner_token").catch(()=>"")||"");
+  const token=String(sessionOwnerToken||"");
   if(!token)return {ok:false,code:"DAEMON_AUTH_NOT_CONFIGURED"};
   const now=Date.now();
   const persistedAttempt=Number(await metaGet("last_attempt").catch(()=>0)||0);
@@ -242,7 +243,7 @@ async function runPhantomDaemon({force=false,reason="daemon"}={}){
     });
     return {ok:true,changed:true,written:totalWritten,deleted,batches};
   }catch(error){
-    if(Number(error?.status)===401)await metaDelete("owner_token").catch(()=>{});
+    if(Number(error?.status)===401){sessionOwnerToken="";await metaDelete("owner_token").catch(()=>{});}
     await metaPut("last_error",String(error?.message||error)).catch(()=>{});
     await notifyClients({type:"omni-daemon-error",message:String(error?.message||error),reason});
     return {ok:false,error:String(error?.message||error)};
@@ -277,6 +278,8 @@ self.addEventListener("activate",event=>{
   event.waitUntil((async()=>{
     const names=await caches.keys();
     await Promise.all(names.filter(n=>n!==CACHE_NAME).map(n=>caches.delete(n)));
+    // Purge any admin token persisted by pre-v10.1 service workers.
+    await metaDelete("owner_token").catch(()=>{});
     await self.clients.claim();
     armBestEffortTimer();
     await runPhantomDaemon({reason:"activate"}).catch(()=>{});
@@ -292,7 +295,8 @@ self.addEventListener("message",event=>{
   if(data.type==="configure-omni-daemon"){
     event.waitUntil((async()=>{
       const token=String(data.token||"");
-      if(token)await metaPut("owner_token",token);
+      if(token)sessionOwnerToken=token;
+      await metaDelete("owner_token").catch(()=>{});
       armBestEffortTimer();
       await runPhantomDaemon({force:Boolean(data.force),reason:"configure"}).catch(()=>{});
     })());
@@ -305,7 +309,8 @@ self.addEventListener("message",event=>{
   if(data.type==="hydrate-r2-library"){
     event.waitUntil((async()=>{
       const token=String(data.token||"");
-      if(token)await metaPut("owner_token",token);
+      if(token)sessionOwnerToken=token;
+      await metaDelete("owner_token").catch(()=>{});
       await runPhantomDaemon({force:data.force!==false,reason:"r2-self-heal"}).catch(()=>{});
     })());
   }
