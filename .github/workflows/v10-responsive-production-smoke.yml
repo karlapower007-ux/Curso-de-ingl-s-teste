@@ -95,15 +95,23 @@ jobs:
             await context.setOffline(true);
             await page.reload({waitUntil:"domcontentloaded",timeout:20000});
             await page.locator("#questionInput").waitFor({state:"visible",timeout:8000});
-            const offlineState=await page.evaluate(()=>({
-              online:navigator.onLine,
+            const offlineState=await page.evaluate(async()=>({
+              navigatorOnline:navigator.onLine,
               mode:localStorage.getItem("fns_operating_mode_v10"),
               width:window.innerWidth,
               scrollWidth:document.documentElement.scrollWidth,
-              title:document.title
+              title:document.title,
+              apiProbe:await (async()=>{
+                try{
+                  const r=await fetch("/api/status?offline_probe="+Date.now(),{cache:"no-store"});
+                  return {resolved:true,status:r.status,type:r.type};
+                }catch(error){
+                  return {resolved:false,error:String(error)};
+                }
+              })()
             }));
-            if(offlineState.online!==false) throw new Error("Browser não ficou offline.");
             if(offlineState.mode!=="offline") throw new Error("Modo offline não persistiu: "+JSON.stringify(offlineState));
+            if(offlineState.apiProbe?.resolved!==false) throw new Error("Uma chamada /api conseguiu sair durante o modo offline: "+JSON.stringify(offlineState));
             if(offlineState.scrollWidth>offlineState.width+2) throw new Error("Overflow no reload offline: "+JSON.stringify(offlineState));
             report.push({offline_shell_reload:offlineState});
             await context.close();
