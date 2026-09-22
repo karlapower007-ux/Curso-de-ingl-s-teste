@@ -88,7 +88,7 @@ jobs:
           grep -q 'function networkAllowed' public/app.js
           grep -q '100% offline' public/index.html
           grep -q 'set-operating-mode' public/sw-v3.js
-          grep -q 'fns-consiencia-v10-1-private-offline-online' public/sw-v3.js
+          grep -Eq 'fns-consiencia-(v10-1-private-offline-online|v2-local-first)' public/sw-v3.js
           grep -q 'external_models_receive_full_library: false' src/index.js
           grep -q 'external_models_receive_original_files: false' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
