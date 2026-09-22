@@ -3,6 +3,7 @@ const V2_KEY_RESPONSE="fns_v2_response_mode";
 let localReady=false;
 let browserOnly=false;
 let health=null;
+let apiBase="";
 let dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0};
 
 const $=id=>document.getElementById(id);
@@ -110,8 +111,9 @@ function setBusy(on,label=""){
 }
 async function call(path,body,timeout=300000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
+  const target=(apiBase&&String(path).startsWith("/api/v2/"))?apiBase+path:path;
   try{
-    const res=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:controller.signal});
+    const res=await fetch(target,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:controller.signal,mode:"cors"});
     const data=await res.json().catch(()=>({}));
     if(!res.ok||data?.ok===false)throw Object.assign(new Error(data?.error||("HTTP "+res.status)),{data,status:res.status});
     return data;
@@ -241,19 +243,35 @@ async function searchDictionary(reset=true){
 }
 async function probe(){
   browserOnly=false;
-  try{
-    const res=await fetch("/api/v2/health",{cache:"no-store"});
-    const data=await res.json();
-    localReady=Boolean(res.ok&&data?.ok&&data?.local_only);health=data;
-  }catch{
+  apiBase="";
+  health=null;
+  const candidates=[
+    {base:"",url:"/api/v2/health"},
+    {base:"http://127.0.0.1:8788",url:"http://127.0.0.1:8788/api/v2/health"},
+    {base:"http://localhost:8788",url:"http://localhost:8788/api/v2/health"}
+  ];
+  for(const candidate of candidates){
     try{
-      const mod=await import("/v2-local-engine.js");
-      const state=await mod.FNSV2LocalEngine.counts();
-      browserOnly=Number(state?.chunks||0)>0;
-      localReady=browserOnly;
-      health=browserOnly?{ok:true,local_only:true,browser_only:true,ollama:{reachable:false},embeddings:{installed:Number(state?.qwen_vectors||0)>0},library:{chunks:state.chunks}}:null;
-    }catch{localReady=false;health=null;}
+      const res=await fetch(candidate.url,{cache:"no-store",mode:"cors"});
+      const data=await res.json().catch(()=>null);
+      if(res.ok&&data?.ok&&data?.local_only){
+        apiBase=candidate.base;
+        window.__FNS_V2_API_BASE=apiBase;
+        localReady=true;
+        health=data;
+        updateV2Status();
+        return;
+      }
+    }catch{}
   }
+  try{
+    const mod=await import("/v2-local-engine.js");
+    const state=await mod.FNSV2LocalEngine.counts();
+    browserOnly=Number(state?.chunks||0)>0;
+    localReady=browserOnly;
+    window.__FNS_V2_API_BASE="";
+    health=browserOnly?{ok:true,local_only:true,browser_only:true,ollama:{reachable:false},embeddings:{installed:Number(state?.qwen_vectors||0)>0},library:{chunks:state.chunks}}:null;
+  }catch{localReady=false;health=null;}
   updateV2Status();
 }
 function updateV2Status(){
@@ -263,7 +281,7 @@ function updateV2Status(){
   const model=selectedModel()==="auto"?String(health?.hardware?.selected||health?.hardware?.recommended||"auto"):selectedModel();
   el.textContent=browserOnly
     ?"Local no navegador • biblioteca offline • respostas determinísticas sem LLM"
-    :"Local grátis • "+(ollama?model:"sem LLM • fallback determinístico")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
+    :(apiBase?"Ollama local conectado • ":"Local grátis • ")+(ollama?model:"sem LLM • fallback determinístico")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
   el.classList.toggle("ok",browserOnly||ollama);
   const settings=$("v2SettingsInfo");
   if(settings)settings.textContent="RAM detectada: "+String(health?.hardware?.ram_gb||"?")+" GB • recomendado: "+String(health?.hardware?.recommended||"?")+" • biblioteca local: "+String(health?.library?.chunks||0)+" chunks.";
