@@ -66,11 +66,15 @@
               <input id="autoSendVoice" type="checkbox" checked>
               <span>Enviar automaticamente ao terminar de falar</span>
             </label>
+            <label class="check-option">
+              <input id="v2SpeakAnswers" type="checkbox" checked>
+              <span>Ler respostas da IA em voz alta</span>
+            </label>
             <button id="clearChatBtn" class="ghost small-btn" type="button">Limpar conversa</button>
           </div>
           <p id="micStatus" class="status" aria-live="polite"></p>
           <div class="input-area">
-            <button id="micBtn" class="whisper-btn" type="button" disabled>Carregando IA de Voz...</button>
+            <button id="micBtn" class="whisper-btn" type="button">🎤 Segure para Falar</button>
             <button id="stopAudioBtn" class="ghost" type="button" disabled>🔇 Parar áudio</button>
             <button id="sendBtn" class="primary" type="button">Enviar</button>
           </div>
@@ -196,8 +200,11 @@
       const mic = document.getElementById("micBtn");
       if (mic) {
         mic.addEventListener("pointerenter", loadVoice, { once: true });
+        mic.addEventListener("pointerdown", loadVoice, { once: true });
         mic.addEventListener("touchstart", loadVoice, { once: true, passive: true });
         mic.addEventListener("focus", loadVoice, { once: true });
+        mic.addEventListener("click", loadVoice, { once: true });
+        if (Number(navigator.deviceMemory || 4) <= 4) setTimeout(loadVoice, 700);
       }
     });
   </script>
