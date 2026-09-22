@@ -54,6 +54,7 @@ $base = "https://raw.githubusercontent.com/karlapower007-ux/Curso-de-ingl-s-test
 $files = @(
   "scripts/v2-local-server.mjs",
   "scripts/v2-local-core.mjs",
+  "scripts/v3-evidence-core.mjs",
   "public/v2-local-ui.js",
   "public/v2-local-engine.js",
   "public/v2-aliases.json",
@@ -111,6 +112,12 @@ Write-Host "Modelo: $($health.hardware.selected)" -ForegroundColor Green
 Write-Host "Embedding: $($health.embeddings.model)" -ForegroundColor Green
 Write-Host "Chunks: $($health.library.chunks)" -ForegroundColor Green
 Write-Host "Build: $($health.local_runtime_build)" -ForegroundColor Green
+try {
+  $v3 = Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v3/health" -TimeoutSec 30
+  Write-Host "Evidence V3: $($v3.evidence_units) unidades • Dicionario congelado: $($v3.dictionary_frozen)" -ForegroundColor Green
+} catch {
+  Write-Host "Evidence V3 ainda preparando; o servidor continuara carregando em paralelo." -ForegroundColor Yellow
+}
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 
