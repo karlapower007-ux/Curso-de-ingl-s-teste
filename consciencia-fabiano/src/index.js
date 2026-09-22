@@ -190,7 +190,15 @@ function libraryStub(env) {
 async function libraryCall(env, path, options = {}) {
   const res = await libraryStub(env).fetch(new Request("https://library.internal" + path, options));
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || ("LibraryDO " + res.status));
+  if (!res.ok) {
+    const message=String(data?.message || ("LibraryDO " + res.status));
+    const error=new Error(message);
+    error.status=res.status;
+    error.code=/Exceeded allowed rows read|free tier|rows read/i.test(message)
+      ? "FREE_TIER_STORAGE_QUOTA"
+      : String(data?.code || "LIBRARY_ERROR");
+    throw error;
+  }
   return data;
 }
 
@@ -1519,6 +1527,20 @@ function gracefulEmptyAnswer() {
   return EMPTY_GROUNDED_ANSWER;
 }
 
+function publicSourceRows(sources) {
+  return Array.from(sources||[]).map((s,i)=>{
+    const reference=String(s?.referencia || extractSemanticReference(s?.trecho || s?.text || "") || "").trim();
+    const title=reference ? "" : humanDocumentName(String(s?.arquivo||""),String(s?.titulo||""));
+    return {
+      ref_id:sourceRefId(s,i),
+      titulo:title,
+      autor:String(s?.autor||"").trim(),
+      pagina:s?.pagina ? Number(s.pagina) : null,
+      referencia:reference
+    };
+  }).filter(s=>s.referencia || s.titulo);
+}
+
 function sourceRefId(source,index=0) {
   const explicit=String(source?.ref_id || "").trim().toUpperCase();
   return /^F\d{1,3}$/.test(explicit) ? explicit : "F"+(index+1);
@@ -2590,14 +2612,15 @@ async function massivePipelineStreamResponse(env,meta) {
           meta.cognitiveContract
         );
         const usedSources=selectCitedSources(answer,meta.sources);
+        const publicUsedSources=publicSourceRows(usedSources);
         const memoryPersisted=await persistChatTurn(
-          env,meta.ownerId,meta.body,meta.question,answer,usedSources,false
+          env,meta.ownerId,meta.body,meta.question,answer,publicUsedSources,false
         );
         emit("delta",{text:answer});
         emit("done",{
           ok:true,
           resposta:answer,
-          fontes:usedSources,
+          fontes:publicUsedSources,
           fallback:false,
           memory_persisted:memoryPersisted,
           provider:"v10-private-rag",
@@ -3385,14 +3408,20 @@ function referenceOnlyAnswer(sources,question="") {
   const rows=Array.isArray(sources)?sources:[];
   const q=foldSearchText(question);
   const wantsStructural=/\b(?:capitulo|versiculo|chapter|verse)\b/i.test(q);
+  const publicLabel=s=>{
+    const canonical=String(s?.referencia || extractSemanticReference([s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ")) || "").trim();
+    if(canonical) return canonical;
+    const name=humanDocumentName(String(s?.arquivo||""),String(s?.titulo||s?.title||""));
+    const page=s?.pagina ? "p. "+Number(s.pagina) : "";
+    const label=[name,page].filter(Boolean).join(" — ").trim();
+    return /^(?:documento|fonte|standard works|obras padrão)$/iu.test(label) ? "" : label;
+  };
   if(wantsStructural){
-    const ranked=rows.slice().sort((a,b)=>{
-      const aClient=/client/i.test(String(a?.retrieval_mode||"")) ? 1000 : 0;
-      const bClient=/client/i.test(String(b?.retrieval_mode||"")) ? 1000 : 0;
-      return (bClient+Number(b?.score||0))-(aClient+Number(a?.score||0));
-    });
+    const ranked=rows.slice().sort((a,b)=>Number(b?.score||0)-Number(a?.score||0));
     for(const s of ranked){
-      const title=String(s?.titulo || s?.title || s?.arquivo || "").replace(/[\r\n]+/g," ").trim();
+      const canonical=publicLabel(s);
+      if(/\b\d{1,3}:\d{1,3}\b/.test(canonical)) return canonical;
+      const title=humanDocumentName(String(s?.arquivo||""),String(s?.titulo||s?.title||""));
       const corpus=[title,s?.trecho,s?.text,s?.texto].filter(Boolean).join(" ");
       const location=corpus.match(/\b(\d{1,3})\s*:\s*(\d{1,3})\b/);
       const chapter=Number(s?.chapter || s?.capitulo || location?.[1] || 0);
@@ -3401,16 +3430,11 @@ function referenceOnlyAnswer(sources,question="") {
     }
   }
   const seen=new Set(),lines=[];
-  for(let i=0;i<rows.length;i++){
-    const s=rows[i];
-    const ref=sourceRefId(s,i);
-    const key=[s?.document_id||"",s?.pagina||"",s?.titulo||s?.arquivo||""].join("|");
-    if(seen.has(key)) continue;
-    seen.add(key);
-    const name=String(s?.titulo || s?.arquivo || "Documento").replace(/[\r\n]+/g," ").trim();
-    const author=String(s?.autor || "").replace(/[\r\n]+/g," ").trim();
-    const page=s?.pagina ? "p. "+Number(s.pagina) : "";
-    lines.push("["+ref+"] "+[name,author,page].filter(Boolean).join(" — "));
+  for(const s of rows){
+    const label=publicLabel(s);
+    if(!label || seen.has(label)) continue;
+    seen.add(label);
+    lines.push(label);
     if(lines.length>=12) break;
   }
   return lines.join("\n");
@@ -3990,8 +4014,11 @@ async function chat(request, env) {
   let retrievalLevel=Number(body?.retrieval_level || 0) || (clientContext.length ? 2 : 0);
   let retrievalUnavailable = false;
 
-  // V2.0: contexto local e remoto sempre são fundidos; falha remota não apaga o índice local.
-  if(env.LIBRARY){
+  // v10: prefer the already-private local evidence pack to avoid unnecessary
+  // Durable Object row reads. The server library is consulted only when local evidence is sparse.
+  const preferClientContext=body?.prefer_client_context===true;
+  const localEvidenceEnough=preferClientContext && clientContext.length>=6;
+  if(env.LIBRARY && !localEvidenceEnough){
     try {
       const serverContext = await retrieveContext(
         env,
@@ -4002,9 +4029,11 @@ async function chat(request, env) {
       if(serverContext.length) retrievalLevel=Math.max(retrievalLevel,5);
     } catch (error) {
       if (error?.code === "EXTERNAL_AI_NOT_CONFIGURED") throw error;
-      if (error?.code === "RAG_RETRIEVAL_UNAVAILABLE") retrievalUnavailable = true;
+      if (["RAG_RETRIEVAL_UNAVAILABLE","FREE_TIER_STORAGE_QUOTA"].includes(String(error?.code||""))) retrievalUnavailable = clientContext.length===0;
       context = clientContext;
     }
+  } else if(localEvidenceEnough) {
+    retrievalLevel=Math.max(retrievalLevel,4);
   }
 
   context=(Array.isArray(context)?context:[])
@@ -4092,11 +4121,12 @@ async function chat(request, env) {
     const answer=referenceOnlyAnswer(sources,question);
     const citedSources=selectCitedSources(answer,sources);
     const usedSources=citedSources.length ? citedSources : sources.slice(0,1).map((s,i)=>({...s,ref_id:sourceRefId(s,i)}));
-    const memoryPersisted=await persistChatTurn(env,ownerId,body,question,answer,usedSources,false);
+    const publicUsedSources=publicSourceRows(usedSources);
+    const memoryPersisted=await persistChatTurn(env,ownerId,body,question,answer,publicUsedSources,false);
     const payload={
       ok:true,
       resposta:answer,
-      fontes:usedSources,
+      fontes:publicUsedSources,
       fallback:false,
       memory_persisted:memoryPersisted,
       provider:"deterministic-reference-only",
@@ -4153,12 +4183,13 @@ async function chat(request, env) {
   );
   validatorMs+=Date.now()-postValidationStarted;
   const usedSources=selectCitedSources(answer,sources);
-  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, usedSources, false);
+  const publicUsedSources=publicSourceRows(usedSources);
+  const memoryPersisted = await persistChatTurn(env, ownerId, body, question, answer, publicUsedSources, false);
 
   return json({
     ok: true,
     resposta: answer,
-    fontes: usedSources,
+    fontes: publicUsedSources,
     fallback: false,
     memory_persisted: memoryPersisted,
     provider: "v10-private-rag",
@@ -4641,11 +4672,14 @@ async function handleApi(request, env, url, ctx) {
     if (url.pathname === "/api/admin/reindex" && request.method === "POST") return await reindexLibrary(request, env);
     return json({ ok: false, message: "Rota não encontrada." }, 404);
   } catch (error) {
+    const code=String(error?.code || "INTERNAL_ERROR");
     return json({
       ok: false,
-      code: error?.code || "INTERNAL_ERROR",
-      message: String(error?.message || error),
-    }, ["BINDINGS_MISSING","EXTERNAL_AI_NOT_CONFIGURED"].includes(error?.code) ? 503 : 500);
+      code,
+      message: code==="FREE_TIER_STORAGE_QUOTA"
+        ? "A cota gratuita de leitura da nuvem foi atingida temporariamente. Use a biblioteca local/offline; a cota reinicia automaticamente."
+        : String(error?.message || error),
+    }, ["BINDINGS_MISSING","EXTERNAL_AI_NOT_CONFIGURED","FREE_TIER_STORAGE_QUOTA"].includes(code) ? 503 : 500);
   }
 }
 
