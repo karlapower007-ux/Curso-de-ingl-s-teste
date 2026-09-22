@@ -1,6 +1,7 @@
 const V2_KEY_MODEL="fns_v2_local_model";
 const V2_KEY_RESPONSE="fns_v2_response_mode";
 let localReady=false;
+let browserOnly=false;
 let health=null;
 let dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0};
 
@@ -61,6 +62,31 @@ function addControls(){
     info.innerHTML="<strong>Consciência Fabiano v2 • Local-first</strong><p id=\"v2SettingsInfo\">Ollama local + Qwen. A biblioteca v10.1 permanece preservada e os vetores Qwen são criados em paralelo.</p>";
     settings.appendChild(info);
   }
+}
+function browserDeterministicAnswer(mode,question,evidence=[]){
+  const rows=(evidence||[]).filter(x=>String(x?.text||"").trim()).slice(0,mode==="short"?3:12);
+  if(!rows.length)return "A biblioteca local não encontrou evidência suficiente para responder a essa pergunta.";
+  const ref=row=>String(row?.reference||row?.title||"Fonte local").trim()||"Fonte local";
+  if(mode==="short"){
+    return rows.map((row,i)=>"["+(i+1)+"] "+String(row.text||"").trim()+"\n"+ref(row)).join("\n\n");
+  }
+  if(mode==="timeline"){
+    const dated=[],undated=[];
+    for(const row of rows){
+      const years=String(row.text||"").match(/\b(?:1[5-9]\d{2}|20\d{2}|21\d{2})\b/g);
+      if(years?.length)dated.push({year:Math.min(...years.map(Number)),row});else undated.push(row);
+    }
+    dated.sort((a,b)=>a.year-b.year);
+    const parts=dated.map(({year,row})=>String(year)+" — "+String(row.text||"").trim()+"\n"+ref(row));
+    if(undated.length)parts.push("Data não identificada\n"+undated.map(row=>String(row.text||"").trim()+"\n"+ref(row)).join("\n\n"));
+    return parts.join("\n\n");
+  }
+  if(mode==="compare"){
+    const groups=new Map();
+    for(const row of rows){const key=ref(row);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
+    return [...groups.entries()].map(([source,items])=>source+"\n"+items.slice(0,3).map(x=>"• "+String(x.text||"").trim()).join("\n")).join("\n\n");
+  }
+  return "Resposta determinística local — sem LLM\n\n"+rows.map((row,i)=>"["+(i+1)+"] "+String(row.text||"").trim()+"\n"+ref(row)).join("\n\n");
 }
 function appendMessage(role,content,sources=[]){
   const host=$("messages");if(!host)return;
@@ -128,6 +154,15 @@ async function sendLocal(){
         evidence=[...merged.values()].slice(0,90);
       }catch{}
     }
+    if(browserOnly||health?.ollama?.reachable===false){
+      const answer=browserDeterministicAnswer(mode,q,evidence);
+      appendMessage("assistant",answer,evidence);
+      const backend=$("backendText");if(backend)backend.textContent="v2 navegador • resposta determinística local • zero LLM";
+      const dot=$("backendDot");if(dot)dot.className="dot ok";
+      const state=$("avatarState");if(state)state.textContent="Pronto";
+      return;
+    }
+
     const data=await call("/api/v2/chat",{
       question:q,mode,model,semantic:mode!=="exact",page_size:25,
       evidence:evidence.map(r=>({
@@ -205,11 +240,20 @@ async function searchDictionary(reset=true){
   finally{if(btn)btn.disabled=false;}
 }
 async function probe(){
+  browserOnly=false;
   try{
     const res=await fetch("/api/v2/health",{cache:"no-store"});
     const data=await res.json();
     localReady=Boolean(res.ok&&data?.ok&&data?.local_only);health=data;
-  }catch{localReady=false;health=null;}
+  }catch{
+    try{
+      const mod=await import("/v2-local-engine.js");
+      const state=await mod.FNSV2LocalEngine.counts();
+      browserOnly=Number(state?.chunks||0)>0;
+      localReady=browserOnly;
+      health=browserOnly?{ok:true,local_only:true,browser_only:true,ollama:{reachable:false},embeddings:{installed:Number(state?.qwen_vectors||0)>0},library:{chunks:state.chunks}}:null;
+    }catch{localReady=false;health=null;}
+  }
   updateV2Status();
 }
 function updateV2Status(){
@@ -217,8 +261,10 @@ function updateV2Status(){
   if(!localReady){el.textContent="v2 local não detectada • v10.1 continua disponível";el.classList.remove("ok");return;}
   const ollama=Boolean(health?.ollama?.reachable),embed=Boolean(health?.embeddings?.installed);
   const model=selectedModel()==="auto"?String(health?.hardware?.selected||health?.hardware?.recommended||"auto"):selectedModel();
-  el.textContent="Local grátis • "+(ollama?model:"Ollama sem modelo")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
-  el.classList.toggle("ok",ollama);
+  el.textContent=browserOnly
+    ?"Local no navegador • biblioteca offline • respostas determinísticas sem LLM"
+    :"Local grátis • "+(ollama?model:"sem LLM • fallback determinístico")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
+  el.classList.toggle("ok",browserOnly||ollama);
   const settings=$("v2SettingsInfo");
   if(settings)settings.textContent="RAM detectada: "+String(health?.hardware?.ram_gb||"?")+" GB • recomendado: "+String(health?.hardware?.recommended||"?")+" • biblioteca local: "+String(health?.library?.chunks||0)+" chunks.";
 }
