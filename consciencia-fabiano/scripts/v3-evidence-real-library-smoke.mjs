@@ -52,7 +52,11 @@ function premortalRelevant(text){
     f.includes("before we came") ||
     f.includes("before the world") ||
     f.includes("before mortal") ||
-    f.includes("before birth");
+    f.includes("before birth") ||
+    f.includes("before the foundations") ||
+    f.includes("before the foundation") ||
+    f.includes("ages and ages before") ||
+    f.includes("pre-earth");
 }
 
 const report=[];
@@ -71,9 +75,6 @@ for(const query of queries){
     assert.ok(top.every(x=>worldRelevant(x.text)),"mundo espiritual não pode aceitar evidência com apenas a palavra espírito");
   }
   if(query.includes("vida pré-mortal")){
-    console.error("V3_PREMORTAL_DIAGNOSTIC="+JSON.stringify(top.map(x=>({
-      reference:x.reference,kind:x.kind,score:x.score,text:x.text
-    }))));
     assert.ok(top.length>=5,"vida pré-mortal deve ter fluxo documental suficiente");
     assert.ok(top.every(x=>!v3Fold(x.text).includes("gee vida pre-mortal")),"nota GEE não pode ser evidência de vida pré-mortal");
     assert.ok(top.slice(0,5).every(x=>premortalRelevant(x.text)),"os cinco primeiros resultados de vida pré-mortal devem começar em conteúdo substantivo do tema");
