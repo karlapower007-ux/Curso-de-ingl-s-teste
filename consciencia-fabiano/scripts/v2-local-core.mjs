@@ -29,9 +29,60 @@ export function sanitizePublicTitle(row={}){
   return cleaned || "Livro";
 }
 
+export function isStandardWorksRow(row={}){
+  const raw=[row.filename,row.title,row.source_title,row.document_title].map(x=>String(x||"")).join(" ");
+  return /standard[-_ ]?works|obras[-_ ]?padrao|obras\s+padr[aã]o/i.test(fold(raw));
+}
+
+export function extractVerifiedPageReference(pageText=""){
+  const raw=String(pageText||"").replace(/\s+/g," ").trim();
+  if(!raw)return "";
+  const tail=raw.slice(-1400);
+  const re=/\b\d{1,4}\s+((?:(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*(?:\s+(?:E|DE|DO|DA|DOS|DAS|[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ.&—-]*)){0,5})\s+\d{1,4}:\d{1,4}(?:\s*[–-]\s*\d{1,4})?)\b/gu;
+  let match,last="";
+  while((match=re.exec(tail)))last=String(match[1]||"").replace(/\s+/g," ").replace(/\s*([:–-])\s*/g,"$1").trim();
+  return last;
+}
+
+export function citationIntegrity(row={},pageText=""){
+  const canonical=String(row.canonical_reference||"").trim();
+  if(canonical){
+    return {verified:true,reference:canonical,kind:"canonical-metadata",reason:"canonical_reference"};
+  }
+
+  if(isStandardWorksRow(row)){
+    const footer=extractVerifiedPageReference(pageText||row.text||"");
+    if(footer)return {verified:true,reference:footer,kind:"scripture-page-footer",reason:"verified-page-footer"};
+    return {verified:false,reference:"",kind:"scripture-unverified",reason:"canonical-footer-not-found"};
+  }
+
+  const title=String(row.title||row.source_title||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+  const page=Number(row.page||0)||null;
+  if(title&&page)return {verified:true,reference:title+" • página "+page,kind:"book-page",reason:"title-page-metadata"};
+  if(title)return {verified:true,reference:title,kind:"book-title",reason:"title-metadata"};
+  return {verified:false,reference:"",kind:"unverified",reason:"missing-authoritative-metadata"};
+}
+
+export function hasSubstantiveFocus(row={}){
+  if(!isStandardWorksRow(row))return true;
+  const text=fold(row.text||"");
+  const aliases=(Array.isArray(row.focus_aliases)?row.focus_aliases:[]).map(fold).filter(Boolean);
+  if(!aliases.length)return true;
+  for(const alias of aliases){
+    let at=0;
+    while((at=text.indexOf(alias,at))>=0){
+      const prefix=text.slice(Math.max(0,at-36),at);
+      const apparatus=/\bgee\s*$|guia para estudo das escrituras\s*$|\bver\s*$|\bsee\s*$/i.test(prefix);
+      if(!apparatus)return true;
+      at+=Math.max(1,alias.length);
+    }
+  }
+  return false;
+}
+
 export function publicReference(row={}){
-  const canonical=String(row.reference||row.canonical_reference||extractSemanticReference(row.text||"")||"").trim();
-  if(canonical) return canonical;
+  const canonical=String(row.canonical_reference||"").trim();
+  if(canonical)return canonical;
   const title=sanitizePublicTitle(row);
   const page=Number(row.page||0);
   return [title,page?("página "+page):""].filter(Boolean).join(" • ");
@@ -247,7 +298,7 @@ export function formatExactAnswer(matches=[]){
 export function formatGroundedAnswer(evidence=[],mode="explain"){
   const safeMode=RESPONSE_MODES.has(mode)?mode:"explain";
   const maxRows=safeMode==="short"?3:10;
-  const rows=(evidence||[]).filter(row=>String(row?.text||"").trim()).slice(0,maxRows);
+  const rows=(evidence||[]).filter(row=>row?.citation_verified===true && String(row?.text||"").trim()).slice(0,maxRows);
   if(!rows.length)return "A biblioteca local não encontrou evidência suficiente para responder a essa pergunta.";
 
   const clipExact=text=>{
@@ -257,7 +308,7 @@ export function formatGroundedAnswer(evidence=[],mode="explain"){
     const boundary=Math.max(cut.lastIndexOf(". "),cut.lastIndexOf("; "),cut.lastIndexOf(": "));
     return (boundary>240?cut.slice(0,boundary+1):cut).trim();
   };
-  const ref=row=>String(row?.reference||publicReference(row)||"Fonte").trim()||"Fonte";
+  const ref=row=>String(row?.citation_reference||row?.reference||publicReference(row)||"Fonte").trim()||"Fonte";
   const unique=[];
   const seen=new Set();
   for(const row of rows){
@@ -281,7 +332,7 @@ export function formatGroundedAnswer(evidence=[],mode="explain"){
     return unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\nFonte: "+row._ref).join("\n\n");
   }
   return "Resposta documental exata — cada ponto abaixo vem diretamente da biblioteca:\n\n"+
-    unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\nFonte: "+row._ref).join("\n\n");
+    unique.map((row,i)=>"["+(i+1)+"] "+row._exact+"\n✓ Fonte verificada: "+row._ref).join("\n\n");
 }
 
 export function buildPrompt({question,mode,evidence=[]}){
