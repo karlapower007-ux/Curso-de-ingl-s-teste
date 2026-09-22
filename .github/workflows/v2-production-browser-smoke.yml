@@ -1,0 +1,135 @@
+name: Consciência Fabiano v2 Production Browser Smoke
+
+on:
+  push:
+    branches: [consciencia-cloudflare-native-v1]
+    paths:
+      - ".github/workflows/v2-production-browser-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-v2-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install browser driver
+        working-directory: consciencia-fabiano
+        run: npm install --no-save --ignore-scripts playwright-core
+
+      - name: Validate live v2 UI and standalone offline mode
+        working-directory: consciencia-fabiano
+        shell: bash
+        run: |
+          cat > .v2-production-smoke.mjs <<'NODE'
+          import fs from "node:fs";
+          import { chromium } from "playwright-core";
+
+          const base="https://consciencia-fabiano.focoeepoder2.workers.dev";
+          const executablePath=[
+            process.env.CHROME_PATH,
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser"
+          ].filter(Boolean).find(p=>fs.existsSync(p));
+          if(!executablePath) throw new Error("Chrome/Chromium não encontrado.");
+
+          async function seed(page){
+            return page.evaluate(async()=>{
+              const db=await new Promise((resolve,reject)=>{
+                const req=indexedDB.open("fns_rag_resilience_v1",1);
+                req.onupgradeneeded=()=>{
+                  const d=req.result;
+                  if(!d.objectStoreNames.contains("chunks")){
+                    const s=d.createObjectStore("chunks",{keyPath:"key"});
+                    s.createIndex("document_id","document_id",{unique:false});
+                  }
+                  if(!d.objectStoreNames.contains("vectors")){
+                    const s=d.createObjectStore("vectors",{keyPath:"key"});
+                    s.createIndex("document_id","document_id",{unique:false});
+                  }
+                };
+                req.onsuccess=()=>resolve(req.result);
+                req.onerror=()=>reject(req.error);
+              });
+              await new Promise((resolve,reject)=>{
+                const tx=db.transaction("chunks","readwrite");
+                tx.objectStore("chunks").put({
+                  key:"prod-smoke:1",id:"prod-smoke:1",document_id:"prod-smoke",
+                  title:"Livro QA Produção",page:10,chunk_index:1,
+                  text:"O Plano de Salvação inclui ensinamentos sobre a Vida Pré-Mortal e a mortalidade."
+                });
+                tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+              });
+              db.close();
+              return true;
+            });
+          }
+
+          const browser=await chromium.launch({headless:true,executablePath,args:["--no-sandbox"]});
+          const report=[];
+          try{
+            for(const width of [360,390,412,1366]){
+              const context=await browser.newContext({viewport:{width,height:width<600?800:900}});
+              const page=await context.newPage();
+              const errors=[];
+              page.on("pageerror",e=>errors.push(String(e)));
+              await page.goto(base+"/?v2_prod_smoke="+width+"-"+Date.now(),{waitUntil:"domcontentloaded",timeout:45000});
+              await page.locator("#v2Model").waitFor({state:"visible",timeout:15000});
+              await page.locator("#v2ResponseMode").waitFor({state:"visible",timeout:15000});
+
+              const state=await page.evaluate(()=>({
+                title:document.title,
+                width:window.innerWidth,
+                scrollWidth:document.documentElement.scrollWidth,
+                modelOptions:[...document.querySelectorAll("#v2Model option")].map(x=>x.textContent),
+                responseOptions:[...document.querySelectorAll("#v2ResponseMode option")].map(x=>x.textContent),
+                header:document.querySelector(".header-kicker")?.textContent||""
+              }));
+              if(!/v2/i.test(state.title)||!/v2/i.test(state.header)) throw new Error("Identidade v2 ausente: "+JSON.stringify(state));
+              if(state.scrollWidth>state.width+2) throw new Error("Overflow horizontal em "+width+": "+JSON.stringify(state));
+              for(const needed of ["Resposta curta","Explicação","Comparar fontes","Linha do tempo","Citação exata"]){
+                if(!state.responseOptions.some(x=>String(x).includes(needed))) throw new Error("Modo ausente "+needed+" em "+width);
+              }
+              if(errors.length) throw new Error("Page errors em "+width+": "+errors.join(" | "));
+              report.push({width,live_v2:true,no_horizontal_overflow:true});
+              await context.close();
+            }
+
+            const context=await browser.newContext({viewport:{width:390,height:800},serviceWorkers:"block"});
+            const page=await context.newPage();
+            await page.route("http://127.0.0.1:8788/**",r=>r.abort());
+            await page.route("http://localhost:8788/**",r=>r.abort());
+            await page.goto(base+"/?v2_offline_seed="+Date.now(),{waitUntil:"domcontentloaded",timeout:45000});
+            await page.locator("#v2ResponseMode").waitFor({state:"visible",timeout:15000});
+            await seed(page);
+            await page.reload({waitUntil:"domcontentloaded",timeout:30000});
+            await page.waitForFunction(()=>document.querySelector("#v2LocalStatus")?.textContent?.includes("Local no navegador"),null,{timeout:15000});
+            await context.setOffline(true);
+
+            await page.locator("#v2ResponseMode").selectOption("exact");
+            await page.locator("#questionInput").fill("Plano de Salvação e Vida Pré-Mortal");
+            await page.locator("#sendBtn").click();
+            await page.waitForFunction(()=>document.querySelectorAll(".msg.assistant.v2-msg").length>0,null,{timeout:15000});
+            const answer=await page.locator(".msg.assistant.v2-msg").last().innerText();
+            if(!answer.includes("Plano de Salvação")||!answer.includes("Vida Pré-Mortal")) throw new Error("Citação exata offline em produção falhou: "+answer);
+            report.push({width:390,production_origin_offline:true,exact_zero_llm:true});
+            await context.close();
+
+            console.log("V2_PRODUCTION_BROWSER_SMOKE=pass");
+            console.log(JSON.stringify(report));
+          } finally {
+            await browser.close();
+          }
+          NODE
+          node .v2-production-smoke.mjs
+          rm -f .v2-production-smoke.mjs
