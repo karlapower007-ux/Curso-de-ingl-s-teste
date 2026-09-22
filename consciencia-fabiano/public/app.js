@@ -1947,7 +1947,7 @@
     }
   }
 
-  const dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0,hits:[]};
+  const dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0,hits:[],concept:null};
   function publicSourceLabel(hit){
     const title=String(hit?.title||hit?.titulo||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim().replace(/^(?:standard works|obras padrão|documento|fonte)$/i,"");
     const page=Number(hit?.page||hit?.pagina||0);
@@ -1955,7 +1955,41 @@
     if(canonical)return canonical;
     return title+(page?" • página "+page:"");
   }
+  function renderDictionaryConcept(){
+    const host=$("dictionaryConcept");
+    if(!host)return;
+    host.replaceChildren();
+    const concept=dictionaryState.concept;
+    if(!concept?.label){
+      host.classList.add("hidden");
+      return;
+    }
+    const head=document.createElement("div");head.className="dictionary-concept-head";
+    const title=document.createElement("strong");title.textContent=concept.label;
+    const kind=document.createElement("span");kind.textContent=String(concept.kind||"conceito");
+    head.append(title,kind);
+
+    const stats=document.createElement("p");
+    stats.textContent=Number(concept.occurrences||0)+" ocorrência(s) em "+Number(concept.documents||0)+" livro(s).";
+
+    const aliases=document.createElement("p");aliases.className="dictionary-concept-aliases";
+    const aliasList=Array.isArray(concept.aliases)?concept.aliases.filter(Boolean).slice(0,12):[];
+    aliases.textContent=aliasList.length?"Aliases: "+aliasList.join(" • "):"";
+
+    const related=Array.isArray(concept.related)?concept.related.slice(0,8):[];
+    const rel=document.createElement("p");rel.className="dictionary-concept-related";
+    rel.textContent=related.length
+      ?"Relações por coocorrência: "+related.map(x=>String(x.label||"")).filter(Boolean).join(" • ")
+      :"";
+
+    host.append(head,stats);
+    if(aliases.textContent)host.appendChild(aliases);
+    if(rel.textContent)host.appendChild(rel);
+    host.classList.remove("hidden");
+  }
+
   function renderDictionaryPage(){
+    renderDictionaryConcept();
     const host=$("dictionaryResults"), pager=$("dictionaryPager");
     if(!host||!pager)return;
     host.replaceChildren();
@@ -1979,6 +2013,8 @@
     if(resetPage || q!==dictionaryState.query) dictionaryState.page=1;
     dictionaryState.query=q;
     dictionaryState.hits=[];
+    dictionaryState.concept=null;
+    renderDictionaryConcept();
     $("dictionaryStatus").textContent="Consultando a enciclopédia local…";
     $("dictionarySearchBtn").disabled=true;
     try{
@@ -2005,6 +2041,15 @@
         }catch(error){
           if(!localAvailable) throw error;
         }
+      }
+
+      if(networkAllowed()){
+        try{
+          const conceptData=await api("/api/encyclopedia/concept",{
+            method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:q})
+          },false);
+          dictionaryState.concept=conceptData?.found===true ? conceptData.concept : null;
+        }catch{}
       }
 
       data=data||{matches:[],total:0,pages:0,local_only:true};
@@ -2061,6 +2106,43 @@
     }
   }
 
+  let conceptBackfillTimer=0;
+  let conceptBackfillRunning=false;
+  async function runConceptIndexBackfill({force=false}={}){
+    const node=$("conceptIndexStatus");
+    if(!node || conceptBackfillRunning)return;
+    if(!ownerToken()){
+      node.textContent="Índice conceitual • autentique a Biblioteca para atualizar a camada derivada.";
+      return;
+    }
+    if(!networkAllowed() || !navigator.onLine){
+      node.textContent="Índice conceitual • offline: nenhuma atualização de nuvem será iniciada.";
+      return;
+    }
+    if(!force && $("libraryPanel")?.classList.contains("hidden"))return;
+    conceptBackfillRunning=true;
+    try{
+      const data=await api("/api/admin/encyclopedia-concepts/backfill",{
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:100})
+      },false);
+      const progress=Math.max(0,Math.min(100,Number(data?.progress||0)));
+      node.textContent=data?.complete===true
+        ?"Índice conceitual • 100% derivado da biblioteca atual."
+        :"Índice conceitual • "+progress+"% • lote "+Number(data?.processed||0)+" chunk(s) • sem reindexar PDFs.";
+      if(data?.complete!==true){
+        clearTimeout(conceptBackfillTimer);
+        conceptBackfillTimer=setTimeout(()=>runConceptIndexBackfill().catch(()=>{}),20000);
+      }
+    }catch(error){
+      const code=String(error?.code||"");
+      node.textContent=code==="FREE_TIER_STORAGE_QUOTA"
+        ?"Índice conceitual • pausa segura: cota gratuita de leitura atingida. A busca FTS/R2 continua funcionando."
+        :"Índice conceitual • atualização derivada pausada; a biblioteca principal não foi alterada.";
+    }finally{
+      conceptBackfillRunning=false;
+    }
+  }
+
   function switchPanel(name) {
     const lib=name==="library", dict=name==="dictionary", settings=name==="settings", chat=!lib&&!dict&&!settings;
     if(lib && !ensureLocalAdminAccess()) return;
@@ -2072,7 +2154,7 @@
     $("dictionaryTab")?.classList.toggle("active",dict);
     $("settingsTab")?.classList.toggle("active",settings);
     $("libraryTab").classList.toggle("active",lib);
-    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadCostGuardStatus();maybeAutoOmniSync();}
+    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadCostGuardStatus();runConceptIndexBackfill({force:true});maybeAutoOmniSync();}
     if(dict) $("dictionaryInput")?.focus();
     if(settings) updateOperatingModeUi();
   }
