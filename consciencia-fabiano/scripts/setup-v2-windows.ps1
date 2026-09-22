@@ -79,22 +79,49 @@ if (-not (Test-Path "node_modules")) {
 }
 
 $existing = Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
-if (-not $existing) {
-  Write-Host "Iniciando Consciência Fabiano v2..." -ForegroundColor Cyan
-  Start-Process -FilePath "node" -ArgumentList "scripts/v2-local-server.mjs" -WorkingDirectory $project
+if ($existing) {
+  Write-Host "Reiniciando o servidor local para aplicar a versão mais nova..." -ForegroundColor Yellow
+  $pids = @($existing | Select-Object -ExpandProperty OwningProcess -Unique)
+  foreach ($pidToStop in $pids) {
+    try {
+      $proc = Get-Process -Id $pidToStop -ErrorAction Stop
+      if ($proc.ProcessName -match "node") {
+        Stop-Process -Id $pidToStop -Force -ErrorAction Stop
+      } else {
+        throw "A porta 8788 está sendo usada por outro programa ($($proc.ProcessName))."
+      }
+    } catch {
+      if ($_.Exception.Message -match "outro programa") { throw }
+    }
+  }
+  Start-Sleep -Milliseconds 800
 }
+
+Write-Host "Iniciando Consciência Fabiano v2 atualizada..." -ForegroundColor Cyan
+Start-Process -FilePath "node" -ArgumentList "scripts/v2-local-server.mjs" -WorkingDirectory $project
 
 $ready = $false
 for ($i=0; $i -lt 30; $i++) {
   try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v2/health" -TimeoutSec 2
-    if ($health.ok) { $ready = $true; break }
+    if ($health.ok) {
+      $brainInstalled = @($health.ollama.installed) -contains $brain
+      $embedInstalled = [bool]$health.embeddings.installed
+      if (-not $brainInstalled -or -not $embedInstalled) {
+        throw "O servidor iniciou, mas ainda não confirmou $brain e qwen3-embedding:0.6b no Ollama."
+      }
+      $ready = $true
+      break
+    }
   } catch {}
   Start-Sleep -Seconds 1
 }
 if (-not $ready) { throw "O servidor local não respondeu na porta 8788." }
 
-Write-Host "Pronto. Consciência Fabiano v2 disponível em http://127.0.0.1:8788" -ForegroundColor Green
+Write-Host "Pronto. Servidor atualizado e modelos confirmados." -ForegroundColor Green
+Write-Host "Cérebro ativo: $brain" -ForegroundColor Green
+Write-Host "Embeddings ativos: qwen3-embedding:0.6b" -ForegroundColor Green
+Write-Host "Consciência Fabiano v2 disponível em http://127.0.0.1:8788" -ForegroundColor Green
 if ($env:CI -ne "true" -and $env:FNS_NO_OPEN -ne "1") {
   Start-Process "http://127.0.0.1:8788"
 }
