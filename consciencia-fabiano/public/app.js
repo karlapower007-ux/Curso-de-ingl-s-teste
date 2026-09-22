@@ -14,6 +14,11 @@
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
   const CURRENT_SYSTEM_VERSION = "v10-zero-cost-private-offline-online";
   const OPERATING_MODE_KEY = "fns_operating_mode_v10";
+  const OFFLINE_PREP_KEY = "fns_offline_ready_v10";
+  const OFFLINE_EMBED_KEY = "fns_offline_embedding_ready_v10";
+  const OFFLINE_VOICE_KEY = "fns_offline_voice_ready_v10";
+  const PDFJS_MODULE_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+  const PDFJS_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
   function operatingMode(){
     const value=String(localStorage.getItem(OPERATING_MODE_KEY)||"auto");
     return ["auto","offline","online"].includes(value)?value:"auto";
@@ -38,14 +43,21 @@
     if(select) select.value=operatingMode();
     const status=$("modeStatus");
     const mode=effectiveMode();
+    const prepared=localStorage.getItem(OFFLINE_PREP_KEY)==="1";
     if(status){
       status.textContent=mode==="offline"
-        ? "100% offline • nenhuma chamada externa"
+        ? (prepared ? "100% offline • preparado neste aparelho • nenhuma chamada externa" : "100% offline • nenhuma chamada externa • prepare a biblioteca neste aparelho")
         : mode==="online"
           ? "Online • RAG privado + fallback local"
           : mode==="offline-unavailable"
             ? "Online solicitado, mas sem conexão • usando local"
-            : "Automático";
+            : (prepared ? "Automático • offline preparado" : "Automático");
+    }
+    const prep=$("offlinePrepStatus");
+    if(prep && !prep.dataset.busy){
+      prep.textContent=prepared
+        ? "Offline pronto neste aparelho."
+        : "Para usar sem Internet, prepare uma vez enquanto estiver conectado.";
     }
   }
   async function setOperatingMode(mode){
@@ -1768,6 +1780,7 @@
           const engine=await ensureRagCascade("v10-offline-query");
           const localResult=engine?.offlineHybridSearch
             ? await engine.offlineHybridSearch(q,{
+                allowSemantic:localStorage.getItem(OFFLINE_EMBED_KEY)==="1",
                 onProgress:()=>{if($("backendText")) $("backendText").textContent="100% offline • analisando biblioteca local";}
               })
             : await engine.offlineSearch(q);
@@ -2324,8 +2337,8 @@
   async function getPdfJs() {
     if(window.pdfjsLib?.getDocument) return window.pdfjsLib;
     if(!window.__pdfjsReady){
-      window.__pdfjsReady=import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs").then(mod=>{
-        mod.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+      window.__pdfjsReady=import(PDFJS_MODULE_URL).then(mod=>{
+        mod.GlobalWorkerOptions.workerSrc=PDFJS_WORKER_URL;
         window.pdfjsLib=mod;
         return mod;
       }).catch(error=>{
@@ -2335,6 +2348,84 @@
     }
     return await window.__pdfjsReady;
   }
+  async function preloadOfflineVoiceModel(){
+    if(!navigator.onLine) return false;
+    return await new Promise(resolve=>{
+      let settled=false;
+      const finish=value=>{if(settled)return;settled=true;clearTimeout(timer);try{worker.terminate();}catch{}resolve(value);};
+      const worker=new Worker("/whisper-worker.js?v=10.0.0",{type:"module"});
+      const timer=setTimeout(()=>finish(false),180000);
+      worker.onmessage=e=>{
+        const data=e.data||{};
+        if(data.type==="progress" && $("offlinePrepStatus")){
+          $("offlinePrepStatus").textContent="Preparando voz offline… "+Math.round(Number(data.progress||0))+"%";
+        }
+        if(data.type==="ready") finish(true);
+        if(data.type==="error") finish(false);
+      };
+      worker.onerror=()=>finish(false);
+      worker.postMessage({type:"load"});
+    });
+  }
+
+  async function prepareOfflineMode(){
+    const btn=$("prepareOfflineBtn");
+    const status=$("offlinePrepStatus");
+    if(btn) btn.disabled=true;
+    if(status){status.dataset.busy="1";status.textContent="Preparando biblioteca offline…";}
+    try{
+      if(!navigator.onLine){
+        throw new Error("Conecte à Internet uma vez para preparar os arquivos offline deste aparelho.");
+      }
+      if(isOfflineOnly()){
+        throw new Error("Mude temporariamente o modo para Automático ou Online durante a preparação offline.");
+      }
+      const engine=await ensureRagCascade("v10-offline-preparation");
+      if(status) status.textContent="Copiando a biblioteca para o armazenamento local…";
+      await engine.hydrateStaticBackup(true);
+      const stats=await engine.localStats();
+      const chunks=Number(stats?.chunks||0);
+      if(chunks<=0) throw new Error("A biblioteca local não recebeu chunks nesta preparação.");
+
+      // Prime PDF.js into Cache Storage so local PDF extraction keeps working offline.
+      if(status) status.textContent="Preparando leitura de PDF offline…";
+      await getPdfJs();
+      await fetch(PDFJS_WORKER_URL,{cache:"reload"}).catch(()=>null);
+
+      // Semantic embeddings are optional. Literal/BM25 remains fully offline even
+      // if a device cannot load the local model.
+      let embeddingReady=false;
+      try{
+        if(status) status.textContent="Preparando busca semântica offline…";
+        const test=await engine.embedQuery("preparação offline");
+        embeddingReady=Array.isArray(test?.vector)&&test.vector.length>=64;
+      }catch{}
+      localStorage.setItem(OFFLINE_EMBED_KEY,embeddingReady?"1":"0");
+
+      // Voice is optional too; failure does not block text chat or Encyclopedia.
+      let voiceReady=false;
+      try{
+        if(status) status.textContent="Preparando voz offline…";
+        voiceReady=await preloadOfflineVoiceModel();
+      }catch{}
+      localStorage.setItem(OFFLINE_VOICE_KEY,voiceReady?"1":"0");
+
+      localStorage.setItem(OFFLINE_PREP_KEY,"1");
+      if(status){
+        status.textContent="Offline pronto: "+chunks.toLocaleString("pt-BR")+" registros locais • PDF pronto • busca semântica "+(embeddingReady?"pronta":"opcional indisponível")+" • voz "+(voiceReady?"pronta":"opcional indisponível")+".";
+      }
+      updateOperatingModeUi();
+      await notifyServiceWorkerMode();
+      return true;
+    }catch(error){
+      if(status) status.textContent="Preparação offline não concluída: "+String(error?.message||error);
+      return false;
+    }finally{
+      if(status) delete status.dataset.busy;
+      if(btn) btn.disabled=false;
+    }
+  }
+
   function bytesToHex(buffer){return [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,"0")).join("");}
   function cleanPageText(items){
     let out="";
@@ -3083,6 +3174,8 @@
     modeSelect.value=operatingMode();
     modeSelect.addEventListener("change",()=>setOperatingMode(modeSelect.value));
   }
+  const prepareOfflineBtn=$("prepareOfflineBtn");
+  if(prepareOfflineBtn) prepareOfflineBtn.addEventListener("click",()=>prepareOfflineMode());
   updateOperatingModeUi();
 
   loadHistory();
