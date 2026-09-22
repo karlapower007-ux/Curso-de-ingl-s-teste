@@ -148,6 +148,49 @@ async function strictSearchAll(question,topK=STRICT_LOGICAL_TASK_CAP){
   });
 }
 
+async function strictSearchPage(question,offset=0,limit=50){
+  const target=deriveStrictPhrase(question);
+  if(!target)return {matches:[],scanned:0,total:0,target:"",offset:0,limit:Number(limit||50)};
+  const start=Math.max(0,Number(offset||0));
+  const pageSize=Math.max(1,Math.min(100,Number(limit||50)));
+  const db=await openDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction("chunks","readonly");
+    const store=tx.objectStore("chunks");
+    const req=store.openCursor();
+    const matches=[];
+    let scanned=0,total=0;
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(!cursor){
+        db.close();
+        resolve({matches,scanned,total,target,offset:start,limit:pageSize});
+        return;
+      }
+      const row=cursor.value||{};
+      scanned++;
+      const match=strictParagraphMatch(row.text||"",question);
+      if(match.matched){
+        const hitIndex=total++;
+        if(hitIndex>=start && matches.length<pageSize){
+          matches.push({
+            ...row,
+            text:String(match.paragraph||row.text||"").trim(),
+            score:100,
+            coverage:1,
+            strict_phrase:match.target,
+            strict_paragraph_index:match.paragraph_index,
+            retrieval_mode:"strict-phrase-indexeddb-page-v10"
+          });
+        }
+      }
+      cursor.continue();
+    };
+    req.onerror=()=>{const e=req.error;db.close();reject(e);};
+    tx.onerror=()=>{const e=tx.error;db.close();reject(e);};
+  });
+}
+
 async function deleteByDocument(store,documentId){
   const rows=await all(store);
   const keys=rows.filter(r=>String(r.document_id||r.doc_key||"")===String(documentId)).map(r=>r.key);
@@ -312,6 +355,7 @@ self.onmessage=async e=>{
     if(d.type==="persist-vectors"){const count=await putMany("vectors",d.records||[]);self.postMessage({id,ok:true,count});return;}
     if(d.type==="search-semantic"){const matches=await semantic(d.query||[],Number(d.top_k||500),Number(d.min_score||.38));self.postMessage({id,ok:true,matches});return;}
     if(d.type==="search-strict"){const result=await strictSearchAll(d.question||"",Number(d.top_k||STRICT_LOGICAL_TASK_CAP));self.postMessage({id,ok:true,...result,mode:"strict-phrase-v4"});return;}
+    if(d.type==="search-strict-page"){const result=await strictSearchPage(d.question||"",Number(d.offset||0),Number(d.limit||50));self.postMessage({id,ok:true,...result,mode:"strict-phrase-indexeddb-page-v10"});return;}
     if(d.type==="search-bm25"){const topK=Number(d.top_k||500);const anchored=await literalAnchorSearch(d.question||"",topK);const matches=anchored.length?anchored:await bm25(d.question||"",topK);self.postMessage({id,ok:true,matches,mode:anchored.length?"literal-anchor":"bm25"});return;}
     if(d.type==="local-stats"){
       const [chunks,vectors]=await Promise.all([countStore("chunks"),countStore("vectors")]);
