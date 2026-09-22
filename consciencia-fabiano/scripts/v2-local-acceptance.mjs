@@ -34,9 +34,11 @@ assert.ok(prompt.includes("não use conhecimento externo"));
 assert.ok(prompt.includes("EVIDÊNCIA 1"));
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
-const [server,ui,index,css,sw,pkg]=await Promise.all([
+const [server,ui,engine,opfs,index,css,sw,pkg]=await Promise.all([
   readFile(path.join(root,"scripts","v2-local-server.mjs"),"utf8"),
   readFile(path.join(root,"public","v2-local-ui.js"),"utf8"),
+  readFile(path.join(root,"public","v2-local-engine.js"),"utf8"),
+  readFile(path.join(root,"public","opfs-sqlite-worker.js"),"utf8"),
   readFile(path.join(root,"public","index.html"),"utf8"),
   readFile(path.join(root,"public","style.css"),"utf8"),
   readFile(path.join(root,"public","sw-v3.js"),"utf8"),
@@ -58,6 +60,10 @@ assert.ok(server.includes("qwen3-embedding:0.6b")||server.includes("DEFAULT_EMBE
 assert.ok(ui.includes('["exact","Citação exata • zero LLM"]'));
 assert.ok(ui.includes('["timeline","Linha do tempo"]'));
 assert.ok(ui.includes('["compare","Comparar fontes"]'));
+assert.ok(engine.includes('type:"search-fts"'),"v2 deve consultar o índice OPFS FTS5");
+assert.ok(engine.includes('search_backend:"opfs-sqlite-fts5"'),"resultado FTS5 deve ser identificável internamente");
+assert.ok(opfs.includes("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5"),"OPFS deve manter índice SQLite FTS5");
+assert.ok(opfs.includes('d.type==="search-fts"'),"worker OPFS deve expor busca FTS5 local");
 assert.ok(index.includes("/v2-local-ui.js"));
 assert.ok(css.includes("@media(max-width:360px)"));
 assert.ok(css.includes("@media(max-width:390px)"));
