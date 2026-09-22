@@ -152,6 +152,11 @@ jobs:
             .external_models_receive_original_files == false and
             .external_models_receive_full_library == false and
             .full_offline_mode_supported == true and
+            .encyclopedia_concept_graph == true and
+            .encyclopedia_alias_index == true and
+            .encyclopedia_concept_fail_open == true and
+            .encyclopedia_concept_max_per_chunk == 4 and
+            .encyclopedia_concept_daily_chunk_budget == 1500 and
             .semantic_query_embedding_server_enabled == false and
             .external_providers.gemini == "disabled" and
             .external_providers.xai_grok == "disabled" and
@@ -204,6 +209,20 @@ jobs:
           fi
           echo "V10_1_DICTIONARY_BROWSER_ROUTE=pass"
           echo "V10_1_DICTIONARY_FUNCTIONAL=pass"
+          CONCEPT_HTTP="$(curl -sS --max-time 20 -o /tmp/v10-concept.json -w '%{http_code}' -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/encyclopedia/concept -H 'Content-Type: application/json' --data '{"query":"Adão"}' || true)"
+          if [ "$CONCEPT_HTTP" = "200" ]; then
+            jq -e '.ok == true and (.found == true or .found == false)' /tmp/v10-concept.json >/dev/null
+            echo "V10_1_CONCEPT_API=available"
+          elif [ "$CONCEPT_HTTP" = "503" ] && jq -e '.code == "FREE_TIER_STORAGE_QUOTA"' /tmp/v10-concept.json >/dev/null 2>&1; then
+            echo "V10_1_CONCEPT_API=quota-safe"
+          else
+            echo "V10_1_CONCEPT_API_HTTP=$CONCEPT_HTTP"
+            cat /tmp/v10-concept.json
+            exit 1
+          fi
+          CONCEPT_ADMIN_HTTP="$(curl -sS --max-time 20 -o /tmp/v10-concept-admin.json -w '%{http_code}' -X POST https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/encyclopedia-concepts/backfill -H 'Content-Type: application/json' --data '{"limit":1}' || true)"
+          test "$CONCEPT_ADMIN_HTTP" = "401"
+          echo "V10_1_CONCEPT_BACKFILL_ADMIN_PROTECTED=pass"
           COST_HTTP="$(curl -sS --max-time 20 -o /tmp/v10-cost.json -w '%{http_code}' https://consciencia-fabiano.focoeepoder2.workers.dev/api/admin/cost-status || true)"
           test "$COST_HTTP" = "401"
           echo "V10_1_COST_GUARD_ADMIN_PROTECTED=pass"
