@@ -37,7 +37,7 @@ jobs:
           node-version: "22"
 
       - name: Run the real Windows initializer
-        shell: powershell
+        shell: pwsh
         env:
           CI: "true"
           FNS_BRAIN_MODEL: "qwen3:0.6b"
@@ -47,12 +47,12 @@ jobs:
           .\scripts\setup-v2-windows.ps1
 
       - name: Prove real Ollama inference and embeddings
-        shell: powershell
+        shell: pwsh
         run: |
           .\scripts\v2-real-ollama-homologation.ps1
 
       - name: Confirm no production deployment in homologation
-        shell: powershell
+        shell: pwsh
         run: |
           $workflow = Get-Content "..\.github\workflows\v2-windows-real-ollama-homologation.yml" -Raw
           if ($workflow -match "wrangler deploy") { throw "Homologation workflow must not deploy production." }
