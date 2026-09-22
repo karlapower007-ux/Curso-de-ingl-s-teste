@@ -39,19 +39,23 @@
     }catch{}
   }
   function updateOperatingModeUi(){
+    const selectedMode=operatingMode();
     const select=$("operationMode");
-    if(select) select.value=operatingMode();
-    const status=$("modeStatus");
+    const settingsSelect=$("settingsOperationMode");
+    if(select) select.value=selectedMode;
+    if(settingsSelect) settingsSelect.value=selectedMode;
     const mode=effectiveMode();
     const prepared=localStorage.getItem(OFFLINE_PREP_KEY)==="1";
-    if(status){
-      status.textContent=mode==="offline"
-        ? (prepared ? "100% offline • preparado neste aparelho • nenhuma chamada externa" : "100% offline • nenhuma chamada externa • prepare a biblioteca neste aparelho")
-        : mode==="online"
-          ? "Online • RAG privado + fallback local"
-          : mode==="offline-unavailable"
-            ? "Online solicitado, mas sem conexão • usando local"
-            : (prepared ? "Automático • offline preparado" : "Automático");
+    const statusText=mode==="offline"
+      ? (prepared ? "100% offline • preparado neste aparelho • nenhuma chamada externa" : "100% offline • nenhuma chamada externa • prepare a biblioteca neste aparelho")
+      : mode==="online"
+        ? "Online • RAG privado + fallback local"
+        : mode==="offline-unavailable"
+          ? "Online solicitado, mas sem conexão • usando local"
+          : (prepared ? "Automático • offline preparado" : "Automático");
+    for(const id of ["modeStatus","settingsModeStatus"]){
+      const status=$(id);
+      if(status) status.textContent=statusText;
     }
     const prep=$("offlinePrepStatus");
     if(prep && !prep.dataset.busy){
@@ -2049,16 +2053,19 @@
   }
 
   function switchPanel(name) {
-    const lib=name==="library", dict=name==="dictionary", chat=!lib&&!dict;
+    const lib=name==="library", dict=name==="dictionary", settings=name==="settings", chat=!lib&&!dict&&!settings;
     if(lib && !ensureLocalAdminAccess()) return;
     $("chatPanel").classList.toggle("hidden",!chat);
     $("dictionaryPanel")?.classList.toggle("hidden",!dict);
+    $("settingsPanel")?.classList.toggle("hidden",!settings);
     $("libraryPanel").classList.toggle("hidden",!lib);
     $("chatTab").classList.toggle("active",chat);
     $("dictionaryTab")?.classList.toggle("active",dict);
+    $("settingsTab")?.classList.toggle("active",settings);
     $("libraryTab").classList.toggle("active",lib);
     if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadCostGuardStatus();maybeAutoOmniSync();}
     if(dict) $("dictionaryInput")?.focus();
+    if(settings) updateOperatingModeUi();
   }
 
   function setMicStatus(message = "", isError = false) {
@@ -3092,6 +3099,7 @@
   $("chatTab").onclick = () => switchPanel("chat");
   $("dictionaryTab").onclick = () => switchPanel("dictionary");
   $("libraryTab").onclick = () => switchPanel("library");
+  $("settingsTab").onclick = () => switchPanel("settings");
   $("dictionarySearchBtn").onclick=()=>searchDictionary(true);
   $("dictionaryInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();searchDictionary(true);}});
   $("dictionaryPrev").onclick=()=>{if(dictionaryState.page>1){dictionaryState.page--;searchDictionary(false);$("dictionaryPanel").scrollIntoView({behavior:"smooth",block:"start"});}};
@@ -3127,8 +3135,15 @@
     modeSelect.value=operatingMode();
     modeSelect.addEventListener("change",()=>setOperatingMode(modeSelect.value));
   }
+  const settingsModeSelect=$("settingsOperationMode");
+  if(settingsModeSelect){
+    settingsModeSelect.value=operatingMode();
+    settingsModeSelect.addEventListener("change",()=>setOperatingMode(settingsModeSelect.value));
+  }
   const prepareOfflineBtn=$("prepareOfflineBtn");
   if(prepareOfflineBtn) prepareOfflineBtn.addEventListener("click",()=>prepareOfflineMode());
+  const settingsPrepareOfflineBtn=$("settingsPrepareOfflineBtn");
+  if(settingsPrepareOfflineBtn) settingsPrepareOfflineBtn.addEventListener("click",()=>prepareOfflineMode());
   updateOperatingModeUi();
 
   loadHistory();
