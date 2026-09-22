@@ -14,12 +14,13 @@ export function v3Fold(text){
     .toLowerCase()
     .replace(/[“”„‟«»"'’]/g,"")
     .replace(/[^\p{L}\p{N}\s:+-]/gu," ")
+    .replace(/([\p{L}\p{N}])\s*-\s*([\p{L}\p{N}])/gu,"$1-$2")
     .replace(/\s+/g," ")
     .trim();
 }
 
 function stemToken(token){
-  let t=v3Fold(token);
+  let t=v3Fold(token).replace(/-/g,"");
   if(!t)return "";
   if(t.startsWith("espirit")||t.startsWith("spirit"))return "espirit";
   if(t==="world"||t.startsWith("world"))return "mundo";
@@ -242,7 +243,7 @@ export function buildV3EvidenceIndex(rows=[]){
   }
 
   return {
-    version:"3.0.3-evidence-engine-verified-window",
+    version:"3.0.4-evidence-engine-ocr-normalized",
     generated_at:new Date().toISOString(),
     source_rows:Number(rows?.length||0),
     units,
