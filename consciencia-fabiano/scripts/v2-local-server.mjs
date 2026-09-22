@@ -19,6 +19,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
+const LOCAL_RUNTIME_BUILD="2026-09-22-model-resolution-r2";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -287,7 +288,7 @@ async function handleHealth(req,res){
   const models=await installedModels();
   const lib=await loadLibrary();
   json(res,{
-    ok:true,version:V2_VERSION,service:"Consciência Fabiano v2 Local",
+    ok:true,version:V2_VERSION,local_runtime_build:LOCAL_RUNTIME_BUILD,service:"Consciência Fabiano v2 Local",
     local_only:true,external_paid_providers:false,
     ollama:{url:"localhost:11434",reachable:models.length>0,installed:models},
     hardware:{ram_gb:ramGb(),recommended:recommendedByHardware(),selected:autoModel(models),context_tokens:contextTokensByHardware()},
@@ -456,6 +457,7 @@ http.createServer(async(req,res)=>{
 }).listen(PORT,HOST,async()=>{
   const models=await installedModels();
   console.log("CONSCIENCIA_FABIANO_V2="+V2_VERSION);
+  console.log("LOCAL_RUNTIME_BUILD="+LOCAL_RUNTIME_BUILD);
   console.log("LOCAL_URL=http://"+(HOST==="0.0.0.0"?"127.0.0.1":HOST)+":"+PORT);
   console.log("OLLAMA="+OLLAMA);
   console.log("EMBED_MODEL="+EMBED_MODEL);
