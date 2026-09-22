@@ -1681,7 +1681,7 @@ async function repairFalseNegativeSynthesis(env,question,sources) {
       role:"system",
       content:
         "Há uma ou mais fontes documentais válidas já confirmadas pelo servidor. Portanto, é PROIBIDO responder que não foram encontradas informações. " +
-        "Produza somente a seção 1. SÍNTESE PRINCIPAL usando exclusivamente as evidências fornecidas. " +
+        "Produza somente a resposta documental usando exclusivamente as evidências fornecidas. " +
         "Cruze as fontes independentes diretamente relevantes em prosa coesa, com densidade enciclopédica, sem despejar trechos ou nomes em sequência. " +
         "Depois de cada afirmação factual, mantenha os identificadores [F#] das evidências que realmente a sustentam. " +
         "Não invente fatos, autores, páginas, capítulos ou citações e não acrescente uma seção de referências."
@@ -2339,7 +2339,7 @@ async function runMasterNode20(env,question,lastBatch,baton,history,source) {
         "\n\nCATÁLOGO TRANSVERSAL:\n"+trimToTokenBudget(ledger,1400)+
         "\n\nBASTÃO ACUMULADO DOS NÚCLEOS 1-19:\n"+trimToTokenBudget(baton || "(sem conteúdo acumulado)",5600)+
         "\n\nBLOCO FINAL DO NÚCLEO 20:\n"+(lastRaw || "(sem novos trechos neste núcleo; faça a fusão do bastão acumulado)")+
-        "\n\nREDAJA AGORA SOMENTE A SÍNTESE PRINCIPAL ENCICLOPÉDICA."
+        "\n\nREDAJA AGORA SOMENTE A RESPOSTA ENCICLOPÉDICA."
     }
   ],9200);
 
@@ -2691,9 +2691,9 @@ async function massivePipelineStreamResponse(env,meta) {
           active_worker_limit:MASSIVE_WORKER_CONCURRENCY,
           relay_mode:"async-worker-pool",
           master_node:"final-fusion",
-          llm_calls:Number(reduced.llm_calls || 1),
+          llm_calls:Number(reduced.llm_calls ?? 0),
           pre_master_llm_calls:0,
-          groq_final_stage_only:false,
+          groq_final_stage_only:true,
           reference_only_llm_bypass:true,
           unsupported_claim_policy:"abstain",
           false_negative_guard:true,
@@ -4001,7 +4001,7 @@ async function chat(request, env) {
       cognitive_contract_version:"1.0",
       llm_calls:0,
       pre_master_llm_calls:0,
-      groq_final_stage_only:false,
+      groq_final_stage_only:true,
       cognitive_v74:true,
       cognitive_catalog_size:1000,
       turbine_selected_count:cognitivePlan.selected_count,
@@ -4139,7 +4139,7 @@ async function chat(request, env) {
         turbine_selected_count:cognitivePlan.selected_count,turbine_selected_ids:cognitivePlan.selected_ids,
         turbine_executed_count:microExecution.executed_count,turbine_concurrency:microExecution.concurrency,
         evidence_gate:evidenceGate,
-        llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:false,
+        llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
         embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
         map_reduce:false,map_batches:0,
         micro_nodes_total:MASSIVE_NODE_COUNT,
@@ -4159,7 +4159,7 @@ async function chat(request, env) {
       turbine_selected_count:cognitivePlan.selected_count,turbine_selected_ids:cognitivePlan.selected_ids,
       turbine_executed_count:microExecution.executed_count,turbine_concurrency:microExecution.concurrency,
       evidence_gate:evidenceGate,
-      llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:false,
+      llm_calls:0,pre_master_llm_calls:0,groq_final_stage_only:true,
       embedding_model:LOCAL_EMBEDDING_MODEL,chat_model:CHAT_MODEL,
       map_reduce:false,map_batches:0,
       micro_nodes_total:MASSIVE_NODE_COUNT,
@@ -4185,7 +4185,7 @@ async function chat(request, env) {
       cognitive_contract_version:"1.0",
       llm_calls:0,
       pre_master_llm_calls:0,
-      groq_final_stage_only:false,
+      groq_final_stage_only:true,
       reference_only_llm_bypass:true,
       cognitive_v74:true,
       cognitive_catalog_size:1000,
