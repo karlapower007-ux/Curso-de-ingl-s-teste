@@ -2126,6 +2126,10 @@
         method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:100})
       },false);
       const progress=Math.max(0,Math.min(100,Number(data?.progress||0)));
+      if(data?.paused_zero_cost===true){
+        node.textContent="Índice conceitual • "+progress+"% • orçamento R$0 diário preservado; FTS/R2 continuam ativos.";
+        return;
+      }
       node.textContent=data?.complete===true
         ?"Índice conceitual • 100% derivado da biblioteca atual."
         :"Índice conceitual • "+progress+"% • lote "+Number(data?.processed||0)+" chunk(s) • sem reindexar PDFs.";
