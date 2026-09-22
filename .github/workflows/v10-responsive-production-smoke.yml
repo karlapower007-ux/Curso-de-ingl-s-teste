@@ -147,8 +147,8 @@ jobs:
                 {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"Tithing"},
                 {query:"Pai Celestial",minTotal:1,concept:"Pai Celestial",mustContain:"Heavenly Father"},
                 {query:"Sacerdócio de Melquisedeque",minTotal:1,concept:"Sacerdócio de Melquisedeque",mustContain:"Melchizedek Priesthood"},
-                {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,concept:"Plano de Salvação + Vida Pré-Mortal",mustContain:"plan of salvation",mustContainAlso:"premortal life",compound:true},
-                {query:"Batismo e Sacramento",minTotal:1,concept:"Batismo + Sacramento",mustContain:"Baptism",mustContainAlso:"sacrament",compound:true}
+                {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,conceptParts:["Plano de Salvação","Vida Pré-Mortal"],mustContain:"plan of salvation",mustContainAlso:"premortal life",compound:true},
+                {query:"Batismo e Sacramento",minTotal:1,conceptParts:["Batismo","Sacramento"],mustContain:"Baptism",mustContainAlso:"sacrament",compound:true}
               ];
               const canonicalReport=[];
               for(const test of canonical){
@@ -167,7 +167,9 @@ jobs:
                 const totalMatch=state.pageInfo.match(/•\s*(\d+)\s*ocorrência/i);
                 const total=Number(totalMatch?.[1]||0);
                 if(total<test.minTotal) throw new Error("Alias offline não expandiu "+test.query+" em "+width+": "+JSON.stringify(state));
-                if(!state.concept.includes(test.concept)) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(test.conceptParts){
+                  if(!test.conceptParts.every(part=>state.concept.includes(part))) throw new Error("Componentes canônicos ausentes para "+test.query+" em "+width+": "+JSON.stringify(state));
+                }else if(!state.concept.includes(test.concept)) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
                 if(!state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase()))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
                 if(test.mustContainAlso && !state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase())&&x.toLowerCase().includes(test.mustContainAlso.toLowerCase()))) {
                   throw new Error("AND composto não manteve os conceitos no mesmo parágrafo para "+test.query+" em "+width+": "+JSON.stringify(state));
