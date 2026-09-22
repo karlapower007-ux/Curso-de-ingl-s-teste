@@ -20,6 +20,10 @@ assert(index.includes('10.1.0-private-egress-offline-online'), "version marker m
 assert(index.includes("const PRIVATE_EGRESS_LOCK = true;"), "server private egress lock is not enabled");
 assert(index.includes("const LEGACY_EXTERNAL_EMBEDDINGS = false;"), "legacy external embeddings are not disabled");
 assert(index.includes("const LEGACY_EXTERNAL_MIRRORS = false;"), "legacy external mirrors are not disabled");
+assert(index.includes("const GROQ_ZDR_REQUIRED = true;"), "Groq ZDR gate is not mandatory");
+assert(index.includes("const GROQ_FREE_ONLY_REQUIRED = true;"), "Groq free-tier gate is not mandatory");
+assert(index.includes("const WORKERS_AI_DAILY_NEURON_BUDGET = 8500;"), "Workers AI neuron budget is missing");
+assert(index.includes("externalSafeMessages(messages),inputBudget"), "low-level Groq transport bypasses Privacy Gate");
 assert(stateful.includes("const SECONDARY_PRIVACY_LOCK = true;"), "secondary privacy lock is not enabled");
 
 for (const forbidden of [
@@ -40,6 +44,7 @@ assert(index.includes("semantic_query_embedding_server_enabled: false"), "server
 assert(!app.includes("LOCAL_ADMIN_PASSWORD"), "admin password constant leaked to browser");
 assert(!/["']gadu["']/i.test(app), "legacy cleartext admin password leaked to browser");
 assert(!app.includes("/api/admin/mirror-upsert"), "browser external mirror endpoint still reachable");
+assert(!app.includes('standard[-_ ]?works[-_\\w]*\\.pdf/gi, "Obras Padrão"'), "UI still rewrites a technical filename to Obras Padrão");
 assert(app.includes('CURRENT_SYSTEM_VERSION = "v10.1-private-egress-offline-online"'), "client version marker missing");
 assert(app.includes('return ["auto","offline","online"].includes(value)?value:"auto";'), "offline/online operating modes missing");
 assert(app.includes("async function prepareOfflineMode()"), "offline preparation flow missing");
@@ -59,4 +64,5 @@ for (const width of ["412px","390px","360px"]) {
   assert(css.includes("@media(max-width:" + width + ")"), "responsive breakpoint missing: " + width);
 }
 
+assert(index.includes("groq_final_stage_only:true"), "final-stage-only LLM marker missing");
 console.log("V10.1 private/offline acceptance: OK");
