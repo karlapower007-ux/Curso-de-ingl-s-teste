@@ -248,7 +248,7 @@ export function buildV3EvidenceIndex(rows=[]){
   }
 
   return {
-    version:"3.0.4-evidence-engine-ocr-normalized",
+    version:"3.0.5-evidence-engine-topic-first",
     generated_at:new Date().toISOString(),
     source_rows:Number(rows?.length||0),
     units,
@@ -269,7 +269,7 @@ export function focusedV3Excerpt(text,expansions=[],queryStems=[],maxChars=760){
     const folded=v3Fold(sentences[i]);
     const phrase=phrases.find(p=>folded.includes(p));
     if(!phrase)continue;
-    let picked=sentences.slice(Math.max(0,i-1),Math.min(sentences.length,i+2)).join(" ").trim();
+    let picked=sentences.slice(i,Math.min(sentences.length,i+2)).join(" ").trim();
     if(picked.length>maxChars)picked=sentences[i].slice(0,maxChars).trim();
     return {accepted:true,text:picked,reason:"alias-phrase",matched:phrase};
   }
