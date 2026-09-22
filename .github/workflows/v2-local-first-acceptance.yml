@@ -1,0 +1,86 @@
+name: Consciência Fabiano v2 Local-First Acceptance
+
+on:
+  push:
+    branches:
+      - consciencia-v2-local-first-staging-20260922
+    paths:
+      - "consciencia-fabiano/**"
+      - ".github/workflows/v2-local-first-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consciencia-fabiano-v2-local-first
+  cancel-in-progress: true
+
+jobs:
+  validate-local-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: consciencia-fabiano
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: npm install --ignore-scripts
+
+      - name: V2 invariant gate
+        run: |
+          set -euo pipefail
+          npm run v2:test
+          node --check scripts/v2-local-core.mjs
+          node --check scripts/v2-local-server.mjs
+          node --check public/v2-local-ui.js
+          node --check public/v2-local-engine.js
+          grep -q 'qwen3-embedding:0.6b' scripts/v2-local-core.mjs
+          grep -q 'local-exact-no-llm' scripts/v2-local-server.mjs
+          grep -q 'if(mode==="exact")' scripts/v2-local-server.mjs
+          grep -q 'Citação exata • zero LLM' public/v2-local-ui.js
+          grep -q 'Comparar fontes' public/v2-local-ui.js
+          grep -q 'Linha do tempo' public/v2-local-ui.js
+          grep -q 'unlimited_logical_results:true' public/v2-local-engine.js
+          grep -q 'fns_qwen_vectors_v2' public/v2-local-engine.js
+          grep -q 'url.pathname.startsWith("/api/v2/")' public/sw-v3.js
+          ! grep -qi 'api.x.ai' scripts/v2-local-server.mjs
+          ! grep -qi 'api.groq.com' scripts/v2-local-server.mjs
+          ! grep -qi 'generativelanguage.googleapis.com' scripts/v2-local-server.mjs
+
+      - name: V10.1 regression and Worker dry-run
+        run: npm run check
+
+      - name: Local server smoke without Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/v2-local-server.mjs >/tmp/consciencia-v2.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8788/api/v2/health >/tmp/v2-health.json; then break; fi
+            sleep 1
+          done
+
+          node -e 'const d=require("/tmp/v2-health.json"); if(!d.ok||!d.local_only||d.version!=="2.0.0-local-first") process.exit(1)'
+
+          curl -fsS -X POST http://127.0.0.1:8788/api/v2/chat             -H 'content-type: application/json'             --data '{"question":"Plano de Salvação e Vida Pré-Mortal","mode":"exact","page_size":5}'             >/tmp/v2-exact.json
+
+          node -e 'const d=require("/tmp/v2-exact.json"); if(d.provider!=="local-exact-no-llm"||d.bypass_llm!==true||d.exact_retrieval!==true) process.exit(1)'
+
+          echo "V2_LOCAL_SERVER_SMOKE=pass"
+
+      - name: Confirm validation cannot publish
+        run: |
+          set -euo pipefail
+          ! grep -R --line-number --fixed-string 'wrangler deploy' scripts/v2-local-*.mjs public/v2-local-*.js
+          echo "PRODUCTION_DEPLOYMENT=false"
+          echo "BASELINE_BRANCH=consciencia-cloudflare-native-v1"
