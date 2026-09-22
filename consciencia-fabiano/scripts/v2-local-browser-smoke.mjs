@@ -111,6 +111,33 @@ try{
     await context.close();
   }
 
+  const standaloneContext=await browser.newContext({viewport:{width:390,height:800},serviceWorkers:"block"});
+  await standaloneContext.route("**/api/v2/health",route=>route.abort());
+  const standalone=await standaloneContext.newPage();
+  await standalone.goto(base+"/?v2_standalone="+Date.now(),{waitUntil:"domcontentloaded",timeout:45000});
+  await standalone.locator("#questionInput").waitFor({state:"visible",timeout:10000});
+  await seedLegacy(standalone);
+  await standalone.reload({waitUntil:"domcontentloaded",timeout:30000});
+  await standalone.locator("#v2LocalStatus").waitFor({state:"visible",timeout:10000});
+  await standalone.waitForFunction(()=>document.querySelector("#v2LocalStatus")?.textContent?.includes("Local no navegador"),null,{timeout:15000});
+  await standaloneContext.setOffline(true);
+
+  await standalone.locator("#v2ResponseMode").selectOption("exact");
+  await standalone.locator("#questionInput").fill("Plano de Salvação e Vida Pré-Mortal");
+  await standalone.locator("#sendBtn").click();
+  await standalone.waitForFunction(()=>document.querySelectorAll(".msg.assistant.v2-msg").length>=1,null,{timeout:15000});
+  const standaloneExact=await standalone.locator(".msg.assistant.v2-msg").last().innerText();
+  if(!/Plano de Salvação|plan of salvation/i.test(standaloneExact))throw new Error("Standalone mobile exact falhou.");
+
+  await standalone.locator("#v2ResponseMode").selectOption("explain");
+  await standalone.locator("#questionInput").fill("Explique o Plano de Salvação");
+  await standalone.locator("#sendBtn").click();
+  await standalone.waitForFunction(()=>document.querySelectorAll(".msg.assistant.v2-msg").length>=2,null,{timeout:15000});
+  const standaloneExplain=await standalone.locator(".msg.assistant.v2-msg").last().innerText();
+  if(!standaloneExplain.includes("Resposta determinística local"))throw new Error("Standalone mobile deterministic fallback falhou: "+standaloneExplain);
+  report.push({width:390,standalone_browser_offline:true,exact_zero_llm:true,deterministic_without_ollama:true});
+  await standaloneContext.close();
+
   console.log("V2_LOCAL_BROWSER_SMOKE=pass");
   console.log(JSON.stringify(report,null,2));
 }finally{
