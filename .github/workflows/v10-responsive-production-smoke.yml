@@ -4,11 +4,19 @@ on:
   push:
     branches: [consciencia-cloudflare-native-v1]
     paths:
+      - "consciencia-fabiano/public/index.html"
+      - "consciencia-fabiano/public/app.js"
+      - "consciencia-fabiano/public/style.css"
+      - "consciencia-fabiano/public/sw-v3.js"
       - ".github/workflows/v10-responsive-production-smoke.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: v10-1-responsive-production-smoke
+  cancel-in-progress: true
 
 jobs:
   browser-production:
@@ -69,15 +77,19 @@ jobs:
                 questionVisible:!!document.querySelector("#questionInput")?.getClientRects().length,
                 sendVisible:!!document.querySelector("#sendBtn")?.getClientRects().length,
                 dictionaryVisible:!!document.querySelector("#dictionaryTab")?.getClientRects().length,
+                conceptSurfacePresent:!!document.querySelector("#dictionaryConcept"),
+                conceptBackfillStatusPresent:!!document.querySelector("#conceptIndexStatus"),
                 version:(document.body.innerText.match(/v10\.1[^\n]*/i)||[""])[0]
               }));
               if(layout.scrollWidth>layout.innerWidth+2) throw new Error("Overflow horizontal em "+width+": "+JSON.stringify(layout));
               if(!layout.questionVisible||!layout.sendVisible||!layout.dictionaryVisible) throw new Error("Controle principal oculto em "+width+": "+JSON.stringify(layout));
+              if(!layout.conceptSurfacePresent||!layout.conceptBackfillStatusPresent) throw new Error("Superfície conceitual ausente em "+width+": "+JSON.stringify(layout));
               if(pageErrors.length) throw new Error("Page errors em "+width+": "+pageErrors.join(" | "));
 
               await page.locator("#dictionaryTab").click();
               await page.locator("#dictionaryPanel").waitFor({state:"visible",timeout:10000});
               await page.locator("#dictionaryInput").waitFor({state:"visible",timeout:10000});
+              if(await page.locator("#dictionaryConcept").count()!==1) throw new Error("Card conceitual ausente em "+width);
               await page.locator("#chatTab").click();
               await page.locator("#chatPanel").waitFor({state:"visible",timeout:10000});
               await page.locator("#operationMode").waitFor({state:"visible",timeout:5000});
