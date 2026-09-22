@@ -10,5 +10,5 @@
   "source_generation": "git:eeadaf861443:2026-09-21T00:17:02.926Z",
   "cursor_id": "",
   "embedding_cursor_id": "",
-  "reason": "Secondary resume_state HTTP 500 {\"ok\":false,\"provider\":\"supabase-secondary\",\"generation\":\"\",\"total_chunks\":0,\"vector_count\":0,\"total_books\":0,\"last_id\":\"\"}"
+  "reason": "fetch failed"
 }
