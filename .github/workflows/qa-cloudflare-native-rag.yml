@@ -31,7 +31,7 @@ jobs:
           node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync("public/cognitive-v74-manifest.json","utf8")); if(m.audit.total!==1000||m.audit.unique_ids!==1000||m.audit.family_count!==20||!m.audit.valid) process.exit(1)'
 
           # Core identity: V8 must preserve every V7.5 cognitive/storage invariant
-          grep -q 'const VERSION = "9.0.0-private-hybrid-encyclopedia"' src/index.js
+          grep -q 'const VERSION = "9.1.0-private-hybrid-encyclopedia"' src/index.js
           grep -q 'from "./adaptive-rag-v80.js"' src/index.js
           grep -q 'preserve_legacy_pipeline:true' src/index.js
           grep -q 'llm_calls_before_final:0' src/index.js
@@ -79,6 +79,11 @@ jobs:
           grep -q '/api/admin/cognitive-v74/manifest' src/index.js
           grep -q 'provider:"deterministic-reference-only"' src/index.js
           grep -q 'provider:"hybrid-private-rag"' src/index.js
+          grep -q 'CREATE VIRTUAL TABLE IF NOT EXISTS encyclopedia_fts USING fts5' src/index.js
+          grep -q 'encyclopedia_index:"sqlite-fts5"' src/index.js
+          grep -q 'function grokCompletion' src/index.js
+          grep -q 'external_models_receive_full_library: false' src/index.js
+          grep -q 'external_models_receive_original_files: false' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
           python3 -c 'from pathlib import Path; s=Path("src/index.js").read_text(encoding="utf-8"); a=s.index("async function massiveReduceGroup"); b=s.index("async function massiveMasterSynthesis",a); assert "groqCompletion(" not in s[a:b], "Reducer must remain deterministic; Groq is final-stage only"'
 
