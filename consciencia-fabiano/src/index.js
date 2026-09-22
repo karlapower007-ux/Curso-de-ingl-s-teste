@@ -2,7 +2,7 @@ import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAu
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "10.0.0-zero-cost-private-offline-online";
+const VERSION = "10.1.0-private-egress-offline-online";
 const FAST_MEMORY_MESSAGES = 8;
 // v10: private library + local/offline retrieval + zero-cost cloud fallbacks.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
@@ -11,6 +11,9 @@ const DEEP_CHAT_MODEL = "openai/gpt-oss-120b";
 const WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const WORKERS_AI_DAILY_CALL_LIMIT = 40;
 const ZERO_COST_MODE = true;
+const PRIVATE_EGRESS_LOCK = true;
+const LEGACY_EXTERNAL_EMBEDDINGS = false;
+const LEGACY_EXTERNAL_MIRRORS = false;
 const STT_MODEL = "whisper-large-v3-turbo";
 const TTS_MODEL = "browser-local-pt-BR";
 const MAX_TEXT_CHARS = 30_000_000;
@@ -397,52 +400,14 @@ function detectLanguage(text) {
   return bestScore >= 4 ? best : "unknown";
 }
 
-async function cohereEmbedTexts(env, texts, inputType = "search_document") {
-  const apiKey = requireSecret(env, "COHERE_API_KEY");
-  const list = Array.from(texts || []).map(text => String(text || ""));
-  if (!list.length) return [];
-  if (list.length > COHERE_API_BATCH) {
-    throw new Error("Lote Cohere acima do limite interno de " + COHERE_API_BATCH + " textos.");
-  }
-  const safeInputType = inputType === "search_query" ? "search_query" : "search_document";
-  const res = await fetch("https://api.cohere.com/v2/embed", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + apiKey,
-      "Content-Type": "application/json",
-      "X-Client-Name": "consciencia-fabiano",
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      texts: list,
-      input_type: safeInputType,
-      embedding_types: ["float"],
-      truncate: "END",
-    }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(body?.message || body?.error?.message || ("Cohere embeddings HTTP " + res.status));
-    err.status = res.status;
-    if (res.status === 429 && /trial key|1000 api calls|month|monthly/i.test(String(err.message || ""))) {
-      err.code = "COHERE_MONTHLY_QUOTA_EXHAUSTED";
-    }
-    const retryAfter = Number(res.headers.get("retry-after") || 0);
-    if (retryAfter > 0) err.retryAfterMs = Math.min(120000, retryAfter * 1000);
-    throw err;
-  }
-  const vectors =
-    body?.embeddings?.float ||
-    body?.embeddings?.float_ ||
-    (Array.isArray(body?.embeddings) ? body.embeddings : []);
-  if (vectors.length !== list.length || vectors.some(v => !Array.isArray(v) || !v.length)) {
-    throw new Error("Cohere não retornou todos os embeddings esperados.");
-  }
-  return vectors;
+async function cohereEmbedTexts(_env, _texts, _inputType = "search_document") {
+  const error = new Error("Embeddings externos desativados pelo PRIVATE_EGRESS_LOCK. Use embeddings locais do navegador.");
+  error.code = "PRIVATE_EGRESS_BLOCKED";
+  throw error;
 }
 
 const embeddingAdapter = {
-  name: "cohere-api",
+  name: "browser-local-only",
   model: EMBEDDING_MODEL,
   async embed(env, texts, inputType) {
     return cohereEmbedTexts(env, texts, inputType);
@@ -829,11 +794,16 @@ async function retrieveSemanticContext(env, question, suppliedEmbedding = null) 
     : [];
 }
 
+function privateSecondaryConfigured(env) {
+  return PRIVATE_EGRESS_LOCK ? false : secondarySupabaseConfigured(env);
+}
+
 function supabaseLexicalConfigured(env) {
-  return secondarySupabaseConfigured(env);
+  return privateSecondaryConfigured(env);
 }
 
 async function retrieveSupabaseLexicalContext(env, question) {
+  if (PRIVATE_EGRESS_LOCK) return [];
   const base = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
   const token = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   const terms = lexicalTerms(question).slice(0, 6);
@@ -884,6 +854,7 @@ async function retrieveSupabaseLexicalContext(env, question) {
 }
 
 async function supabaseMirrorHasAnyRows(env) {
+  if (PRIVATE_EGRESS_LOCK) return null;
   const base = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
   const token = String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   if (!base || !token) return null;
@@ -947,6 +918,7 @@ async function retrieveDurableStrictContext(env,question){
 }
 
 async function retrieveSupabaseStrictContext(env,question){
+  if (PRIVATE_EGRESS_LOCK) return {matches:[],readable:false,scanned:0,documents_hit:0};
   const base=String(env?.SUPABASE_URL||"").replace(/\/$/,"");
   const token=String(env?.SUPABASE_SERVICE_ROLE_KEY||env?.SUPABASE_RAG_KEY||"").trim();
   const target=deriveStrictPhrase(question);
@@ -1411,7 +1383,7 @@ async function retrieveContext(env, question, suppliedEmbedding = null) {
 
   // Secondary cluster: positive evidence can rescue a query, but an empty secondary
   // result never becomes proof that the authoritative library is empty.
-  if(secondarySupabaseConfigured(env)) {
+  if(privateSecondaryConfigured(env)) {
     try {
       const secondary=await retrieveSecondaryHybridContext(
         env,
@@ -3079,6 +3051,7 @@ function normalizeClientContext(items) {
 }
 
 function ragProviderConfig(env, provider) {
+  if (PRIVATE_EGRESS_LOCK) return null;
   const p=String(provider || "").toLowerCase();
   const supabaseToken=env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_RAG_KEY;
   const map={
@@ -3094,6 +3067,7 @@ function ragProviderConfig(env, provider) {
 }
 
 async function externalRagProviderSearch(request, env) {
+  if (PRIVATE_EGRESS_LOCK) return json({ok:false,configured:false,code:"PRIVATE_EGRESS_BLOCKED",message:"Provedores RAG externos desativados na v10.1."},410);
   const body=await request.json().catch(()=>({}));
   const provider=String(body?.provider || "").toLowerCase();
   const cfg=ragProviderConfig(env,provider);
@@ -3206,6 +3180,7 @@ function normalizeLibraryChunkRecords(items){
 }
 
 async function mirrorLibraryChunks(request,env){
+  if (PRIVATE_EGRESS_LOCK || !LEGACY_EXTERNAL_MIRRORS) return json({ok:false,code:"PRIVATE_EGRESS_BLOCKED",message:"Espelhamento externo desativado na v10.1."},410);
   const base=String(env.SUPABASE_URL || "").replace(/\/$/,"");
   const token=String(env.SUPABASE_SERVICE_ROLE_KEY || "");
   if(!base || !token) return json({ok:false,code:"SUPABASE_LIBRARY_MIRROR_UNAVAILABLE"},503);
@@ -3232,6 +3207,7 @@ async function mirrorLibraryChunks(request,env){
 
 
 async function mirrorSupabase(env,records){
+  if (PRIVATE_EGRESS_LOCK || !LEGACY_EXTERNAL_MIRRORS) return {provider:"supabase",configured:false,upserted:0,privacy_locked:true};
   const base=String(env.SUPABASE_URL || "").replace(/\/$/,"");
   const token=String(env.SUPABASE_SERVICE_ROLE_KEY || "");
   if(!base || !token) return {provider:"supabase",configured:false,upserted:0};
@@ -3252,6 +3228,7 @@ async function mirrorSupabase(env,records){
 }
 
 async function mirrorPinecone(env,records){
+  if (PRIVATE_EGRESS_LOCK || !LEGACY_EXTERNAL_MIRRORS) return {provider:"pinecone",configured:false,upserted:0,privacy_locked:true};
   const url=String(env.PINECONE_UPSERT_URL || "");
   const key=String(env.PINECONE_API_KEY || "");
   if(!url || !key) return {provider:"pinecone",configured:false,upserted:0};
@@ -3273,6 +3250,7 @@ async function mirrorPinecone(env,records){
 }
 
 async function mirrorUpsert(request,env){
+  if (PRIVATE_EGRESS_LOCK || !LEGACY_EXTERNAL_MIRRORS) return json({ok:true,any_configured:false,any_upserted:false,privacy_locked:true,providers:[]});
   const body=await request.json().catch(()=>({}));
   const records=normalizeMirrorRecords(body?.records).slice(0,50);
   if(!records.length) return json({ok:true,records:0,providers:[]});
@@ -3725,6 +3703,7 @@ async function exactGuardedFetch(url,options={}) {
 }
 
 async function supabaseExactDocumentChunks(env,documentId,startChunk,limit) {
+  if (PRIVATE_EGRESS_LOCK) return [];
   const base=String(env?.SUPABASE_URL || "").replace(/\/$/,"");
   const token=String(env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_RAG_KEY || "").trim();
   if(!base || !token || !documentId) return [];
@@ -4358,8 +4337,8 @@ async function status(env) {
     client_and_server_context_merge: true,
     lexical_full_scan_limit: VECTOR_SCAN_LIMIT,
     lexical_single_anchor_opens_pipeline: true,
-    supabase_lexical_fallback: secondarySupabaseConfigured(env),
-    durable_object_quota_fails_open_to_supabase: secondarySupabaseConfigured(env),
+    supabase_lexical_fallback: false,
+    durable_object_quota_fails_open_to_supabase: false,
     empty_mirror_is_not_empty_library: true,
     retrieval_unavailable_is_distinct_from_no_match: true,
     failure_message_requires_zero_sources: true,
@@ -4374,10 +4353,10 @@ async function status(env) {
     raw_excerpt_dump_in_references: false,
     inline_citation_grounding: true,
     synthesis_independent_document_cap: TOP_K,
-    multicloud_mirror: secondarySupabaseConfigured(env),
+    multicloud_mirror: false,
     provider_auth_surface: "server-side-secrets-only",
     client_provider_keys_exposed: false,
-    supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
+    supabase_transport: "disabled-private-egress-lock",
     direct_postgres_connections: 0,
     logical_worker_nodes: MASSIVE_NODE_COUNT,
     worker_pool_concurrency: MASSIVE_WORKER_CONCURRENCY,
@@ -4429,7 +4408,7 @@ async function status(env) {
     online_offline_search_symmetry: true,
     hybrid_grounded_retrieval: true,
     hybrid_context_limit: HYBRID_CONTEXT_LIMIT,
-    semantic_query_embedding_server_enabled: true,
+    semantic_query_embedding_server_enabled: false,
     semantic_multilingual_min_score: HYBRID_SEMANTIC_MIN_SCORE,
     semantic_multilingual_strong_score: HYBRID_SEMANTIC_STRONG_SCORE,
     strict_exact_path_preserved: true,
@@ -4534,7 +4513,7 @@ async function status(env) {
     rag_local_levels: [1,2,3,10],
     rag_cloudflare_level: 5,
     rag_external_slots: [],
-    supabase_mirror_configured: secondarySupabaseConfigured(env),
+    supabase_mirror_configured: false,
     pinecone_mirror_configured: false,
     local_library_catalog: true,
     admin_access_password_version: "gadu-v1",
@@ -4628,7 +4607,7 @@ async function handleApi(request, env, url, ctx) {
         ok:true,
         levels:10,
         providers:{
-          supabase:secondarySupabaseConfigured(env),
+          supabase:privateSecondaryConfigured(env),
           pinecone:false,
           mongodb:false,
           astra:false,
@@ -5050,18 +5029,27 @@ export class LibraryDO {
         }
       }
 
-      for(let embedOffset=0;embedOffset<wave.length;embedOffset+=COHERE_API_BATCH){
-        const batch=wave.slice(embedOffset,embedOffset+COHERE_API_BATCH);
-        const embeddings=await embedWaveBatchedWithRetry(this.env,batch);
-        for(let i=0;i<batch.length;i++){
-          const chunk=batch[i];
+      if (PRIVATE_EGRESS_LOCK || !LEGACY_EXTERNAL_EMBEDDINGS) {
+        for (const chunk of wave) {
           this.sql.exec(
             "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
-            chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embeddings[i]),new Date().toISOString()
+            chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,"[]",new Date().toISOString()
           );
         }
-        if(embedOffset+COHERE_API_BATCH<wave.length) {
-          await new Promise(resolve=>setTimeout(resolve,COHERE_THROTTLE_MS));
+      } else {
+        for(let embedOffset=0;embedOffset<wave.length;embedOffset+=COHERE_API_BATCH){
+          const batch=wave.slice(embedOffset,embedOffset+COHERE_API_BATCH);
+          const embeddings=await embedWaveBatchedWithRetry(this.env,batch);
+          for(let i=0;i<batch.length;i++){
+            const chunk=batch[i];
+            this.sql.exec(
+              "INSERT INTO chunks (id,document_id,page,chunk_index,text,embedding,created_at) VALUES (?,?,?,?,?,?,?)",
+              chunk.id,documentId,chunk.page,chunk.chunk_index,chunk.text,JSON.stringify(embeddings[i]),new Date().toISOString()
+            );
+          }
+          if(embedOffset+COHERE_API_BATCH<wave.length) {
+            await new Promise(resolve=>setTimeout(resolve,COHERE_THROTTLE_MS));
+          }
         }
       }
 
@@ -5090,7 +5078,7 @@ export class LibraryDO {
       if(isMonthlyQuotaError(error)){
         this.sql.exec(
           "UPDATE index_jobs SET status='paused_quota',error=?,updated_at=? WHERE id=?",
-          "Cohere Trial Key atingiu a quota mensal. Progresso preservado; retome o mesmo job quando houver quota disponível.",
+          "Embedding externo legado bloqueado pela política de privacidade. O documento permanece preservado e pesquisável lexicalmente.",
           new Date().toISOString(),jobId
         );
         if(documentId) this.sql.exec("UPDATE documents SET status='indexing' WHERE id=?",documentId);
@@ -5859,10 +5847,20 @@ export default {
         workers_ai_model: WORKERS_AI_MODEL,
         groq_fast_model: CHAT_MODEL,
         groq_deep_model: DEEP_CHAT_MODEL,
+        privacy_mode: "strict-private-egress-lock",
+        external_providers: {
+          gemini: "disabled",
+          xai_grok: "disabled",
+          openrouter: "disabled",
+          cohere: "disabled",
+          supabase: "disabled",
+          groq: groqApiKeys(env).length > 0 ? "enabled" : "not-configured",
+          workers_ai: workersAiConfigured(env) ? "enabled" : "not-configured"
+        },
         external_egress_allowlist: ["api.groq.com","cloudflare-workers-ai-binding"],
         full_offline_mode_supported: true,
         client_provider_keys_exposed: false,
-        supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
+        supabase_transport: "disabled-private-egress-lock",
         direct_postgres_connections: 0,
         embedding_provider: "browser-transformers",
         server_pdf_parsing: false,
@@ -5947,7 +5945,7 @@ export default {
     online_offline_search_symmetry: true,
     hybrid_grounded_retrieval: true,
     hybrid_context_limit: HYBRID_CONTEXT_LIMIT,
-    semantic_query_embedding_server_enabled: true,
+    semantic_query_embedding_server_enabled: false,
     semantic_multilingual_min_score: HYBRID_SEMANTIC_MIN_SCORE,
     semantic_multilingual_strong_score: HYBRID_SEMANTIC_STRONG_SCORE,
     strict_exact_path_preserved: true,
@@ -6027,7 +6025,7 @@ export default {
         deep_answer_mode: true,
         exhaustive_source_references: true,
         exhaustive_source_footer: true,
-        supabase_mirror_configured: secondarySupabaseConfigured(env),
+        supabase_mirror_configured: false,
         pinecone_mirror_configured: false,
         whisper_fallback_timeout_ms: 8000,
         local_whisper_stt: true,
