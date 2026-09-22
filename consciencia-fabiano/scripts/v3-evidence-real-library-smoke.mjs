@@ -69,6 +69,9 @@ for(const query of queries){
     assert.ok(top.every(x=>worldRelevant(x.text)),"mundo espiritual não pode aceitar evidência com apenas a palavra espírito");
   }
   if(query.includes("vida pré-mortal")){
+    console.error("V3_PREMORTAL_DIAGNOSTIC="+JSON.stringify(top.map(x=>({
+      reference:x.reference,kind:x.kind,score:x.score,text:x.text
+    }))));
     assert.ok(top.length>=5,"vida pré-mortal deve ter fluxo documental suficiente");
     assert.ok(top.every(x=>!v3Fold(x.text).includes("gee vida pre-mortal")),"nota GEE não pode ser evidência de vida pré-mortal");
     assert.ok(top.filter(x=>premortalRelevant(x.text)).length>=5,"vida pré-mortal deve retornar conteúdo substantivo, não aparato editorial");
