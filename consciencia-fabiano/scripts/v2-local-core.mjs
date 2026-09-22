@@ -141,6 +141,50 @@ export function queryTerms(query){
   return [...new Set(fold(deriveStrictPhrase(query)||query).split(/\s+/).filter(x=>x.length>=3&&!STOP.has(x)))].slice(0,24);
 }
 
+export function focusEvidence(rows,query,aliasObject={},limit=20){
+  const aliasMap=normalizeAliases(aliasObject);
+  const q=fold(query);
+  const explicit=[];
+  for(const [key,aliases] of aliasMap.entries()){
+    if(aliases.some(a=>a&&q.includes(a)))explicit.push({label:key,key,aliases});
+  }
+  const concepts=explicit.length?explicit:splitConcepts(query,aliasObject).filter(c=>c.key.split(" ").length<=4);
+  if(!concepts.length)return (rows||[]).slice(0,limit);
+
+  const strict=[];
+  const partial=[];
+  for(const row of rows||[]){
+    for(const block of paragraphBlocks(row?.text||"")){
+      const audit=strictParagraphAudit(block,concepts);
+      const item={...row,text:block,reference:publicReference({...row,text:block}),focus_coverage:audit.coverage,focus_aliases:audit.matched.map(x=>x.alias)};
+      if(audit.accepted)strict.push(item);
+      else if(audit.coverage>0)partial.push(item);
+    }
+  }
+  const uniq=list=>{
+    const seen=new Set(),out=[];
+    for(const row of list){
+      const key=String(row.reference||"")+"|"+fold(row.text||"").slice(0,160);
+      if(seen.has(key))continue;seen.add(key);out.push(row);
+      if(out.length>=limit)break;
+    }
+    return out;
+  };
+  if(strict.length)return uniq(strict);
+  return uniq(partial.sort((a,b)=>Number(b.focus_coverage||0)-Number(a.focus_coverage||0)));
+}
+
+export function answerStaysOnFocus(answer,query,aliasObject={}){
+  const q=fold(query),a=fold(answer);
+  const aliasMap=normalizeAliases(aliasObject);
+  const explicit=[];
+  for(const [key,aliases] of aliasMap.entries()){
+    if(aliases.some(x=>x&&q.includes(x)))explicit.push(aliases);
+  }
+  if(!explicit.length)return true;
+  return explicit.every(group=>group.some(x=>x&&a.includes(x)));
+}
+
 export function lexicalCandidates(rows,query,limit=80){
   const terms=queryTerms(query);
   if(!terms.length)return [];
@@ -214,9 +258,13 @@ export function buildPrompt({question,mode,evidence=[]}){
   }[safeMode];
   return [
     "Você é o cérebro local da Consciência Fabiano v2.",
+    "FOCUS LOCK ABSOLUTO: responda exclusivamente ao assunto perguntado pelo usuário.",
+    "Não traduza o texto, não faça sermão, não crie introdução genérica e não mude o tema.",
+    "Não mencione outro assunto, pessoa, escritura ou doutrina a menos que isso apareça literalmente nas evidências e seja necessário para responder à pergunta.",
+    "Comece diretamente pela resposta, sem dizer 'Claro', 'Aqui está', 'Vamos entender' ou frases semelhantes.",
     "REGRA ABSOLUTA: não use conhecimento externo para completar lacunas.",
     "REGRA ABSOLUTA: não invente fatos, páginas, títulos, citações ou datas.",
-    "Se as evidências forem insuficientes, diga exatamente que a biblioteca recuperada não é suficiente.",
+    "Se as evidências forem insuficientes ou não estiverem realmente focadas na pergunta, diga exatamente: A biblioteca recuperada não é suficiente para responder com foco.",
     "Nunca revele filename, chunk ID, caminho de arquivo, hash, nome técnico de banco ou detalhes internos.",
     modeInstruction,
     "",
