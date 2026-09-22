@@ -1,7 +1,7 @@
 // V6.0 PHANTOM DAEMON + resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-ultimate-resilience-v7-1";
+const CACHE_NAME="fns-consiencia-v10-offline-online";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const BATCH_SIZE=200;
 const DAEMON_DB="fns_omni_daemon_v6";
@@ -24,6 +24,8 @@ const CORE=[
   "/rag-cascade.js",
   "/rag-search-worker.js",
   "/embedding-worker.js",
+  "/whisper-local.js",
+  "/whisper-worker.js",
   "/failover-manifest.json",
   "/steel/index.json",
   "/fabiano-fechado.png",
@@ -174,6 +176,8 @@ async function notifyClients(payload){
 }
 async function runPhantomDaemon({force=false,reason="daemon"}={}){
   if(daemonRunning)return {ok:false,busy:true};
+  const operatingMode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
+  if(operatingMode==="offline")return {ok:true,skipped:"offline-mode"};
   const token=String(await metaGet("owner_token").catch(()=>"")||"");
   if(!token)return {ok:false,code:"DAEMON_AUTH_NOT_CONFIGURED"};
   const now=Date.now();
@@ -271,6 +275,10 @@ self.addEventListener("activate",event=>{
 
 self.addEventListener("message",event=>{
   const data=event.data||{};
+  if(data.type==="set-operating-mode"){
+    event.waitUntil(metaPut("operating_mode",["auto","offline","online"].includes(String(data.mode))?String(data.mode):"auto"));
+    return;
+  }
   if(data.type==="configure-omni-daemon"){
     event.waitUntil((async()=>{
       const token=String(data.token||"");
@@ -307,9 +315,21 @@ self.addEventListener("sync",event=>{
 self.addEventListener("fetch",event=>{
   const req=event.request;
   const url=new URL(req.url);
-  if(url.origin===self.location.origin)maybeRunOnActivity(event);
-  if(req.method!=="GET") return;
   if(url.origin!==self.location.origin) return;
+  if(url.pathname.startsWith("/api/") || url.pathname.startsWith("/health")){
+    event.respondWith((async()=>{
+      const mode=String(await metaGet("operating_mode").catch(()=>"auto")||"auto");
+      if(mode==="offline"){
+        return new Response(JSON.stringify({ok:false,offline:true,code:"OFFLINE_ONLY",message:"Modo 100% offline ativo."}),{
+          status:503,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}
+        });
+      }
+      return fetch(req);
+    })());
+    return;
+  }
+  maybeRunOnActivity(event);
+  if(req.method!=="GET") return;
 
   if(url.pathname==="/api/v1/r2/library-manifest"){
     // Private stale-while-revalidate: never serve the private cache without the owner header.
@@ -331,8 +351,6 @@ self.addEventListener("fetch",event=>{
     })());
     return;
   }
-
-  if(url.pathname.startsWith("/api/") || url.pathname.startsWith("/health")) return;
 
   const isSteel=url.pathname.startsWith("/steel/");
   const isResilienceAsset=isSteel || [
