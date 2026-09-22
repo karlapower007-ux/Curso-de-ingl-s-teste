@@ -78,7 +78,7 @@ jobs:
           grep -q '/api/admin/cognitive-v74' src/index.js
           grep -q '/api/admin/cognitive-v74/manifest' src/index.js
           grep -q 'provider:"deterministic-reference-only"' src/index.js
-          grep -q 'provider:"groq-final-only+500-node-grounded-rag"' src/index.js
+          grep -q 'provider:"hybrid-private-rag"' src/index.js
           grep -q 'const rows=Array.from(group || \[\]).filter' src/index.js
           python3 -c 'from pathlib import Path; s=Path("src/index.js").read_text(encoding="utf-8"); a=s.index("async function massiveReduceGroup"); b=s.index("async function massiveMasterSynthesis",a); assert "groqCompletion(" not in s[a:b], "Reducer must remain deterministic; Groq is final-stage only"'
 
@@ -287,7 +287,9 @@ jobs:
           grep -q 'whisper-large-v3-turbo' src/index.js
           ! grep -qE 'env\\.AI([^A-Za-z0-9_]|$)' src/index.js
           ! grep -q '@cf/' src/index.js
-          ! grep -qi 'gemini' src/index.js
+          grep -q 'function geminiCompletion' src/index.js
+          grep -q 'function hybridReasoningCompletion' src/index.js
+          grep -q 'redactExternalPrompt' src/index.js
           ! grep -q 'AI.toMarkdown' src/index.js
           ! grep -q 'request.formData' src/index.js
           ! grep -q 'readPdfBuffer' src/index.js
