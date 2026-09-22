@@ -1,8 +1,8 @@
-import {strictParagraphMatch,deriveStrictPhrase,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
+import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAudit,extractSemanticReference,firstStrictAnchor,pushStrictHit,roundRobinStrictHits,STRICT_LOGICAL_TASK_CAP,STRICT_PER_DOCUMENT_HIT_CAP} from "../public/strict-match-core.js";
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "8.1.0-strict-focus-dictionary";
+const VERSION = "8.2.0-strict-focus-lock";
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 const CHAT_MODEL = "openai/gpt-oss-20b";
@@ -5313,6 +5313,7 @@ export class LibraryDO {
         const page=Math.max(1,Number(body?.page||1));
         const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
         const target=deriveStrictPhrase(question);
+        const intent=buildStrictIntent(question);
         if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"strict-focus-dictionary-v8.2"});
         const hits=[];
         let scanned=0,exactHits=0;
@@ -5327,19 +5328,22 @@ export class LibraryDO {
           const match=strictParagraphMatch(row?.text||"",question);
           if(!match.matched)continue;
           exactHits++;
+          const evidence=String(match.paragraph||"").trim();
+          const audit=strictIntentAudit(evidence,intent);
+          if(!audit.accepted)continue;
+          const canonical=extractSemanticReference(evidence);
           hits.push({
-            page:Number(row.page||0),
-            text:String(match.paragraph||"").trim(),
-            title:humanDocumentName("",row.title),
-            author:String(row.author||""),
-            score:100,coverage:1
+            page:Number(row.page||0),text:evidence,
+            title:canonical?"":humanDocumentName("",row.title),
+            author:String(row.author||""),reference:canonical,
+            score:100,coverage:audit.coverage
           });
         }
         const from=(page-1)*pageSize;
         const matches=hits.slice(from,from+pageSize);
         return json({ok:true,matches,scanned,total:exactHits,returned:matches.length,
           target,page,page_size:pageSize,pages:Math.ceil(exactHits/pageSize),
-          mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,
+          mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,intent_lock:true,evidence_lock:true,
           plans:{A:"exact",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
           or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false});
       }
