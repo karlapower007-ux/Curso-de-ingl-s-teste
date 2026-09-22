@@ -55,6 +55,9 @@ assert(index.includes('url.pathname === "/api/admin/encyclopedia-concepts/backfi
 assert(index.includes('encyclopedia_relation_type: "co_occurs_with"'), "relation type marker missing");
 assert(index.includes("derived_index_error:true"), "concept indexing must fail open");
 assert(index.includes("encyclopedia_concept_fail_open: true"), "concept fail-open health marker missing");
+assert(index.includes("const CONCEPT_INDEX_MAX_CONCEPTS_PER_CHUNK = 4;"), "concept fanout zero-cost cap missing");
+assert(index.includes("const CONCEPT_BACKFILL_DAILY_CHUNK_BUDGET = 1500;"), "concept daily zero-cost budget missing");
+assert(index.includes("paused_zero_cost:true"), "concept backfill does not pause at zero-cost budget");
 assert(index.includes("ready_for_search:readyForSearch"), "real PDF ready-for-search stage missing");
 assert(index.includes("encyclopedia:{progress:encyclopediaProgress"), "encyclopedia indexing progress stage missing");
 assert(index.includes("semantic_query_embedding_server_enabled: false"), "server semantic embeddings must stay disabled");
@@ -70,6 +73,7 @@ assert(app.includes("offlineDictionarySearch"), "local encyclopedia search missi
 assert(app.includes('api("/api/encyclopedia/concept"'), "concept graph is not wired to dictionary UI");
 assert(app.includes('api("/api/admin/encyclopedia-concepts/backfill"'), "incremental concept backfill is not wired");
 assert(app.includes("Relações por coocorrência"), "concept relation UI missing");
+assert(app.includes("orçamento R$0 diário preservado"), "concept zero-cost pause is not surfaced in UI");
 assert(app.includes("Xenova/paraphrase-multilingual-MiniLM-L12-v2"), "local embedding model missing");
 
 assert(!sw.includes('metaPut("owner_token"'), "service worker persists admin token");
