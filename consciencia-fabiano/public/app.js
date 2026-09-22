@@ -130,7 +130,7 @@
 
   async function ensureFailoverV3(){
     if(!failoverModulePromise){
-      failoverModulePromise=import("/failover-v3.js?v=10.0.0").catch(error=>{
+      failoverModulePromise=import("/failover-v3.js?v=10.1.0").catch(error=>{
         failoverModulePromise=null;
         throw error;
       });
@@ -447,7 +447,7 @@
   function unlockUI(token = "") {
     const value=String(token || "").trim();
     if(!value) return false;
-    // A senha/tokeno administrativo existe apenas nesta sessão do navegador.
+    // A credencial administrativa existe apenas nesta sessão do navegador.
     // A validação real permanece no Worker; nenhum segredo fica embutido no JavaScript.
     sessionStorage.setItem(OWNER_TOKEN_KEY,value);
     setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),300);
@@ -1241,7 +1241,7 @@
       .replace(/\s+/g," ")
       .trim();
     const page=Number(item?.page||0);
-    return [title,page?"p. "+page:""].filter(Boolean).join(" — ") || "Fonte local";
+    return [title,page&&title?"p. "+page:""].filter(Boolean).join(" — ");
   }
 
   function compactOfflineEvidence(text){
@@ -1418,7 +1418,7 @@
       .replace(/\bLc\.?\b/gi, "Lucas")
       .replace(/\bJo\.?\b/gi, "João")
       .replace(/\bD&C\b/gi, "Doutrina e Convênios")
-      .replace(/standard[-_ ]?works[-_\w]*\.pdf/gi, "Obras Padrão")
+      .replace(/standard[-_ ]?works[-_\w]*\.pdf/gi, "")
       .replace(/[\[\]{}()*_~#>|]/g, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s*\n+\s*/g, ". ")
