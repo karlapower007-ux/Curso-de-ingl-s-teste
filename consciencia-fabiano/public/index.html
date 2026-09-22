@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <title>Consciência do Fabiano - v9.1</title>
+  <title>Consciência do Fabiano - v10</title>
   <link rel="preload" as="image" href="/fabiano-fechado.png">
   <link rel="preload" as="image" href="/fabiano-falando.png">
   <link rel="preload" as="image" href="/fabiano-aberto.png">
@@ -13,7 +13,7 @@
 <body>
   <header class="site-header">
     <div>
-      <span class="header-kicker">v9.1 • Privacidade + Gemini/Grok/Groq</span>
+      <span class="header-kicker">v10 • Privacidade • Zero custo • Offline/Online</span>
       <strong>Consciência do Fabiano</strong>
     </div>
     <div class="top-actions">
@@ -35,7 +35,7 @@
           <span id="backendDot" class="dot"></span>
           <span id="backendText">Verificando biblioteca…</span>
         </div>
-        <p class="avatar-note">Biblioteca privada no centro. Busca e referências determinísticas; Gemini, Grok e Groq recebem apenas evidências filtradas quando necessários.</p>
+        <p class="avatar-note">Biblioteca privada no centro. No modo 100% offline, nenhuma chamada externa é feita. Online usa somente evidências filtradas, nunca o PDF inteiro.</p>
       </aside>
 
       <section class="chat-section">
@@ -44,6 +44,15 @@
         <div class="composer">
           <textarea id="questionInput" rows="2" placeholder="Escreva a sua mensagem ou pergunta..." autocomplete="off"></textarea>
           <div class="composer-options">
+            <label class="mode-option" for="operationMode">
+              <span>Modo</span>
+              <select id="operationMode" aria-label="Modo de funcionamento">
+                <option value="auto">Automático</option>
+                <option value="offline">100% offline</option>
+                <option value="online">Online</option>
+              </select>
+            </label>
+            <span id="modeStatus" class="mode-status" aria-live="polite">Automático</span>
             <label class="check-option">
               <input id="autoSendVoice" type="checkbox" checked>
               <span>Enviar automaticamente ao terminar de falar</span>
@@ -69,7 +78,7 @@
             <h2>Dicionário / Enciclopédia</h2>
           </div>
         </div>
-        <p class="dictionary-note">Cada PDF, estudo ou arquivo incorporado amplia a enciclopédia. Os verbetes são curtos, rastreáveis e separados do chat; as referências são montadas pelo sistema, não pela IA.</p>
+        <p class="dictionary-note">Cada PDF, estudo ou arquivo incorporado amplia a enciclopédia. Ela funciona online e, depois da sincronização local, também 100% offline no celular ou PC. Os verbetes são curtos e as referências são determinísticas.</p>
         <div class="dictionary-search">
           <input id="dictionaryInput" type="search" placeholder="Ex.: Adão, Miguel, Elohim, lei do dízimo" autocomplete="off">
           <button id="dictionarySearchBtn" class="primary" type="button">Pesquisar</button>
@@ -102,7 +111,7 @@
             <small id="selectedPdfName" class="selected-pdf-name">Nenhum arquivo selecionado.</small>
           </label>
           <button id="uploadBtn" class="primary full" type="button">Adicionar Livro / Processar PDF</button>
-          <p class="client-extract-note">⚡ O PDF é extraído localmente, fica pesquisável no navegador e entra na fila de sincronização da nuvem sem apagar os livros existentes.</p>
+          <p class="client-extract-note">⚡ O PDF é extraído localmente. A cópia pesquisável fica neste aparelho para uso offline; quando o modo permite rede, a sincronização privada é feita sem apagar livros existentes.</p>
         </div>
         <p id="adminStatus" class="status"></p>
         <div id="omniSyncProgress" class="omni-sync-progress hidden" aria-live="polite">
@@ -118,11 +127,7 @@
         <div id="booksList" class="books"></div>
       </div>
     </section>
-  </main>
-
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-  <script>
+  </main><script>
     window.addEventListener("DOMContentLoaded", () => {
       const buildStamp = Date.now();
       const css = document.getElementById("mainStylesheet");
