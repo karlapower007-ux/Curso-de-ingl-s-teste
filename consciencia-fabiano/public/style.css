@@ -577,6 +577,12 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 .dictionary-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
 .dictionary-search input{min-height:48px}
 .dictionary-results{display:grid;gap:14px;margin-top:16px}
+.dictionary-concept-card{margin-top:14px;padding:15px 16px;border:1px solid #2f4858;border-radius:10px;background:#101922;overflow-wrap:anywhere}
+.dictionary-concept-head{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.dictionary-concept-head strong{font-size:1.05rem;color:#f8fafc}
+.dictionary-concept-head span{font-size:.74rem;color:#7dd3fc;text-transform:uppercase;letter-spacing:.06em}
+.dictionary-concept-card p{margin:7px 0 0;color:#cbd5e1;line-height:1.45}
+.dictionary-concept-aliases,.dictionary-concept-related{font-size:.8rem;color:#94a3b8!important}
 .dictionary-result{background:#141414;border:1px solid #333;border-left:4px solid var(--accent);border-radius:10px;padding:16px;overflow-wrap:anywhere}
 .dictionary-result-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
 .dictionary-result-head strong{color:#f8fafc}
@@ -595,7 +601,7 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 @media(max-width:560px){.dictionary-result{padding:12px}.dictionary-result-text{font-size:.88rem;line-height:1.44}.dictionary-source{font-size:.72rem}.dictionary-pager{flex-wrap:wrap}}
 
 /* Explicit viewport hardening for requested mobile widths */
-@media(max-width:412px){.app{padding-left:10px;padding-right:10px}.dictionary-card{padding:12px}.dictionary-search input{min-width:0}.dictionary-result{width:100%;box-sizing:border-box}}
+@media(max-width:412px){.app{padding-left:10px;padding-right:10px}.dictionary-card{padding:12px}.dictionary-search input{min-width:0}.dictionary-result{width:100%;box-sizing:border-box}.dictionary-concept-card{padding:12px}.dictionary-concept-head{align-items:flex-start;flex-direction:column;gap:4px}}
 @media(max-width:390px){.site-header{gap:10px}.dictionary-result-text{font-size:.87rem}.dictionary-source{font-size:.71rem}}
 @media(max-width:360px){.app{padding-left:8px;padding-right:8px}.dictionary-card{padding:10px}.dictionary-pager{gap:8px}.dictionary-pager span{font-size:.78rem;text-align:center}}
 
