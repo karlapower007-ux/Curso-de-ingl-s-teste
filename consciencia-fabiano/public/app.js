@@ -12,7 +12,7 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v10-zero-cost-private-offline-online";
+  const CURRENT_SYSTEM_VERSION = "v10.1-private-egress-offline-online";
   const OPERATING_MODE_KEY = "fns_operating_mode_v10";
   const OFFLINE_PREP_KEY = "fns_offline_ready_v10";
   const OFFLINE_EMBED_KEY = "fns_offline_embedding_ready_v10";
@@ -115,7 +115,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=10.0.0").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=10.1.0").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -147,8 +147,6 @@
     setTimeout(()=>pruneIndexedDbPointers().catch(()=>{}),800);
     if(networkAllowed()){
       setTimeout(()=>processSyncQueue().catch(()=>{}),1100);
-      setTimeout(()=>processMirrorQueue().catch(()=>{}),1400);
-      setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),1700);
       setTimeout(()=>reconcileBackendLibraryToR2().catch(()=>{}),1900);
     }
   }
@@ -445,21 +443,24 @@
     }
   }
 
-  const LOCAL_ADMIN_PASSWORD = "gadu";
   function ownerToken() { return sessionStorage.getItem(OWNER_TOKEN_KEY) || ""; }
-  function unlockUI() {
-    sessionStorage.setItem(OWNER_TOKEN_KEY,LOCAL_ADMIN_PASSWORD);
-    setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),250);
+  function unlockUI(token = "") {
+    const value=String(token || "").trim();
+    if(!value) return false;
+    // A senha/tokeno administrativo existe apenas nesta sessão do navegador.
+    // A validação real permanece no Worker; nenhum segredo fica embutido no JavaScript.
+    sessionStorage.setItem(OWNER_TOKEN_KEY,value);
     setTimeout(()=>backfillLibraryChunksToCloud().catch(()=>{}),300);
     setTimeout(()=>configurePhantomDaemon({force:true}).catch(()=>{}),350);
     return true;
   }
   function ensureLocalAdminAccess() {
-    if(ownerToken()===LOCAL_ADMIN_PASSWORD) return true;
+    if(ownerToken()) return true;
     const password=prompt("Senha da biblioteca:");
-    if(password===LOCAL_ADMIN_PASSWORD) return unlockUI();
-    if(password!==null) alert("Senha incorreta.");
-    return false;
+    if(password===null) return false;
+    const value=String(password).trim();
+    if(!value) return false;
+    return unlockUI(value);
   }
   function authHeaders(extra = {}) {
     const headers={"X-FNS-Memory-Key":memorySecret};
@@ -494,84 +495,12 @@
     return body;
   }
 
-  let mirrorQueueRunning=false;
-
-  async function enqueueMirrorRecords(records){
-    const list=Array.isArray(records)?records.filter(r=>Array.isArray(r?.vector)&&r.vector.length>=64):[];
-    if(!list.length) return {ok:true,queued:0};
-    let queued=0;
-    for(let i=0;i<list.length;i+=50){
-      const batch=list.slice(i,i+50);
-      const id="mirror-"+Date.now()+"-"+Math.random().toString(36).slice(2,9)+"-"+i;
-      await idbPut("mirror_queue",{
-        id,
-        records:batch,
-        attempts:0,
-        next_attempt_at:Date.now(),
-        created_at:Date.now(),
-        updated_at:Date.now()
-      });
-      queued+=batch.length;
-    }
-    processMirrorQueue().catch(()=>{});
-    return {ok:true,queued};
+  async function enqueueMirrorRecords(_records){
+    return {ok:true,queued:0,disabled:"private-egress-lock"};
   }
-
   async function processMirrorQueue(){
-    if(mirrorQueueRunning || !networkAllowed() || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
-    mirrorQueueRunning=true;
-    try{
-      const now=Date.now();
-      const items=(await idbGetAll("mirror_queue").catch(()=>[]))
-        .filter(x=>Number(x.next_attempt_at||0)<=now)
-        .sort((a,b)=>(a.created_at||0)-(b.created_at||0));
-
-      for(const item of items.slice(0,2)){
-        try{
-          const list=Array.isArray(item.records)?item.records.slice(0,50):[];
-          if(!list.length){await idbDelete("mirror_queue",item.id);continue;}
-          const result=await api("/api/admin/mirror-upsert",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({records:list})
-          },false);
-
-          if(result?.any_configured===false){
-            const attempts=Number(item.attempts||0)+1;
-            await idbPut("mirror_queue",{
-              ...item,
-              attempts,
-              next_attempt_at:Date.now()+6*60*60*1000,
-              last_error:"Nenhum co-master configurado no servidor.",
-              updated_at:Date.now()
-            });
-            break;
-          }
-
-          await idbDelete("mirror_queue",item.id);
-          await new Promise(resolve=>setTimeout(resolve,900));
-        }catch(error){
-          const msg=String(error?.message || error || "");
-          const attempts=Number(item.attempts||0)+1;
-          const quota=error?.status===429 || /quota|rate limit|too many/i.test(msg);
-          const delay=quota
-            ? Math.min(6*60*60*1000,Math.max(15*60*1000,attempts*30*60*1000))
-            : Math.min(60*60*1000,Math.max(5*60*1000,attempts*10*60*1000));
-          await idbPut("mirror_queue",{
-            ...item,
-            attempts,
-            next_attempt_at:Date.now()+delay,
-            last_error:msg,
-            updated_at:Date.now()
-          });
-          if(quota) break;
-        }
-      }
-    }finally{
-      mirrorQueueRunning=false;
-    }
+    return {ok:true,disabled:"private-egress-lock"};
   }
-
   window.FNSRagMirrorBatch = enqueueMirrorRecords;
 
   const MIRROR_BACKFILL_STATE_KEY="fns_rag_mirror_backfill_v2";
@@ -660,7 +589,7 @@
   }
 
   async function backfillLibraryChunksToCloud(){
-    if(libraryChunkBackfillRunning || !networkAllowed() || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
+    if(libraryChunkBackfillRunning || !networkAllowed() || !ownerToken()) return;
     libraryChunkBackfillRunning=true;
     try{
       await ensureRagCascade("cross-device-r2-backfill");
@@ -764,49 +693,7 @@
   }
 
   async function backfillLocalVectorMirror(){
-    if(mirrorBackfillRunning || !navigator.onLine || ownerToken()!==LOCAL_ADMIN_PASSWORD) return;
-    mirrorBackfillRunning=true;
-    try{
-      await ensureRagCascade("mirror-backfill");
-      if(!window.FNSRagCascade?.localStats || !window.FNSRagCascade?.exportVectors) return;
-      const stats=await window.FNSRagCascade.localStats();
-      const total=Math.max(0,Number(stats?.vectors||0));
-      if(!total) return;
-
-      let state={offset:0,total:0,updated_at:0};
-      try{state=JSON.parse(localStorage.getItem(MIRROR_BACKFILL_STATE_KEY)||"{}")||state;}catch{}
-      if(Number(state.total||0)!==total || Number(state.offset||0)>total) state={offset:0,total,updated_at:Date.now()};
-
-      let offset=Math.max(0,Number(state.offset||0));
-      let batches=0;
-      while(offset<total && batches<8){
-        const page=await window.FNSRagCascade.exportVectors(offset,50);
-        const records=Array.isArray(page?.records)?page.records:[];
-        if(!records.length) break;
-
-        const result=await api("/api/admin/mirror-upsert",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({records})
-        },false);
-
-        if(result?.any_configured===false || result?.any_upserted!==true) break;
-        offset=Number(page.next_offset||offset+records.length);
-        batches++;
-        localStorage.setItem(MIRROR_BACKFILL_STATE_KEY,JSON.stringify({offset,total,updated_at:Date.now()}));
-        await new Promise(resolve=>setTimeout(resolve,950));
-      }
-
-      if(offset>=total){
-        localStorage.setItem(MIRROR_BACKFILL_STATE_KEY,JSON.stringify({offset:total,total,done:true,updated_at:Date.now()}));
-      }else if(batches>0){
-        setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),4000);
-      }
-    }catch{
-      setTimeout(()=>backfillLocalVectorMirror().catch(()=>{}),15*60*1000);
-    }finally{
-      mirrorBackfillRunning=false;
-    }
+    return {ok:true,disabled:"private-egress-lock"};
   }
 
   function setAvatar(mode) {
@@ -2326,7 +2213,7 @@
       if (status === "ready") return data;
       if (status === "duplicate") return { ...data, duplicate: true };
       if (status === "paused_quota") {
-        throw new Error((data.error || "Quota mensal da Cohere atingida.") + " Job preservado: " + jobId);
+        throw new Error((data.error || "Indexação legada pausada; o documento permanece preservado.") + " Job preservado: " + jobId);
       }
       if (status === "failed") throw new Error(data.error || "Falha durante a indexação.");
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -2353,7 +2240,7 @@
     return await new Promise(resolve=>{
       let settled=false;
       const finish=value=>{if(settled)return;settled=true;clearTimeout(timer);try{worker.terminate();}catch{}resolve(value);};
-      const worker=new Worker("/whisper-worker.js?v=10.0.0",{type:"module"});
+      const worker=new Worker("/whisper-worker.js?v=10.1.0",{type:"module"});
       const timer=setTimeout(()=>finish(false),180000);
       worker.onmessage=e=>{
         const data=e.data||{};
