@@ -5318,6 +5318,7 @@ export class LibraryDO {
         const matches=[];
         const from=(page-1)*pageSize;
         let scanned=0,exactHits=0;
+        const needle=target;
         // Read in bounded SQL pages so the Durable Object never holds the whole library cursor.
         const sqlPageSize=200;
         for(let offset=0;;offset+=sqlPageSize){
@@ -5331,7 +5332,9 @@ export class LibraryDO {
           if(!rows.length)break;
           for(const row of rows){
             scanned++;
-            const match=strictParagraphMatch(row?.text||"",question);
+            const rawText=String(row?.text||"");
+            if(!normalizeStrictText(rawText).includes(needle))continue;
+            const match=strictParagraphMatch(rawText,question);
             if(!match.matched)continue;
             const evidence=String(match.paragraph||"").trim();
             const audit=strictIntentAudit(evidence,intent);
