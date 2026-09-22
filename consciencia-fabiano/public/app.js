@@ -12,7 +12,7 @@
   const LOCAL_EMBED_BATCH = Number(navigator.deviceMemory || 4) <= 4 ? 6 : 12;
   const R2_LIBRARY_GENERATION_KEY = "fns_r2_library_generation_v1";
   const BACKEND_R2_RECONCILE_STATE_KEY = "fns_backend_r2_reconcile_v1";
-  const CURRENT_SYSTEM_VERSION = "v9.0-private-hybrid-encyclopedia";
+  const CURRENT_SYSTEM_VERSION = "v9.1-private-hybrid-encyclopedia";
 
   function renderSystemBadge(status="nuvem online • RAG híbrido + biblioteca local"){
     return {
@@ -346,7 +346,7 @@
 
   const memorySecret = getMemorySecret();
 
-  async function syncPersistentHistory() {
+  async function syncPersistentHistory({render=false}={}) {
     try {
       const data = await api("/api/memory", { method: "GET" });
       const remote = Array.isArray(data?.messages) ? data.messages : [];
@@ -359,7 +359,7 @@
           ts: x.ts || Date.now()
         }));
         saveHistory();
-        renderHistory();
+        if(render) renderHistory();
       }
     } catch {}
   }
@@ -1400,6 +1400,13 @@
       appendMessage("assistant",
         "Estou pronto. Alimente minha biblioteca com PDFs e converse comigo sobre qualquer assunto. Vou responder sempre em português e mostrar as fontes quando a biblioteca as fornecer.");
     }
+  }
+
+  function renderFreshChat() {
+    $("messages").innerHTML = "";
+    appendMessage("assistant",
+      "Pronto. Faça uma pergunta sobre a biblioteca. A conversa começa limpa; a memória só é usada quando ajuda a entender a pergunta atual.",
+      [], false);
   }
 
   function markdownToSpeech(text) {
@@ -2962,8 +2969,8 @@
   };
 
   loadHistory();
-  renderHistory();
-  syncPersistentHistory();
+  renderFreshChat();
+  syncPersistentHistory({render:false});
   switchPanel(location.pathname === "/admin" ? "library" : "chat");
   checkBackend();
   enforcePersistentStorage().catch(()=>false);
