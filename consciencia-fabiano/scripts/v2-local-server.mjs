@@ -20,6 +20,12 @@ const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
 const MAX_BODY=4*1024*1024;
+const LOCAL_BRIDGE_ORIGINS=new Set([
+  "https://consciencia-fabiano.focoeepoder2.workers.dev",
+  "http://127.0.0.1:8788",
+  "http://localhost:8788",
+  ...String(process.env.FNS_ALLOWED_ORIGINS||"").split(",").map(x=>x.trim()).filter(Boolean)
+]);
 const rows=[];
 let libraryPromise=null;
 let aliasesPromise=null;
@@ -40,8 +46,20 @@ function json(res,data,status=200,extra={}){
   for(const [k,v] of Object.entries(extra))res.setHeader(k,v);
   res.end(JSON.stringify(data));
 }
-function localHeaders(res){
-  res.setHeader("Cross-Origin-Resource-Policy","same-origin");
+function localHeaders(req,res){
+  const origin=String(req.headers.origin||"");
+  const bridgeAllowed=LOCAL_BRIDGE_ORIGINS.has(origin);
+  if(bridgeAllowed){
+    res.setHeader("Access-Control-Allow-Origin",origin);
+    res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers","Content-Type");
+    res.setHeader("Access-Control-Allow-Private-Network","true");
+    res.setHeader("Access-Control-Max-Age","600");
+    res.setHeader("Vary","Origin");
+    res.setHeader("Cross-Origin-Resource-Policy","cross-origin");
+  }else{
+    res.setHeader("Cross-Origin-Resource-Policy","same-origin");
+  }
   res.setHeader("Referrer-Policy","no-referrer");
   res.setHeader("X-Frame-Options","SAMEORIGIN");
 }
@@ -325,7 +343,7 @@ async function serveStatic(req,res){
 await mkdir(DATA_DIR,{recursive:true}).catch(()=>{});
 
 http.createServer(async(req,res)=>{
-  localHeaders(res);
+  localHeaders(req,res);
   try{
     const url=new URL(req.url,"http://localhost");
     if(req.method==="GET" && url.pathname==="/api/v2/health"){await handleHealth(req,res);return;}
