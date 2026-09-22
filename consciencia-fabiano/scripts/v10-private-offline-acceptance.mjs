@@ -53,6 +53,8 @@ assert(index.includes("backfillEncyclopediaConcepts(limit"), "incremental concep
 assert(index.includes('url.pathname === "/api/encyclopedia/concept"'), "public concept summary route missing");
 assert(index.includes('url.pathname === "/api/admin/encyclopedia-concepts/backfill"'), "private concept backfill route missing");
 assert(index.includes('encyclopedia_relation_type: "co_occurs_with"'), "relation type marker missing");
+assert(index.includes("derived_index_error:true"), "concept indexing must fail open");
+assert(index.includes("encyclopedia_concept_fail_open: true"), "concept fail-open health marker missing");
 assert(index.includes("ready_for_search:readyForSearch"), "real PDF ready-for-search stage missing");
 assert(index.includes("encyclopedia:{progress:encyclopediaProgress"), "encyclopedia indexing progress stage missing");
 assert(index.includes("semantic_query_embedding_server_enabled: false"), "server semantic embeddings must stay disabled");
