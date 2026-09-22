@@ -119,7 +119,7 @@
   async function ensureRagCascade(reason="on-demand") {
     if(window.FNSRagCascade) return window.FNSRagCascade;
     if(!ragCascadePromise){
-      ragCascadePromise=import("/rag-cascade.js?v=10.1.0").then(()=>{
+      ragCascadePromise=import("/rag-cascade.js?v=10.1.1").then(()=>{
         if(!window.FNSRagCascade) throw new Error("RAG local não inicializou.");
         return window.FNSRagCascade;
       }).catch(error=>{
@@ -2042,6 +2042,8 @@
           if(!localAvailable) throw error;
         }
       }
+
+      dictionaryState.concept=data?.concept||null;
 
       if(networkAllowed()){
         try{
