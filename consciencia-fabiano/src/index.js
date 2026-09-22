@@ -2,8 +2,9 @@ import {strictParagraphMatch,deriveStrictPhrase,buildStrictIntent,strictIntentAu
 import {PERFORMANCE_GUARD as COGNITIVE_PERFORMANCE_GUARD,buildExecutionPlan as buildV74ExecutionPlan,runCognitivePlan,evidenceGateV74,catalogAudit,catalogManifest} from "./cognitive-turbines-v74.js";
 import {resolveStatefulQuery,retrieveSecondaryHybridContext,secondarySupabaseConfigured,secondaryCircuitState} from "./stateful-rag-v75.js";
 import {buildAdaptiveV80Plan,buildQueryVariantsV80,adaptiveFuseAndRerankV80,adaptiveEvidenceGateV80,v80RuntimeSummary} from "./adaptive-rag-v80.js";
-const VERSION = "9.0.0-private-hybrid-encyclopedia";
+const VERSION = "9.1.0-private-hybrid-encyclopedia";
 const GEMINI_MODEL = "gemini-3.8-flash";
+const GROK_MODEL = "grok-4.7";
 const FAST_MEMORY_MESSAGES = 8;
 // Xeque-Mate: Groq chat/STT + browser-local multilingual embeddings.
 const EMBEDDING_MODEL = "embed-multilingual-v3.0";
@@ -1940,6 +1941,10 @@ function geminiApiKey(env) {
   return String(env?.GEMINI_API_KEY || env?.GOOGLE_API_KEY || "").trim();
 }
 
+function grokApiKey(env) {
+  return String(env?.XAI_API_KEY || env?.GROK_API_KEY || "").trim();
+}
+
 function redactExternalPrompt(text) {
   return String(text || "")
     .replace(/\b(?:filename|document_id|chunk_index|storage_key|r2_key)\s*[:=]\s*[^\s,;]+/giu,"")
@@ -1969,12 +1974,56 @@ async function geminiCompletion(env,messages,options={}) {
   return new Response(JSON.stringify({choices:[{message:{content:text}}],_provider:"gemini"}),{headers:{"Content-Type":"application/json"}});
 }
 
-async function hybridReasoningCompletion(env,messages,options={}) {
-  if(geminiApiKey(env)){try{return await geminiCompletion(env,messages,options);}catch{}}
-  const res=await groqCompletion(env,externalSafeMessages(messages),false,options);
-  const data=await res.clone().json().catch(()=>({}));
-  return new Response(JSON.stringify({...data,_provider:"groq"}),{status:res.status,headers:{"Content-Type":"application/json"}});
+async function grokCompletion(env,messages,options={}) {
+  const key=grokApiKey(env);
+  if(!key){const error=new Error("Grok não configurado.");error.code="GROK_NOT_CONFIGURED";throw error;}
+  const safe=externalSafeMessages(messages);
+  const model=String(env?.GROK_MODEL || GROK_MODEL).trim() || GROK_MODEL;
+  const res=await fetch("https://api.x.ai/v1/chat/completions",{
+    method:"POST",
+    headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+    body:JSON.stringify({
+      model,
+      messages:safe,
+      temperature:0,
+      max_tokens:Math.max(200,Number(options.max_completion_tokens || MASTER_NODE_MAX_COMPLETION_TOKENS))
+    })
+  });
+  if(!res.ok){const body=await res.json().catch(()=>({}));const error=new Error(body?.error?.message || ("Grok HTTP "+res.status));error.status=res.status;throw error;}
+  const data=await res.json();
+  return new Response(JSON.stringify({...data,_provider:"grok"}),{headers:{"Content-Type":"application/json"}});
 }
+
+function reasoningProviderStatus(env) {
+  return {
+    gemini:Boolean(geminiApiKey(env)),
+    grok:Boolean(grokApiKey(env)),
+    groq:groqApiKeys(env).length>0
+  };
+}
+
+function requireReasoningProvider(env) {
+  const providers=reasoningProviderStatus(env);
+  if(!providers.gemini && !providers.grok && !providers.groq){
+    const error=new Error("Nenhum provedor de raciocínio foi configurado no servidor.");
+    error.code="EXTERNAL_AI_NOT_CONFIGURED";
+    throw error;
+  }
+  return providers;
+}
+
+async function hybridReasoningCompletion(env,messages,options={}) {
+  const providers=reasoningProviderStatus(env);
+  if(providers.gemini){try{return await geminiCompletion(env,messages,options);}catch{}}
+  if(providers.grok){try{return await grokCompletion(env,messages,options);}catch{}}
+  if(providers.groq){
+    const res=await groqCompletion(env,externalSafeMessages(messages),false,options);
+    const data=await res.clone().json().catch(()=>({}));
+    return new Response(JSON.stringify({...data,_provider:"groq"}),{status:res.status,headers:{"Content-Type":"application/json"}});
+  }
+  requireReasoningProvider(env);
+}
+
 async function mapExtractReferences(env, question, batch, batchIndex) {
   const raw=buildMapBatchContext(batch,question,batchIndex);
   const messages=[
@@ -2359,7 +2408,7 @@ async function massiveMasterSynthesis(env,question,reducers,history,sources,cogn
 
 async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=null,cognitiveContract=null) {
   const rows=Array.from(sources || []).slice(0,MASSIVE_NODE_COUNT);
-  const tasks=Array.from({length:MASSIVE_NODE_COUNT},(_,index)=>({node:index+1,source:rows[index] || null}));
+  const tasks=rows.map((source,index)=>({node:index+1,source}));
   let completed=0;
   let failed=0;
 
@@ -2379,7 +2428,7 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
           page:result?.page || null,
           summary:String(result?.evidence || "").slice(0,240),
           completed,
-          total:MASSIVE_NODE_COUNT
+          total:tasks.length
         });
       }
     }
@@ -2415,7 +2464,8 @@ async function massivePipelineSynthesis(env,question,sources,history=[],onEvent=
     masterSynthesis:master.text,
     used:true,
     batches:groups.length,
-    micro_nodes_total:MASSIVE_NODE_COUNT,
+    micro_nodes_total:rows.length,
+    micro_nodes_logical_capacity:MASSIVE_NODE_COUNT,
     micro_nodes_executed:completed,
     micro_nodes_failed:failed,
     relay_mode:"async-worker-pool",
@@ -4024,7 +4074,7 @@ async function chat(request, env) {
     return json(payload);
   }
 
-  requireGroqKeys(env);
+  requireReasoningProvider(env);
 
   if (wantsStream) {
     return massivePipelineStreamResponse(env,{
@@ -4131,7 +4181,7 @@ async function tts(request, env) {
 async function status(env) {
   const missing = [];
   if (!env.LIBRARY) missing.push("LIBRARY");
-  if (!groqApiKeys(env).length) missing.push("GROQ_API_KEY_POOL");
+  if (!geminiApiKey(env) && !grokApiKey(env) && !groqApiKeys(env).length) missing.push("LLM_PROVIDER");
   let documents = null, chunks = null, memoryMessages = null, indexJobs = null, ready = false;
   let storageProbe = missing.length ? "missing-binding" : "not-started";
   if (!missing.length) {
@@ -4424,6 +4474,9 @@ async function handleApi(request, env, url, ctx) {
     if (privateIndexRoute && !(await adminAuthorized(request, env))) {
       return json({ ok: false, code: "AUTH_REQUIRED", message: "Acesso administrativo privado." }, 401);
     }
+    if (url.pathname === "/api/encyclopedia/status" && request.method === "GET") {
+      return json(await libraryCall(env,"/encyclopedia/status"));
+    }
     if (url.pathname === "/api/dictionary/search" && request.method === "POST") {
       const body=await request.json().catch(()=>({}));
       const question=String(body?.query||"").trim();
@@ -4565,6 +4618,22 @@ export class LibraryDO {
           text TEXT NOT NULL, embedding TEXT NOT NULL, created_at TEXT NOT NULL,
           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
+        CREATE VIRTUAL TABLE IF NOT EXISTS encyclopedia_fts USING fts5(
+          text,
+          content='chunks',
+          content_rowid='rowid',
+          tokenize='unicode61 remove_diacritics 2'
+        );
+        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ai AFTER INSERT ON chunks BEGIN
+          INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_ad AFTER DELETE ON chunks BEGIN
+          INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS encyclopedia_chunks_au AFTER UPDATE OF text ON chunks BEGIN
+          INSERT INTO encyclopedia_fts(encyclopedia_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+          INSERT INTO encyclopedia_fts(rowid,text) VALUES (new.rowid,new.text);
+        END;
         CREATE TABLE IF NOT EXISTS conversation_messages (
           id TEXT PRIMARY KEY,
           owner_id TEXT NOT NULL,
@@ -5364,6 +5433,13 @@ export class LibraryDO {
         return json({ ok: true, cleared: Number(before) });
       }
 
+      if (url.pathname === "/encyclopedia/status" && request.method === "GET") {
+        const chunks=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
+        let indexed=0;
+        try{indexed=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);}catch{}
+        return json({ok:true,engine:"sqlite-fts5",chunks,indexed,synced:indexed===chunks});
+      }
+
       if (url.pathname === "/dictionary/search" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const question=String(body?.query||"").trim();
@@ -5371,38 +5447,67 @@ export class LibraryDO {
         const pageSize=Math.max(1,Math.min(50,Number(body?.page_size||50)));
         const target=deriveStrictPhrase(question);
         const intent=buildStrictIntent(question);
-        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"strict-focus-dictionary-v8.2"});
-        const terms=lexicalTerms(question);
-        const anchor=foldSearchText(target);
-        const scanLimit=Math.max(200,Math.min(50000,Number(body?.scan_limit||30000)));
-        const rows=[...this.sql.exec(`
-          SELECT c.page,c.text,d.title,d.author
-          FROM chunks c JOIN documents d ON d.id=c.document_id
-          WHERE d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
-          ORDER BY c.created_at DESC LIMIT ?
-        `,scanLimit)];
-        const candidates=[];
-        for(const row of rows){
-          const folded=foldSearchText(row?.text||"");
-          if(anchor && folded.includes(anchor)) candidates.push(row);
-          else if(terms.length && terms.every(t=>folded.includes(t))) candidates.push(row);
+        if(!target)return json({ok:true,matches:[],scanned:0,total:0,target:"",page,page_size:pageSize,pages:0,mode:"encyclopedia-fts5-v9.1"});
+
+        const chunkTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM chunks")][0]?.n || 0);
+        let indexedTotal=0;
+        try{indexedTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);}catch{}
+        if(indexedTotal!==chunkTotal){
+          this.sql.exec("INSERT INTO encyclopedia_fts(encyclopedia_fts) VALUES('rebuild')");
+          indexedTotal=Number([...this.sql.exec("SELECT COUNT(*) AS n FROM encyclopedia_fts")][0]?.n || 0);
         }
-        const accepted=[];
-        for(const row of candidates){
-          const match=strictParagraphMatch(row?.text||"",question);
-          if(!match.matched)continue;
-          const evidence=String(match.paragraph||"").trim();
-          const audit=strictIntentAudit(evidence,intent);
-          if(!audit.accepted)continue;
-          const canonical=extractSemanticReference(evidence);
-          const clean=cleanNarrativeText(evidence);
-          const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
-          const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
-          accepted.push({page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage});
-        }
+
+        const ftsQuery='"'+target.replace(/"/g,'""')+'"';
+        const candidateTotal=Number([...this.sql.exec(`
+          SELECT COUNT(*) AS n
+          FROM encyclopedia_fts e
+          JOIN chunks c ON c.rowid=e.rowid
+          JOIN documents d ON d.id=c.document_id
+          WHERE encyclopedia_fts MATCH ?
+            AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+        `,ftsQuery)][0]?.n || 0);
+
         const from=(page-1)*pageSize;
-        const matches=accepted.slice(from,from+pageSize);
-        return json({ok:true,matches,scanned:rows.length,total:accepted.length,returned:matches.length,target,page,page_size:pageSize,pages:Math.ceil(accepted.length/pageSize),mode:"strict-focus-dictionary-v8.2",strict_focus_lock:true,intent_lock:true,evidence_lock:true,plans:{A:"exact",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false});
+        const accepted=[];
+        let candidateOffset=Math.max(0,from),scanned=0;
+        const batchSize=200;
+        while(accepted.length<pageSize && candidateOffset<candidateTotal){
+          const rows=[...this.sql.exec(`
+            SELECT c.page,c.text,d.title,d.author
+            FROM encyclopedia_fts e
+            JOIN chunks c ON c.rowid=e.rowid
+            JOIN documents d ON d.id=c.document_id
+            WHERE encyclopedia_fts MATCH ?
+              AND d.status IN ('ready','indexing','lexical_loading','lexical_ready','vectorizing_local','ready_local')
+            ORDER BY c.rowid ASC
+            LIMIT ? OFFSET ?
+          `,ftsQuery,batchSize,candidateOffset)];
+          if(!rows.length)break;
+          candidateOffset+=rows.length;
+          for(const row of rows){
+            scanned++;
+            const match=strictParagraphMatch(row?.text||"",question);
+            if(!match.matched)continue;
+            const evidence=String(match.paragraph||"").trim();
+            const audit=strictIntentAudit(evidence,intent);
+            if(!audit.accepted)continue;
+            const canonical=extractSemanticReference(evidence);
+            const clean=cleanNarrativeText(evidence);
+            const sentences=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+            const compact=(sentences.slice(0,2).join(" ") || clean).slice(0,420).trim();
+            accepted.push({page:Number(row.page||0),text:compact,title:canonical?"":humanDocumentName("",row.title),author:String(row.author||""),reference:canonical,source_kind:canonical?"scripture":"book",score:100,coverage:audit.coverage});
+            if(accepted.length>=pageSize)break;
+          }
+        }
+
+        return json({
+          ok:true,matches:accepted,scanned,total:candidateTotal,returned:accepted.length,
+          target,page,page_size:pageSize,pages:Math.ceil(candidateTotal/pageSize),
+          mode:"encyclopedia-fts5-v9.1",encyclopedia_index:"sqlite-fts5",
+          encyclopedia_index_synced:indexedTotal===chunkTotal,strict_focus_lock:true,intent_lock:true,evidence_lock:true,
+          plans:{A:"fts5-exact-phrase",B:"semantic-restricted",C:"cross-language",D:"context-controlled",E:"local-contingency",F:"final-audit"},
+          or_disabled:true,fuzzy_disabled:true,technical_metadata_exposed:false
+        });
       }
 
       if (url.pathname === "/search-strict" && request.method === "POST") {
@@ -5549,6 +5654,12 @@ export default {
         workers_ai_used: false,
         llm_provider: "groq",
         provider_auth_surface: "server-side-secrets-only",
+        provider_chain: ["gemini","grok","groq"],
+        provider_configured: reasoningProviderStatus(env),
+        external_privacy_gate: true,
+        external_models_receive_original_files: false,
+        external_models_receive_full_library: false,
+        external_payload_mode: "filtered-evidence-only",
         client_provider_keys_exposed: false,
         supabase_transport: secondarySupabaseConfigured(env) ? "secondary-hybrid-fallback" : "disabled-not-configured",
         direct_postgres_connections: 0,
