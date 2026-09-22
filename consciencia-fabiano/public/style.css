@@ -587,3 +587,27 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 @media(max-width:412px){.app{padding-left:10px;padding-right:10px}.dictionary-card{padding:12px}.dictionary-search input{min-width:0}.dictionary-result{width:100%;box-sizing:border-box}}
 @media(max-width:390px){.site-header{gap:10px}.dictionary-result-text{font-size:.87rem}.dictionary-source{font-size:.71rem}}
 @media(max-width:360px){.app{padding-left:8px;padding-right:8px}.dictionary-card{padding:10px}.dictionary-pager{gap:8px}.dictionary-pager span{font-size:.78rem;text-align:center}}
+
+/* v10 operating-mode controls */
+.mode-option{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.84rem;font-weight:700}
+.mode-option select{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:.52rem .7rem;min-width:132px}
+.mode-option select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px rgba(56,189,248,.12)}
+.mode-status{color:var(--muted);font-size:.78rem;line-height:1.35}
+@media(max-width:780px){
+  .composer-options{align-items:stretch}
+  .mode-option{width:100%;justify-content:space-between}
+  .mode-option select{min-width:150px}
+  .mode-status{width:100%}
+}
+@media(max-width:412px){
+  .mode-option{font-size:.8rem}
+  .mode-option select{min-width:0;width:58%;padding:.5rem .55rem}
+}
+@media(max-width:390px){
+  .top-actions{overflow-x:auto;max-width:100%;padding-bottom:2px}
+  .site-header{align-items:flex-start;flex-direction:column}
+}
+@media(max-width:360px){
+  .mode-option{gap:6px}
+  .mode-status{font-size:.72rem}
+}
