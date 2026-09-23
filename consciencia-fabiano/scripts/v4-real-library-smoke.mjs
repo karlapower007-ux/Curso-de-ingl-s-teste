@@ -177,6 +177,27 @@ const atonementUsable=atonementAll.filter(x=>{
 });
 assert.ok(atonementUsable.length>=2,"Expiação deve ter pelo menos duas provas substantivas, não apenas remissões GEE/TJS");
 assert.ok(atonementUsable.some(x=>Number(x.page||0)>=180&&Number(x.page||0)<=220),"A prova substantiva de expiação deve alcançar o bloco bíblico de Levítico disponível no acervo");
+const atonementFallbackLesson=await buildLesson({
+  question:atonementQuestion,
+  age:12,
+  mode:"aula",
+  evidence:atonementUsable.slice(0,6).map((x,i)=>({
+    ...x,
+    id:"at-real-"+i,
+    source_chunk_id:String(x.id||x.key||("at-real-"+i)),
+    kind:"book-paragraph",
+    reference:"Fonte verificada • PDF p. "+String(x.page||""),
+    pdf_page:Number(x.page||0)||null,
+    verified:true,
+    citation_verified:true
+  })),
+  generate:async()=>({model:"qwen3:0.6b",content:"not-json"}),
+  verify:async()=>({model:"qwen3:0.6b",content:"{}"})
+});
+assert.equal(atonementFallbackLesson.nao_sei,false,"Expiação tem provas reais suficientes; falha do redator local não pode produzir 'Não achei na biblioteca'");
+assert.equal(atonementFallbackLesson.fallback_literal,true);
+assert.equal(atonementFallbackLesson.provas.length,2);
+
 console.log("V4_ATONEMENT_DICTIONARY_FALLBACK="+JSON.stringify({
   question:atonementQuestion,
   query:atonementQuery,
