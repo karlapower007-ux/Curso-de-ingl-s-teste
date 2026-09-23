@@ -203,6 +203,8 @@ assert.ok(!server.includes('/api/v4/dictionary'),"V4 não pode criar Dicionário
 assert.ok(server.includes('url.pathname==="/api/v2/dictionary"'),"Dicionário V2 deve permanecer");
 assert.ok(server.includes("generatorQueue=Promise.resolve()"),"gerador deve operar em fila única");
 assert.ok(server.includes("v4EvidenceFromAuthority"),"V4 deve voltar ao registro autoritativo antes de liberar prova");
+assert.ok(server.includes("v4DictionaryFallbackEvidence"),"V4 deve reutilizar o Dicionário strict-AND quando a busca V3 não formar duas provas");
+assert.ok(server.includes("dictionary_fallback_enabled:true"),"A resposta V4 deve declarar o fallback de Dicionário habilitado");
 assert.ok(server.includes("authoritative-record+exact-substring"),"trecho precisa existir no registro autoritativo");
 assert.ok(server.includes("verify:verifyLessonWithQwen"),"V4 deve executar verificador semântico local");
 assert.ok(server.includes('" • PDF p. "'),"livros sem página impressa explícita devem rotular página do PDF");
