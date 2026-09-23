@@ -2,14 +2,9 @@ name: V10.1 Responsive Offline Production Smoke
 # Offline privacy verification marker
 
 on:
-  push:
-    branches: [consciencia-cloudflare-native-v1]
-    paths:
-      - "consciencia-fabiano/public/index.html"
-      - "consciencia-fabiano/public/app.js"
-      - "consciencia-fabiano/public/style.css"
-      - "consciencia-fabiano/public/sw-v3.js"
-      - ".github/workflows/v10-responsive-production-smoke.yml"
+  workflow_run:
+    workflows: ["Deploy Consciência Fabiano v2 Local-First Safely"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -21,10 +16,13 @@ concurrency:
 
 jobs:
   browser-production:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'consciencia-cloudflare-native-v1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
