@@ -166,11 +166,24 @@ assert.equal(atonementQuery,"expiação","Aula deve reduzir pergunta natural ao 
 const atonementDictionary=exactAndMatches(rows,atonementQuery,{aliases,page:1,pageSize:12});
 assert.ok(atonementDictionary.total>=2,"A biblioteca real deve conter pelo menos duas ocorrências verificáveis de expiação para fallback da Aula");
 assert.ok(atonementDictionary.matches.length>=2,"Fallback doutrinário precisa de duas provas estritas para expiação");
+const atonementAll=[];
+for(let page=1;page<=Math.min(8,atonementDictionary.pages);page++){
+  const batch=exactAndMatches(rows,atonementQuery,{aliases,page,pageSize:100});
+  atonementAll.push(...batch.matches);
+}
+const atonementUsable=atonementAll.filter(x=>{
+  const text=String(x?.text||"").replace(/\s+/g," ").trim();
+  return text.length>=100 && text.split(/\s+/).length>=18 && !/\b(?:GEE|TJS)\b/i.test(text);
+});
+assert.ok(atonementUsable.length>=2,"Expiação deve ter pelo menos duas provas substantivas, não apenas remissões GEE/TJS");
+assert.ok(atonementUsable.some(x=>Number(x.page||0)>=180&&Number(x.page||0)<=220),"A prova substantiva de expiação deve alcançar o bloco bíblico de Levítico disponível no acervo");
 console.log("V4_ATONEMENT_DICTIONARY_FALLBACK="+JSON.stringify({
   question:atonementQuestion,
   query:atonementQuery,
   total:atonementDictionary.total,
-  proofs:atonementDictionary.matches.slice(0,3).map(x=>({document_id:x.document_id,page:x.page,reference:x.reference,text:String(x.text||"").slice(0,260)}))
+  strict_total:atonementDictionary.total,
+  usable_total:atonementUsable.length,
+  proofs:atonementUsable.slice(0,3).map(x=>({document_id:x.document_id,page:x.page,reference:x.reference,text:String(x.text||"").slice(0,260)}))
 },null,2));
 
 const dictionary=exactAndMatches(rows,"Adão",{aliases,page:1,pageSize:3});
