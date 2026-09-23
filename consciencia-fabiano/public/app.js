@@ -3207,6 +3207,91 @@
     }catch{return [];}
   }
 
+  let legacyV3PromotionRunning=false;
+  function validSha256(value=""){
+    const sha=String(value||"").trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(sha)?sha:"";
+  }
+  async function promoteLegacyLocalBooksToV3(localList=[],v3List=[]){
+    if(legacyV3PromotionRunning)return;
+    const localServer=location.hostname==="127.0.0.1"||location.hostname==="localhost"||Boolean(window.__FNS_V2_API_BASE);
+    if(!localServer)return;
+    legacyV3PromotionRunning=true;
+    try{
+      await ensureRagCascade("legacy-to-50k-promotion");
+      const integrated=new Set();
+      for(const item of (v3List||[])){
+        const sha=validSha256(item?.content_sha256||item?.sha256||item?.document_id);
+        if(sha)integrated.add(sha);
+      }
+      const candidates=(localList||[]).filter(item=>{
+        const sha=validSha256(item?.content_sha256||item?.sha256||item?.document_id);
+        if(!sha||integrated.has(sha))return false;
+        const source=String(item?.source||"");
+        const status=String(item?.status||"");
+        return /local|indexeddb/i.test(source)||/local|checkpoint|lexical/i.test(status);
+      });
+      if(!candidates.length)return;
+
+      const host=$("massImportStatus");
+      for(let i=0;i<candidates.length;i++){
+        const item=candidates[i];
+        const sha=validSha256(item?.content_sha256||item?.sha256||item?.document_id);
+        const localId=String(item?.document_id||"").trim();
+        const name=String(item?.arquivo||item?.titulo||"PDF");
+        if(!sha||!localId)continue;
+        if(host)host.textContent="Fila 50K • integrando PDF antigo "+(i+1)+"/"+candidates.length+" • "+name;
+        try{
+          const start=await localV3Api("/api/v3/library/start",{
+            method:"POST",
+            body:JSON.stringify({
+              filename:String(item?.arquivo||item?.filename||name),
+              size_bytes:Number(item?.size_bytes||0),
+              page_count:Number(item?.paginas||item?.pages||0),
+              title:String(item?.titulo||item?.title||name),
+              author:String(item?.autor||item?.author||""),
+              language:String(item?.idioma||item?.language||"pt"),
+              content_sha256:sha,
+              source_token:""
+            })
+          },120000);
+
+          if(!start?.duplicate){
+            let offset=0,sent=0;
+            while(true){
+              const rows=await window.FNSRagCascade.getDocumentChunks(localId,offset,50);
+              if(!rows.length)break;
+              const pages=rows.map(r=>({page:Number(r.page||0),text:String(r.text||"")})).filter(r=>r.text.trim());
+              if(pages.length){
+                await localV3Api("/api/v3/library/append",{
+                  method:"POST",body:JSON.stringify({job_id:start.job_id,pages})
+                },180000);
+                sent+=pages.length;
+              }
+              offset+=rows.length;
+              if(rows.length<50)break;
+              await new Promise(resolve=>setTimeout(resolve,0));
+            }
+            if(!sent)throw new Error("texto local não disponível");
+            await localV3Api("/api/v3/library/commit",{
+              method:"POST",body:JSON.stringify({job_id:start.job_id})
+            },300000);
+          }
+          integrated.add(sha);
+          await saveLocalCatalogEntry({...item,status:"V3/V4-pronto",ready_for_search:true,updated_at:Date.now()});
+        }catch(error){
+          console.warn("Migração local → 50K pendente:",name,error);
+          await saveLocalCatalogEntry({...item,status:"local-pendente-50K",updated_at:Date.now()}).catch(()=>{});
+        }
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      await loadMassImportStatus(false).catch(()=>{});
+      await loadBooks().catch(()=>{});
+    }finally{
+      legacyV3PromotionRunning=false;
+    }
+  }
+
   async function submitExtractedTextLocal(extracted,originalR2Key=""){
     const common={filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,title:extracted.title,author:extracted.author,content_sha256:extracted.content_sha256,original_r2_key:originalR2Key};
     const started=await api("/api/admin/local-ingest-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(common)});
@@ -3450,6 +3535,9 @@
       renderBooks(local,false);
     }
     setUploadGate(false);
+    // Livros que entraram antes da arquitetura 50K podem existir apenas no
+    // IndexedDB do navegador. Integra esses textos automaticamente ao V3/50K.
+    promoteLegacyLocalBooksToV3(local,v3Local).catch(()=>{});
 
     if(!navigator.onLine){
       $("adminStatus").textContent=local.length
