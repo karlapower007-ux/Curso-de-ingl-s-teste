@@ -178,24 +178,28 @@ async function authoritativePageTextAsync(row={}){
 
 async function decorateDictionaryReference(hit={}){
   const authority=await candidateAuthorityRow(hit);
-  if(!authority||!isStandardWorksRow(authority))return hit;
+  const scriptureSource=Boolean(hit?.standard_works)||isStandardWorksRow(authority||hit);
+  if(!scriptureSource)return hit;
   const source={
-    ...authority,
+    ...(authority||{}),
     ...hit,
-    filename:authority.filename,
-    title:authority.title,
-    source_title:authority.source_title,
-    document_title:authority.document_title,
-    canonical_reference:authority.canonical_reference
+    standard_works:true,
+    filename:authority?.filename,
+    title:authority?.title||hit?.title||"",
+    source_title:authority?.source_title,
+    document_title:authority?.document_title,
+    canonical_reference:authority?.canonical_reference||hit?.canonical_reference||""
   };
   const pageText=await authoritativePageTextAsync(source);
   const reference=dictionaryPublicReference(source,pageText);
+  const verified=reference!=="Obras Padrão";
   return {
     ...hit,
     title:"",
     reference,
-    canonical_reference:reference==="Obras Padrão"?"":reference,
-    dictionary_scripture_reference:reference!=="Obras Padrão"
+    canonical_reference:verified?reference:"",
+    dictionary_scripture_source:true,
+    dictionary_scripture_reference:verified
   };
 }
 async function decorateDictionaryMatches(matches=[]){
