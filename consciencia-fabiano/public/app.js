@@ -2160,7 +2160,7 @@
     $("dictionaryTab")?.classList.toggle("active",dict);
     $("settingsTab")?.classList.toggle("active",settings);
     $("libraryTab").classList.toggle("active",lib);
-    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadCostGuardStatus();runConceptIndexBackfill({force:true});maybeAutoOmniSync();}
+    if(lib){activateHeavyLocalSubsystems("library-admin");loadBooks();loadFiftyKLedger(true);loadCostGuardStatus();runConceptIndexBackfill({force:true});maybeAutoOmniSync();}
     if(dict) $("dictionaryInput")?.focus();
     if(settings) updateOperatingModeUi();
   }
@@ -3063,6 +3063,77 @@
     throw lastError||new Error("Servidor local V3 indisponível.");
   }
 
+  const fiftyKLedgerState={offset:0,limit:100,total:0,items:[],loading:false};
+
+  function renderFiftyKLedger(){
+    const host=$("fiftyKLedgerList"),title=$("fiftyKLedgerTitle"),info=$("fiftyKLedgerInfo"),more=$("fiftyKMoreBtn");
+    if(!host||!title||!info)return;
+    host.replaceChildren();
+    const items=fiftyKLedgerState.items;
+    title.textContent="PDFs realmente registrados no 50K • "+fiftyKLedgerState.total.toLocaleString("pt-BR");
+    info.textContent=items.length
+      ?("Mostrando "+items.length.toLocaleString("pt-BR")+" de "+fiftyKLedgerState.total.toLocaleString("pt-BR")+". Cada linha abaixo é um PDF confirmado no índice 50K.")
+      :"Nenhum PDF novo confirmado no índice 50K ainda.";
+
+    items.forEach((item,index)=>{
+      const row=document.createElement("div");row.className="fiftyk-ledger-row";
+      const number=document.createElement("span");number.className="fiftyk-ledger-number";number.textContent=String(index+1);
+      const body=document.createElement("div");body.className="fiftyk-ledger-body";
+      const name=document.createElement("strong");name.textContent=String(item?.arquivo||item?.titulo||item?.filename||"Documento");
+      const meta=document.createElement("small");
+      const bits=[];
+      if(Number(item?.paginas||0))bits.push(Number(item.paginas).toLocaleString("pt-BR")+" pág.");
+      if(Number(item?.chunks||0))bits.push(Number(item.chunks).toLocaleString("pt-BR")+" trechos");
+      if(item?.created_at){
+        try{bits.push(new Date(item.created_at).toLocaleString("pt-BR"));}catch{}
+      }
+      meta.textContent=bits.join(" • ");
+      body.append(name,meta);
+      const badge=document.createElement("span");badge.className="fiftyk-ready-badge";badge.textContent="PRONTO 50K";
+      row.append(number,body,badge);
+      host.appendChild(row);
+    });
+    if(more){
+      more.classList.toggle("hidden",items.length>=fiftyKLedgerState.total);
+      more.disabled=fiftyKLedgerState.loading;
+    }
+  }
+
+  async function loadFiftyKLedger(reset=true){
+    if(fiftyKLedgerState.loading)return;
+    fiftyKLedgerState.loading=true;
+    const refresh=$("fiftyKRefreshBtn"),more=$("fiftyKMoreBtn"),info=$("fiftyKLedgerInfo");
+    if(refresh)refresh.disabled=true;
+    if(more)more.disabled=true;
+    try{
+      if(reset){
+        fiftyKLedgerState.offset=0;
+        fiftyKLedgerState.total=0;
+        fiftyKLedgerState.items=[];
+        if(info)info.textContent="Lendo os PDFs confirmados no 50K…";
+      }
+      const data=await localV3Api(
+        "/api/v3/library/catalog?limit="+fiftyKLedgerState.limit+"&offset="+fiftyKLedgerState.offset,
+        {},30000
+      );
+      const batch=(Array.isArray(data?.books)?data.books:[]).filter(x=>x?.source==="v3-incremental");
+      const known=new Set(fiftyKLedgerState.items.map(x=>String(x?.document_id||"")));
+      for(const item of batch){
+        const id=String(item?.document_id||"");
+        if(id&&!known.has(id)){fiftyKLedgerState.items.push(item);known.add(id);}
+      }
+      fiftyKLedgerState.total=Number(data?.incremental_documents||fiftyKLedgerState.items.length);
+      fiftyKLedgerState.offset=fiftyKLedgerState.items.length;
+      renderFiftyKLedger();
+    }catch(error){
+      if(info)info.textContent="Não consegui ler a lista 50K: "+String(error?.message||error);
+    }finally{
+      fiftyKLedgerState.loading=false;
+      if(refresh)refresh.disabled=false;
+      if(more)more.disabled=false;
+    }
+  }
+
   async function loadMassImportStatus(forceScan=false){
     const host=$("massImportStatus");
     const scanBtn=$("massScanBtn");
@@ -3081,8 +3152,8 @@
       const recent=Array.isArray(data?.recent_incremental)?data.recent_incremental:[];
       if($("recentIndexedPdfs")){
         $("recentIndexedPdfs").textContent=recent.length
-          ?"Últimos PDFs indexados • "+recent.map(x=>String(x.title||"Livro")+" ("+Number(x.page_count||0)+" pág.)").join(" • ")
-          :"Últimos PDFs indexados • ainda não há PDFs novos no índice incremental.";
+          ?"Últimos 5 PDFs indexados • "+recent.map(x=>String(x.title||"Livro")+" ("+Number(x.page_count||0)+" pág.)").join(" • ")
+          :"Últimos 5 PDFs indexados • ainda não há PDFs novos no índice incremental.";
       }
       const parts=[];
 
@@ -3409,6 +3480,7 @@
       $("adminStatus").textContent="Fila concluída • "+ok+" PDF(s) processado(s)"+(failed?" • "+failed+" falha(s)":"")+" • biblioteca antiga preservada.";
       if($("pdfInput"))$("pdfInput").value="";
       await loadBooks();
+      await loadFiftyKLedger(true).catch(()=>{});
     }finally{
       bulkUploadRunning=false;
       $("uploadBtn").disabled=false;
@@ -3657,7 +3729,9 @@
   $("uploadBtn").onclick = () => uploadPdfQueue(Array.from($("pdfInput").files||[]));
   $("reindexBtn").onclick = reindex;
   if($("massOpenFolderBtn")) $("massOpenFolderBtn").onclick=()=>openMassImportFolder();
-  if($("massScanBtn")) $("massScanBtn").onclick=()=>loadMassImportStatus(true).then(()=>loadBooks());
+  if($("massScanBtn")) $("massScanBtn").onclick=()=>loadMassImportStatus(true).then(async()=>{await loadBooks();await loadFiftyKLedger(true);});
+  if($("fiftyKRefreshBtn")) $("fiftyKRefreshBtn").onclick=()=>loadFiftyKLedger(true);
+  if($("fiftyKMoreBtn")) $("fiftyKMoreBtn").onclick=()=>loadFiftyKLedger(false);
   bindPdfUploadUi();
   setUploadGate(true);
 
