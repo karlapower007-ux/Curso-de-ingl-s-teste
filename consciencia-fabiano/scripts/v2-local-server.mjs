@@ -1297,6 +1297,18 @@ async function handleV3LibraryScan(req,res){
   const inc=await ensureIncrementalLibrary();
   json(res,{ok:true,scan,incremental:inc.counts(),mass_import:massImportState});
 }
+async function handleV3LibraryOpenFolder(req,res){
+  await mkdir(MASS_IMPORT_DIR,{recursive:true});
+  if(process.platform!=="win32"){
+    json(res,{ok:false,error:"Abrir pasta automaticamente só está disponível no Windows.",path:MASS_IMPORT_DIR},400);
+    return;
+  }
+  const child=spawn("explorer.exe",[MASS_IMPORT_DIR],{
+    cwd:ROOT,windowsHide:false,detached:true,stdio:"ignore"
+  });
+  child.unref();
+  json(res,{ok:true,opened:true,path:MASS_IMPORT_DIR});
+}
 async function handleV3LibraryCatalog(req,res){
   await loadLibrary();
   const url=new URL(req.url,"http://localhost");
@@ -1384,6 +1396,7 @@ http.createServer(async(req,res)=>{
     if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v3/library/status"){await handleV3LibraryStatus(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/scan"){await handleV3LibraryScan(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/library/open-folder"){await handleV3LibraryOpenFolder(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v3/library/catalog"){await handleV3LibraryCatalog(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/start"){await handleV3LibraryStart(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/append"){await handleV3LibraryAppend(req,res);return;}
