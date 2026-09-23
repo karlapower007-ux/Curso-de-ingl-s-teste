@@ -1,7 +1,7 @@
 import path from "node:path";
 import {mkdir} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
-import {exactAndMatches,splitConcepts} from "./v2-local-core.mjs";
+import {splitConcepts,paragraphBlocks,strictParagraphAudit,sanitizePublicTitle} from "./v2-local-core.mjs";
 
 const VERSION="v3-incremental-1";
 const MAX_PAGE_CHARS=700000;
@@ -261,27 +261,42 @@ export async function createIncrementalLibrary(root){
     if(!concepts.length||!expr)return {query,concepts:[],total:0,page:safePage,page_size:safeSize,pages:0,matches:[]};
     let candidates=[];
     try{
-      candidates=db.prepare("SELECT c.id AS key,c.id,c.document_id,c.title,c.author,c.language,c.page,c.chunk_index,c.text FROM chunks_fts f JOIN chunks c ON c.id=f.id WHERE chunks_fts MATCH ? ORDER BY c.document_id,c.chunk_index").all(expr);
+      candidates=db.prepare("SELECT c.id AS key,c.id,c.document_id,c.title,c.author,c.language,c.page,c.chunk_index,c.text FROM chunks_fts f JOIN chunks c ON c.id=f.id WHERE chunks_fts MATCH ? ORDER BY c.title,c.page,c.chunk_index").all(expr);
     }catch{
       candidates=[];
     }
-    const exact=exactAndMatches(candidates,query,{aliases,page:1,pageSize:100});
-    // exactAndMatches pagina internamente; para preservar total sem teto, refazemos sobre candidatos em blocos lógicos.
-    const allHits=[];
-    for(let p=1;;p++){
-      const batch=exactAndMatches(candidates,query,{aliases,page:p,pageSize:100});
-      allHits.push(...batch.matches);
-      if(p>=batch.pages)break;
+
+    const hits=[];
+    for(const row of candidates){
+      const blocks=paragraphBlocks(row.text||"");
+      for(let index=0;index<blocks.length;index++){
+        const audit=strictParagraphAudit(blocks[index],concepts);
+        if(!audit.accepted)continue;
+        const title=sanitizePublicTitle(row);
+        hits.push({
+          id:String(row.id||row.key||row.document_id+":"+row.chunk_index+":"+index),
+          document_id:String(row.document_id||""),
+          title,
+          page:Number(row.page||0)||null,
+          chunk_index:Number(row.chunk_index||0),
+          text:blocks[index],
+          reference:[title,Number(row.page||0)?("PDF p. "+Number(row.page)):""].filter(Boolean).join(" • "),
+          aliases:audit.matched.map(x=>x.alias),
+          concepts:audit.matched.map(x=>x.label),
+          score:1
+        });
+      }
     }
+    hits.sort((a,b)=>String(a.reference||"").localeCompare(String(b.reference||""),"pt-BR")||a.chunk_index-b.chunk_index);
     const startAt=(safePage-1)*safeSize;
     return {
       query,
-      concepts:exact.concepts,
-      total:allHits.length,
+      concepts:concepts.map(x=>({label:x.label,aliases:x.aliases})),
+      total:hits.length,
       page:safePage,
       page_size:safeSize,
-      pages:Math.ceil(allHits.length/safeSize),
-      matches:allHits.slice(startAt,startAt+safeSize).map(x=>({...x,reference:[x.title,x.page?("PDF p. "+x.page):""].filter(Boolean).join(" • ")}))
+      pages:Math.ceil(hits.length/safeSize),
+      matches:hits.slice(startAt,startAt+safeSize)
     };
   };
 
