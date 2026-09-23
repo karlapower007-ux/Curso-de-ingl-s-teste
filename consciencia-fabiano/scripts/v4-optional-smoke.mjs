@@ -77,6 +77,11 @@ assert.ok(!/ollama|11434/i.test(winStop),"atalho Parar não pode encerrar Ollama
 assert.ok(directInstall.includes("consciencia-cloudflare-native-v1.zip"),"instalador direto deve baixar a branch canônica");
 assert.ok(directInstall.includes("/api/v2/health")&&directInstall.includes("/api/v3/health")&&directInstall.includes("/api/v4/health"),"instalador direto deve validar V2/V3/V4");
 assert.ok(directInstall.includes("/api/v2/dictionary"),"instalador direto deve validar Dicionário V2");
+assert.ok(directInstall.includes("/api/v4/lesson"),"instalador direto deve executar uma Aula real no Qwen local");
+assert.ok(directInstall.includes("support_quote_literal+entailment_local"),"instalador deve exigir o juiz semântico final");
+assert.ok(directInstall.includes("install-validation.json"),"instalador deve gravar relatório da validação física");
+assert.ok(directInstall.includes("piper-wav-generated"),"instalador deve testar WAV local quando Piper estiver disponível");
+assert.ok(directInstall.includes("browser-fallback-pending-user-audio"),"instalador deve distinguir fallback de voz ainda dependente do dispositivo");
 assert.ok(mobileVbs.includes("HABILITAR_CELULAR_TAILSCALE.ps1"),"atalho de celular deve usar gateway autenticado");
 assert.ok(legacyWorkflow.includes("LEGACY_DEPLOY_BLOCKED=true"),"workflow legado deve bloquear HEAD local-first");
 assert.ok(legacyWorkflow.includes("if: env.LEGACY_DEPLOY_BLOCKED != 'true'"),"etapas legadas de deploy devem ser puladas quando V2/V3/V4 estiverem presentes");
@@ -91,6 +96,6 @@ console.log(JSON.stringify({
   whisper:"tiny-lazy",
   dictionary:"v2-frozen",
   windows:"canonical-hidden-local-validated",
-  direct_installer:"branch-download+health+dictionary-check",
+  direct_installer:"branch-download+health+dictionary+real-qwen-lesson+device-report",
   legacy_workflow:"skip-before-deploy"
 },null,2));
