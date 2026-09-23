@@ -72,6 +72,14 @@ try {
   }
   if(-not ($v2.ok -and $v3.ok -and $v4.ok)){ throw "A instalação terminou, mas V2/V3/V4 não responderam corretamente na porta local 8788." }
   if(-not $v4.dictionary_frozen){ throw "A V4 não confirmou o Dicionário congelado. Instalação interrompida." }
+
+  $library50k=Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v3/library/status" -TimeoutSec 30
+  if(-not $library50k.ok){ throw "A biblioteca incremental 50K não respondeu." }
+  if(-not $library50k.base_frozen){ throw "A biblioteca-base não foi confirmada como congelada." }
+  if(-not $library50k.append_only){ throw "A camada incremental não foi confirmada como append-only." }
+  if(([string]$library50k.incremental.version) -notmatch '50k'){ throw "A arquitetura incremental 50K não foi confirmada." }
+  if(-not (Test-Path "C:\ConscienciaFabiano\ImportarPDFs")){ throw "A pasta ImportarPDFs não foi criada." }
+  if(-not (Test-Path "C:\ConscienciaFabiano\node_modules\pdfjs-dist")){ throw "O leitor PDF local pdfjs-dist não foi instalado." }
   if($v4.lesson_endpoint -ne "/api/v4/lesson"){ throw "Endpoint da Aula V4 não confirmado." }
 
   $dict=Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v2/dictionary" -Method Post -ContentType "application/json" -Body '{"query":"Adão","page":1,"page_size":3}' -TimeoutSec 30
@@ -120,6 +128,12 @@ try {
     v2_version=$v2.version
     v3_version=$v3.version
     v3_evidence_units=$v3.evidence_units
+    architecture_50k=$library50k.incremental.version
+    incremental_documents=$library50k.incremental.documents
+    incremental_blocks=$library50k.incremental.blocks
+    mass_import_dir=$library50k.mass_import.import_dir
+    base_frozen=$library50k.base_frozen
+    append_only=$library50k.append_only
     v4_version=$v4.version
     library_hash=$v4.library_hash
     dictionary_frozen=$v4.dictionary_frozen
@@ -149,6 +163,8 @@ try {
     "V4: "+$v4.version+[Environment]::NewLine+
     "Aula real Qwen: validada com "+@($lesson.provas).Count+" provas"+[Environment]::NewLine+
     "V3 unidades: "+$v3.evidence_units+[Environment]::NewLine+
+    "Biblioteca 50K: "+$library50k.incremental.version+[Environment]::NewLine+
+    "Pasta massiva: C:\ConscienciaFabiano\ImportarPDFs"+[Environment]::NewLine+
     "Dicionário V2: preservado ("+$dict.total+" ocorrências para Adão)"+[Environment]::NewLine+
     "Voz técnica: "+$voiceStatus+[Environment]::NewLine+
     "Relatório: C:\ConscienciaFabiano\.fns-local\install-validation.json"+[Environment]::NewLine+
