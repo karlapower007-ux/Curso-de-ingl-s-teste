@@ -29,6 +29,12 @@ $stop.Arguments='"C:\ConscienciaFabiano\windows\PARAR_CONSCIENCIA_V4.vbs"'
 $stop.WorkingDirectory=$Target
 $stop.Save()
 
+$mobile=$wsh.CreateShortcut((Join-Path $desktop "Consciência Fabiano - Celular.lnk"))
+$mobile.TargetPath="$env:WINDIR\System32\wscript.exe"
+$mobile.Arguments='"C:\ConscienciaFabiano\windows\CELULAR_CONSCIENCIA_V4.vbs"'
+$mobile.WorkingDirectory=$Target
+$mobile.Save()
+
 if(-not $SkipTask){
   $taskCmd='wscript.exe "C:\ConscienciaFabiano\windows\INICIAR_CONSCIENCIA_V4.vbs" /silent'
   schtasks.exe /Create /TN "ConscienciaFabianoV4" /SC ONLOGON /TR $taskCmd /F | Out-Null
