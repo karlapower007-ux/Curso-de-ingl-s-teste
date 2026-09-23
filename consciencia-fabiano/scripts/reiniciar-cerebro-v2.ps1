@@ -57,6 +57,7 @@ $files = @(
   "scripts/v2-local-core.mjs",
   "scripts/v3-evidence-core.mjs",
   "scripts/v3-persistent-index.mjs",
+  "scripts/v3-incremental-library.mjs",
   "scripts/v4-lesson-core.mjs",
   "scripts/v4-piper-tts.mjs",
   "scripts/v4-mobile-gateway.mjs",
