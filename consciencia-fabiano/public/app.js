@@ -3063,7 +3063,12 @@
     throw lastError||new Error("Servidor local V3 indisponível.");
   }
 
-  const fiftyKLedgerState={offset:0,limit:100,total:0,items:[],loading:false};
+  const fiftyKLedgerState={offset:0,limit:100,total:0,items:[],loading:false,pending:null};
+
+  function setFiftyKPending(fileName="",stage="",detail=""){
+    fiftyKLedgerState.pending=fileName?{fileName:String(fileName),stage:String(stage||"processando"),detail:String(detail||"")}:null;
+    renderFiftyKLedger();
+  }
 
   function renderFiftyKLedger(){
     const host=$("fiftyKLedgerList"),title=$("fiftyKLedgerTitle"),info=$("fiftyKLedgerInfo"),more=$("fiftyKMoreBtn");
@@ -3074,6 +3079,19 @@
     info.textContent=items.length
       ?("Mostrando "+items.length.toLocaleString("pt-BR")+" de "+fiftyKLedgerState.total.toLocaleString("pt-BR")+". Cada linha abaixo é um PDF confirmado no índice 50K.")
       :"Nenhum PDF novo confirmado no índice 50K ainda.";
+
+    if(fiftyKLedgerState.pending){
+      const item=fiftyKLedgerState.pending;
+      const row=document.createElement("div");row.className="fiftyk-ledger-row fiftyk-ledger-pending";
+      const number=document.createElement("span");number.className="fiftyk-ledger-number";number.textContent="…";
+      const body=document.createElement("div");body.className="fiftyk-ledger-body";
+      const name=document.createElement("strong");name.textContent=item.fileName;
+      const meta=document.createElement("small");meta.textContent=[item.stage,item.detail].filter(Boolean).join(" • ");
+      body.append(name,meta);
+      const badge=document.createElement("span");badge.className="fiftyk-processing-badge";badge.textContent="PROCESSANDO 50K";
+      row.append(number,body,badge);
+      host.appendChild(row);
+    }
 
     items.forEach((item,index)=>{
       const row=document.createElement("div");row.className="fiftyk-ledger-row";
@@ -3385,12 +3403,14 @@
     if($("selectedPdfName")) $("selectedPdfName").textContent=file.name;
     const startedAt=performance.now();
     try{
+      setFiftyKPending(file.name,"Extraindo texto","ainda não registrado no 50K");
       const extracted=await extractPdfLocally(file);
       const localId=String(extracted.content_sha256 || extracted.filename);
       const localRequired=location.hostname==="127.0.0.1"||location.hostname==="localhost"||Boolean(window.__FNS_V2_API_BASE);
       let sourceRecord=null;
       try{
         $("adminStatus").textContent="Preservando PDF original para abrir a fonte no Dicionário e no Chat…";
+        setFiftyKPending(file.name,"Preservando PDF original","ainda não registrado no 50K");
         sourceRecord=await storeOriginalPdfForSourceLink(file,extracted.content_sha256);
       }catch(error){
         console.warn("Fonte Viva não conseguiu preservar o PDF original.",error);
@@ -3398,6 +3418,7 @@
       }
 
       $("adminStatus").textContent="Texto extraído. Salvando livro no IndexedDB/OPFS local…";
+      setFiftyKPending(file.name,"Salvando texto local","próxima etapa: registrar no índice 50K");
       await ensureRagCascade("on-demand-local");
       await window.FNSRagCascade?.persistExtracted?.(extracted);
 
@@ -3416,6 +3437,7 @@
 
       let incremental=null;
       try{
+        setFiftyKPending(file.name,"Registrando no índice 50K","aguarde a confirmação PRONTO 50K");
         incremental=await submitExtractedTextIncremental(extracted,String(sourceRecord?.source_token||""));
         await saveLocalCatalogEntry({
           document_id:localId,
@@ -3452,9 +3474,16 @@
           ?"PDF computado • Fonte Viva + Dicionário + Chat V3 + Aula V4 prontos • "+seconds+"s"
           :"PDF salvo no navegador; V3 local aguardando conexão • "+seconds+"s";
 
+      if(incremental?.duplicate || incremental?.searchable_immediately){
+        setFiftyKPending("");
+        await loadFiftyKLedger(true).catch(()=>{});
+        await loadMassImportStatus(false).catch(()=>{});
+      }
+
       // Tenta sincronizar agora; se a Cloudflare estiver em 429, a fila fica preservada para o próximo ciclo.
       processSyncQueue().catch(()=>{});
     }catch(error){
+      setFiftyKPending(file.name,"FALHA","não entrou no 50K • "+String(error?.message||error));
       $("adminStatus").textContent="Falha ao processar o PDF localmente: "+String(error?.message || error);
       throw error;
     }finally{
