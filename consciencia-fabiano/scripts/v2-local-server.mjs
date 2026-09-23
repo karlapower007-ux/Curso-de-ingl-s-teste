@@ -2,7 +2,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {readFile,readdir,stat,mkdir,appendFile} from "node:fs/promises";
+import {readFile,readdir,stat,mkdir,appendFile,opendir} from "node:fs/promises";
+import {spawn} from "node:child_process";
 import {createHash} from "node:crypto";
 import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
@@ -33,6 +34,9 @@ const PORT=Math.max(1,Number(process.env.PORT||8788));
 const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/\/$/,"");
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
+const MASS_IMPORT_DIR=path.join(ROOT,"ImportarPDFs");
+const PDF_INGEST_WORKER=path.join(ROOT,"scripts","v3-pdf-ingest-worker.mjs");
+const MASS_SCAN_MS=Math.max(60000,Number(process.env.FNS_MASS_SCAN_MS||600000));
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
 const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2";
 const MAX_BODY=4*1024*1024;
@@ -55,6 +59,14 @@ let incrementalPromise=null;
 let baseCatalogCache=null;
 let v4ProfilePromise=null;
 let generatorQueue=Promise.resolve();
+let generatorBusy=0;
+let massScanRunning=false;
+let massPumpRunning=false;
+let activePdfChild=null;
+const massImportState={
+  started:false,last_scan:null,last_file:null,last_result:null,discovered_last_scan:0,
+  import_dir:MASS_IMPORT_DIR
+};
 const embedCache=new Map();
 
 const MIME={
@@ -308,6 +320,117 @@ async function reconcileIncrementalV3(state){
   }
   return {added_documents:addedDocuments,added_units:addedUnits};
 }
+
+async function* walkPdfFiles(dir){
+  let handle;
+  try{handle=await opendir(dir);}catch{return;}
+  for await(const entry of handle){
+    const full=path.join(dir,entry.name);
+    if(entry.isDirectory()){
+      if(entry.name.startsWith("."))continue;
+      yield* walkPdfFiles(full);
+    }else if(entry.isFile()&&/\.pdf$/i.test(entry.name)){
+      yield full;
+    }
+  }
+}
+
+async function scanMassImportFolder(){
+  if(massScanRunning)return {ok:true,skipped:true};
+  massScanRunning=true;
+  let discovered=0,seen=0;
+  try{
+    await mkdir(MASS_IMPORT_DIR,{recursive:true});
+    const inc=await ensureIncrementalLibrary();
+    for await(const file of walkPdfFiles(MASS_IMPORT_DIR)){
+      seen++;
+      try{
+        const info=await stat(file);
+        if(inc.enqueueFolderFile(file,info.size,Math.floor(info.mtimeMs)))discovered++;
+      }catch{}
+      if(seen%250===0)await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    massImportState.last_scan=new Date().toISOString();
+    massImportState.discovered_last_scan=discovered;
+    return {ok:true,seen,discovered};
+  }finally{massScanRunning=false;}
+}
+
+function runPdfIngestWorker(sourcePath){
+  return new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[PDF_INGEST_WORKER,sourcePath],{
+      cwd:ROOT,windowsHide:true,stdio:["ignore","pipe","pipe"],
+      env:{...process.env,FNS_MAX_PDF_MB:String(process.env.FNS_MAX_PDF_MB||512)}
+    });
+    activePdfChild=child;
+    let stdout="",stderr="";
+    const cap=(value,chunk)=>(value+String(chunk||"")).slice(-65536);
+    child.stdout.on("data",chunk=>stdout=cap(stdout,chunk));
+    child.stderr.on("data",chunk=>stderr=cap(stderr,chunk));
+    child.on("error",error=>{if(activePdfChild===child)activePdfChild=null;reject(error);});
+    child.on("close",code=>{
+      if(activePdfChild===child)activePdfChild=null;
+      const lines=stdout.trim().split(/\r?\n/).filter(Boolean);
+      let payload=null;
+      for(let i=lines.length-1;i>=0;i--){
+        try{payload=JSON.parse(lines[i]);break;}catch{}
+      }
+      if(payload)resolve({...payload,exit_code:Number(code||0),stderr:stderr.slice(-2000)});
+      else resolve({ok:false,code:"WORKER_NO_RESULT",error:stderr||("worker exit "+code),exit_code:Number(code||0)});
+    });
+  });
+}
+
+async function pumpMassImportQueue(){
+  if(massPumpRunning)return;
+  massPumpRunning=true;
+  try{
+    const inc=await ensureIncrementalLibrary();
+    while(true){
+      if(generatorBusy>0||os.freemem()<600*1024*1024){
+        await new Promise(resolve=>setTimeout(resolve,3000));
+        continue;
+      }
+      const item=inc.nextFolderFile();
+      if(!item)break;
+      massImportState.last_file=item.source_path;
+      let result;
+      try{result=await runPdfIngestWorker(item.source_path);}
+      catch(error){result={ok:false,code:"WORKER_ERROR",error:String(error?.message||error)};}
+      massImportState.last_result=result;
+      if(result?.ok){
+        inc.finishFolderFile(item.source_path,{
+          status:result.duplicate?"duplicate":"done",
+          sha256:result.sha256||"",
+          documentId:result?.document?.document_id||""
+        });
+      }else{
+        const code=String(result?.code||"");
+        inc.finishFolderFile(item.source_path,{
+          status:code==="NEEDS_OCR"?"needs_ocr":"failed",
+          error:String(result?.error||code||"Falha de ingestão")
+        });
+      }
+      inc.checkpoint();
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+  }finally{massPumpRunning=false;}
+}
+
+async function startMassImporter(){
+  if(massImportState.started)return;
+  massImportState.started=true;
+  await mkdir(MASS_IMPORT_DIR,{recursive:true});
+  const inc=await ensureIncrementalLibrary();
+  inc.requeueInterrupted();
+  await scanMassImportFolder();
+  pumpMassImportQueue().catch(()=>{});
+  setInterval(()=>{
+    scanMassImportFolder().then(()=>pumpMassImportQueue()).catch(()=>{});
+  },MASS_SCAN_MS).unref?.();
+  setInterval(()=>pumpMassImportQueue().catch(()=>{}),15000).unref?.();
+}
+
 async function loadLibrary(){
   if(libraryPromise)return libraryPromise;
   libraryPromise=(async()=>{
@@ -485,7 +608,12 @@ async function ensureV4Profile(){
   return v4ProfilePromise;
 }
 function withGeneratorQueue(task){
-  const run=generatorQueue.then(task,task);
+  const wrapped=async()=>{
+    generatorBusy++;
+    try{return await task();}
+    finally{generatorBusy=Math.max(0,generatorBusy-1);}
+  };
+  const run=generatorQueue.then(wrapped,wrapped);
   generatorQueue=run.catch(()=>{});
   return run;
 }
@@ -1132,7 +1260,17 @@ async function handleChat(req,res){
 
 async function handleV3LibraryStatus(req,res){
   const [state,inc]=await Promise.all([ensureV3Index(),ensureIncrementalLibrary()]);
-  json(res,{ok:true,base:persistentV3Health(state),incremental:inc.counts(),append_only:true,base_frozen:true});
+  json(res,{
+    ok:true,base:persistentV3Health(state),incremental:inc.counts(),
+    append_only:true,base_frozen:true,
+    mass_import:{...massImportState,scanner_running:massScanRunning,worker_running:massPumpRunning}
+  });
+}
+async function handleV3LibraryScan(req,res){
+  const scan=await scanMassImportFolder();
+  pumpMassImportQueue().catch(()=>{});
+  const inc=await ensureIncrementalLibrary();
+  json(res,{ok:true,scan,incremental:inc.counts(),mass_import:massImportState});
 }
 async function handleV3LibraryCatalog(req,res){
   await loadLibrary();
@@ -1220,6 +1358,7 @@ http.createServer(async(req,res)=>{
     if(req.method==="GET" && url.pathname==="/api/v3/health"){await handleV3Health(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v3/library/status"){await handleV3LibraryStatus(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/library/scan"){await handleV3LibraryScan(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v3/library/catalog"){await handleV3LibraryCatalog(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/start"){await handleV3LibraryStart(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/append"){await handleV3LibraryAppend(req,res);return;}
@@ -1252,4 +1391,5 @@ http.createServer(async(req,res)=>{
     console.log("LOCAL_LIBRARY_CHUNKS="+info.chunks);
     ensureV3Index().then(state=>console.log("V3_EVIDENCE_UNITS="+persistentV3Health(state).evidence_units)).catch(()=>{});
   }).catch(()=>{});
+  startMassImporter().then(()=>console.log("MASS_IMPORT_DIR="+MASS_IMPORT_DIR)).catch(error=>console.error("MASS_IMPORT_ERROR",String(error?.message||error)));
 });
