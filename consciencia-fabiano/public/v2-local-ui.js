@@ -248,11 +248,20 @@ function lessonDisplayText(data={}){
   if(data?.nao_sei)return data?.guard==="adulto"
     ?String(data.ideia||"")+"\n\n"+String(data.pergunta||"")
     :"Não achei na biblioteca.";
-  const proofs=(data.provas||[]).map((p,i)=>"Prova "+(i+1)+": "+String(p.ref||"")+"\n"+String(p.trecho||"")).join("\n\n");
+  const proofs=(data.provas||[]).map((p,i)=>{
+    const lang=String(p?.idioma_original||"").trim();
+    const originalLabel=lang&&lang!=="pt"?"Trecho original ("+lang+")":"Trecho original";
+    const lines=[
+      "Prova "+(i+1)+": "+String(p.ref||""),
+      originalLabel+": "+String(p.trecho_original||p.trecho||"")
+    ];
+    if(String(p?.traducao_pt||"").trim())lines.push("Tradução automática para português: "+String(p.traducao_pt));
+    return lines.join("\n");
+  }).join("\n\n");
   return [
-    String(data.ideia||""),
+    "Ideia: "+String(data.ideia||""),
+    ...(data.explicacao||[]).map(x=>"Explicação: "+String(x)),
     proofs,
-    ...(data.explicacao||[]).map(String),
     "Entendeu? "+String(data.pergunta||"")
   ].filter(Boolean).join("\n\n");
 }
