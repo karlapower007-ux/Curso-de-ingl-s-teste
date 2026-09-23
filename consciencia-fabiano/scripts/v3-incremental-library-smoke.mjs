@@ -7,6 +7,7 @@ import {DatabaseSync} from "node:sqlite";
 import {createIncrementalLibrary} from "./v3-incremental-library.mjs";
 import {buildV3EvidenceIndex} from "./v3-evidence-core.mjs";
 import {ensurePersistentV3,persistentV3Health,searchPersistentV3} from "./v3-persistent-index.mjs";
+import {mergeFederatedSearch} from "./v3-federated-core.mjs";
 
 const tmp=await mkdtemp(path.join(os.tmpdir(),"fns-50k-"));
 try{
@@ -16,7 +17,7 @@ try{
   await mkdir(path.join(tmp,"raw-vault","generated"),{recursive:true});
 
   const baseRows=[
-    {id:"base-1",document_id:"base-doc",title:"Biblioteca Base",page:1,chunk_index:0,text:"Conteúdo antigo preservado no baú base.",language:"pt"}
+    {id:"base-1",document_id:"base-doc",title:"Biblioteca Base",page:1,chunk_index:0,text:"Conteúdo antigo preservado no baú base. Integração federada comum entre acervo antigo e novo.",language:"pt"}
   ];
   const baseFile=path.join(backup,"part-0000.json");
   await writeFile(baseFile,JSON.stringify({chunks:baseRows}),"utf8");
@@ -37,7 +38,7 @@ try{
     filename:"Real.pdf",title:"Livro Real",content_sha256:shaReal,page_count:2,size_bytes:2048,source_path:"C:\\ImportarPDFs\\Real.pdf"
   });
   inc.append(started.job_id,[
-    {page:1,text:"Este livro real confirma a integração incremental permanente."},
+    {page:1,text:"Este livro real confirma a integração incremental permanente. Integração federada comum entre acervo antigo e novo."},
     {page:2,text:"O Dicionário, o Livro V3 e a Aula V4 compartilham este acervo novo."}
   ]);
   const committed=inc.commit(started.job_id);
@@ -48,6 +49,16 @@ try{
     filename:"Copia.pdf",title:"Cópia",content_sha256:shaReal,page_count:2,size_bytes:2048
   });
   assert.equal(duplicate.duplicate,true,"SHA-256 repetido deve ser deduplicado");
+
+  // Prova executável da federação usada pelo servidor: mesma consulta, duas camadas.
+  const federationQuery="integração federada comum";
+  const oldHit=searchPersistentV3(baseState,federationQuery,{}, {limit:10,strict:false});
+  const newHit=inc.searchV3(federationQuery,{}, {limit:10,candidate_limit:100});
+  const federated=mergeFederatedSearch(oldHit,newHit,20);
+  assert.ok(federated.results.some(x=>String(x.document_id)==="base-doc"),"busca federada deve manter resultado do acervo antigo");
+  assert.ok(federated.results.some(x=>String(x.document_id)===shaReal),"busca federada deve incluir PDF novo");
+  assert.ok(Number(federated.sources.base_frozen||0)>0);
+  assert.ok(Number(federated.sources.incremental_50k||0)>0);
 
   // Carga sintética 50K em uma única transação: testa o formato físico e o FTS real.
   const db=new DatabaseSync(inc.db_path);
@@ -118,6 +129,8 @@ try{
     sha256_dedup:true,
     base_index_unchanged:true,
     base_vault_unchanged:true,
+    federation_old_and_new_same_query:true,
+    federation_sources:federated.sources,
     architecture:"base-frozen + incremental-50k federated"
   },null,2));
 }finally{
