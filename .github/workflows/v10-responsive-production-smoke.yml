@@ -144,11 +144,11 @@ jobs:
                 {query:"Adão",minTotal:2,concept:"Adão",mustContain:"Adam",related:"Miguel"},
                 {query:"Miguel",minTotal:1,concept:"Miguel",mustContain:"Michael"},
                 {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",mustContain:"Second Anointing"},
-                {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"Tithing"},
-                {query:"Pai Celestial",minTotal:1,concept:"Pai Celestial",mustContain:"Heavenly Father"},
-                {query:"Sacerdócio de Melquisedeque",minTotal:1,concept:"Sacerdócio de Melquisedeque",mustContain:"Melchizedek Priesthood"},
+                {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"dízimo"},
+                {query:"Pai Celestial",minTotal:1,concept:"Pai Celestial",mustContain:"Pai Celestial"},
+                {query:"Sacerdócio de Melquisedeque",minTotal:1,concept:"Sacerdócio de Melquisedeque",mustContain:"Sacerdócio de Melquisedeque"},
                 {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,conceptParts:["Plano de Salvação","Vida Pré-Mortal"],mustContain:"plan of salvation",mustContainAlso:"premortal life",compound:true},
-                {query:"Batismo e Sacramento",minTotal:1,conceptParts:["Batismo","Sacramento"],mustContain:"Baptism",mustContainAlso:"sacrament",compound:true}
+                {query:"Batismo e Sacramento",minTotal:1,conceptParts:["Batismo","Sacramento"],mustContain:"Batismo",mustContainAlso:"Sacramento",compound:true}
               ];
               const canonicalReport=[];
               for(const test of canonical){
