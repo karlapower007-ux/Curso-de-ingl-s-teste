@@ -494,13 +494,20 @@ async function searchDictionary(reset=true){
   const btn=$("dictionarySearchBtn");if(btn)btn.disabled=true;
   try{
     let data=null;
-    try{
-      const mod=await import("/v2-local-engine.js");
-      const state=await mod.FNSV2LocalEngine.counts();
-      if(Number(state?.chunks||0)>0){
-        data=await mod.FNSV2LocalEngine.exactSearch(q,{page:dictionaryState.page,pageSize:dictionaryState.pageSize});
-      }
-    }catch{}
+    if(localReady&&!browserOnly){
+      try{
+        data=await call("/api/v2/dictionary",{query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize},120000);
+      }catch{}
+    }
+    if(!data){
+      try{
+        const mod=await import("/v2-local-engine.js");
+        const state=await mod.FNSV2LocalEngine.counts();
+        if(Number(state?.chunks||0)>0){
+          data=await mod.FNSV2LocalEngine.exactSearch(q,{page:dictionaryState.page,pageSize:dictionaryState.pageSize});
+        }
+      }catch{}
+    }
     if(!data){
       data=await call("/api/v2/dictionary",{query:q,page:dictionaryState.page,page_size:dictionaryState.pageSize},120000);
     }
