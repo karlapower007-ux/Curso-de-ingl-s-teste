@@ -7,7 +7,7 @@ const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
 
 const read=rel=>readFile(path.join(root,rel),"utf8");
-const [server,ui,piper,gateway,whisper,worker,enableMobile,disableMobile,disableExternal,updater,winInstall,winStart,winStop,directInstall,mobileVbs,legacyWorkflow]=await Promise.all([
+const [server,ui,piper,gateway,whisper,worker,enableMobile,disableMobile,disableExternal,updater,winInstall,winStart,winStop,directInstall,mobileVbs,legacyWorkflow,indexHtml,appJs]=await Promise.all([
   read("scripts/v2-local-server.mjs"),
   read("public/v2-local-ui.js"),
   read("scripts/v4-piper-tts.mjs"),
@@ -23,7 +23,9 @@ const [server,ui,piper,gateway,whisper,worker,enableMobile,disableMobile,disable
   read("windows/stop-local.ps1"),
   read("windows/INSTALAR_DIRETO_CONSCIENCIA_V4.ps1"),
   read("windows/CELULAR_CONSCIENCIA_V4.vbs"),
-  read("../.github/workflows/v80-production-deploy.yml")
+  read("../.github/workflows/v80-production-deploy.yml"),
+  read("public/index.html"),
+  read("public/app.js")
 ]);
 
 assert.ok(server.includes('process.env.FNS_EXTERNAL_WRITER_ENABLED||"0"'),"redator externo deve nascer desligado");
@@ -91,6 +93,12 @@ assert.ok(enableMobile.includes("TAILSCALE"),"habilitador deve exibir endereço 
 assert.ok(enableMobile.includes(":8790/?token="),"LAN deve usar somente o gateway autenticado 8790");
 assert.ok(legacyWorkflow.includes("LEGACY_DEPLOY_BLOCKED=true"),"workflow legado deve bloquear HEAD local-first");
 assert.ok(legacyWorkflow.includes("if: env.LEGACY_DEPLOY_BLOCKED != 'true'"),"etapas legadas de deploy devem ser puladas quando V2/V3/V4 estiverem presentes");
+assert.ok(server.includes('/api/v3/library/open-folder'),"servidor local deve expor ação de abrir a pasta ImportarPDFs");
+assert.ok(server.includes('spawn("explorer.exe"'),"abrir pasta deve usar Explorer no Windows local");
+assert.ok(indexHtml.includes('id="massOpenFolderBtn"'),"Biblioteca deve ter botão Abrir pasta dos PDFs");
+assert.ok(indexHtml.includes('id="massScanBtn"'),"Biblioteca deve manter botão Verificar pasta agora");
+assert.ok(appJs.includes("PDF(s) encontrado(s)"),"verificação deve mostrar contagem visível de PDFs encontrados");
+assert.ok(appJs.includes("Último arquivo:"),"status deve mostrar o último PDF processado");
 
 console.log(JSON.stringify({
   ok:true,
