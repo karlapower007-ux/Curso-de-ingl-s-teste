@@ -388,7 +388,7 @@ export async function createIncrementalLibrary(root){
     if(!p)return false;
     const now=new Date().toISOString();
     const existing=db.prepare("SELECT source_path,size_bytes,mtime_ms,status FROM folder_queue WHERE source_path=?").get(p);
-    if(existing && Number(existing.size_bytes)===Number(sizeBytes||0) && Number(existing.mtime_ms)===Number(mtimeMs||0) && ["queued","processing","done","duplicate"].includes(String(existing.status)))return false;
+    if(existing && Number(existing.size_bytes)===Number(sizeBytes||0) && Number(existing.mtime_ms)===Number(mtimeMs||0) && ["queued","processing","done","duplicate","failed","needs_ocr"].includes(String(existing.status)))return false;
     db.prepare("INSERT INTO folder_queue(source_path,size_bytes,mtime_ms,status,attempts,last_error,discovered_at,updated_at) VALUES(?,?,?,'queued',0,'',?,?) ON CONFLICT(source_path) DO UPDATE SET size_bytes=excluded.size_bytes,mtime_ms=excluded.mtime_ms,status='queued',last_error='',updated_at=excluded.updated_at")
       .run(p,Math.max(0,Number(sizeBytes||0)),Math.max(0,Number(mtimeMs||0)),now,now);
     return true;
