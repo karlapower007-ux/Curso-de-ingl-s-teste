@@ -162,6 +162,7 @@ assert.ok(server.includes("dictionaryPublicReference"),"Dicionário deve reutili
 assert.ok(server.includes("dictionary_scripture_source:true"),"Dicionário deve marcar resultados das Escrituras para apresentação segura");
 assert.ok(ui.includes('hit.dictionary_scripture_source?"PDF p. "'),"UI do Dicionário deve mostrar a página técnica apenas como PDF p. X nas Escrituras");
 assert.ok(incremental.includes("standard_works:isStandardWorksRow(row)"),"Índice incremental 50K deve preservar o marcador de Obras Padrão");
+assert.ok(restart.includes('"scripts/v3-incremental-library.mjs"'),"Atualizador Windows deve baixar o motor incremental 50K junto com a correção do Dicionário");
 assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
 assert.ok(ui.includes('call("/api/v3/chat"'),"Chat oficial deve usar o Evidence Engine V3");
 assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve continuar usando exatamente a rota V2");
