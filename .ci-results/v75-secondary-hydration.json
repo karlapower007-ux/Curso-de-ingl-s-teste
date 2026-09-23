@@ -1,10 +1,10 @@
 {
   "state": "failed",
-  "primary_total": 14666,
+  "primary_total": 14820,
   "mirrored_chunks": 0,
   "hydrated_embeddings": 0,
   "total_books": 0,
-  "generation": "v75-etl-mudd5g0u",
+  "generation": "v75-etl-mudf0pis",
   "source_signature": "",
   "source": "durable-object",
   "source_generation": "",
