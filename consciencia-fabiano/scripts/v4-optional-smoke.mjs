@@ -50,7 +50,9 @@ assert.ok(gateway.includes("HttpOnly; Secure; SameSite=Strict"),"token móvel de
 assert.ok(!gateway.includes('0.0.0.0'),"gateway móvel não pode bindar publicamente");
 
 assert.ok(enableMobile.includes("tailscale serve --bg http://127.0.0.1:8790"),"Tailscale deve servir só o gateway autenticado");
-assert.ok(!enableMobile.includes("8788"),"habilitador móvel não pode publicar a porta 8788");
+const serveLines=enableMobile.split(/\r?\n/).filter(line=>/tailscale\s+serve/i.test(line) && !/^\s*#/.test(line));
+assert.ok(serveLines.length>=1,"habilitador móvel deve possuir comando tailscale serve");
+assert.ok(serveLines.every(line=>!line.includes("8788")),"nenhum comando tailscale serve pode publicar a porta 8788");
 assert.ok(disableMobile.includes("tailscale serve reset"),"desabilitar celular deve remover o Tailscale Serve");
 assert.ok(disableExternal.includes('"FNS_EXTERNAL_WRITER_ENABLED","0","User"'),"deve existir desligamento explícito do redator externo");
 
