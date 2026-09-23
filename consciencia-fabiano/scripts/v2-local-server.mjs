@@ -1279,10 +1279,14 @@ async function handleChat(req,res){
 }
 
 async function handleV3LibraryStatus(req,res){
+  await loadLibrary();
   const [state,inc]=await Promise.all([ensureV3Index(),ensureIncrementalLibrary()]);
   json(res,{
-    ok:true,base:persistentV3Health(state),incremental:inc.counts(),
-    append_only:true,base_frozen:true,
+    ok:true,
+    base:{...persistentV3Health(state),documents:baseLibraryCatalog().length},
+    incremental:inc.counts(),
+    total_documents:baseLibraryCatalog().length+Number(inc.counts().documents||0),
+    append_only:true,base_frozen:true,federated_search:true,
     mass_import:{...massImportState,scanner_running:massScanRunning,worker_running:massPumpRunning}
   });
 }
