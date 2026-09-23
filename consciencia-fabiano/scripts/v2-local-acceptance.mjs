@@ -165,6 +165,10 @@ assert.ok(ui.includes('hit.dictionary_scripture_source?"PDF p. "'),"UI do Dicion
 assert.ok(incremental.includes("standard_works:isStandardWorksRow(row)"),"Índice incremental 50K deve preservar o marcador de Obras Padrão");
 assert.ok(restart.includes('"scripts/v3-incremental-library.mjs"'),"Atualizador Windows deve baixar o motor incremental 50K junto com a correção do Dicionário");
 assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
+assert.ok(index.includes('id="fiftyKLedgerList"'),"Biblioteca deve exibir uma lista dedicada de PDFs confirmados no 50K");
+assert.ok(index.includes('id="fiftyKMoreBtn"'),"Lista 50K deve permitir continuar vendo todos os PDFs por paginação");
+assert.ok(app.includes("loadFiftyKLedger"),"UI deve carregar o catálogo incremental 50K diretamente");
+assert.ok(app.includes('"PRONTO 50K"'),"cada PDF confirmado deve mostrar selo explícito PRONTO 50K");
 assert.ok(app.includes("promoteLegacyLocalBooksToV3"),"PDFs antigos somente no IndexedDB devem migrar automaticamente ao índice 50K");
 assert.ok(app.includes("legacy-to-50k-promotion"),"migração ao 50K deve reutilizar os chunks locais, sem exigir novo upload");
 assert.ok(app.includes("local-pendente-50K"),"falha de migração ao 50K deve ficar marcada no catálogo");
