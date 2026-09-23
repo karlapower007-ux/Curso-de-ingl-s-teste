@@ -190,7 +190,7 @@ jobs:
                 if(test.compound){
                   const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
                   const groups=test.query.startsWith("Plano")
-                    ? [["plano de salvacao","plan of salvation","plan of redemption"],["vida pre mortal","vida pre-mortal","premortal life","pre-mortal life","preexistence","pre-existence","preexistencia"]]
+                    ? [["plano de salvacao","plano de redencao","plan of salvation","plan of redemption"],["vida pre mortal","vida pre-mortal","premortal life","pre-mortal life","preexistence","pre-existence","preexistencia"]]
                     : [["batismo","baptism"],["sacramento","sacrament"]];
                   for(const row of state.results){
                     const f=fold(row);
