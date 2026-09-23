@@ -8,14 +8,17 @@ import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
   exactAndMatches, lexicalCandidates, chooseInstalledModel,
   formatExactAnswer, formatGroundedAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
-  focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus, focusedEvidenceWindow
+  focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus, focusedEvidenceWindow,
+  sanitizePublicTitle
 } from "./v2-local-core.mjs";
 import {
   buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer,v3DisplayReference
 } from "./v3-evidence-core.mjs";
 import {
-  ensurePersistentV3,searchPersistentV3,persistentV3Health
+  ensurePersistentV3,searchPersistentV3,persistentV3Health,
+  appendPersistentV3,persistentV3HasDocument
 } from "./v3-persistent-index.mjs";
+import {createIncrementalLibrary} from "./v3-incremental-library.mjs";
 import {
   V4_VERSION,buildLesson,lessonToPlainText,lessonSpeechText,createLessonProfileStore,
   judgeLessonDraft
@@ -48,6 +51,8 @@ const authoritativePages=new Map();
 let libraryPromise=null;
 let aliasesPromise=null;
 let v3IndexPromise=null;
+let incrementalPromise=null;
+let baseCatalogCache=null;
 let v4ProfilePromise=null;
 let generatorQueue=Promise.resolve();
 const embedCache=new Map();
@@ -123,14 +128,37 @@ function explicitPrintedPage(row={}){
   }
   return null;
 }
-function candidateAuthorityRow(candidate={}){
+async function candidateAuthorityRow(candidate={}){
   const sourceId=String(candidate.source_chunk_id||"").trim();
   if(sourceId&&authoritativeRows.has(sourceId))return authoritativeRows.get(sourceId);
+  if(sourceId){
+    try{
+      const inc=await ensureIncrementalLibrary();
+      const row=inc.getChunk(sourceId);
+      if(row)return row;
+    }catch{}
+  }
   const pageRows=authoritativePages.get(authoritativePageKey(candidate))||[];
   const needle=normalizeAuthorityText(candidate.text);
-  return pageRows.find(row=>normalizeAuthorityText(row.text).includes(needle))||null;
+  const base=pageRows.find(row=>normalizeAuthorityText(row.text).includes(needle));
+  if(base)return base;
+  try{
+    const inc=await ensureIncrementalLibrary();
+    const extra=inc.getPage(candidate.document_id,candidate.page);
+    return extra.find(row=>normalizeAuthorityText(row.text).includes(needle))||null;
+  }catch{return null;}
 }
-function v4EvidenceFromAuthority(candidates=[]){
+async function authoritativePageTextAsync(row={}){
+  const base=authoritativePageText(row);
+  if(base&&base!==String(row.text||""))return base;
+  try{
+    const inc=await ensureIncrementalLibrary();
+    const pageRows=inc.getPage(row.document_id,row.page);
+    if(pageRows.length)return pageRows.map(x=>String(x.text||"")).join(" ");
+  }catch{}
+  return String(row.text||"");
+}
+async function v4EvidenceFromAuthority(candidates=[]){
   const out=[];
   for(const candidate of candidates||[]){
     if(String(candidate?.kind||"")==="scripture-page-window")continue;
@@ -138,7 +166,7 @@ function v4EvidenceFromAuthority(candidates=[]){
     if(!text)continue;
 
     if(String(candidate?.kind||"")==="scripture-verse"){
-      const pageText=normalizeAuthorityText(authoritativePageText(candidate));
+      const pageText=normalizeAuthorityText(await authoritativePageTextAsync(candidate));
       const ref=String(candidate.reference||"").replace(/\s+/g," ").trim();
       if(!pageText.includes(text))continue;
       if(!/\b\d{1,4}:\d{1,4}\b/.test(ref))continue;
@@ -158,7 +186,7 @@ function v4EvidenceFromAuthority(candidates=[]){
       continue;
     }
 
-    const authority=candidateAuthorityRow(candidate);
+    const authority=await candidateAuthorityRow(candidate);
     if(!authority)continue;
     const authorityText=normalizeAuthorityText(authority.text);
     if(!authorityText.includes(text))continue;
@@ -230,6 +258,56 @@ async function loadAliases(){
     .then(x=>JSON.parse(x)).catch(()=>({}));
   return aliasesPromise;
 }
+
+async function ensureIncrementalLibrary(){
+  if(!incrementalPromise)incrementalPromise=createIncrementalLibrary(ROOT);
+  return incrementalPromise;
+}
+
+function baseLibraryCatalog(){
+  if(baseCatalogCache)return baseCatalogCache;
+  const map=new Map();
+  for(const row of rows){
+    if(String(row?.source||"")==="incremental-local")continue;
+    const documentId=String(row?.document_id||row?.doc_key||"").trim()||"base:"+String(row?.title||row?.filename||"livro");
+    let item=map.get(documentId);
+    if(!item){
+      const title=sanitizePublicTitle(row)||(/standard[-_ ]?works|obras\s+padr[aã]o/i.test(String(row?.title||row?.filename||""))?"Escrituras":"Livro");
+      item={
+        document_id:documentId,arquivo:title,titulo:title,autor:String(row?.author||""),
+        paginas:0,chunks:0,idioma:String(row?.language||""),status:"base-congelada",
+        source:"v3-base-frozen",immutable:true
+      };
+      map.set(documentId,item);
+    }
+    item.chunks++;
+    item.paginas=Math.max(item.paginas,Number(row?.page||0)||0);
+  }
+  baseCatalogCache=[...map.values()].sort((a,b)=>String(a.titulo).localeCompare(String(b.titulo),"pt-BR"));
+  return baseCatalogCache;
+}
+
+async function allRowsForV3Rebuild(){
+  await loadLibrary();
+  const inc=await ensureIncrementalLibrary();
+  const all=[...rows];
+  for(const documentId of inc.allReadyDocumentIds()){
+    all.push(...inc.rowsForDocument(documentId));
+  }
+  return all;
+}
+
+async function reconcileIncrementalV3(state){
+  const inc=await ensureIncrementalLibrary();
+  let addedDocuments=0,addedUnits=0;
+  for(const documentId of inc.allReadyDocumentIds()){
+    if(persistentV3HasDocument(state,documentId))continue;
+    const docRows=inc.rowsForDocument(documentId);
+    const result=appendPersistentV3(state,docRows,buildV3EvidenceIndex);
+    if(Number(result.added_units||0)>0){addedDocuments++;addedUnits+=Number(result.added_units||0);}
+  }
+  return {added_documents:addedDocuments,added_units:addedUnits};
+}
 async function loadLibrary(){
   if(libraryPromise)return libraryPromise;
   libraryPromise=(async()=>{
@@ -277,8 +355,9 @@ async function ensureV3Index(){
       root:ROOT,
       publicDir:PUBLIC,
       buildIndex:buildV3EvidenceIndex,
-      loadRows:async()=>{await loadLibrary();return rows;}
+      loadRows:allRowsForV3Rebuild
     });
+    await reconcileIncrementalV3(state);
     return {...state,build_ms:Date.now()-started};
   })();
   return v3IndexPromise;
@@ -471,14 +550,14 @@ async function handleV4Lesson(req,res){
 
   const [state,aliases,profileStore]=await Promise.all([ensureV3Index(),loadAliases(),ensureV4Profile()]);
   let search=searchPersistentV3(state,question,aliases,{limit:16,strict:false,candidate_limit:500});
-  let verifiedEvidence=v4EvidenceFromAuthority(search.results);
+  let verifiedEvidence=await v4EvidenceFromAuthority(search.results);
   if(verifiedEvidence.length<2){
     const expanded=await withGeneratorQueue(()=>expandV3WithQwen(question));
     if(expanded.length){
       search=searchPersistentV3(state,question,aliases,{
         limit:16,strict:false,candidate_limit:700,extraExpansions:expanded
       });
-      verifiedEvidence=v4EvidenceFromAuthority(search.results);
+      verifiedEvidence=await v4EvidenceFromAuthority(search.results);
     }
   }
 
@@ -733,23 +812,69 @@ function exactPayload(result){
 async function handleHealth(req,res){
   const models=await installedModels();
   const lib=await loadLibrary();
+  const inc=await ensureIncrementalLibrary();
+  const incCounts=inc.counts();
   json(res,{
     ok:true,version:V2_VERSION,local_runtime_build:LOCAL_RUNTIME_BUILD,service:"Consciência Fabiano v2 Local",
     local_only:true,external_paid_providers:false,
     ollama:{url:"localhost:11434",reachable:models.length>0,installed:models},
     hardware:{ram_gb:ramGb(),recommended:recommendedByHardware(),selected:autoModel(models),context_tokens:contextTokensByHardware()},
     embeddings:{model:EMBED_MODEL,installed:models.includes(EMBED_MODEL)},
-    library:lib
+    library:{
+      ...lib,
+      base_chunks:lib.chunks,
+      incremental_chunks:incCounts.chunks,
+      incremental_documents:incCounts.documents,
+      pending_jobs:incCounts.jobs,
+      chunks:Number(lib.chunks||0)+Number(incCounts.chunks||0)
+    }
   });
 }
 async function handleDictionary(req,res){
   const body=await readJsonBody(req);
   await loadLibrary();
   const aliases=await loadAliases();
-  const result=exactAndMatches(rows,String(body.query||body.question||""),{
-    aliases,page:Number(body.page||1),pageSize:Number(body.page_size||50)
+  const query=String(body.query||body.question||"");
+  const page=Math.max(1,Number(body.page||1));
+  const pageSize=Math.min(100,Math.max(1,Number(body.page_size||50)));
+
+  const baseProbe=exactAndMatches(rows,query,{aliases,page:1,pageSize:1});
+  const inc=await ensureIncrementalLibrary();
+  const incProbe=inc.searchDictionary(query,{aliases,page:1,pageSize:1});
+  const baseTotal=Number(baseProbe.total||0),incTotal=Number(incProbe.total||0);
+  const total=baseTotal+incTotal;
+  const start=(page-1)*pageSize;
+  const end=Math.min(total,start+pageSize);
+  const matches=[];
+
+  if(start<baseTotal && end>0){
+    const firstBasePage=Math.floor(start/pageSize)+1;
+    const first=exactAndMatches(rows,query,{aliases,page:firstBasePage,pageSize});
+    const offsetInFirst=start-(firstBasePage-1)*pageSize;
+    matches.push(...first.matches.slice(offsetInFirst,offsetInFirst+(end-start)));
+  }
+
+  if(matches.length<end-start && end>baseTotal){
+    const incOffset=Math.max(0,start-baseTotal);
+    const needed=(end-start)-matches.length;
+    const incPage=Math.floor(incOffset/pageSize)+1;
+    const first=inc.searchDictionary(query,{aliases,page:incPage,pageSize});
+    const offset=incOffset-(incPage-1)*pageSize;
+    matches.push(...first.matches.slice(offset,offset+needed));
+    if(matches.length<end-start && incPage<first.pages){
+      const second=inc.searchDictionary(query,{aliases,page:incPage+1,pageSize});
+      matches.push(...second.matches.slice(0,(end-start)-matches.length));
+    }
+  }
+
+  json(res,{
+    ok:true,local_only:true,unlimited_logical_results:true,
+    query,
+    concepts:baseProbe.concepts?.length?baseProbe.concepts:incProbe.concepts,
+    total,page,page_size:pageSize,pages:Math.ceil(total/pageSize),
+    matches,
+    sources:{base_frozen:baseTotal,incremental:incTotal}
   });
-  json(res,{ok:true,local_only:true,unlimited_logical_results:true,...result});
 }
 async function handleEmbed(req,res){
   const body=await readJsonBody(req);
@@ -968,6 +1093,52 @@ async function handleChat(req,res){
     matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
   });
 }
+
+async function handleV3LibraryStatus(req,res){
+  const [state,inc]=await Promise.all([ensureV3Index(),ensureIncrementalLibrary()]);
+  json(res,{ok:true,base:persistentV3Health(state),incremental:inc.counts(),append_only:true,base_frozen:true});
+}
+async function handleV3LibraryCatalog(req,res){
+  await loadLibrary();
+  const inc=await ensureIncrementalLibrary();
+  const base=baseLibraryCatalog();
+  const added=inc.listDocuments({limit:10000}).map(x=>({
+    document_id:x.document_id,arquivo:x.title||x.filename,titulo:x.title||x.filename,autor:x.author||"",
+    paginas:Number(x.page_count||0),chunks:Number(x.chunk_count||0),idioma:x.language||"",
+    status:"incremental-pronto",source:"v3-incremental",immutable:false,created_at:x.created_at
+  }));
+  json(res,{ok:true,base_frozen:true,total_documents:base.length+added.length,base_documents:base.length,incremental_documents:added.length,books:[...base,...added]});
+}
+async function handleV3LibraryStart(req,res){
+  const body=await readJsonBody(req);
+  const inc=await ensureIncrementalLibrary();
+  json(res,inc.start(body));
+}
+async function handleV3LibraryAppend(req,res){
+  const body=await readJsonBody(req);
+  const inc=await ensureIncrementalLibrary();
+  json(res,inc.append(body.job_id,body.pages));
+}
+async function handleV3LibraryCommit(req,res){
+  const body=await readJsonBody(req);
+  const inc=await ensureIncrementalLibrary();
+  const committed=inc.commit(body.job_id);
+  let indexResult={added_source_rows:0,added_units:0,total_units:0};
+  if(!committed.duplicate&&committed.rows?.length){
+    const state=await ensureV3Index();
+    indexResult=appendPersistentV3(state,committed.rows,buildV3EvidenceIndex);
+    for(const row of committed.rows)indexAuthoritativeRow(row);
+  }
+  json(res,{
+    ok:true,duplicate:Boolean(committed.duplicate),document:committed.document,
+    index:indexResult,
+    searchable_immediately:true,
+    dictionary_included:true,
+    v3_included:true,
+    v4_included:true
+  });
+}
+
 async function serveStatic(req,res){
   const url=new URL(req.url,"http://localhost");
   let pathname=decodeURIComponent(url.pathname);
@@ -1006,6 +1177,11 @@ http.createServer(async(req,res)=>{
     if(req.method==="GET" && url.pathname==="/painel"){res.statusCode=200;res.setHeader("Content-Type","text/html; charset=utf-8");res.end(panelHtml());return;}
     if(req.method==="GET" && url.pathname==="/api/v3/health"){await handleV3Health(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
+    if(req.method==="GET" && url.pathname==="/api/v3/library/status"){await handleV3LibraryStatus(req,res);return;}
+    if(req.method==="GET" && url.pathname==="/api/v3/library/catalog"){await handleV3LibraryCatalog(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/library/start"){await handleV3LibraryStart(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/library/append"){await handleV3LibraryAppend(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v3/library/commit"){await handleV3LibraryCommit(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/health"){await handleHealth(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/models"){
       const installed=await installedModels();
