@@ -355,12 +355,43 @@ async function ensureV3Index(){
       root:ROOT,
       publicDir:PUBLIC,
       buildIndex:buildV3EvidenceIndex,
-      loadRows:allRowsForV3Rebuild
+      loadRows:async()=>{await loadLibrary();return rows;}
     });
-    await reconcileIncrementalV3(state);
     return {...state,build_ms:Date.now()-started};
   })();
   return v3IndexPromise;
+}
+
+function mergeFederatedSearch(baseResult,incrementalResult,limit=40){
+  const all=[...(baseResult?.results||[]),...(incrementalResult?.results||[])];
+  all.sort((a,b)=>Number(b?.score||0)-Number(a?.score||0)||
+    String(a?.reference||"").localeCompare(String(b?.reference||""),"pt-BR"));
+  const seen=new Set(),results=[];
+  for(const row of all){
+    const key=String(row?.document_id||"")+"|"+String(row?.page||"")+"|"+
+      String(row?.text||"").replace(/\s+/g," ").trim().slice(0,240);
+    if(seen.has(key))continue;
+    seen.add(key);results.push(row);
+    if(results.length>=limit)break;
+  }
+  return {
+    query:String(baseResult?.query||incrementalResult?.query||""),
+    expansions:[...new Set([...(baseResult?.expansions||[]),...(incrementalResult?.expansions||[])])],
+    total:Number(baseResult?.total||0)+Number(incrementalResult?.total||0),
+    results,
+    sources:{
+      base_frozen:Number(baseResult?.total||0),
+      incremental_50k:Number(incrementalResult?.total||0)
+    }
+  };
+}
+
+async function searchFederatedV3(question,aliases,options={}){
+  const [base,inc]=await Promise.all([ensureV3Index(),ensureIncrementalLibrary()]);
+  const limit=Math.max(1,Math.min(80,Number(options.limit||40)));
+  const baseResult=searchPersistentV3(base,question,aliases,{...options,limit});
+  const incResult=inc.searchV3(question,aliases,{...options,limit});
+  return mergeFederatedSearch(baseResult,incResult,limit);
 }
 async function expandV3WithQwen(question){
   const models=await installedModels();
@@ -390,18 +421,21 @@ async function expandV3WithQwen(question){
   }catch{return [];}
 }
 async function handleV3Health(req,res){
-  const state=await ensureV3Index();
+  const [state,inc]=await Promise.all([ensureV3Index(),ensureIncrementalLibrary()]);
   const persistent=persistentV3Health(state);
+  const incremental=inc.counts();
   json(res,{
     ok:true,
     version:persistent.version,
-    engine:"Evidence Engine V3",
+    engine:"Evidence Engine V3 Federado",
     dictionary_frozen:true,
+    architecture:"base-frozen + incremental-50k",
     source_rows:persistent.source_rows,
-    evidence_units:persistent.evidence_units,
+    evidence_units:Number(persistent.evidence_units||0)+Number(incremental.blocks||0),
     counts:persistent.counts,
     build_ms:state.build_ms,
-    persistent_index:persistent
+    persistent_index:persistent,
+    incremental_index:incremental
   });
 }
 async function handleV3Chat(req,res){
@@ -409,15 +443,15 @@ async function handleV3Chat(req,res){
   const question=String(body.question||"").trim();
   const mode=RESPONSE_MODES.has(String(body.mode||""))?String(body.mode):"explain";
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
-  const [index,aliases]=await Promise.all([ensureV3Index(),loadAliases()]);
+  const aliases=await loadAliases();
   const strict=mode==="exact" && body.strict_phrase===true;
-  let result=searchPersistentV3(index,question,aliases,{limit:mode==="exact"?25:40,strict});
+  let result=await searchFederatedV3(question,aliases,{limit:mode==="exact"?25:40,strict,candidate_limit:700});
   let query_expansions=[];
   if(mode!=="exact" && !strict && result.results.length<8 && body.allow_query_expansion!==false){
     query_expansions=await expandV3WithQwen(question);
     if(query_expansions.length){
-      result=searchPersistentV3(index,question,aliases,{
-        limit:40,strict:false,extraExpansions:query_expansions
+      result=await searchFederatedV3(question,aliases,{
+        limit:40,strict:false,candidate_limit:900,extraExpansions:query_expansions
       });
     }
   }
@@ -432,7 +466,8 @@ async function handleV3Chat(req,res){
     query_expansions,
     total_candidates:result.total,
     evidence_count:result.results.length,
-    index_version:persistentV3Health(index).version,
+    index_version:(await ensureV3Index()).version||persistentV3Health(await ensureV3Index()).version,
+    search_sources:result.sources,
     matches:result.results.slice(0,mode==="short"?4:14).map(row=>({
       reference:v3DisplayReference(row),
       citation_verified:true,
@@ -539,7 +574,8 @@ async function handleV4Health(req,res){
     library_hash:p.library_hash,
     v3_persistent:p.persistent,
     v3_fts5:p.fts5,
-    evidence_units:p.evidence_units
+    evidence_units:p.evidence_units,
+    incremental_50k:(await ensureIncrementalLibrary()).counts()
   });
 }
 async function handleV4Lesson(req,res){
@@ -548,14 +584,14 @@ async function handleV4Lesson(req,res){
   const mode=["aula","livro","revisao"].includes(String(body.mode))?String(body.mode):"aula";
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
 
-  const [state,aliases,profileStore]=await Promise.all([ensureV3Index(),loadAliases(),ensureV4Profile()]);
-  let search=searchPersistentV3(state,question,aliases,{limit:16,strict:false,candidate_limit:500});
+  const [aliases,profileStore]=await Promise.all([loadAliases(),ensureV4Profile()]);
+  let search=await searchFederatedV3(question,aliases,{limit:16,strict:false,candidate_limit:700});
   let verifiedEvidence=await v4EvidenceFromAuthority(search.results);
   if(verifiedEvidence.length<2){
     const expanded=await withGeneratorQueue(()=>expandV3WithQwen(question));
     if(expanded.length){
-      search=searchPersistentV3(state,question,aliases,{
-        limit:16,strict:false,candidate_limit:700,extraExpansions:expanded
+      search=await searchFederatedV3(question,aliases,{
+        limit:16,strict:false,candidate_limit:1000,extraExpansions:expanded
       });
       verifiedEvidence=await v4EvidenceFromAuthority(search.results);
     }
@@ -1100,14 +1136,26 @@ async function handleV3LibraryStatus(req,res){
 }
 async function handleV3LibraryCatalog(req,res){
   await loadLibrary();
+  const url=new URL(req.url,"http://localhost");
+  const limit=Math.max(10,Math.min(500,Number(url.searchParams.get("limit")||200)));
+  const offset=Math.max(0,Number(url.searchParams.get("offset")||0));
   const inc=await ensureIncrementalLibrary();
   const base=baseLibraryCatalog();
-  const added=inc.listDocuments({limit:10000}).map(x=>({
+  const incCounts=inc.counts();
+  const added=inc.listDocuments({limit,offset}).map(x=>({
     document_id:x.document_id,arquivo:x.title||x.filename,titulo:x.title||x.filename,autor:x.author||"",
-    paginas:Number(x.page_count||0),chunks:Number(x.chunk_count||0),idioma:x.language||"",
+    paginas:Number(x.page_count||0),chunks:Number(x.chunk_count||0),blocos:Number(x.block_count||0),idioma:x.language||"",
     status:"incremental-pronto",source:"v3-incremental",immutable:false,created_at:x.created_at
   }));
-  json(res,{ok:true,base_frozen:true,total_documents:base.length+added.length,base_documents:base.length,incremental_documents:added.length,books:[...base,...added]});
+  json(res,{
+    ok:true,base_frozen:true,
+    total_documents:base.length+Number(incCounts.documents||0),
+    base_documents:base.length,
+    incremental_documents:Number(incCounts.documents||0),
+    incremental_offset:offset,incremental_limit:limit,
+    more_incremental:offset+added.length<Number(incCounts.documents||0),
+    books:[...base,...added]
+  });
 }
 async function handleV3LibraryStart(req,res){
   const body=await readJsonBody(req);
@@ -1123,15 +1171,9 @@ async function handleV3LibraryCommit(req,res){
   const body=await readJsonBody(req);
   const inc=await ensureIncrementalLibrary();
   const committed=inc.commit(body.job_id);
-  let indexResult={added_source_rows:0,added_units:0,total_units:0};
-  if(!committed.duplicate&&committed.rows?.length){
-    const state=await ensureV3Index();
-    indexResult=appendPersistentV3(state,committed.rows,buildV3EvidenceIndex);
-    for(const row of committed.rows)indexAuthoritativeRow(row);
-  }
   json(res,{
     ok:true,duplicate:Boolean(committed.duplicate),document:committed.document,
-    index:indexResult,
+    index:{engine:"incremental-50k",separate_from_base:true},
     searchable_immediately:true,
     dictionary_included:true,
     v3_included:true,
