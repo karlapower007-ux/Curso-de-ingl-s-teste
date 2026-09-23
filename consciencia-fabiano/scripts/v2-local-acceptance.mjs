@@ -31,6 +31,11 @@ const exact=exactAndMatches(rows,"Plano de Salvação e Vida Pré-Mortal",{alias
 assert.equal(exact.total,2,"strict AND deve aceitar somente blocos com ambos os conceitos");
 assert.ok(exact.matches.every(x=>x.text.toLowerCase().includes("plano")||x.text.toLowerCase().includes("plan")));
 assert.ok(!exact.matches.some(x=>x.id==="b"),"conceitos em parágrafos separados não podem ser combinados");
+const dictionaryScriptureMarker=exactAndMatches([
+  {id:"sw",document_id:"sw1",filename:"standard-works-83806-por.pdf",title:"standard works 83806 por",page:55,chunk_index:1,text:"A vida pré-mortal é ensinada nesta página."}
+],"vida pré-mortal",{aliases,page:1,pageSize:50});
+assert.equal(dictionaryScriptureMarker.matches.length,1);
+assert.equal(dictionaryScriptureMarker.matches[0].standard_works,true,"Dicionário deve preservar internamente o marcador de Obras Padrão sem depender do título público");
 const focusRows=[
   {id:"focus-ok",document_id:"f1",title:"Fonte Focada",page:3,chunk_index:1,text:"Na vida pré-mortal, os filhos de Deus viviam antes do nascimento mortal."},
   {id:"focus-bad",document_id:"f2",title:"Fonte Fora",page:9,chunk_index:2,text:"O Espírito da Verdade é mencionado neste texto, sem tratar da existência pré-mortal."}
@@ -130,7 +135,7 @@ assert.ok(prompt.includes("EVIDÊNCIA 1"));
 assert.ok(prompt.includes("4 a 8 pontos substantivos"),"modo Explicação deve pedir resposta mais rica sem sair do foco");
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
-const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart]=await Promise.all([
+const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart,incremental]=await Promise.all([
   readFile(path.join(root,"scripts","v2-local-server.mjs"),"utf8"),
   readFile(path.join(root,"public","v2-local-ui.js"),"utf8"),
   readFile(path.join(root,"public","v2-local-engine.js"),"utf8"),
@@ -141,7 +146,8 @@ const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart]=await Prom
   readFile(path.join(root,"package.json"),"utf8"),
   readFile(path.join(root,"public","whisper-local.js"),"utf8"),
   readFile(path.join(root,"scripts","v3-evidence-core.mjs"),"utf8"),
-  readFile(path.join(root,"scripts","reiniciar-cerebro-v2.ps1"),"utf8")
+  readFile(path.join(root,"scripts","reiniciar-cerebro-v2.ps1"),"utf8"),
+  readFile(path.join(root,"scripts","v3-incremental-library.mjs"),"utf8")
 ]);
 
 for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis.com"]){
@@ -153,6 +159,9 @@ assert.ok(server.includes('url.pathname==="/api/v3/chat"'),"servidor deve expor 
 assert.ok(server.includes('url.pathname==="/api/v2/dictionary"'),"Dicionário aprovado deve permanecer na rota V2");
 assert.ok(server.includes("decorateDictionaryReference"),"Dicionário deve aplicar somente a camada de referência pública das Escrituras");
 assert.ok(server.includes("dictionaryPublicReference"),"Dicionário deve reutilizar o parser canônico sem pacote externo");
+assert.ok(server.includes("dictionary_scripture_source:true"),"Dicionário deve marcar resultados das Escrituras para apresentação segura");
+assert.ok(ui.includes('hit.dictionary_scripture_source?"PDF p. "'),"UI do Dicionário deve mostrar a página técnica apenas como PDF p. X nas Escrituras");
+assert.ok(incremental.includes("standard_works:isStandardWorksRow(row)"),"Índice incremental 50K deve preservar o marcador de Obras Padrão");
 assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
 assert.ok(ui.includes('call("/api/v3/chat"'),"Chat oficial deve usar o Evidence Engine V3");
 assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve continuar usando exatamente a rota V2");
