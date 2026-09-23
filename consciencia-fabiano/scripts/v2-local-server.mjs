@@ -31,7 +31,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-v4-lesson-r1";
+const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2";
 const MAX_BODY=4*1024*1024;
 const EXTERNAL_WRITER_ENABLED=String(process.env.FNS_EXTERNAL_WRITER_ENABLED||"0")==="1";
 const EXTERNAL_WRITER_URL=String(process.env.FNS_EXTERNAL_WRITER_URL||"").trim();
@@ -102,6 +102,88 @@ function applyCitationIntegrity(evidence=[]){
       citation_verified:true,
       citation_kind:check.kind,
       citation_reason:check.reason
+    });
+  }
+  return out;
+}
+
+function normalizeAuthorityText(value=""){
+  return String(value||"").replace(/[“”„‟«»]/g,'"').replace(/[‘’]/g,"'").replace(/\s+/g," ").trim();
+}
+function cleanAuthorityTitle(row={},fallback=""){
+  const raw=String(row.title||row.source_title||fallback||"").replace(/\.pdf$/i,"");
+  const clean=raw.replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+  if(!clean||/standard[-_ ]?works|obras\s+padr[aã]o/i.test(clean))return "";
+  return clean;
+}
+function explicitPrintedPage(row={}){
+  for(const key of ["printed_page","page_printed","printedPage","physical_page","physicalPage"]){
+    const value=String(row?.[key]??"").trim();
+    if(value)return value.slice(0,40);
+  }
+  return null;
+}
+function candidateAuthorityRow(candidate={}){
+  const sourceId=String(candidate.source_chunk_id||"").trim();
+  if(sourceId&&authoritativeRows.has(sourceId))return authoritativeRows.get(sourceId);
+  const pageRows=authoritativePages.get(authoritativePageKey(candidate))||[];
+  const needle=normalizeAuthorityText(candidate.text);
+  return pageRows.find(row=>normalizeAuthorityText(row.text).includes(needle))||null;
+}
+function v4EvidenceFromAuthority(candidates=[]){
+  const out=[];
+  for(const candidate of candidates||[]){
+    if(String(candidate?.kind||"")==="scripture-page-window")continue;
+    const text=normalizeAuthorityText(candidate?.text||"");
+    if(!text)continue;
+
+    if(String(candidate?.kind||"")==="scripture-verse"){
+      const pageText=normalizeAuthorityText(authoritativePageText(candidate));
+      const ref=String(candidate.reference||"").replace(/\s+/g," ").trim();
+      if(!pageText.includes(text))continue;
+      if(!/\b\d{1,4}:\d{1,4}\b/.test(ref))continue;
+      out.push({
+        ...candidate,
+        reference:ref,
+        citation_reference:ref,
+        citation_verified:true,
+        verified:true,
+        title:String(candidate.title||"").trim(),
+        pdf_page:Number(candidate.page||0)||null,
+        printed_page:null,
+        page_basis:"canonical-scripture",
+        source_verified:true,
+        source_verification:"canonical-reference+authoritative-page-substring"
+      });
+      continue;
+    }
+
+    const authority=candidateAuthorityRow(candidate);
+    if(!authority)continue;
+    const authorityText=normalizeAuthorityText(authority.text);
+    if(!authorityText.includes(text))continue;
+
+    const title=cleanAuthorityTitle(authority,candidate.title);
+    if(!title)continue;
+    const pdfPage=Number(authority.pdf_page??authority.page??candidate.page??0)||null;
+    const printedPage=explicitPrintedPage(authority);
+    const reference=printedPage
+      ?title+" • página impressa "+printedPage+(pdfPage?" • PDF p. "+pdfPage:"")
+      :(pdfPage?title+" • PDF p. "+pdfPage:title);
+
+    out.push({
+      ...candidate,
+      title,
+      language:String(authority.language||candidate.language||""),
+      reference,
+      citation_reference:reference,
+      citation_verified:true,
+      verified:true,
+      pdf_page:pdfPage,
+      printed_page:printedPage,
+      page_basis:printedPage?"printed+pdf":(pdfPage?"pdf":"title-only"),
+      source_verified:true,
+      source_verification:"authoritative-record+exact-substring"
     });
   }
   return out;
@@ -302,7 +384,22 @@ async function generateLessonWithQwen(prompt){
       body:JSON.stringify({
         model:"qwen3:0.6b",stream:false,think:false,
         messages:[{role:"user",content:String(prompt||"")}],
-        options:{temperature:0,num_ctx:1024,num_predict:220}
+        options:{temperature:0,num_ctx:1536,num_predict:220}
+      })
+    },180000);
+    return {content:String(data?.message?.content||""),model:"qwen3:0.6b"};
+  });
+}
+async function verifyLessonWithQwen(prompt){
+  return withGeneratorQueue(async()=>{
+    const models=await installedModels();
+    if(!models.includes("qwen3:0.6b"))return null;
+    const data=await fetchOllama("/api/chat",{
+      method:"POST",
+      body:JSON.stringify({
+        model:"qwen3:0.6b",stream:false,think:false,
+        messages:[{role:"user",content:String(prompt||"")}],
+        options:{temperature:0,num_ctx:1024,num_predict:100}
       })
     },180000);
     return {content:String(data?.message?.content||""),model:"qwen3:0.6b"};
@@ -354,6 +451,9 @@ async function handleV4Health(req,res){
     external_writer_enabled:EXTERNAL_WRITER_ENABLED,
     external_writer_configured:Boolean(EXTERNAL_WRITER_URL),
     generator_queue:"single",
+    claim_grounding:"literal-support-quote",
+    semantic_verifier:"qwen3:0.6b-local",
+    reference_verification:"authoritative-record+exact-substring",
     tts:piper,
     model:models.includes("qwen3:0.6b")?"qwen3:0.6b":null,
     profile_persistent:Boolean(profile?.persistent),
@@ -370,13 +470,15 @@ async function handleV4Lesson(req,res){
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
 
   const [state,aliases,profileStore]=await Promise.all([ensureV3Index(),loadAliases(),ensureV4Profile()]);
-  let search=searchPersistentV3(state,question,aliases,{limit:12,strict:false,candidate_limit:500});
-  if(search.results.length<2){
-    const expanded=await expandV3WithQwen(question);
+  let search=searchPersistentV3(state,question,aliases,{limit:16,strict:false,candidate_limit:500});
+  let verifiedEvidence=v4EvidenceFromAuthority(search.results);
+  if(verifiedEvidence.length<2){
+    const expanded=await withGeneratorQueue(()=>expandV3WithQwen(question));
     if(expanded.length){
       search=searchPersistentV3(state,question,aliases,{
-        limit:12,strict:false,candidate_limit:700,extraExpansions:expanded
+        limit:16,strict:false,candidate_limit:700,extraExpansions:expanded
       });
+      verifiedEvidence=v4EvidenceFromAuthority(search.results);
     }
   }
 
@@ -385,9 +487,10 @@ async function handleV4Lesson(req,res){
     question,
     age:Number(body.age||0)||null,
     mode,
-    evidence:search.results.slice(0,6).map(x=>({...x,citation_verified:x.verified===true})),
+    evidence:verifiedEvidence.slice(0,8),
     profile,
-    generate:generateLessonText
+    generate:generateLessonText,
+    verify:verifyLessonWithQwen
   });
 
   if(!lesson.nao_sei){
