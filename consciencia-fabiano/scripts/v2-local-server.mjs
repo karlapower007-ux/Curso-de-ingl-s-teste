@@ -343,14 +343,23 @@ async function scanMassImportFolder(){
   try{
     await mkdir(MASS_IMPORT_DIR,{recursive:true});
     const inc=await ensureIncrementalLibrary();
+    let batch=[];
+    const flush=()=>{
+      if(!batch.length)return;
+      const result=inc.enqueueFolderBatch(batch);
+      discovered+=Number(result.added||0);
+      batch=[];
+    };
     for await(const file of walkPdfFiles(MASS_IMPORT_DIR)){
       seen++;
       try{
         const info=await stat(file);
-        if(inc.enqueueFolderFile(file,info.size,Math.floor(info.mtimeMs)))discovered++;
+        batch.push({source_path:file,size_bytes:info.size,mtime_ms:Math.floor(info.mtimeMs)});
+        if(batch.length>=500)flush();
       }catch{}
-      if(seen%250===0)await new Promise(resolve=>setTimeout(resolve,0));
+      if(seen%500===0)await new Promise(resolve=>setTimeout(resolve,0));
     }
+    flush();
     massImportState.last_scan=new Date().toISOString();
     massImportState.discovered_last_scan=discovered;
     return {ok:true,seen,discovered};
