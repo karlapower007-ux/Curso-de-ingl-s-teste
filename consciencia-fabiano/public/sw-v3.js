@@ -1,7 +1,7 @@
 // V7.0 LOCAL-FIRST V2 + PHANTOM DAEMON resilience service worker.
 // Browser note: a Service Worker may be suspended by the browser. The 3-minute cadence is enforced
 // while the origin is active, and Periodic Background Sync is used when supported.
-const CACHE_NAME="fns-consiencia-v2-local-first-20260922";
+const CACHE_NAME="fns-consiencia-v2-local-first-20260923-v411-repair";
 const DAEMON_INTERVAL_MS=3*60*1000;
 const OFFLINE_ASSET_HOSTS=new Set([
   "cdn.jsdelivr.net",
@@ -412,10 +412,11 @@ self.addEventListener("fetch",event=>{
     event.respondWith((async()=>{
       const cache=await caches.open(CACHE_NAME);
       const cached=await cache.match(req);
-      if(cached) return cached;
+      // Update-critical local JS/JSON assets are network-first. This prevents an
+      // old v2-local-ui.js from surviving a successful Windows update.
       try{
-        const res=await fetch(req);
-        if(res.ok) await cache.put(req,res.clone());
+        const res=await fetch(new Request(req,{cache:"no-store"}));
+        if(res.ok) await cache.put(req,res.clone()).catch(()=>{});
         return res;
       }catch{
         return cached || new Response("",{status:503});
