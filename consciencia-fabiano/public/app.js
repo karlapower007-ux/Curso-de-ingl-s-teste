@@ -3152,11 +3152,18 @@
           updated_at:Date.now()
         });
       }catch(error){
-        console.warn("V3 incremental indisponível; mantendo cópia local IndexedDB.",error);
+        console.warn("V3 incremental indisponível.",error);
+        const localRequired=location.hostname==="127.0.0.1"||location.hostname==="localhost"||Boolean(window.__FNS_V2_API_BASE);
+        if(localRequired)throw new Error("Falha ao registrar o PDF no índice incremental V3: "+String(error?.message||error));
       }
 
-      await enqueueCloudSync(extracted);
-      await queueOfflineVectorization(extracted);
+      // Em instalação local, FTS5/V3 torna o livro pesquisável imediatamente.
+      // Não vetorizamos automaticamente centenas/milhares de PDFs num PC de 4 GB.
+      // O pipeline antigo de IndexedDB/nuvem permanece apenas como fallback quando o servidor local não existe.
+      if(!incremental?.searchable_immediately){
+        await enqueueCloudSync(extracted);
+        await queueOfflineVectorization(extracted);
+      }
       $("pdfInput").value="";
       await loadBooks();
 
@@ -3171,9 +3178,10 @@
       processSyncQueue().catch(()=>{});
     }catch(error){
       $("adminStatus").textContent="Falha ao processar o PDF localmente: "+String(error?.message || error);
+      throw error;
     }finally{
       delete $("uploadBtn").dataset.busy;
-      $("uploadBtn").disabled=false;
+      if(!bulkUploadRunning)$("uploadBtn").disabled=false;
       setUploadGate(true);
     }
   }
@@ -3311,7 +3319,7 @@
     let local=await localBookCatalog();
     const v3Local=await fetchV3LocalCatalog();
     if(v3Local.length){
-      local=mergeBookLists(local,v3Local);
+      local=mergeBookLists([...local,...v3Local],[]);
       renderBooks(local,false);
       const baseCount=v3Local.filter(x=>x.immutable===true||x.source==="v3-base-frozen").length;
       const incrementalCount=v3Local.filter(x=>x.source==="v3-incremental").length;
