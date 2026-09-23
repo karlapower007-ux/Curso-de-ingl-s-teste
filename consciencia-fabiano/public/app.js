@@ -3065,34 +3065,82 @@
 
   async function loadMassImportStatus(forceScan=false){
     const host=$("massImportStatus");
+    const scanBtn=$("massScanBtn");
+    let scanInfo=null;
     try{
       if(forceScan){
-        if(host)host.textContent="Fila 50K • verificando a pasta de importação…";
-        await localV3Api("/api/v3/library/scan",{method:"POST",body:"{}"},300000);
+        if(scanBtn)scanBtn.disabled=true;
+        if(host)host.textContent="Fila 50K • verificando C:\\ConscienciaFabiano\\ImportarPDFs…";
+        const scanResponse=await localV3Api("/api/v3/library/scan",{method:"POST",body:"{}"},300000);
+        scanInfo=scanResponse?.scan||null;
       }
       const data=await localV3Api("/api/v3/library/status",{},30000);
       const inc=data?.incremental||{};
       const queue=inc?.folder_queue||{};
       const mass=data?.mass_import||{};
-      const parts=[
+      const parts=[];
+
+      if(scanInfo){
+        const seen=Number(scanInfo.seen||0);
+        const discovered=Number(scanInfo.discovered||0);
+        if(seen===0)parts.push("VERIFICAÇÃO: nenhum PDF encontrado na pasta");
+        else parts.push("VERIFICAÇÃO: "+seen.toLocaleString("pt-BR")+" PDF(s) encontrado(s) • "+discovered.toLocaleString("pt-BR")+" novo(s) colocado(s) na fila");
+      }
+
+      parts.push(
         "Antigos integrados: "+Number(data?.base?.documents||0).toLocaleString("pt-BR"),
         "Novos prontos: "+Number(inc.documents||0).toLocaleString("pt-BR"),
         "Total integrado: "+Number(data?.total_documents||0).toLocaleString("pt-BR"),
-        "Blocos pesquisáveis: "+Number(inc.blocks||0).toLocaleString("pt-BR"),
         "Na fila: "+Number(queue.queued||0).toLocaleString("pt-BR"),
         "Processando: "+Number(queue.processing||0).toLocaleString("pt-BR"),
         "Concluídos: "+Number(queue.done||0).toLocaleString("pt-BR"),
         "Duplicados: "+Number(queue.duplicate||0).toLocaleString("pt-BR"),
         "Requer OCR: "+Number(queue.needs_ocr||0).toLocaleString("pt-BR"),
         "Falhas: "+Number(queue.failed||0).toLocaleString("pt-BR")
-      ];
+      );
+
+      if(mass.last_file){
+        const last=String(mass.last_file).split(/[\\/]/).pop();
+        parts.push("Último arquivo: "+last);
+      }
+      if(mass.last_result){
+        const r=mass.last_result;
+        parts.push(r.ok?(r.duplicate?"Último resultado: duplicado, não criado novamente":"Último resultado: indexado e pesquisável")
+                       :"Último resultado: falhou • "+String(r.error||r.code||"erro"));
+      }
       if(mass.free_gb!=null)parts.push("Disco livre: "+Number(mass.free_gb).toLocaleString("pt-BR")+" GB");
       if(mass.paused_reason)parts.push("PAUSADO: "+String(mass.paused_reason));
+
       if(host)host.textContent="Fila 50K • "+parts.join(" • ");
+      if(scanInfo&&$("adminStatus")){
+        $("adminStatus").textContent=Number(scanInfo.seen||0)===0
+          ?"Nenhum PDF foi encontrado em C:\\ConscienciaFabiano\\ImportarPDFs."
+          :"Verificação concluída. A fila foi atualizada; acompanhe o status acima.";
+      }
       return data;
     }catch(error){
-      if(host)host.textContent="Fila 50K • servidor local indisponível neste aparelho.";
+      if(host)host.textContent="Fila 50K • não consegui consultar o servidor local: "+String(error?.message||error);
+      if($("adminStatus"))$("adminStatus").textContent="Falha ao verificar a pasta local. O acervo antigo não foi alterado.";
       return null;
+    }finally{
+      if(scanBtn)scanBtn.disabled=false;
+    }
+  }
+
+  async function openMassImportFolder(){
+    const host=$("massImportStatus");
+    const btn=$("massOpenFolderBtn");
+    try{
+      if(btn)btn.disabled=true;
+      const data=await localV3Api("/api/v3/library/open-folder",{method:"POST",body:"{}"},30000);
+      if(host)host.textContent="Pasta aberta no Windows: "+String(data?.path||"C:\\ConscienciaFabiano\\ImportarPDFs");
+      if($("adminStatus"))$("adminStatus").textContent="Coloque seus PDFs nessa pasta. A fila detecta os arquivos automaticamente.";
+      return data;
+    }catch(error){
+      if(host)host.textContent="Não consegui abrir a pasta automaticamente: "+String(error?.message||error);
+      return null;
+    }finally{
+      if(btn)btn.disabled=false;
     }
   }
 
@@ -3479,6 +3527,7 @@
   $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = () => uploadPdfQueue(Array.from($("pdfInput").files||[]));
   $("reindexBtn").onclick = reindex;
+  if($("massOpenFolderBtn")) $("massOpenFolderBtn").onclick=()=>openMassImportFolder();
   if($("massScanBtn")) $("massScanBtn").onclick=()=>loadMassImportStatus(true).then(()=>loadBooks());
   bindPdfUploadUi();
   setUploadGate(true);
