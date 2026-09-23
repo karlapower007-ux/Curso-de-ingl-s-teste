@@ -2,9 +2,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {readFile,readdir,stat,mkdir,appendFile,opendir,statfs} from "node:fs/promises";
+import {readFile,readdir,stat,mkdir,appendFile,opendir,statfs,open,rename,unlink} from "node:fs/promises";
 import {spawn} from "node:child_process";
-import {watch as fsWatch} from "node:fs";
+import {watch as fsWatch,createReadStream} from "node:fs";
 import {createHash} from "node:crypto";
 import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
@@ -37,11 +37,13 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const MASS_IMPORT_DIR=path.join(ROOT,"ImportarPDFs");
+const PDF_VAULT_DIR=path.join(DATA_DIR,"pdf-vault");
+const MAX_ORIGINAL_PDF_BYTES=Math.max(64*1024*1024,Number(process.env.FNS_MAX_ORIGINAL_PDF_BYTES||2*1024*1024*1024));
 const PDF_INGEST_WORKER=path.join(ROOT,"scripts","v3-pdf-ingest-worker.mjs");
 const MASS_SCAN_MS=Math.max(60000,Number(process.env.FNS_MASS_SCAN_MS||600000));
 const MASS_MIN_FREE_GB=Math.max(1,Number(process.env.FNS_MIN_FREE_GB||5));
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2";
+const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2-sourcelink";
 const MAX_BODY=4*1024*1024;
 const EXTERNAL_WRITER_ENABLED=String(process.env.FNS_EXTERNAL_WRITER_ENABLED||"0")==="1";
 const EXTERNAL_WRITER_URL=String(process.env.FNS_EXTERNAL_WRITER_URL||"").trim();
@@ -205,7 +207,7 @@ async function decorateDictionaryReference(hit={}){
 async function decorateDictionaryMatches(matches=[]){
   const out=[];
   for(const hit of matches||[])out.push(await decorateDictionaryReference(hit));
-  return out;
+  return decorateSourceLinkRows(out);
 }
 async function v4EvidenceFromAuthority(candidates=[]){
   const out=[];
@@ -279,8 +281,9 @@ function localHeaders(req,res){
   const bridgeAllowed=LOCAL_BRIDGE_ORIGINS.has(origin);
   if(bridgeAllowed){
     res.setHeader("Access-Control-Allow-Origin",origin);
-    res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers","Content-Type");
+    res.setHeader("Access-Control-Allow-Methods","GET,HEAD,POST,PUT,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers","Content-Type,Range");
+    res.setHeader("Access-Control-Expose-Headers","Accept-Ranges,Content-Length,Content-Range");
     res.setHeader("Access-Control-Allow-Private-Network","true");
     res.setHeader("Access-Control-Max-Age","600");
     res.setHeader("Vary","Origin");
@@ -311,6 +314,67 @@ async function loadAliases(){
 async function ensureIncrementalLibrary(){
   if(!incrementalPromise)incrementalPromise=createIncrementalLibrary(ROOT);
   return incrementalPromise;
+}
+function safeSourceDocumentId(value=""){
+  const id=String(value||"").trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(id)?id:"";
+}
+function pathInside(root,candidate){
+  const rel=path.relative(path.resolve(root),path.resolve(candidate));
+  return rel!=="" && rel!==".." && !rel.startsWith(".."+path.sep) && !path.isAbsolute(rel);
+}
+function allowedPdfSourcePath(candidate=""){
+  const value=String(candidate||"").trim();
+  if(!value || path.extname(value).toLowerCase()!==".pdf")return "";
+  const resolved=path.resolve(value);
+  if(pathInside(PDF_VAULT_DIR,resolved)||pathInside(MASS_IMPORT_DIR,resolved))return resolved;
+  return "";
+}
+function sourceVaultPath(documentId){
+  const id=safeSourceDocumentId(documentId);
+  return id?path.join(PDF_VAULT_DIR,id+".pdf"):"";
+}
+async function sourcePdfRecord(documentId){
+  const id=safeSourceDocumentId(documentId);
+  if(!id)return null;
+  const inc=await ensureIncrementalLibrary();
+  const doc=inc.getDocument(id);
+  const sourcePath=allowedPdfSourcePath(doc?.source_path||"");
+  if(!sourcePath)return null;
+  const info=await stat(sourcePath).catch(()=>null);
+  if(!info?.isFile())return null;
+  return {document_id:id,path:sourcePath,size:Number(info.size||0),filename:String(doc?.filename||doc?.title||"documento.pdf")};
+}
+async function sourceLinkFields(row={}){
+  const documentId=safeSourceDocumentId(row?.document_id||"");
+  if(!documentId)return {source_pdf_available:false,source_pdf_url:"",source_pdf_page:null};
+  const source=await sourcePdfRecord(documentId).catch(()=>null);
+  const page=Number(row?.source_pdf_page??row?.pagina_pdf??row?.pdf_page??row?.page??0)||null;
+  return {
+    source_pdf_available:Boolean(source),
+    source_pdf_url:source?("/api/v3/source/pdf?document_id="+encodeURIComponent(documentId)):"",
+    source_pdf_page:source?page:null
+  };
+}
+async function decorateSourceLinkRows(rows=[]){
+  const out=[];
+  const cache=new Map();
+  for(const row of rows||[]){
+    const documentId=safeSourceDocumentId(row?.document_id||"");
+    let fields={source_pdf_available:false,source_pdf_url:"",source_pdf_page:null};
+    if(documentId){
+      if(!cache.has(documentId))cache.set(documentId,sourcePdfRecord(documentId).catch(()=>null));
+      const source=await cache.get(documentId);
+      const page=Number(row?.source_pdf_page??row?.pagina_pdf??row?.pdf_page??row?.page??0)||null;
+      fields={
+        source_pdf_available:Boolean(source),
+        source_pdf_url:source?("/api/v3/source/pdf?document_id="+encodeURIComponent(documentId)):"",
+        source_pdf_page:source?page:null
+      };
+    }
+    out.push({...row,...fields});
+  }
+  return out;
 }
 
 function baseLibraryCatalog(){
@@ -632,6 +696,16 @@ async function handleV3Chat(req,res){
     }
   }
   const answer=formatV3EvidenceAnswer(result,mode);
+  const chatMatches=await decorateSourceLinkRows(result.results.slice(0,mode==="short"?4:14).map(row=>({
+    document_id:String(row.document_id||""),
+    reference:v3DisplayReference(row),
+    citation_verified:true,
+    kind:row.kind,
+    title:row.title||"",
+    page:row.page||null,
+    score:Number(row.score||0),
+    text:row.text
+  })));
   json(res,{
     ok:true,
     answer,
@@ -644,15 +718,7 @@ async function handleV3Chat(req,res){
     evidence_count:result.results.length,
     index_version:(await ensureV3Index()).version||persistentV3Health(await ensureV3Index()).version,
     search_sources:result.sources,
-    matches:result.results.slice(0,mode==="short"?4:14).map(row=>({
-      reference:v3DisplayReference(row),
-      citation_verified:true,
-      kind:row.kind,
-      title:row.title||"",
-      page:row.page||null,
-      score:Number(row.score||0),
-      text:row.text
-    }))
+    matches:chatMatches
   });
 }
 
@@ -797,10 +863,15 @@ async function handleV4Lesson(req,res){
     });
   }
 
+  const lessonProofs=[];
+  for(const proof of (lesson.provas||[])){
+    lessonProofs.push({...proof,...await sourceLinkFields(proof)});
+  }
   json(res,{
     ...lesson,
+    provas:lessonProofs,
     ok:true,
-    speech_text:lessonSpeechText(lesson),
+    speech_text:lessonSpeechText({...lesson,provas:lessonProofs}),
     provider:"v4-lesson-local",
     dictionary_frozen:true,
     external_writer_enabled:EXTERNAL_WRITER_ENABLED
@@ -1133,8 +1204,10 @@ async function handleChat(req,res){
       page:1,
       matches:verifiedMatches
     };
+    const payload=exactPayload(verified);
+    payload.matches=await decorateSourceLinkRows((payload.matches||[]).map(r=>({...r,document_id:String(r.document_id||"")})));
     json(res,{
-      ...exactPayload(verified),
+      ...payload,
       citation_integrity:true,
       evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault"
     });return;
@@ -1182,14 +1255,15 @@ async function handleChat(req,res){
       embedding_model:EMBED_MODEL,
       evidence_count:evidence.length,
       evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
-      matches:evidence.map(r=>({
+      matches:await decorateSourceLinkRows(evidence.map(r=>({
+        document_id:String(r.document_id||""),
         reference:r.citation_reference||r.reference||"",
         citation_verified:r.citation_verified===true,
         citation_kind:r.citation_kind||"",
         title:r.public_title||"",
         page:r.page||null,
         text:r.text||""
-      }))
+      })))
     });
     return;
   }
@@ -1267,7 +1341,7 @@ async function handleChat(req,res){
       mode,model:null,provider:"local-deterministic-timeout",embedding_model:EMBED_MODEL,
       context_tokens:usedContext,evidence_count:promptEvidence.length,
       evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
-      matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+      matches:await decorateSourceLinkRows(promptEvidence.map(r=>({document_id:String(r.document_id||""),reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""})))
     });
     return;
   }
@@ -1297,7 +1371,7 @@ async function handleChat(req,res){
       mode,model:null,provider:"focus-lock-deterministic",embedding_model:EMBED_MODEL,
       context_tokens:usedContext,evidence_count:promptEvidence.length,
       evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
-      matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+      matches:await decorateSourceLinkRows(promptEvidence.map(r=>({document_id:String(r.document_id||""),reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""})))
     });
     return;
   }
@@ -1308,7 +1382,7 @@ async function handleChat(req,res){
     mode,model,provider:"ollama-local-direct",embedding_model:EMBED_MODEL,
     context_tokens:usedContext,evidence_count:promptEvidence.length,
     evidence_origin:suppliedEvidence.length?"browser-local":"static-local-vault",
-    matches:promptEvidence.map(r=>({reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""}))
+    matches:await decorateSourceLinkRows(promptEvidence.map(r=>({document_id:String(r.document_id||""),reference:r.reference||publicReference(r),title:r.public_title||"",page:r.page||null,text:r.text||""})))
   });
 }
 
@@ -1370,8 +1444,103 @@ async function handleV3LibraryCatalog(req,res){
     books:[...base,...added]
   });
 }
+async function handleV3SourceOriginal(req,res){
+  const url=new URL(req.url,"http://localhost");
+  const documentId=safeSourceDocumentId(url.searchParams.get("document_id"));
+  if(!documentId){json(res,{ok:false,error:"document_id SHA-256 inválido."},400);return;}
+  const declaredLength=Math.max(0,Number(req.headers["content-length"]||0));
+  if(declaredLength>MAX_ORIGINAL_PDF_BYTES){json(res,{ok:false,error:"PDF original excede o limite local configurado."},413);return;}
+
+  await mkdir(PDF_VAULT_DIR,{recursive:true});
+  const destination=sourceVaultPath(documentId);
+  const temp=destination+".part";
+  const handle=await open(temp,"w");
+  const hash=createHash("sha256");
+  let total=0;
+  let magic=Buffer.alloc(0);
+  try{
+    for await(const raw of req){
+      const chunk=Buffer.isBuffer(raw)?raw:Buffer.from(raw);
+      total+=chunk.length;
+      if(total>MAX_ORIGINAL_PDF_BYTES)throw Object.assign(new Error("PDF original excede o limite local configurado."),{status:413});
+      if(magic.length<8)magic=Buffer.concat([magic,chunk.subarray(0,8-magic.length)]);
+      hash.update(chunk);
+      await handle.write(chunk);
+    }
+    await handle.sync();
+  }catch(error){
+    await handle.close().catch(()=>{});
+    await unlink(temp).catch(()=>{});
+    throw error;
+  }
+  await handle.close();
+  if(!magic.toString("ascii").startsWith("%PDF-")){
+    await unlink(temp).catch(()=>{});
+    json(res,{ok:false,error:"O arquivo recebido não é um PDF válido."},400);return;
+  }
+  const digest=hash.digest("hex");
+  if(digest!==documentId){
+    await unlink(temp).catch(()=>{});
+    json(res,{ok:false,error:"SHA-256 do PDF não confere com o documento extraído."},409);return;
+  }
+  const existing=await stat(destination).catch(()=>null);
+  if(existing?.isFile())await unlink(temp).catch(()=>{});
+  else await rename(temp,destination);
+
+  const inc=await ensureIncrementalLibrary();
+  inc.attachSourcePath(documentId,destination);
+  json(res,{ok:true,stored:true,source_token:documentId,size_bytes:total});
+}
+async function handleV3SourcePdf(req,res){
+  const url=new URL(req.url,"http://localhost");
+  const source=await sourcePdfRecord(url.searchParams.get("document_id"));
+  if(!source){json(res,{ok:false,error:"PDF original não está disponível localmente para esta fonte.",code:"SOURCE_PDF_UNAVAILABLE"},404);return;}
+  const total=Math.max(0,Number(source.size||0));
+  const safeName=String(source.filename||"documento.pdf").replace(/[\r\n"]/g,"_").slice(0,180);
+  res.setHeader("Content-Type","application/pdf");
+  res.setHeader("Content-Disposition",'inline; filename="'+safeName+'"');
+  res.setHeader("Accept-Ranges","bytes");
+  res.setHeader("Cache-Control","private, no-store");
+  res.setHeader("X-Content-Type-Options","nosniff");
+
+  let start=0,end=Math.max(0,total-1),partial=false;
+  const range=String(req.headers.range||"").trim();
+  if(range){
+    const match=/^bytes=(\d*)-(\d*)$/i.exec(range);
+    if(!match){res.statusCode=416;res.setHeader("Content-Range","bytes */"+total);res.end();return;}
+    if(match[1]){
+      start=Number(match[1]);
+      end=match[2]?Math.min(Number(match[2]),total-1):total-1;
+    }else if(match[2]){
+      const suffix=Math.max(0,Number(match[2]));
+      start=Math.max(0,total-suffix);
+      end=total-1;
+    }
+    if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<start||start>=total){
+      res.statusCode=416;res.setHeader("Content-Range","bytes */"+total);res.end();return;
+    }
+    partial=true;
+  }
+  const length=total?end-start+1:0;
+  res.statusCode=partial?206:200;
+  res.setHeader("Content-Length",String(length));
+  if(partial)res.setHeader("Content-Range","bytes "+start+"-"+end+"/"+total);
+  if(req.method==="HEAD"||total===0){res.end();return;}
+  const stream=createReadStream(source.path,{start,end});
+  stream.on("error",()=>{try{res.destroy();}catch{}});
+  stream.pipe(res);
+}
 async function handleV3LibraryStart(req,res){
   const body=await readJsonBody(req);
+  const token=safeSourceDocumentId(body?.source_token||"");
+  const sha=safeSourceDocumentId(body?.content_sha256||"");
+  delete body.source_path;
+  delete body.source_token;
+  if(token && sha && token===sha){
+    const candidate=sourceVaultPath(token);
+    const info=await stat(candidate).catch(()=>null);
+    if(info?.isFile())body.source_path=candidate;
+  }
   const inc=await ensureIncrementalLibrary();
   json(res,inc.start(body));
 }
@@ -1421,6 +1590,7 @@ async function serveStatic(req,res){
 }
 
 await mkdir(DATA_DIR,{recursive:true}).catch(()=>{});
+await mkdir(PDF_VAULT_DIR,{recursive:true}).catch(()=>{});
 
 http.createServer(async(req,res)=>{
   localHeaders(req,res);
@@ -1436,6 +1606,8 @@ http.createServer(async(req,res)=>{
     if(req.method==="POST" && url.pathname==="/api/v3/library/scan"){await handleV3LibraryScan(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/open-folder"){await handleV3LibraryOpenFolder(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v3/library/catalog"){await handleV3LibraryCatalog(req,res);return;}
+    if(req.method==="PUT" && url.pathname==="/api/v3/source/original"){await handleV3SourceOriginal(req,res);return;}
+    if((req.method==="GET"||req.method==="HEAD") && url.pathname==="/api/v3/source/pdf"){await handleV3SourcePdf(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/start"){await handleV3LibraryStart(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/append"){await handleV3LibraryAppend(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/commit"){await handleV3LibraryCommit(req,res);return;}
