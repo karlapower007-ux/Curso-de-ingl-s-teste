@@ -17,8 +17,10 @@ import {
   ensurePersistentV3,searchPersistentV3,persistentV3Health
 } from "./v3-persistent-index.mjs";
 import {
-  V4_VERSION,buildLesson,lessonToPlainText,lessonSpeechText,createLessonProfileStore
+  V4_VERSION,buildLesson,lessonToPlainText,lessonSpeechText,createLessonProfileStore,
+  judgeLessonDraft
 } from "./v4-lesson-core.mjs";
+import {piperStatus,synthesizePiper} from "./v4-piper-tts.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(__dirname,"..");
@@ -31,6 +33,9 @@ const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
 const LOCAL_RUNTIME_BUILD="2026-09-22-v4-lesson-r1";
 const MAX_BODY=4*1024*1024;
+const EXTERNAL_WRITER_ENABLED=String(process.env.FNS_EXTERNAL_WRITER_ENABLED||"0")==="1";
+const EXTERNAL_WRITER_URL=String(process.env.FNS_EXTERNAL_WRITER_URL||"").trim();
+const EXTERNAL_WRITER_TOKEN=String(process.env.FNS_EXTERNAL_WRITER_TOKEN||"").trim();
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
   "http://127.0.0.1:8788",
@@ -303,8 +308,39 @@ async function generateLessonWithQwen(prompt){
     return {content:String(data?.message?.content||""),model:"qwen3:0.6b"};
   });
 }
+async function generateLessonWithExternal(question,proofs){
+  if(!EXTERNAL_WRITER_ENABLED||!EXTERNAL_WRITER_URL)return null;
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),45000);
+  try{
+    const headers={"Content-Type":"application/json"};
+    if(EXTERNAL_WRITER_TOKEN)headers.Authorization="Bearer "+EXTERNAL_WRITER_TOKEN;
+    const res=await fetch(EXTERNAL_WRITER_URL,{
+      method:"POST",headers,signal:controller.signal,
+      body:JSON.stringify({
+        question:String(question||"").slice(0,600),
+        proofs:(proofs||[]).slice(0,3).map(p=>({id:p.id,trecho:p.trecho}))
+      })
+    });
+    if(!res.ok)throw new Error("External writer HTTP "+res.status);
+    const data=await res.json().catch(()=>null);
+    const content=data?.content??data?.text??data?.answer??data;
+    const judged=judgeLessonDraft(content,proofs||[]);
+    if(judged.source_rejected.length||!judged.accepted.length)return null;
+    return {content,model:"external-writer"};
+  }finally{clearTimeout(timer);}
+}
+async function generateLessonText(prompt,context={}){
+  if(EXTERNAL_WRITER_ENABLED){
+    try{
+      const external=await generateLessonWithExternal(context.question,context.proofs);
+      if(external)return external;
+    }catch{}
+  }
+  return generateLessonWithQwen(prompt);
+}
 async function handleV4Health(req,res){
-  const [v3,profile,models]=await Promise.all([ensureV3Index(),ensureV4Profile(),installedModels()]);
+  const [v3,profile,models,piper]=await Promise.all([ensureV3Index(),ensureV4Profile(),installedModels(),piperStatus(ROOT)]);
   const p=persistentV3Health(v3);
   json(res,{
     ok:true,
@@ -315,8 +351,10 @@ async function handleV4Health(req,res){
     dictionary_endpoint:"/api/v2/dictionary",
     v3_endpoint:"/api/v3/chat",
     lesson_endpoint:"/api/v4/lesson",
-    external_writer_enabled:false,
+    external_writer_enabled:EXTERNAL_WRITER_ENABLED,
+    external_writer_configured:Boolean(EXTERNAL_WRITER_URL),
     generator_queue:"single",
+    tts:piper,
     model:models.includes("qwen3:0.6b")?"qwen3:0.6b":null,
     profile_persistent:Boolean(profile?.persistent),
     library_hash:p.library_hash,
@@ -349,7 +387,7 @@ async function handleV4Lesson(req,res){
     mode,
     evidence:search.results.slice(0,6).map(x=>({...x,citation_verified:x.verified===true})),
     profile,
-    generate:generateLessonWithQwen
+    generate:generateLessonText
   });
 
   if(!lesson.nao_sei){
@@ -366,8 +404,21 @@ async function handleV4Lesson(req,res){
     speech_text:lessonSpeechText(lesson),
     provider:"v4-lesson-local",
     dictionary_frozen:true,
-    external_writer_enabled:false
+    external_writer_enabled:EXTERNAL_WRITER_ENABLED
   });
+}
+async function handleV4Tts(req,res){
+  const body=await readJsonBody(req);
+  const text=[
+    String(body.ideia||"").trim(),
+    ...(Array.isArray(body.explicacao)?body.explicacao:[]).map(x=>String(x||"").trim())
+  ].filter(Boolean).join(" ");
+  const wav=await synthesizePiper(ROOT,text);
+  res.statusCode=200;
+  res.setHeader("Content-Type","audio/wav");
+  res.setHeader("Content-Length",String(wav.length));
+  res.setHeader("Cache-Control","no-store");
+  res.end(wav);
 }
 function panelHtml(){
   return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -848,6 +899,7 @@ http.createServer(async(req,res)=>{
     const url=new URL(req.url,"http://localhost");
     if(req.method==="GET" && url.pathname==="/api/v4/health"){await handleV4Health(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v4/lesson"){await handleV4Lesson(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v4/tts"){await handleV4Tts(req,res);return;}
     if(req.method==="GET" && url.pathname==="/painel"){res.statusCode=200;res.setHeader("Content-Type","text/html; charset=utf-8");res.end(panelHtml());return;}
     if(req.method==="GET" && url.pathname==="/api/v3/health"){await handleV3Health(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
