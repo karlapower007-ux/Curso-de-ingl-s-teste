@@ -17,7 +17,7 @@ import {
   ensurePersistentV3,searchPersistentV3,persistentV3Health
 } from "./v3-persistent-index.mjs";
 import {
-  V4_VERSION,buildLesson,lessonToPlainText,createLessonProfileStore
+  V4_VERSION,buildLesson,lessonToPlainText,lessonSpeechText,createLessonProfileStore
 } from "./v4-lesson-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
@@ -363,7 +363,7 @@ async function handleV4Lesson(req,res){
   json(res,{
     ...lesson,
     ok:true,
-    speech_text:lessonToPlainText(lesson),
+    speech_text:lessonSpeechText(lesson),
     provider:"v4-lesson-local",
     dictionary_frozen:true,
     external_writer_enabled:false
