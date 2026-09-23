@@ -169,6 +169,9 @@ assert.ok(index.includes('id="fiftyKLedgerList"'),"Biblioteca deve exibir uma li
 assert.ok(index.includes('id="fiftyKMoreBtn"'),"Lista 50K deve permitir continuar vendo todos os PDFs por paginação");
 assert.ok(app.includes("loadFiftyKLedger"),"UI deve carregar o catálogo incremental 50K diretamente");
 assert.ok(app.includes('"PRONTO 50K"'),"cada PDF confirmado deve mostrar selo explícito PRONTO 50K");
+assert.ok(app.includes('"PROCESSANDO 50K"'),"PDF atual deve aparecer visivelmente antes do commit final");
+assert.ok(app.includes("setFiftyKPending"),"pipeline deve atualizar o estado visual do PDF em processamento");
+
 assert.ok(app.includes("promoteLegacyLocalBooksToV3"),"PDFs antigos somente no IndexedDB devem migrar automaticamente ao índice 50K");
 assert.ok(app.includes("legacy-to-50k-promotion"),"migração ao 50K deve reutilizar os chunks locais, sem exigir novo upload");
 assert.ok(app.includes("local-pendente-50K"),"falha de migração ao 50K deve ficar marcada no catálogo");
