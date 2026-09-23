@@ -43,7 +43,7 @@ const PDF_INGEST_WORKER=path.join(ROOT,"scripts","v3-pdf-ingest-worker.mjs");
 const MASS_SCAN_MS=Math.max(60000,Number(process.env.FNS_MASS_SCAN_MS||600000));
 const MASS_MIN_FREE_GB=Math.max(1,Number(process.env.FNS_MIN_FREE_GB||5));
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2-sourcelink";
+const LOCAL_RUNTIME_BUILD="2026-09-23-v4.1.1-repair-cache";
 const MAX_BODY=4*1024*1024;
 const EXTERNAL_WRITER_ENABLED=String(process.env.FNS_EXTERNAL_WRITER_ENABLED||"0")==="1";
 const EXTERNAL_WRITER_URL=String(process.env.FNS_EXTERNAL_WRITER_URL||"").trim();
@@ -1693,6 +1693,36 @@ async function handleV3LibraryCommit(req,res){
   });
 }
 
+function repairHtml(){
+  return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Reparando • Consciência Fabiano</title>
+  <style>body{font:16px system-ui;background:#071018;color:#e5f3ff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:680px;padding:28px;background:#101b28;border:1px solid #25506a;border-radius:16px}h1{margin-top:0;color:#7dd3fc}.ok{color:#86efac}.bad{color:#fca5a5}code{word-break:break-all}</style>
+  <main><h1>Reparo da Consciência Fabiano</h1><p id="status">Limpando somente o cache antigo da interface…</p><p>Seus PDFs, índices e a biblioteca local não serão apagados.</p></main>
+  <script>
+  (async()=>{
+    const el=document.getElementById("status");
+    try{
+      if("serviceWorker" in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister().catch(()=>false)));
+      }
+      if("caches" in window){
+        const names=await caches.keys();
+        await Promise.all(names.filter(n=>/^fns-consiencia-/i.test(n)).map(n=>caches.delete(n)));
+      }
+      const health=await fetch("/api/v4/health?repair="+Date.now(),{cache:"no-store"}).then(r=>r.json());
+      if(!health?.ok)throw new Error("V4 local não respondeu.");
+      el.className="ok";
+      el.textContent="Cache antigo removido. V4 "+String(health.version||"")+" confirmada. Reabrindo…";
+      setTimeout(()=>location.replace("/?v4=1&fresh="+Date.now()),900);
+    }catch(error){
+      el.className="bad";
+      el.textContent="Falha no reparo: "+String(error?.message||error);
+    }
+  })();
+  </script></html>`;
+}
+
 async function serveStatic(req,res){
   const url=new URL(req.url,"http://localhost");
   let pathname=decodeURIComponent(url.pathname);
@@ -1714,7 +1744,7 @@ async function serveStatic(req,res){
   const ext=path.extname(resolved).toLowerCase();
   res.statusCode=200;
   res.setHeader("Content-Type",MIME[ext]||"application/octet-stream");
-  if(/\.(html|js|css|json|webmanifest)$/i.test(ext))res.setHeader("Cache-Control","no-cache");
+  if(/\.(html|js|css|json|webmanifest)$/i.test(ext))res.setHeader("Cache-Control","no-store, max-age=0");
   else res.setHeader("Cache-Control","public, max-age=86400");
   res.end(data);
 }
@@ -1741,6 +1771,13 @@ http.createServer(async(req,res)=>{
     if(req.method==="POST" && url.pathname==="/api/v3/library/start"){await handleV3LibraryStart(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/append"){await handleV3LibraryAppend(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/library/commit"){await handleV3LibraryCommit(req,res);return;}
+    if(req.method==="GET" && url.pathname==="/__repair"){
+      res.statusCode=200;
+      res.setHeader("Content-Type","text/html; charset=utf-8");
+      res.setHeader("Cache-Control","no-store, max-age=0");
+      res.end(repairHtml());
+      return;
+    }
     if(req.method==="GET" && url.pathname==="/api/v2/health"){await handleHealth(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/models"){
       const installed=await installedModels();
