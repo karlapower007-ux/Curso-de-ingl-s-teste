@@ -155,14 +155,20 @@ jobs:
                 await page.locator("#dictionaryInput").fill(test.query);
                 await page.locator("#dictionarySearchBtn").click();
                 await page.waitForFunction(
-                  ()=> {
+                  ({query,conceptParts})=>{
+                    const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
                     const status=(document.querySelector("#dictionaryStatus")?.textContent||"").trim();
                     const button=document.querySelector("#dictionarySearchBtn");
-                    return button?.disabled===false &&
+                    const input=document.querySelector("#dictionaryInput");
+                    const concept=fold(document.querySelector("#dictionaryConcept")?.textContent||"");
+                    return input?.value===query &&
+                      button?.disabled===false &&
                       status.length>0 &&
-                      !/Busca strict AND local em toda a biblioteca/i.test(status);
+                      !/Busca strict AND local em toda a biblioteca/i.test(status) &&
+                      conceptParts.every(part=>concept.includes(fold(part)));
                   },
-                  null,{timeout:30000}
+                  {query:test.query,conceptParts:test.conceptParts||[test.concept]},
+                  {timeout:30000}
                 );
                 const state=await page.evaluate(()=>({
                   status:document.querySelector("#dictionaryStatus")?.textContent||"",
