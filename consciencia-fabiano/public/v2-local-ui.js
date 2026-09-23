@@ -3,6 +3,8 @@ const V2_KEY_RESPONSE="fns_v2_response_mode";
 const V2_KEY_SPEAK="fns_v2_speak_answers_v1";
 const V4_KEY_EXPERIENCE="fns_v4_experience_v1";
 let v2SpeechSerial=0;
+let v4PiperAudio=null;
+let v4PiperObjectUrl="";
 let localReady=false;
 let browserOnly=false;
 let health=null;
@@ -51,6 +53,9 @@ async function waitV2Voices(){
 function stopV2Speech(){
   v2SpeechSerial++;
   try{window.speechSynthesis?.cancel();}catch{}
+  try{v4PiperAudio?.pause();}catch{}
+  v4PiperAudio=null;
+  if(v4PiperObjectUrl){try{URL.revokeObjectURL(v4PiperObjectUrl);}catch{}v4PiperObjectUrl="";}
   const stop=$("stopAudioBtn");if(stop)stop.disabled=true;
   const state=$("avatarState");if(state&&/Falando/i.test(state.textContent||""))state.textContent="Pronto";
 }
@@ -82,6 +87,43 @@ async function speakV2Answer(text){
     if(state)state.textContent="Pronto";
   }
 }
+async function speakV4Lesson(lesson={}){
+  if(!v2SpeakEnabled())return;
+  if(apiBase){
+    try{
+      stopV2Speech();
+      const target=apiBase+"/api/v4/tts";
+      const res=await fetch(target,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          ideia:String(lesson?.ideia||""),
+          explicacao:Array.isArray(lesson?.explicacao)?lesson.explicacao:[]
+        }),
+        mode:"cors"
+      });
+      if(res.ok && /audio\/wav/i.test(String(res.headers.get("Content-Type")||""))){
+        const blob=await res.blob();
+        v4PiperObjectUrl=URL.createObjectURL(blob);
+        v4PiperAudio=new Audio(v4PiperObjectUrl);
+        const stop=$("stopAudioBtn");if(stop)stop.disabled=false;
+        const state=$("avatarState");if(state)state.textContent="Falando";
+        await new Promise((resolve,reject)=>{
+          v4PiperAudio.onended=resolve;
+          v4PiperAudio.onerror=reject;
+          v4PiperAudio.play().catch(reject);
+        });
+        if(v4PiperObjectUrl){try{URL.revokeObjectURL(v4PiperObjectUrl);}catch{}v4PiperObjectUrl="";}
+        v4PiperAudio=null;
+        if(stop)stop.disabled=true;
+        if(state)state.textContent="Pronto";
+        return;
+      }
+    }catch{}
+  }
+  return speakV2Answer(lesson?.speech_text||[lesson?.ideia,...(lesson?.explicacao||[])].filter(Boolean).join(". "));
+}
+
 function initV2Voice(){
   const box=$("v2SpeakAnswers");
   if(box){
@@ -288,7 +330,7 @@ async function sendLocal(){
         }));
         const rendered=lessonDisplayText(lesson);
         appendMessage("assistant",rendered,proofSources);
-        speakV2Answer(lesson.speech_text||rendered).catch(()=>{});
+        speakV4Lesson(lesson).catch(()=>{});
         const backend=$("backendText");
         if(backend)backend.textContent="v4 Aula • 1 ideia • até 3 provas verificadas • Qwen sem autoridade de fonte";
         const dot=$("backendDot");if(dot)dot.className="dot ok";
