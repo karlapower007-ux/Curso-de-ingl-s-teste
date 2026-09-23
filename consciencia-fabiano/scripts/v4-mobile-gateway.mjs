@@ -1,6 +1,6 @@
 import http from "node:http";
 
-const HOST="127.0.0.1";
+const HOST=String(process.env.FNS_MOBILE_HOST||"127.0.0.1");
 const PORT=Math.max(1,Number(process.env.FNS_MOBILE_PORT||8790));
 const TARGET="http://127.0.0.1:8788";
 const TOKEN=String(process.env.FNS_MOBILE_TOKEN||"").trim();
@@ -53,7 +53,9 @@ http.createServer(async(req,res)=>{
 
     if(queryToken===TOKEN){
       res.statusCode=302;
-      res.setHeader("Set-Cookie","fns_mobile="+encodeURIComponent(TOKEN)+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=2592000");
+      const forwarded=String(req.headers["x-forwarded-proto"]||"").toLowerCase();
+      const secure=(forwarded==="https"||Boolean(req.socket.encrypted));
+      res.setHeader("Set-Cookie","fns_mobile="+encodeURIComponent(TOKEN)+"; HttpOnly; "+(secure?"Secure; ":"")+"SameSite=Strict; Path=/; Max-Age=2592000");
       res.setHeader("Location",cleanRedirect(url));
       res.setHeader("Cache-Control","no-store");
       res.end();
@@ -88,6 +90,6 @@ http.createServer(async(req,res)=>{
     res.end(JSON.stringify({ok:false,error:String(error?.message||error)}));
   }
 }).listen(PORT,HOST,()=>{
-  console.log("FNS_MOBILE_GATEWAY=http://127.0.0.1:"+PORT);
+  console.log("FNS_MOBILE_GATEWAY=http://"+HOST+":"+PORT);
   console.log("TARGET_LOCAL_ONLY="+TARGET);
 });
