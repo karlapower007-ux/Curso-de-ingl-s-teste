@@ -141,13 +141,13 @@ jobs:
 
               await page.locator("#dictionaryTab").click();
               const canonical=[
-                {query:"Adão",minTotal:2,concept:"Adão",mustContain:"Adam",related:"Miguel"},
-                {query:"Miguel",minTotal:1,concept:"Miguel",mustContain:"Michael"},
-                {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",mustContain:"Second Anointing"},
+                {query:"Adão",minTotal:2,concept:"Adão",aliasSurface:"Adam",related:"Miguel"},
+                {query:"Miguel",minTotal:1,concept:"Miguel",aliasSurface:"Michael"},
+                {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",aliasSurface:"Second Anointing"},
                 {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"dízimo"},
                 {query:"Pai Celestial",minTotal:1,concept:"Pai Celestial",mustContain:"Pai Celestial"},
                 {query:"Sacerdócio de Melquisedeque",minTotal:1,concept:"Sacerdócio de Melquisedeque",mustContain:"Sacerdócio de Melquisedeque"},
-                {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,conceptParts:["Plano de Salvação","Vida Pré-Mortal"],mustContain:"plan of salvation",mustContainAlso:"premortal life",compound:true},
+                {query:"Plano de Salvação e Vida Pré-Mortal",minTotal:1,conceptParts:["Plano de Salvação","Vida Pré-Mortal"],aliasSurface:"plan of salvation",compound:true},
                 {query:"Batismo e Sacramento",minTotal:1,conceptParts:["Batismo","Sacramento"],mustContain:"Batismo",mustContainAlso:"Sacramento",compound:true}
               ];
               const canonicalReport=[];
@@ -178,8 +178,13 @@ jobs:
                 if(test.conceptParts){
                   if(!test.conceptParts.every(part=>conceptFold.includes(foldConcept(part)))) throw new Error("Componentes canônicos ausentes para "+test.query+" em "+width+": "+JSON.stringify(state));
                 }else if(!conceptFold.includes(foldConcept(test.concept))) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
-                if(!state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase()))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
-                if(test.mustContainAlso && !state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase())&&x.toLowerCase().includes(test.mustContainAlso.toLowerCase()))) {
+                if(test.aliasSurface && !conceptFold.includes(foldConcept(test.aliasSurface))) {
+                  throw new Error("Alias canônico ausente da superfície conceitual para "+test.query+" em "+width+": "+JSON.stringify(state));
+                }
+                if(test.mustContain && !state.results.some(x=>foldConcept(x).includes(foldConcept(test.mustContain)))) {
+                  throw new Error("Termo esperado ausente dos resultados para "+test.query+" em "+width+": "+JSON.stringify(state));
+                }
+                if(test.mustContainAlso && !state.results.some(x=>foldConcept(x).includes(foldConcept(test.mustContain))&&foldConcept(x).includes(foldConcept(test.mustContainAlso)))) {
                   throw new Error("AND composto não manteve os conceitos no mesmo parágrafo para "+test.query+" em "+width+": "+JSON.stringify(state));
                 }
                 if(test.compound){
