@@ -314,7 +314,11 @@ async function sendLocal(){
   const mode=selectedResponse(),model=resolvedModelForRequest(),experience=selectedExperience();
   const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;
   try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}
-  appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando Evidence Engine V3…");
+  appendMessage("user",q);input.value="";
+  const busyLabel=(experience==="aula"||experience==="revisao")
+    ?"Preparando aula V4…"
+    :(mode==="exact"?"Buscando citação literal…":"Consultando Evidence Engine V3…");
+  setBusy(true,busyLabel);
   try{
     if(apiBase){
       if(experience==="aula"||experience==="revisao"){
