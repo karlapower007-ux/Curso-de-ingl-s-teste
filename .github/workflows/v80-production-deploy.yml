@@ -29,17 +29,20 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Refuse v2 through legacy v10 release path
+      - name: Skip legacy v10 path for local-first V2/V3/V4
         shell: bash
         run: |
           set -euo pipefail
           if [ -f consciencia-fabiano/public/v2-local-ui.js ]; then
             echo "V2_HEAD_DETECTED=true"
-            echo "Refusing legacy v10 deployment path. Use the dedicated v2 production workflow."
-            exit 1
+            echo "LEGACY_DEPLOY_BLOCKED=true" >> "$GITHUB_ENV"
+            echo "Legacy v10 deploy is intentionally skipped. Dedicated local-first workflow owns this HEAD."
+          else
+            echo "LEGACY_DEPLOY_BLOCKED=false" >> "$GITHUB_ENV"
           fi
 
       - name: Preserve library data and migration boundaries
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -59,16 +62,19 @@ jobs:
           echo "LIBRARY_PRESERVATION_GATE=pass"
 
       - name: Install existing development dependency set
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         working-directory: consciencia-fabiano
         run: npm install --ignore-scripts
 
       - name: Run complete legacy plus V8 acceptance suite
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         working-directory: consciencia-fabiano
         run: |
           npm run check
           npm run test:adaptive-v80
 
       - name: Verify no paid dependency was introduced
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         working-directory: consciencia-fabiano
         shell: bash
         run: |
@@ -79,10 +85,12 @@ jobs:
           echo "V10_1_ZERO_COST_AND_LOAD_GUARD=pass"
 
       - name: Arm rollback after all preflight gates pass
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         shell: bash
         run: echo "DEPLOY_ARMED=true" >> "$GITHUB_ENV"
 
       - name: Deploy official Worker
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         working-directory: consciencia-fabiano
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
@@ -103,6 +111,7 @@ jobs:
           npx wrangler deploy
 
       - name: Remove retired external-provider secrets
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         working-directory: consciencia-fabiano
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
@@ -125,6 +134,7 @@ jobs:
           echo "RETIRED_PROVIDER_SECRETS=verified-absent"
 
       - name: Verify V10 production endpoint
+        if: env.LEGACY_DEPLOY_BLOCKED != 'true'
         id: probe
         shell: bash
         run: |
@@ -238,7 +248,7 @@ jobs:
           echo "V10_1_COST_GUARD_ADMIN_PROTECTED=pass"
 
       - name: Roll back Worker to previous production commit on failure
-        if: failure() && env.DEPLOY_ARMED == 'true'
+        if: failure() && env.DEPLOY_ARMED == 'true' && env.LEGACY_DEPLOY_BLOCKED != 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.FABIANO_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FABIANO_CLOUDFLARE_ACCOUNT_ID }}
