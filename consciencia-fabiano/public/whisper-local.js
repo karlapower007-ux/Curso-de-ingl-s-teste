@@ -165,7 +165,7 @@
       recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data);};
       recorder.onstop=processAudio;recorder.start(200);
       btn.classList.add("recording");btn.textContent="🎙️ Gravando... solte para enviar";
-      setStatus(mode==="local"?"Whisper local: gravando.":"Fallback de nuvem: gravando.");
+      setStatus(mode==="local"?"Whisper tiny local: gravando.":mode==="loading"?"Whisper tiny carregando enquanto você fala.":"Fallback de nuvem: gravando.");
       if(event?.pointerId!=null){try{btn.setPointerCapture(event.pointerId);}catch{}}
     }catch(error){setStatus("Microfone indisponível: "+String(error?.message || error));enableButton();}
   }
@@ -184,11 +184,14 @@
     const blob=new Blob(chunks,{type:recorder?.mimeType || "audio/webm"});lastBlob=blob;chunks=[];
     localStream?.getTracks?.().forEach(t=>{try{t.stop();}catch{}});
     if(blob.size<700){busy=false;setStatus("Áudio muito curto.");enableButton();return;}
+    if(mode==="loading" && !workerReady){
+      for(let i=0;i<80 && mode==="loading" && !workerReady;i++) await new Promise(r=>setTimeout(r,100));
+    }
     if(mode!=="local" || !workerReady){
       if(strictOffline()){
         busy=false;
-        setStatus("Whisper local indisponível neste aparelho. Nenhum áudio saiu do dispositivo.");
-        btn.textContent="🎤 Voz offline não preparada";btn.disabled=true;
+        setStatus("Whisper tiny local ainda não ficou pronto. Nenhum áudio saiu do dispositivo.");
+        enableButton();
         return;
       }
       await transcribeCloud(blob);return;
@@ -207,7 +210,17 @@
     }
   }
 
-  btn.addEventListener("pointerdown",e=>mode==="webspeech"?startWebSpeech(e):startRecorder(e));
+  async function startMic(e){
+    if(mode==="webspeech")return startWebSpeech(e);
+    if(mode==="lazy"){
+      mode="loading";
+      initWorker();
+      return startRecorder(e);
+    }
+    return startRecorder(e);
+  }
+
+  btn.addEventListener("pointerdown",e=>startMic(e));
   btn.addEventListener("pointerup",e=>mode==="webspeech"?stopWebSpeech(e):stopRecorder(e));
   btn.addEventListener("pointercancel",e=>mode==="webspeech"?stopWebSpeech(e):stopRecorder(e));
   btn.addEventListener("lostpointercapture",e=>{if(mode!=="webspeech" && recorder?.state==="recording")stopRecorder(e);});
@@ -221,8 +234,10 @@
     setStatus("Voz do navegador pronta • modo leve para este computador.");
     enableButton("🎤 Segure para Falar");
   }else{
-    btn.disabled=true;
-    setStatus("Carregando Whisper local; fallback automático em até 8 segundos…");
-    initWorker();
+    mode="lazy";
+    workerReady=false;
+    busy=false;
+    setStatus("Whisper tiny local será carregado somente quando você usar o microfone.");
+    enableButton("🎤 Segure para Falar");
   }
 })();
