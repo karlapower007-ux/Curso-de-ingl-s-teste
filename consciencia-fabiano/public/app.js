@@ -3073,8 +3073,11 @@
       const data=await localV3Api("/api/v3/library/status",{},30000);
       const inc=data?.incremental||{};
       const queue=inc?.folder_queue||{};
+      const mass=data?.mass_import||{};
       const parts=[
+        "Antigos integrados: "+Number(data?.base?.documents||0).toLocaleString("pt-BR"),
         "Novos prontos: "+Number(inc.documents||0).toLocaleString("pt-BR"),
+        "Total integrado: "+Number(data?.total_documents||0).toLocaleString("pt-BR"),
         "Blocos pesquisáveis: "+Number(inc.blocks||0).toLocaleString("pt-BR"),
         "Na fila: "+Number(queue.queued||0).toLocaleString("pt-BR"),
         "Processando: "+Number(queue.processing||0).toLocaleString("pt-BR"),
@@ -3083,6 +3086,8 @@
         "Requer OCR: "+Number(queue.needs_ocr||0).toLocaleString("pt-BR"),
         "Falhas: "+Number(queue.failed||0).toLocaleString("pt-BR")
       ];
+      if(mass.free_gb!=null)parts.push("Disco livre: "+Number(mass.free_gb).toLocaleString("pt-BR")+" GB");
+      if(mass.paused_reason)parts.push("PAUSADO: "+String(mass.paused_reason));
       if(host)host.textContent="Fila 50K • "+parts.join(" • ");
       return data;
     }catch(error){
