@@ -11,7 +11,7 @@ import {
   exactAndMatches, lexicalCandidates, chooseInstalledModel,
   formatExactAnswer, formatGroundedAnswer, buildPrompt, cosine, publicReference, extractTimelineYear,
   focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus, focusedEvidenceWindow,
-  sanitizePublicTitle
+  sanitizePublicTitle, dictionaryPublicReference, isStandardWorksRow
 } from "./v2-local-core.mjs";
 import {
   buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer,v3DisplayReference
@@ -174,6 +174,34 @@ async function authoritativePageTextAsync(row={}){
     if(pageRows.length)return pageRows.map(x=>String(x.text||"")).join(" ");
   }catch{}
   return String(row.text||"");
+}
+
+async function decorateDictionaryReference(hit={}){
+  const authority=await candidateAuthorityRow(hit);
+  if(!authority||!isStandardWorksRow(authority))return hit;
+  const source={
+    ...authority,
+    ...hit,
+    filename:authority.filename,
+    title:authority.title,
+    source_title:authority.source_title,
+    document_title:authority.document_title,
+    canonical_reference:authority.canonical_reference
+  };
+  const pageText=await authoritativePageTextAsync(source);
+  const reference=dictionaryPublicReference(source,pageText);
+  return {
+    ...hit,
+    title:"",
+    reference,
+    canonical_reference:reference==="Obras Padrão"?"":reference,
+    dictionary_scripture_reference:reference!=="Obras Padrão"
+  };
+}
+async function decorateDictionaryMatches(matches=[]){
+  const out=[];
+  for(const hit of matches||[])out.push(await decorateDictionaryReference(hit));
+  return out;
 }
 async function v4EvidenceFromAuthority(candidates=[]){
   const out=[];
@@ -1052,12 +1080,13 @@ async function handleDictionary(req,res){
     }
   }
 
+  const displayMatches=await decorateDictionaryMatches(matches);
   json(res,{
     ok:true,local_only:true,unlimited_logical_results:true,
     query,
     concepts:baseProbe.concepts?.length?baseProbe.concepts:incProbe.concepts,
     total,page,page_size:pageSize,pages:Math.ceil(total/pageSize),
-    matches,
+    matches:displayMatches,
     sources:{base_frozen:baseTotal,incremental:incTotal}
   });
 }
