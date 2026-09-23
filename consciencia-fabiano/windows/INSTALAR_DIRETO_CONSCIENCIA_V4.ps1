@@ -209,7 +209,7 @@ try {
     "Biblioteca hash: "+$v4.library_hash
   Show-Info $message
 
-  Start-Process "http://127.0.0.1:8788/?v4=1"
+  Start-Process "http://127.0.0.1:8788/__repair"
   Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
   Show-Error $_.Exception.Message
