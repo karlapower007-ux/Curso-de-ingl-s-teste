@@ -96,7 +96,8 @@ assert(ragCascade.includes("alias_expanded:r.alias_expanded===true"), "offline a
 assert(app.includes("dictionaryState.concept=data?.concept||null;"), "UI does not use local concept cards offline");
 assert(
   sw.includes('fns-consiencia-v10-1-private-offline-online-alias-v2') ||
-  sw.includes('fns-consiencia-v2-local-first-20260922'),
+  sw.includes('fns-consiencia-v2-local-first-20260922') ||
+  sw.includes('fns-consiencia-v2-local-first-20260923-v411-repair'),
   "offline cache marker missing for v10.1 baseline or v2 local-first"
 );
 assert(app.includes('api("/api/encyclopedia/concept"'), "concept graph is not wired to dictionary UI");
