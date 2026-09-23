@@ -88,6 +88,16 @@ export function publicReference(row={}){
   return [title,page?("página "+page):""].filter(Boolean).join(" • ");
 }
 
+export function dictionaryPublicReference(row={},pageText=""){
+  if(isStandardWorksRow(row)){
+    const canonical=String(row.canonical_reference||"").trim();
+    if(canonical)return canonical;
+    const verified=extractVerifiedPageReference(pageText||row.text||"");
+    return verified||"Obras Padrão";
+  }
+  return publicReference(row);
+}
+
 export function paragraphBlocks(text){
   const raw=String(text||"").replace(/\r\n?/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
   if(!raw)return [];
