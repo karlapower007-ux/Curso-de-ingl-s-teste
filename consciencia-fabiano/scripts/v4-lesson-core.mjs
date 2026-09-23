@@ -83,6 +83,7 @@ function publicProof(proof={}){
     traducao_pt:null,
     verified:true,
     titulo:proof.titulo||"",
+    document_id:String(proof.document_id||""),
     pagina_pdf:proof.pagina_pdf??null,
     pagina_impressa:proof.pagina_impressa??null,
     pagina_tipo:proof.pagina_tipo||null
@@ -140,6 +141,7 @@ export function sanitizeLessonEvidence(rows=[]){
       traducao_pt:null,
       verified:true,
       titulo:cleanText(row?.title||row?.titulo||"",180),
+      document_id:String(row?.document_id||""),
       pagina_pdf:paginaPdf,
       pagina_impressa:paginaImpressa,
       pagina_tipo:String(row?.page_basis||row?.pagina_tipo||(paginaImpressa?"impressa+pdf":(paginaPdf?"pdf":"")))||null,
