@@ -3591,6 +3591,7 @@
   // Heartbeat exato enquanto a página está ativa; o Service Worker também usa Periodic Background Sync quando o navegador permite.
   setInterval(()=>{if(networkAllowed())tickPhantomDaemon();},PHANTOM_DAEMON_INTERVAL_MS);
 
+  // Status da fila 50K: no PWA forçado offline não faz probes; no localhost continua local-only.
   setInterval(()=>{
     const localPage=location.hostname==="127.0.0.1"||location.hostname==="localhost";
     if(!isOfflineOnly()||localPage)loadMassImportStatus(false).catch(()=>{});
