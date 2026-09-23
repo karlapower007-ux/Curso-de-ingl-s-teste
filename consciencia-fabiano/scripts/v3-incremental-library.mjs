@@ -204,18 +204,31 @@ export async function createIncrementalLibrary(root){
 
   const start=meta=>{
     const sha=safeDocId(meta?.content_sha256);
+    const incomingSource=clean(meta?.source_path,1800);
     const existing=db.prepare("SELECT document_id,filename,title,page_count,chunk_count,block_count,status,source_path FROM documents WHERE content_sha256=?").get(sha);
-    if(existing)return {ok:true,duplicate:true,document:existing};
+    if(existing){
+      if(incomingSource && String(existing.source_path||"")!==incomingSource){
+        db.prepare("UPDATE documents SET source_path=?,updated_at=? WHERE document_id=?").run(incomingSource,new Date().toISOString(),existing.document_id);
+        existing.source_path=incomingSource;
+      }
+      return {ok:true,duplicate:true,document:existing};
+    }
 
-    const existingJob=db.prepare("SELECT job_id,document_id,received_pages,page_count,status FROM jobs WHERE content_sha256=? ORDER BY updated_at DESC LIMIT 1").get(sha);
-    if(existingJob)return {ok:true,duplicate:false,resumed:true,...existingJob};
+    const existingJob=db.prepare("SELECT job_id,document_id,received_pages,page_count,status,source_path FROM jobs WHERE content_sha256=? ORDER BY updated_at DESC LIMIT 1").get(sha);
+    if(existingJob){
+      if(incomingSource && String(existingJob.source_path||"")!==incomingSource){
+        db.prepare("UPDATE jobs SET source_path=?,updated_at=? WHERE job_id=?").run(incomingSource,new Date().toISOString(),existingJob.job_id);
+        existingJob.source_path=incomingSource;
+      }
+      return {ok:true,duplicate:false,resumed:true,...existingJob};
+    }
 
     const now=new Date().toISOString();
     const jobId="inc-"+randomUUID().replace(/-/g,"");
     const title=clean(meta?.title||meta?.filename||"Livro",300)||"Livro";
     const filename=clean(meta?.filename||title,300)||title;
     db.prepare("INSERT INTO jobs(job_id,document_id,content_sha256,filename,title,author,language,page_count,size_bytes,received_pages,status,source_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,0,'receiving',?,?,?)")
-      .run(jobId,sha,sha,filename,title,clean(meta?.author,300),clean(meta?.language,30),Math.max(0,Number(meta?.page_count||0)),Math.max(0,Number(meta?.size_bytes||0)),clean(meta?.source_path,1800),now,now);
+      .run(jobId,sha,sha,filename,title,clean(meta?.author,300),clean(meta?.language,30),Math.max(0,Number(meta?.page_count||0)),Math.max(0,Number(meta?.size_bytes||0)),incomingSource,now,now);
     return {ok:true,duplicate:false,resumed:false,job_id:jobId,document_id:sha,received_pages:0,page_count:Math.max(0,Number(meta?.page_count||0)),status:"receiving"};
   };
 
@@ -311,6 +324,24 @@ export async function createIncrementalLibrary(root){
     const safeOffset=Math.max(0,Number(offset||0));
     return db.prepare("SELECT document_id,filename,title,author,language,page_count,chunk_count,block_count,size_bytes,status,source_path,created_at,updated_at FROM documents ORDER BY created_at DESC LIMIT ? OFFSET ?").all(safeLimit,safeOffset);
   };
+  const getDocument=documentId=>db.prepare("SELECT document_id,content_sha256,filename,title,author,language,page_count,chunk_count,block_count,size_bytes,status,source_path,created_at,updated_at FROM documents WHERE document_id=?").get(String(documentId||""))||null;
+  const attachSourcePath=(documentId,sourcePath)=>{
+    const id=String(documentId||"").trim();
+    const source=clean(sourcePath,1800);
+    if(!id||!source)return {ok:false,attached:false};
+    const now=new Date().toISOString();
+    const doc=db.prepare("SELECT document_id FROM documents WHERE document_id=?").get(id);
+    if(doc){
+      db.prepare("UPDATE documents SET source_path=?,updated_at=? WHERE document_id=?").run(source,now,id);
+      return {ok:true,attached:true,target:"document"};
+    }
+    const job=db.prepare("SELECT job_id FROM jobs WHERE document_id=? ORDER BY updated_at DESC LIMIT 1").get(id);
+    if(job){
+      db.prepare("UPDATE jobs SET source_path=?,updated_at=? WHERE job_id=?").run(source,now,job.job_id);
+      return {ok:true,attached:true,target:"job"};
+    }
+    return {ok:true,attached:false};
+  };
   const counts=()=>{
     const documents=Number(db.prepare("SELECT COUNT(*) AS n FROM documents").get()?.n||0);
     const chunks=Number(db.prepare("SELECT COUNT(*) AS n FROM chunks").get()?.n||0);
@@ -358,6 +389,7 @@ export async function createIncrementalLibrary(root){
         page:Number(row.page||0)||null,chunk_index:Number(row.block_index||0),
         text:String(row.text||""),
         standard_works:isStandardWorksRow(row),
+        source:"incremental-local",pdf_page_verified:true,
         reference:[title,Number(row.page||0)?("PDF p. "+Number(row.page)):""].filter(Boolean).join(" • "),
         aliases:audit.matched.map(x=>x.alias),concepts:audit.matched.map(x=>x.label),score:1
       });
@@ -469,7 +501,7 @@ export async function createIncrementalLibrary(root){
   const checkpoint=()=>{try{db.exec("PRAGMA wal_checkpoint(PASSIVE);");}catch{}};
 
   return {
-    version:VERSION,db_path:dbPath,start,append,commit,listDocuments,counts,getChunk,getPage,
+    version:VERSION,db_path:dbPath,start,append,commit,listDocuments,getDocument,attachSourcePath,counts,getChunk,getPage,
     rowsForDocument,allReadyDocumentIds,searchDictionary,searchV3,backfillLegacyBlocks,
     enqueueFolderFile,enqueueFolderBatch,requeueInterrupted,nextFolderFile,finishFolderFile,checkpoint
   };
