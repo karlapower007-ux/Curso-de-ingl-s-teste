@@ -89,7 +89,7 @@ export function publicReference(row={}){
 }
 
 export function dictionaryPublicReference(row={},pageText=""){
-  if(isStandardWorksRow(row)){
+  if(row?.standard_works===true||isStandardWorksRow(row)){
     const canonical=String(row.canonical_reference||"").trim();
     if(canonical)return canonical;
     const verified=extractVerifiedPageReference(pageText||row.text||"");
@@ -175,6 +175,7 @@ export function exactAndMatches(rows,query,{aliases={},page=1,pageSize=50}={}){
         chunk_index:Number(row.chunk_index||0),
         text:blocks[index],
         reference:publicReference({...row,text:blocks[index]}),
+        standard_works:isStandardWorksRow(row),
         aliases:audit.matched.map(x=>x.alias),
         concepts:audit.matched.map(x=>x.label),
         score:1
