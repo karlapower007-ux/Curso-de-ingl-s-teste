@@ -53,7 +53,7 @@ http.createServer(async(req,res)=>{
 
     if(queryToken===TOKEN){
       res.statusCode=302;
-      res.setHeader("Set-Cookie","fns_mobile="+encodeURIComponent(TOKEN)+"; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000");
+      res.setHeader("Set-Cookie","fns_mobile="+encodeURIComponent(TOKEN)+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=2592000");
       res.setHeader("Location",cleanRedirect(url));
       res.setHeader("Cache-Control","no-store");
       res.end();
