@@ -4,13 +4,18 @@ import os from "node:os";
 import {mkdtemp,mkdir,writeFile,rm,readFile} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 import {
-  buildLesson,sanitizeLessonEvidence,judgeLessonDraft,lessonToPlainText,createLessonProfileStore
+  buildLesson,sanitizeLessonEvidence,judgeLessonDraft,lessonToPlainText,createLessonProfileStore,lessonKnowledgeQuery
 } from "./v4-lesson-core.mjs";
 import {buildV3EvidenceIndex} from "./v3-evidence-core.mjs";
 import {ensurePersistentV3,searchPersistentV3,persistentV3Health} from "./v3-persistent-index.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
+
+assert.equal(lessonKnowledgeQuery("O que é a expiação?"),"expiação");
+assert.equal(lessonKnowledgeQuery("Explique o que é a expiação."),"expiação");
+assert.equal(lessonKnowledgeQuery("Fale sobre mundo espiritual"),"mundo espiritual");
+assert.equal(lessonKnowledgeQuery("Quem é Jesus Cristo?"),"Jesus Cristo");
 
 const evidence=[
   {
@@ -204,6 +209,7 @@ assert.ok(server.includes('url.pathname==="/api/v2/dictionary"'),"Dicionário V2
 assert.ok(server.includes("generatorQueue=Promise.resolve()"),"gerador deve operar em fila única");
 assert.ok(server.includes("v4EvidenceFromAuthority"),"V4 deve voltar ao registro autoritativo antes de liberar prova");
 assert.ok(server.includes("v4DictionaryFallbackEvidence"),"V4 deve reutilizar o Dicionário strict-AND quando a busca V3 não formar duas provas");
+assert.ok(server.includes("lessonKnowledgeQuery(question)"),"Fallback deve reduzir perguntas naturais como O que é X ao conceito X");
 assert.ok(server.includes("dictionary_fallback_enabled:true"),"A resposta V4 deve declarar o fallback de Dicionário habilitado");
 assert.ok(server.includes("authoritative-record+exact-substring"),"trecho precisa existir no registro autoritativo");
 assert.ok(server.includes("verify:verifyLessonWithQwen"),"V4 deve executar verificador semântico local");
