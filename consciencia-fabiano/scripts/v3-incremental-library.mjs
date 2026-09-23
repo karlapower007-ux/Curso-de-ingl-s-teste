@@ -383,6 +383,46 @@ export async function createIncrementalLibrary(root){
     return {...searched,total:Math.max(Number(searched.total||0),raw.length)};
   };
 
+  const backfillLegacyBlocks=(maxDocuments=25)=>{
+    const docs=db.prepare("SELECT document_id,title,author,language FROM documents WHERE block_count=0 AND chunk_count>0 ORDER BY created_at LIMIT ?")
+      .all(Math.max(1,Math.min(200,Number(maxDocuments||25))));
+    let migratedDocuments=0,migratedBlocks=0;
+    for(const doc of docs){
+      const chunks=db.prepare("SELECT id,document_id,page,chunk_index,title,author,language,text FROM chunks WHERE document_id=? ORDER BY chunk_index").all(doc.document_id);
+      if(!chunks.length)continue;
+      const blockRows=[];let blockIndex=0;
+      for(const chunk of chunks){
+        for(const block of paragraphBlocks(chunk.text||"")){
+          if(!String(block||"").trim())continue;
+          blockRows.push({
+            id:String(doc.document_id)+":b:"+blockIndex,document_id:String(doc.document_id),
+            chunk_id:String(chunk.id),page:Number(chunk.page||0)||null,block_index:blockIndex++,
+            title:String(chunk.title||doc.title||"Livro"),author:String(chunk.author||doc.author||""),
+            language:String(chunk.language||doc.language||""),text:String(block).trim()
+          });
+        }
+      }
+      if(!blockRows.length)continue;
+      db.exec("BEGIN IMMEDIATE;");
+      try{
+        const ins=db.prepare("INSERT OR IGNORE INTO blocks(id,document_id,chunk_id,page,block_index,title,author,language,text) VALUES(?,?,?,?,?,?,?,?,?)");
+        const fts=db.prepare("INSERT INTO blocks_fts(id,document_id,text,title) VALUES(?,?,?,?)");
+        let inserted=0;
+        for(const row of blockRows){
+          const result=ins.run(row.id,row.document_id,row.chunk_id,row.page,row.block_index,row.title,row.author,row.language,row.text);
+          if(Number(result?.changes||0)>0){fts.run(row.id,row.document_id,row.text,row.title);inserted++;}
+        }
+        db.prepare("UPDATE documents SET block_count=?,updated_at=? WHERE document_id=?").run(inserted,new Date().toISOString(),doc.document_id);
+        db.exec("COMMIT;");
+        migratedDocuments++;migratedBlocks+=inserted;
+      }catch(error){
+        try{db.exec("ROLLBACK;");}catch{}
+        throw error;
+      }
+    }
+    return {migrated_documents:migratedDocuments,migrated_blocks:migratedBlocks,remaining:Number(db.prepare("SELECT COUNT(*) AS n FROM documents WHERE block_count=0 AND chunk_count>0").get()?.n||0)};
+  };
+
   const enqueueFolderFile=(sourcePath,sizeBytes,mtimeMs)=>{
     const p=String(sourcePath||"").trim();
     if(!p)return false;
@@ -410,7 +450,7 @@ export async function createIncrementalLibrary(root){
 
   return {
     version:VERSION,db_path:dbPath,start,append,commit,listDocuments,counts,getChunk,getPage,
-    rowsForDocument,allReadyDocumentIds,searchDictionary,searchV3,
+    rowsForDocument,allReadyDocumentIds,searchDictionary,searchV3,backfillLegacyBlocks,
     enqueueFolderFile,requeueInterrupted,nextFolderFile,finishFolderFile,checkpoint
   };
 }
