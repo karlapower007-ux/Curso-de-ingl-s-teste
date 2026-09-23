@@ -1286,6 +1286,11 @@ async function handleV3LibraryStatus(req,res){
     ok:true,
     base:{...persistentV3Health(state),documents:baseLibraryCatalog().length},
     incremental:inc.counts(),
+    recent_incremental:inc.listDocuments({limit:5,offset:0}).map(x=>({
+      document_id:x.document_id,title:x.title||x.filename,status:x.status,
+      page_count:Number(x.page_count||0),chunk_count:Number(x.chunk_count||0),
+      created_at:x.created_at
+    })),
     total_documents:baseLibraryCatalog().length+Number(inc.counts().documents||0),
     append_only:true,base_frozen:true,federated_search:true,
     mass_import:{...massImportState,scanner_running:massScanRunning,worker_running:massPumpRunning}
