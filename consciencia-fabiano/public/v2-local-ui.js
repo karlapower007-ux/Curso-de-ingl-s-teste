@@ -345,7 +345,7 @@ async function sendLocal(){
         appendMessage("assistant",rendered,proofSources);
         speakV4Lesson(lesson).catch(()=>{});
         const backend=$("backendText");
-        if(backend)backend.textContent="v4 Aula • 1 ideia • até 3 provas verificadas • Qwen sem autoridade de fonte";
+        if(backend)backend.textContent="v4.1 Aula • 1 ideia • 2 provas verificadas • suporte literal + juiz semântico local";
         const dot=$("backendDot");if(dot)dot.className="dot ok";
         const state=$("avatarState");if(state)state.textContent="Pronto";
         return;
