@@ -88,14 +88,14 @@ const lesson=await buildLesson({
     model:"qwen3:0.6b",
     content:JSON.stringify({explicacao:[
       {
-        text:"O mundo dos espíritos é apresentado como uma condição relacionada ao período após a morte.",
-        evidence_id:safe[0].id,
-        support_quote:q1
-      },
-      {
-        text:"Nesse estado, as fontes recuperadas descrevem continuidade antes da ressurreição.",
+        text:"O mundo dos espíritos é apresentado pela fonte como um estado após a morte.",
         evidence_id:safe[1].id,
         support_quote:q2
+      },
+      {
+        text:"Nesse estado, a fonte afirma que o evangelho é declarado às pessoas ali mencionadas.",
+        evidence_id:safe[0].id,
+        support_quote:q1
       }
     ]})
   }),
@@ -148,8 +148,8 @@ const review=await buildLesson({
   generate:async()=>({
     model:"qwen3:0.6b",
     content:JSON.stringify({explicacao:[
-      {text:"O mundo dos espíritos é relacionado ao período após a morte.",evidence_id:safe[0].id,support_quote:q1},
-      {text:"As fontes recuperadas o relacionam ao período anterior à ressurreição.",evidence_id:safe[1].id,support_quote:q2}
+      {text:"A fonte situa o mundo dos espíritos após a morte.",evidence_id:safe[1].id,support_quote:q2},
+      {text:"A outra fonte diz que o evangelho é declarado no mundo dos espíritos.",evidence_id:safe[0].id,support_quote:q1}
     ]})
   }),
   verify:async()=>({content:JSON.stringify({verdicts:[
