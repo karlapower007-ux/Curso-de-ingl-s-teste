@@ -4,7 +4,8 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
   V2_VERSION,splitConcepts,exactAndMatches,formatExactAnswer,formatGroundedAnswer,buildPrompt,chooseInstalledModel,
-  focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus,focusedEvidenceWindow
+  focusEvidence,answerStaysOnFocus,citationIntegrity,extractVerifiedPageReference,hasSubstantiveFocus,focusedEvidenceWindow,
+  dictionaryPublicReference
 } from "./v2-local-core.mjs";
 import {
   buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer,expandV3Query,parseScriptureFooter
@@ -62,6 +63,16 @@ assert.ok(grounded.includes("✓ Fonte verificada:"),"Grounded Exact deve citar 
 assert.ok(!grounded.includes("Espírito da Verdade"),"Grounded Exact não pode incluir evidência fora do foco");
 const scripturePage="24 E disse: És tu meu filho Esaú mesmo? Ele disse: Eu sou. 27 a Heb. 11:20. GEE Bênçãos Patriarcais. 29 a GEE Amaldiçoar. 47 GÊNESIS 27:23–38";
 assert.equal(extractVerifiedPageReference(scripturePage),"GÊNESIS 27:23–38","rodapé canônico deve vencer referências cruzadas");
+assert.equal(
+  dictionaryPublicReference({filename:"standard-works-83806-por.pdf",page:55,text:"27 a Heb. 11:20. GEE Bênçãos Patriarcais."},scripturePage),
+  "GÊNESIS 27:23–38",
+  "Dicionário deve substituir standard-works pela referência canônica verificada"
+);
+assert.equal(
+  dictionaryPublicReference({filename:"standard-works-83806-por.pdf",page:999,text:"Trecho sem rodapé canônico."},"Trecho sem rodapé canônico."),
+  "Obras Padrão",
+  "Dicionário deve usar fallback neutro sem vazar standard-works"
+);
 const scriptureCitation=citationIntegrity({
   filename:"standard-works-83806-por.pdf",title:"",page:55,text:"27 a Heb. 11:20. GEE Bênçãos Patriarcais."
 },scripturePage);
@@ -140,6 +151,8 @@ for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis
 assert.ok(server.includes('url.pathname==="/api/v3/health"'),"servidor deve expor health separado da V3");
 assert.ok(server.includes('url.pathname==="/api/v3/chat"'),"servidor deve expor Chat V3 separado");
 assert.ok(server.includes('url.pathname==="/api/v2/dictionary"'),"Dicionário aprovado deve permanecer na rota V2");
+assert.ok(server.includes("decorateDictionaryReference"),"Dicionário deve aplicar somente a camada de referência pública das Escrituras");
+assert.ok(server.includes("dictionaryPublicReference"),"Dicionário deve reutilizar o parser canônico sem pacote externo");
 assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
 assert.ok(ui.includes('call("/api/v3/chat"'),"Chat oficial deve usar o Evidence Engine V3");
 assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve continuar usando exatamente a rota V2");
