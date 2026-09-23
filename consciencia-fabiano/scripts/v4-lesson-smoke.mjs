@@ -100,6 +100,29 @@ const duplicateProofs=[
 ];
 assert.equal(sanitizeLessonEvidence(duplicateProofs).length,1,"trechos quase idênticos não contam como duas provas");
 
+const brokenWriterFallback=await buildLesson({
+  question:"O que é a expiação?",
+  evidence:[
+    {
+      id:"at1",source_chunk_id:"at1",kind:"book-paragraph",title:"Livro Teste",
+      reference:"Levítico 4:20",page:184,language:"pt",
+      text:"O sacerdote fará expiação por eles, e lhes será perdoado o pecado.",verified:true
+    },
+    {
+      id:"at2",source_chunk_id:"at2",kind:"book-paragraph",title:"Livro Teste",
+      reference:"Levítico 16:24",page:210,language:"pt",
+      text:"Então sairá e preparará o seu holocausto e fará expiação por si e pelo povo.",verified:true
+    }
+  ],
+  generate:async()=>({model:"qwen3:0.6b",content:"resposta inválida"}),
+  verify:async()=>({model:"qwen3:0.6b",content:"{}"})
+});
+assert.equal(brokenWriterFallback.nao_sei,false,"duas provas reais não podem virar 'não achei' só porque o Qwen 0.6B falhou no JSON");
+assert.equal(brokenWriterFallback.fallback_literal,true);
+assert.equal(brokenWriterFallback.provas.length,2);
+assert.equal(brokenWriterFallback.verificacao,"support_quote_literal+exact-copy-lock");
+assert.ok(/expiação/i.test(brokenWriterFallback.ideia));
+
 const oneProof=await buildLesson({
   question:"Tema com evidência insuficiente",
   evidence:[evidence[0]],
@@ -211,6 +234,8 @@ assert.ok(server.includes("v4EvidenceFromAuthority"),"V4 deve voltar ao registro
 assert.ok(server.includes("v4DictionaryFallbackEvidence"),"V4 deve reutilizar o Dicionário strict-AND quando a busca V3 não formar duas provas");
 assert.ok(server.includes("lessonKnowledgeQuery(question)"),"Fallback deve reduzir perguntas naturais como O que é X ao conceito X");
 assert.ok(server.includes("dictionary_fallback_enabled:true"),"A resposta V4 deve declarar o fallback de Dicionário habilitado");
+assert.ok(server.includes("verified_evidence_candidates:verifiedEvidence.length"),"A resposta V4 deve expor diagnóstico de quantidade de provas candidatas");
+assert.ok(server.includes("knowledge_query:knowledgeQuery"),"A resposta V4 deve expor a consulta conceitual realmente usada");
 assert.ok(server.includes("authoritative-record+exact-substring"),"trecho precisa existir no registro autoritativo");
 assert.ok(server.includes("verify:verifyLessonWithQwen"),"V4 deve executar verificador semântico local");
 assert.ok(server.includes('" • PDF p. "'),"livros sem página impressa explícita devem rotular página do PDF");
