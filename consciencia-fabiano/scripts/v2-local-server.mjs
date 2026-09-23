@@ -16,6 +16,9 @@ import {
 import {
   ensurePersistentV3,searchPersistentV3,persistentV3Health
 } from "./v3-persistent-index.mjs";
+import {
+  V4_VERSION,buildLesson,lessonToPlainText,createLessonProfileStore
+} from "./v4-lesson-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(__dirname,"..");
@@ -26,7 +29,7 @@ const OLLAMA=String(process.env.OLLAMA_HOST||"http://127.0.0.1:11434").replace(/
 const EMBED_MODEL=String(process.env.FNS_EMBED_MODEL||DEFAULT_EMBED_MODEL);
 const DATA_DIR=path.join(ROOT,".fns-local");
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
-const LOCAL_RUNTIME_BUILD="2026-09-22-focus-citation-integrity-r10";
+const LOCAL_RUNTIME_BUILD="2026-09-22-v4-lesson-r1";
 const MAX_BODY=4*1024*1024;
 const LOCAL_BRIDGE_ORIGINS=new Set([
   "https://consciencia-fabiano.focoeepoder2.workers.dev",
@@ -40,6 +43,8 @@ const authoritativePages=new Map();
 let libraryPromise=null;
 let aliasesPromise=null;
 let v3IndexPromise=null;
+let v4ProfilePromise=null;
+let generatorQueue=Promise.resolve();
 const embedCache=new Map();
 
 const MIME={
@@ -272,6 +277,110 @@ async function handleV3Chat(req,res){
       text:row.text
     }))
   });
+}
+
+async function ensureV4Profile(){
+  if(!v4ProfilePromise)v4ProfilePromise=createLessonProfileStore(ROOT);
+  return v4ProfilePromise;
+}
+function withGeneratorQueue(task){
+  const run=generatorQueue.then(task,task);
+  generatorQueue=run.catch(()=>{});
+  return run;
+}
+async function generateLessonWithQwen(prompt){
+  return withGeneratorQueue(async()=>{
+    const models=await installedModels();
+    if(!models.includes("qwen3:0.6b"))return null;
+    const data=await fetchOllama("/api/chat",{
+      method:"POST",
+      body:JSON.stringify({
+        model:"qwen3:0.6b",stream:false,think:false,
+        messages:[{role:"user",content:String(prompt||"")}],
+        options:{temperature:0,num_ctx:1024,num_predict:220}
+      })
+    },180000);
+    return {content:String(data?.message?.content||""),model:"qwen3:0.6b"};
+  });
+}
+async function handleV4Health(req,res){
+  const [v3,profile,models]=await Promise.all([ensureV3Index(),ensureV4Profile(),installedModels()]);
+  const p=persistentV3Health(v3);
+  json(res,{
+    ok:true,
+    version:V4_VERSION,
+    service:"Consciência Fabiano V4 Aula",
+    local_only:true,
+    dictionary_frozen:true,
+    dictionary_endpoint:"/api/v2/dictionary",
+    v3_endpoint:"/api/v3/chat",
+    lesson_endpoint:"/api/v4/lesson",
+    external_writer_enabled:false,
+    generator_queue:"single",
+    model:models.includes("qwen3:0.6b")?"qwen3:0.6b":null,
+    profile_persistent:Boolean(profile?.persistent),
+    library_hash:p.library_hash,
+    v3_persistent:p.persistent,
+    v3_fts5:p.fts5,
+    evidence_units:p.evidence_units
+  });
+}
+async function handleV4Lesson(req,res){
+  const body=await readJsonBody(req);
+  const question=String(body.question||"").trim();
+  const mode=["aula","livro","revisao"].includes(String(body.mode))?String(body.mode):"aula";
+  if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
+
+  const [state,aliases,profileStore]=await Promise.all([ensureV3Index(),loadAliases(),ensureV4Profile()]);
+  let search=searchPersistentV3(state,question,aliases,{limit:12,strict:false,candidate_limit:500});
+  if(search.results.length<2){
+    const expanded=await expandV3WithQwen(question);
+    if(expanded.length){
+      search=searchPersistentV3(state,question,aliases,{
+        limit:12,strict:false,candidate_limit:700,extraExpansions:expanded
+      });
+    }
+  }
+
+  const profile=profileStore.read();
+  const lesson=await buildLesson({
+    question,
+    age:Number(body.age||0)||null,
+    mode,
+    evidence:search.results.slice(0,6).map(x=>({...x,citation_verified:x.verified===true})),
+    profile,
+    generate:generateLessonWithQwen
+  });
+
+  if(!lesson.nao_sei){
+    profileStore.write({
+      theme:question,
+      last_check:lesson.pergunta,
+      last_proof_id:lesson.provas?.[0]?.id||""
+    });
+  }
+
+  json(res,{
+    ...lesson,
+    ok:true,
+    speech_text:lessonToPlainText(lesson),
+    provider:"v4-lesson-local",
+    dictionary_frozen:true,
+    external_writer_enabled:false
+  });
+}
+function panelHtml(){
+  return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Painel local • Consciência Fabiano</title>
+  <style>body{font:15px system-ui;background:#0b1220;color:#e8eef8;margin:0;padding:24px}main{max-width:900px;margin:auto}h1{margin-top:0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.card{background:#142036;border:1px solid #29415f;border-radius:12px;padding:16px}.ok{color:#69e6a6}.bad{color:#ff8f8f}code{word-break:break-all}</style>
+  <main><h1>Consciência Fabiano • Painel local</h1><p>Somente saúde local. Nenhum conteúdo da biblioteca é exibido aqui.</p><div id="grid" class="grid"></div></main>
+  <script>
+  const endpoints=[["V2","/api/v2/health"],["V3","/api/v3/health"],["V4","/api/v4/health"]];
+  Promise.all(endpoints.map(async ([name,url])=>{try{const r=await fetch(url);return [name,await r.json()]}catch(e){return [name,{ok:false,error:String(e)}]}})).then(rows=>{
+    document.getElementById("grid").innerHTML=rows.map(([name,d])=>'<div class="card"><h2>'+name+'</h2><p class="'+(d.ok?'ok':'bad')+'">'+(d.ok?'OK':'ERRO')+'</p><pre>'+escapeHtml(JSON.stringify(d,null,2))+'</pre></div>').join('');
+  });
+  function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+  </script></html>`;
 }
 async function fetchOllama(endpoint,options={},timeoutMs=120000){
   const controller=new AbortController();
@@ -737,6 +846,9 @@ http.createServer(async(req,res)=>{
   localHeaders(req,res);
   try{
     const url=new URL(req.url,"http://localhost");
+    if(req.method==="GET" && url.pathname==="/api/v4/health"){await handleV4Health(req,res);return;}
+    if(req.method==="POST" && url.pathname==="/api/v4/lesson"){await handleV4Lesson(req,res);return;}
+    if(req.method==="GET" && url.pathname==="/painel"){res.statusCode=200;res.setHeader("Content-Type","text/html; charset=utf-8");res.end(panelHtml());return;}
     if(req.method==="GET" && url.pathname==="/api/v3/health"){await handleV3Health(req,res);return;}
     if(req.method==="POST" && url.pathname==="/api/v3/chat"){await handleV3Chat(req,res);return;}
     if(req.method==="GET" && url.pathname==="/api/v2/health"){await handleHealth(req,res);return;}
@@ -765,6 +877,6 @@ http.createServer(async(req,res)=>{
   console.log("SELECTED_MODEL="+(autoModel(models)||"nenhum instalado"));
   loadLibrary().then(info=>{
     console.log("LOCAL_LIBRARY_CHUNKS="+info.chunks);
-    ensureV3Index().then(index=>console.log("V3_EVIDENCE_UNITS="+index.units.length)).catch(()=>{});
+    ensureV3Index().then(state=>console.log("V3_EVIDENCE_UNITS="+persistentV3Health(state).evidence_units)).catch(()=>{});
   }).catch(()=>{});
 });
