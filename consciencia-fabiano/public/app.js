@@ -3063,6 +3063,34 @@
     throw lastError||new Error("Servidor local V3 indisponível.");
   }
 
+  async function loadMassImportStatus(forceScan=false){
+    const host=$("massImportStatus");
+    try{
+      if(forceScan){
+        if(host)host.textContent="Fila 50K • verificando a pasta de importação…";
+        await localV3Api("/api/v3/library/scan",{method:"POST",body:"{}"},300000);
+      }
+      const data=await localV3Api("/api/v3/library/status",{},30000);
+      const inc=data?.incremental||{};
+      const queue=inc?.folder_queue||{};
+      const parts=[
+        "Novos prontos: "+Number(inc.documents||0).toLocaleString("pt-BR"),
+        "Blocos pesquisáveis: "+Number(inc.blocks||0).toLocaleString("pt-BR"),
+        "Na fila: "+Number(queue.queued||0).toLocaleString("pt-BR"),
+        "Processando: "+Number(queue.processing||0).toLocaleString("pt-BR"),
+        "Concluídos: "+Number(queue.done||0).toLocaleString("pt-BR"),
+        "Duplicados: "+Number(queue.duplicate||0).toLocaleString("pt-BR"),
+        "Requer OCR: "+Number(queue.needs_ocr||0).toLocaleString("pt-BR"),
+        "Falhas: "+Number(queue.failed||0).toLocaleString("pt-BR")
+      ];
+      if(host)host.textContent="Fila 50K • "+parts.join(" • ");
+      return data;
+    }catch(error){
+      if(host)host.textContent="Fila 50K • servidor local indisponível neste aparelho.";
+      return null;
+    }
+  }
+
   async function submitExtractedTextIncremental(extracted){
     const common={
       filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,
@@ -3408,6 +3436,7 @@
   async function loadBooks() {
     const result=await ensureLibraryAlwaysAvailable();
     loadCostGuardStatus().catch(()=>{});
+    loadMassImportStatus(false).catch(()=>{});
     return result;
   }
 
@@ -3445,6 +3474,7 @@
   $("stopAudioBtn").onclick = stopAudioPlayback;
   $("uploadBtn").onclick = () => uploadPdfQueue(Array.from($("pdfInput").files||[]));
   $("reindexBtn").onclick = reindex;
+  if($("massScanBtn")) $("massScanBtn").onclick=()=>loadMassImportStatus(true).then(()=>loadBooks());
   bindPdfUploadUi();
   setUploadGate(true);
 
@@ -3500,6 +3530,8 @@
 
   // Heartbeat exato enquanto a página está ativa; o Service Worker também usa Periodic Background Sync quando o navegador permite.
   setInterval(()=>{if(networkAllowed())tickPhantomDaemon();},PHANTOM_DAEMON_INTERVAL_MS);
+
+  setInterval(()=>loadMassImportStatus(false).catch(()=>{}),15000);
 
   setInterval(()=>{
     if(!heavyLocalSubsystemsActivated || !networkAllowed()) return;
