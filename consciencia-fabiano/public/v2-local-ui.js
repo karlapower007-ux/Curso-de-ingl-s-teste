@@ -204,22 +204,15 @@ function browserDeterministicAnswer(mode,question,evidence=[]){
 }
 function lessonDisplayText(data={}){
   if(data?.nao_sei)return data?.guard==="adulto"
-    ?String(data.ideia||"")+"
-
-"+String(data.pergunta||"")
+    ?String(data.ideia||"")+"\n\n"+String(data.pergunta||"")
     :"Não achei na biblioteca.";
-  const proofs=(data.provas||[]).map((p,i)=>"Prova "+(i+1)+": "+String(p.ref||"")+"
-"+String(p.trecho||"")).join("
-
-");
+  const proofs=(data.provas||[]).map((p,i)=>"Prova "+(i+1)+": "+String(p.ref||"")+"\n"+String(p.trecho||"")).join("\n\n");
   return [
     String(data.ideia||""),
     proofs,
     ...(data.explicacao||[]).map(String),
     "Entendeu? "+String(data.pergunta||"")
-  ].filter(Boolean).join("
-
-");
+  ].filter(Boolean).join("\n\n");
 }
 function appendMessage(role,content,sources=[]){
   const host=$("messages");if(!host)return;
