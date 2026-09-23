@@ -33,4 +33,4 @@ if(-not $healthy){
   }
 }
 if(-not $healthy){ throw "Servidor local V4 não respondeu na porta 8788." }
-if(-not $NoBrowser){ Start-Process "https://consciencia-fabiano.focoeepoder2.workers.dev/?v4=1" }
+if(-not $NoBrowser){ Start-Process "http://127.0.0.1:8788/?v4=1" }
