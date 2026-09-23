@@ -158,11 +158,22 @@
             <strong>Importação massiva 50K</strong>
             <p><strong>Importante:</strong> “Verificar pasta” verifica somente <code>C:\ConscienciaFabiano\ImportarPDFs</code>. PDFs enviados pelo botão “Adicionar PDFs” entram direto no índice e são confirmados em “Últimos PDFs indexados” abaixo.</p>
             <p>Para lotes enormes, use a pasta <code>C:\ConscienciaFabiano\ImportarPDFs</code>. Pode criar subpastas. O sistema processa um PDF por vez e retoma após reiniciar.</p>
-            <p id="recentIndexedPdfs" class="status" aria-live="polite">Últimos PDFs indexados • aguardando leitura…</p>
+            <p id="recentIndexedPdfs" class="status" aria-live="polite">Últimos 5 PDFs indexados • aguardando leitura…</p>
             <p id="massImportStatus" class="status" aria-live="polite">Fila 50K • verificando servidor local…</p>
             <div class="button-row">
               <button id="massOpenFolderBtn" class="secondary" type="button">Abrir pasta dos PDFs</button>
               <button id="massScanBtn" class="secondary" type="button">Verificar pasta agora</button>
+            </div>
+            <div class="fiftyk-ledger" aria-live="polite">
+              <div class="fiftyk-ledger-head">
+                <div>
+                  <strong id="fiftyKLedgerTitle">PDFs realmente registrados no 50K</strong>
+                  <small id="fiftyKLedgerInfo">Carregando a lista completa do índice incremental…</small>
+                </div>
+                <button id="fiftyKRefreshBtn" class="ghost small-btn" type="button">Atualizar lista</button>
+              </div>
+              <div id="fiftyKLedgerList" class="fiftyk-ledger-list"></div>
+              <button id="fiftyKMoreBtn" class="secondary full hidden" type="button">Mostrar mais PDFs do 50K</button>
             </div>
           </div>
         </div>
