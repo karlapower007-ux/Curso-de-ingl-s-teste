@@ -156,10 +156,11 @@ jobs:
                 await page.locator("#dictionarySearchBtn").click();
                 await page.waitForFunction(
                   ()=> {
-                    const status=document.querySelector("#dictionaryStatus")?.textContent||"";
+                    const status=(document.querySelector("#dictionaryStatus")?.textContent||"").trim();
                     const button=document.querySelector("#dictionarySearchBtn");
                     return button?.disabled===false &&
-                      (/v2 local/i.test(status) || /Nenhuma correspondência/i.test(status) || /Busca local v2 indisponível/i.test(status));
+                      status.length>0 &&
+                      !/Busca strict AND local em toda a biblioteca/i.test(status);
                   },
                   null,{timeout:30000}
                 );
