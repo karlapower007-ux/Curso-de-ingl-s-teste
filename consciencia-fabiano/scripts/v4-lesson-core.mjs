@@ -1,7 +1,7 @@
 import path from "node:path";
 import {mkdir} from "node:fs/promises";
 
-export const V4_VERSION="4.1.0-lesson-entailment-locked";
+export const V4_VERSION="4.1.1-lesson-grounded-fallback";
 
 const PRIVATE_PATTERNS=[
   /\b(endere[cç]o|rua|avenida|cep|onde moro|minha casa)\b/i,
@@ -89,7 +89,7 @@ function publicProof(proof={}){
     pagina_tipo:proof.pagina_tipo||null
   };
 }
-function noEvidence(mode="aula"){
+function noEvidence(mode="aula",reason="insufficient-evidence"){
   return {
     ideia:"Não achei na biblioteca.",
     explicacao:[],
@@ -99,8 +99,58 @@ function noEvidence(mode="aula"){
     proximo:null,
     nao_sei:true,
     modelo:"nenhum",
-    modo:mode
+    modo:mode,
+    motivo:reason
   };
+}
+
+function literalEvidenceQuote(proof={},question=""){
+  const source=normalizeQuote(proof?.trecho_original||proof?.trecho||"");
+  if(!source)return "";
+  const conceptTokens=fold(lessonKnowledgeQuery(question)).split(/\s+/).filter(x=>x.length>=3);
+  const candidates=source
+    .split(/(?<=[.!?;:])\s+/u)
+    .flatMap(sentence=>sentence.split(/\s+[—–-]\s+/u))
+    .map(x=>x.trim())
+    .filter(x=>x.length>=28&&x.length<=420);
+
+  const score=text=>{
+    const f=" "+fold(text)+" ";
+    let hits=0;
+    for(const token of conceptTokens)if(f.includes(" "+token+" "))hits++;
+    let value=hits*10;
+    if(/\b(perdo|pecad|salva|redenc|reconc|sacrific|cristo|senhor|deus|vida|morte|ressur|amor|gra[cç]a)\w*/iu.test(text))value+=2;
+    if(/\b(?:GEE|TJS)\b/i.test(text))value-=20;
+    if(SOURCE_LIKE.some(re=>re.test(text)))value-=8;
+    value+=Math.min(3,text.length/140);
+    return value;
+  };
+
+  const ranked=(candidates.length?candidates:[source.slice(0,420)])
+    .filter(x=>!/^\d{1,4}\s+/u.test(x))
+    .sort((a,b)=>score(b)-score(a));
+  const chosen=ranked.find(x=>score(x)>0)||ranked[0]||"";
+  return cleanText(chosen,420);
+}
+
+function buildLiteralFallbackClaims(question,proofs=[]){
+  const out=[];
+  const used=new Set();
+  for(const proof of proofs){
+    if(out.length>=2)break;
+    if(!proof?.id||used.has(proof.id))continue;
+    const quote=literalEvidenceQuote(proof,question);
+    if(!quote||quote.split(/\s+/).length<4||SOURCE_LIKE.some(re=>re.test(quote))||!looksPortuguese(quote))continue;
+    out.push({
+      text:quote,
+      evidence_id:proof.id,
+      support_quote:quote,
+      claim_id:"C"+(out.length+1),
+      deterministic_literal:true
+    });
+    used.add(proof.id);
+  }
+  return out;
 }
 function buildCheckQuestion(idea=""){
   const clean=cleanText(idea,190).replace(/[.!?]+$/,"").trim();
@@ -276,34 +326,41 @@ export async function buildLesson({
   }
 
   const proofs=sanitizeLessonEvidence(evidence);
-  if(proofs.length<2)return noEvidence(safeMode);
-  if(typeof generate!=="function"||typeof verify!=="function")return noEvidence(safeMode);
+  if(proofs.length<2)return noEvidence(safeMode,"fewer-than-two-verified-proofs");
 
   let generated=null,judged={accepted:[]};
-  try{
-    const prompt=buildLessonGeneratorPrompt({question:q,age,proofs,profile});
-    generated=await generate(prompt,{question:q,proofs,mode:safeMode});
-    judged=judgeLessonDraft(generated?.content ?? generated,proofs);
-  }catch{
-    return noEvidence(safeMode);
+  if(typeof generate==="function"){
+    try{
+      const prompt=buildLessonGeneratorPrompt({question:q,age,proofs,profile});
+      generated=await generate(prompt,{question:q,proofs,mode:safeMode});
+      judged=judgeLessonDraft(generated?.content ?? generated,proofs);
+    }catch{}
   }
-  if(judged.accepted.length<2)return noEvidence(safeMode);
 
   let verifiedClaims=[];
-  try{
-    const verifierPrompt=buildEntailmentPrompt({question:q,claims:judged.accepted});
-    const verdict=await verify(verifierPrompt,{question:q,claims:judged.accepted,proofs,mode:safeMode});
-    verifiedClaims=applyEntailmentVerdicts(verdict?.content ?? verdict,judged.accepted);
-  }catch{
-    return noEvidence(safeMode);
+  if(judged.accepted.length>=2 && typeof verify==="function"){
+    try{
+      const verifierPrompt=buildEntailmentPrompt({question:q,claims:judged.accepted});
+      const verdict=await verify(verifierPrompt,{question:q,claims:judged.accepted,proofs,mode:safeMode});
+      verifiedClaims=applyEntailmentVerdicts(verdict?.content ?? verdict,judged.accepted);
+    }catch{}
   }
 
   const distinct=new Map();
   for(const claim of verifiedClaims){
     if(!distinct.has(claim.evidence_id))distinct.set(claim.evidence_id,claim);
   }
-  const claims=[...distinct.values()].slice(0,2);
-  if(claims.length<2)return noEvidence(safeMode);
+  let claims=[...distinct.values()].slice(0,2);
+  let literalFallback=false;
+
+  // On very small local models, valid evidence can exist while JSON generation
+  // or the semantic judge fails. Never report "not found" in that case.
+  // Fall back only to verbatim claims copied from two distinct verified proofs.
+  if(claims.length<2){
+    claims=buildLiteralFallbackClaims(q,proofs);
+    literalFallback=claims.length>=2;
+  }
+  if(claims.length<2)return noEvidence(safeMode,"verified-proofs-present-but-no-safe-claims");
 
   const proofMap=new Map(proofs.map(p=>[p.id,p]));
   const usedProofs=claims.map(c=>proofMap.get(c.evidence_id)).filter(Boolean);
@@ -321,9 +378,10 @@ export async function buildLesson({
     pergunta:buildCheckQuestion(idea),
     proximo:null,
     nao_sei:false,
-    modelo:String(generated?.model||"qwen3:0.6b"),
-    verificador:String((verifiedClaims.length?"qwen3:0.6b":"nenhum")),
-    verificacao:"support_quote_literal+entailment_local",
+    modelo:literalFallback?"fallback-literal-local":String(generated?.model||"qwen3:0.6b"),
+    verificador:literalFallback?"exact-copy-lock":String((verifiedClaims.length?"qwen3:0.6b":"nenhum")),
+    verificacao:literalFallback?"support_quote_literal+exact-copy-lock":"support_quote_literal+entailment_local",
+    fallback_literal:literalFallback,
     modo:safeMode
   };
 }
