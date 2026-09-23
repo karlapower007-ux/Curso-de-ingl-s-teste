@@ -3078,6 +3078,12 @@
       const inc=data?.incremental||{};
       const queue=inc?.folder_queue||{};
       const mass=data?.mass_import||{};
+      const recent=Array.isArray(data?.recent_incremental)?data.recent_incremental:[];
+      if($("recentIndexedPdfs")){
+        $("recentIndexedPdfs").textContent=recent.length
+          ?"Últimos PDFs indexados • "+recent.map(x=>String(x.title||"Livro")+" ("+Number(x.page_count||0)+" pág.)").join(" • ")
+          :"Últimos PDFs indexados • ainda não há PDFs novos no índice incremental.";
+      }
       const parts=[];
 
       if(scanInfo){
