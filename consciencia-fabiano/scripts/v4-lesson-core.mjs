@@ -151,7 +151,7 @@ export async function buildLesson({
   }
 
   const proofs=sanitizeLessonEvidence(evidence);
-  if(!proofs.length){
+  if(proofs.length<2){
     return {
       ideia:"Não achei na biblioteca.",
       explicacao:[],
