@@ -156,6 +156,8 @@ jobs:
           curl -fsS --max-time 20 "$BASE/v2-local-engine.js?v=${GITHUB_SHA}" -o /tmp/v2-engine.js
           curl -fsS --max-time 20 "$BASE/v2-aliases.json?v=${GITHUB_SHA}" -o /tmp/v2-aliases.json
           grep -Fq 'Citação exata • zero LLM' /tmp/v2-ui.js
+          grep -Fq 'sourcePdfHref' /tmp/v2-ui.js
+          grep -Fq 'Abrir PDF' /tmp/v2-ui.js
           grep -Fq 'http://127.0.0.1:8788/api/v2/health' /tmp/v2-ui.js
           grep -Fq 'fns_qwen_vectors_v2' /tmp/v2-engine.js
           jq -e '."plano de salvação" | length > 0' /tmp/v2-aliases.json >/dev/null
