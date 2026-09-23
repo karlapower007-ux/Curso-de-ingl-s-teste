@@ -24,7 +24,7 @@ import {createIncrementalLibrary} from "./v3-incremental-library.mjs";
 import {mergeFederatedSearch} from "./v3-federated-core.mjs";
 import {
   V4_VERSION,buildLesson,lessonToPlainText,lessonSpeechText,createLessonProfileStore,
-  judgeLessonDraft
+  judgeLessonDraft,lessonKnowledgeQuery
 } from "./v4-lesson-core.mjs";
 import {piperStatus,synthesizePiper} from "./v4-piper-tts.mjs";
 
@@ -273,9 +273,15 @@ async function v4DictionaryFallbackEvidence(question,aliases,limit=10){
   const safeLimit=Math.max(2,Math.min(20,Number(limit||10)));
   const pageSize=Math.max(20,safeLimit*4);
   const inc=await ensureIncrementalLibrary();
-  const base=exactAndMatches(rows,question,{aliases,page:1,pageSize});
-  const added=inc.searchDictionary(question,{aliases,page:1,pageSize});
-  const combined=[...(base.matches||[]),...(added.matches||[])];
+  const normalizedQuery=lessonKnowledgeQuery(question);
+  const queries=[normalizedQuery,String(question||"").trim()].filter((x,i,a)=>x&&a.indexOf(x)===i);
+  const combined=[];
+  for(const query of queries){
+    const base=exactAndMatches(rows,query,{aliases,page:1,pageSize});
+    const added=inc.searchDictionary(query,{aliases,page:1,pageSize});
+    combined.push(...(base.matches||[]),...(added.matches||[]));
+    if(combined.length>=safeLimit*2)break;
+  }
   const out=[],seen=new Set();
 
   for(const hit of combined){
