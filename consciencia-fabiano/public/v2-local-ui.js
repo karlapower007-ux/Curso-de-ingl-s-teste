@@ -265,6 +265,14 @@ function lessonDisplayText(data={}){
     "Entendeu? "+String(data.pergunta||"")
   ].filter(Boolean).join("\n\n");
 }
+function sourcePdfHref(item={}){
+  if(item?.source_pdf_available!==true)return "";
+  const raw=String(item?.source_pdf_url||"").trim();
+  if(!raw)return "";
+  const target=/^https?:\/\//i.test(raw)?raw:((apiBase&&raw.startsWith("/"))?apiBase+raw:raw);
+  const page=Number(item?.source_pdf_page??item?.pagina_pdf??item?.page??0);
+  return target+(page?("#page="+page+"&zoom=page-width"):"");
+}
 function appendMessage(role,content,sources=[]){
   const host=$("messages");if(!host)return;
   const wrap=document.createElement("div");wrap.className="msg "+role+" v2-msg";
@@ -275,7 +283,14 @@ function appendMessage(role,content,sources=[]){
     const seen=new Set();
     for(const item of sources){
       const ref=String(item?.reference||"").trim();if(!ref||seen.has(ref))continue;seen.add(ref);
-      const row=document.createElement("div");row.className="source";row.textContent=ref;src.appendChild(row);
+      const row=document.createElement("div");row.className="source";
+      const href=sourcePdfHref(item);
+      if(href){
+        const link=document.createElement("a");link.className="source-pdf-link";link.href=href;link.target="_blank";link.rel="noopener";
+        link.title="Abrir o PDF original na página citada";link.textContent="📖 "+ref+" • Abrir PDF ↗";
+        row.appendChild(link);
+      }else row.textContent=ref;
+      src.appendChild(row);
     }
     if(src.childElementCount)wrap.appendChild(src);
   }
@@ -297,8 +312,13 @@ function appendEvidenceDigest(rows=[]){
     const text=String(item?.text||"").replace(/\s+/g," ").trim();
     const key=ref+"|"+text;if(seen.has(key))continue;seen.add(key);
     const row=document.createElement("div");row.className="source";
-    const strong=document.createElement("strong");
-    strong.textContent=(item?.citation_verified===true?"✓ Fonte verificada — ":"")+ref;
+    const href=sourcePdfHref(item);
+    const strong=href?document.createElement("a"):document.createElement("strong");
+    if(href){
+      strong.className="source-pdf-link";strong.href=href;strong.target="_blank";strong.rel="noopener";
+      strong.title="Abrir o PDF original na página citada";
+    }
+    strong.textContent=(item?.citation_verified===true?"✓ Fonte verificada — ":"")+ref+(href?" • Abrir PDF ↗":"");
     const excerpt=document.createElement("div");excerpt.textContent=text;
     row.append(strong,excerpt);details.appendChild(row);
   }
@@ -337,9 +357,14 @@ async function sendLocal(){
           mode:experience
         },300000);
         const proofSources=(lesson.provas||[]).map(p=>({
+          document_id:p.document_id||"",
           reference:p.ref,
           text:p.trecho,
-          citation_verified:p.verified===true
+          page:p.pagina_pdf??null,
+          citation_verified:p.verified===true,
+          source_pdf_available:p.source_pdf_available===true,
+          source_pdf_url:p.source_pdf_url||"",
+          source_pdf_page:p.source_pdf_page??p.pagina_pdf??null
         }));
         const rendered=lessonDisplayText(lesson);
         appendMessage("assistant",rendered,proofSources);
@@ -462,9 +487,18 @@ function renderDictionary(data){
   for(const hit of (data?.matches||[])){
     const card=document.createElement("article");card.className="dictionary-result v2-dictionary-result";
     const head=document.createElement("div");head.className="dictionary-result-head";
-    const ref=document.createElement("strong");ref.textContent=String(hit.reference||hit.title||"Fonte");
-    const page=document.createElement("span");page.className="dictionary-result-ref";
-    page.textContent=hit.page?(hit.dictionary_scripture_source?"PDF p. "+hit.page:"página "+hit.page):"";
+    const href=sourcePdfHref(hit);
+    const ref=href?document.createElement("a"):document.createElement("strong");
+    if(href){
+      ref.className="dictionary-source-link";ref.href=href;ref.target="_blank";ref.rel="noopener";
+      ref.title="Abrir o PDF original na página citada";
+    }
+    ref.textContent=(href?"📖 ":"")+String(hit.reference||hit.title||"Fonte");
+    const page=document.createElement(href?"a":"span");page.className="dictionary-result-ref"+(href?" dictionary-source-open":"");
+    if(href){
+      page.href=href;page.target="_blank";page.rel="noopener";page.title="Abrir fonte no PDF";
+      page.textContent=hit.page?("Abrir PDF • p. "+hit.page+" ↗"):"Abrir PDF ↗";
+    }else page.textContent=hit.page?(hit.dictionary_scripture_source?"PDF p. "+hit.page:"página "+hit.page):"";
     head.append(ref,page);
     const body=document.createElement("div");body.className="dictionary-result-text";body.textContent=String(hit.text||"");
     const alias=document.createElement("small");alias.className="dictionary-source";
