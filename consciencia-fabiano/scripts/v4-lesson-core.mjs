@@ -1,7 +1,7 @@
 import path from "node:path";
 import {mkdir} from "node:fs/promises";
 
-export const V4_VERSION="4.0.0-lesson-grounded";
+export const V4_VERSION="4.1.0-lesson-entailment-locked";
 
 const PRIVATE_PATTERNS=[
   /\b(endere[cç]o|rua|avenida|cep|onde moro|minha casa)\b/i,
@@ -14,51 +14,136 @@ const SOURCE_LIKE=[
   /\.pdf\b/i,
   /\bstandard[-_ ]?works\b/i,
   /\bp[aá]gina\s+\d+\b/i,
+  /\bPDF\s*p\.?\s*\d+\b/i,
   /\b(?:[1-4]\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÀ-ÿ.-]{1,30}\s+\d{1,4}:\d{1,4}\b/u
 ];
 
 function cleanText(value,max=500){
   return String(value||"").replace(/\s+/g," ").trim().slice(0,max);
 }
-function firstSentence(value,max=220){
-  const text=cleanText(value,1200);
-  if(!text)return "";
-  const m=text.match(/^.*?[.!?](?:\s|$)/u);
-  return cleanText(m?m[0]:text,max);
+function fold(value=""){
+  return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
+function normalizeQuote(value=""){
+  return String(value||"").replace(/[“”„‟«»]/g,'"').replace(/[‘’]/g,"'").replace(/\s+/g," ").trim();
+}
+function tokenSet(value=""){
+  return new Set(fold(value).split(/\s+/).filter(x=>x.length>=3));
+}
+function jaccard(a,b){
+  const A=tokenSet(a),B=tokenSet(b);
+  if(!A.size||!B.size)return 0;
+  let hit=0;for(const x of A)if(B.has(x))hit++;
+  return hit/(A.size+B.size-hit);
+}
+function nearDuplicate(a,b){
+  const A=normalizeQuote(a),B=normalizeQuote(b);
+  if(!A||!B)return false;
+  if(A===B)return true;
+  const short=A.length<B.length?A:B,long=A.length<B.length?B:A;
+  if(short.length>=90 && long.includes(short))return true;
+  return jaccard(A,B)>=0.82;
 }
 function publicProofRef(row={}){
-  return cleanText(row.reference||row.ref||"",180);
+  return cleanText(row.reference||row.ref||"",220);
 }
 function proofId(row,index){
   const raw=String(row.id||row.source_chunk_id||row.reference||("E"+(index+1)));
   return "E"+(index+1)+"-"+raw.replace(/[^A-Za-z0-9_-]/g,"").slice(0,24);
 }
+function languageOf(row={},text=""){
+  const raw=String(row.language||row.lang||"").trim().toLowerCase();
+  if(raw.startsWith("pt"))return "pt";
+  if(raw.startsWith("en"))return "en";
+  if(raw.startsWith("es"))return "es";
+  const f=" "+fold(text)+" ";
+  const pt=(f.match(/\b(o|a|os|as|de|do|da|dos|das|que|uma|um|para|com|não|nao|espírito|espirito|ressurreição|ressurreicao)\b/g)||[]).length;
+  const en=(f.match(/\b(the|of|and|to|in|is|are|that|with|spirit|world|resurrection|after|before)\b/g)||[]).length;
+  return en>pt?"en":pt>0?"pt":"indefinido";
+}
+function looksPortuguese(text=""){
+  const f=" "+fold(text)+" ";
+  const pt=(f.match(/\b(o|a|os|as|de|do|da|dos|das|e|é|eh|sao|uma|um|que|para|com|sem|apos|antes|onde|quando|porque|pode|podem|espiritos|ressurreicao)\b/g)||[]).length;
+  const en=(f.match(/\b(the|of|and|to|in|is|are|was|were|that|this|with|after|before|spirit|world|resurrection)\b/g)||[]).length;
+  return pt>=1 && en<=pt;
+}
+function quoteBelongsToProof(quote,proof){
+  const q=normalizeQuote(quote);
+  const source=normalizeQuote(proof?.trecho_original||proof?.trecho||"");
+  if(q.length<20||q.split(/\s+/).length<4)return false;
+  return source.includes(q);
+}
+function publicProof(proof={}){
+  return {
+    id:proof.id,
+    ref:proof.ref,
+    trecho:proof.trecho_original,
+    trecho_original:proof.trecho_original,
+    idioma_original:proof.idioma_original,
+    traducao_pt:null,
+    verified:true,
+    titulo:proof.titulo||"",
+    pagina_pdf:proof.pagina_pdf??null,
+    pagina_impressa:proof.pagina_impressa??null,
+    pagina_tipo:proof.pagina_tipo||null
+  };
+}
+function noEvidence(mode="aula"){
+  return {
+    ideia:"Não achei na biblioteca.",
+    explicacao:[],
+    provas:[],
+    analogia:null,
+    pergunta:"Quer tentar a pergunta com outras palavras?",
+    proximo:null,
+    nao_sei:true,
+    modelo:"nenhum",
+    modo:mode
+  };
+}
+function buildCheckQuestion(idea=""){
+  const clean=cleanText(idea,190).replace(/[.!?]+$/,"").trim();
+  return clean?"Certo ou errado: "+clean+"?":"Entendeu a ideia principal?";
+}
 
 export function isSensitivePersonalQuestion(question=""){
-  const q=String(question||"");
-  return PRIVATE_PATTERNS.some(re=>re.test(q));
+  return PRIVATE_PATTERNS.some(re=>re.test(String(question||"")));
 }
 
 export function sanitizeLessonEvidence(rows=[]){
   const out=[];
-  const seen=new Set();
   for(const [index,row] of (rows||[]).entries()){
     if(out.length>=3)break;
     if(row?.verified!==true && row?.citation_verified!==true)continue;
     if(String(row?.kind||"")==="scripture-page-window")continue;
-    const trecho=cleanText(row?.text||row?.trecho||"",900);
+
+    const trecho=cleanText(row?.text||row?.trecho_original||row?.trecho||"",1100);
     const ref=publicProofRef(row);
     if(!trecho||!ref)continue;
     if(/\b(?:GEE|TJS)\b/i.test(trecho))continue;
     if(/\.pdf\b|standard[-_ ]?works/i.test(ref))continue;
-    const key=ref+"|"+trecho.slice(0,180);
-    if(seen.has(key))continue;
-    seen.add(key);
+
+    const duplicate=out.some(existing=>
+      nearDuplicate(existing.trecho_original,trecho) ||
+      (row?.source_chunk_id && existing._source_key===String(row.source_chunk_id))
+    );
+    if(duplicate)continue;
+
+    const paginaPdf=Number(row?.pdf_page??row?.pagina_pdf??row?.page??0)||null;
+    const paginaImpressa=cleanText(row?.printed_page??row?.pagina_impressa??"",40)||null;
     out.push({
       id:proofId(row,index),
       ref,
       trecho,
-      verified:true
+      trecho_original:trecho,
+      idioma_original:languageOf(row,trecho),
+      traducao_pt:null,
+      verified:true,
+      titulo:cleanText(row?.title||row?.titulo||"",180),
+      pagina_pdf:paginaPdf,
+      pagina_impressa:paginaImpressa,
+      pagina_tipo:String(row?.page_basis||row?.pagina_tipo||(paginaImpressa?"impressa+pdf":(paginaPdf?"pdf":"")))||null,
+      _source_key:String(row?.source_chunk_id||row?.id||"")
     });
   }
   return out;
@@ -73,64 +158,83 @@ export function buildLessonGeneratorPrompt({question,age,proofs,profile={}}){
   ].filter(Boolean).join(" | ");
 
   return [
-    "Você é o redator pedagógico local da Consciência Fabiano V4.",
+    "Você é somente o redator pedagógico local da Consciência Fabiano V4.",
+    "Escreva em português do Brasil, de forma curta, clara e direta.",
     "NÃO cite fonte, livro, página, versículo, arquivo ou referência.",
     "NÃO use conhecimento externo. Use somente as PROVAS abaixo.",
+    "Produza exatamente 2 afirmações se houver apoio suficiente.",
+    "As 2 afirmações devem usar evidence_id DIFERENTES.",
+    "A primeira afirmação deve responder diretamente à pergunta do aluno.",
+    "Para cada afirmação, copie em support_quote uma passagem LITERAL da prova correspondente que sustente a afirmação.",
+    "support_quote deve ser copiado exatamente; não traduza nem parafraseie o support_quote.",
+    "Se uma prova não sustentar uma afirmação útil, não a use.",
     "Retorne JSON puro e nada mais.",
-    '{"explicacao":[{"text":"frase curta","evidence_id":"ID"}],"pergunta":"checagem curta"}',
-    "Cada frase precisa de um evidence_id existente.",
-    "No máximo 3 frases curtas de explicação, total de aproximadamente 6 linhas.",
-    "A pergunta deve checar uma única ideia, de preferência certo/errado ou escolha simples.",
+    '{"explicacao":[{"text":"afirmação em português","evidence_id":"ID","support_quote":"trecho literal da prova"}]}',
     "Idade do aluno: "+ageText,
     memory?("Memória mínima: "+memory):"Memória mínima: vazia",
     "Pergunta do aluno: "+cleanText(question,500),
     "PROVAS:",
-    ...proofs.map(p=>p.id+" | "+p.trecho)
+    ...proofs.map(p=>p.id+" | "+p.trecho_original)
+  ].join("\n");
+}
+
+export function buildEntailmentPrompt({question,claims=[]}){
+  return [
+    "Você é um verificador semântico local. Não responda à pergunta do aluno e não acrescente fatos.",
+    "Para cada item, decida se a AFIRMAÇÃO decorre diretamente do TRECHO LITERAL fornecido.",
+    "Marque supported=true somente quando o trecho sustentar a afirmação sem conhecimento externo e sem inferência nova.",
+    "Se houver exagero, generalização, contradição, tradução incorreta ou informação ausente, use supported=false.",
+    "Retorne JSON puro e nada mais.",
+    '{"verdicts":[{"claim_id":"C1","supported":true}]}',
+    "Pergunta original: "+cleanText(question,500),
+    "ITENS:",
+    ...claims.map((c,i)=>"C"+(i+1)+" | AFIRMAÇÃO: "+c.text+" | TRECHO LITERAL: "+c.support_quote)
   ].join("\n");
 }
 
 function parseDraft(raw){
   if(raw&&typeof raw==="object")return raw;
-  const text=String(raw||"").trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+  const text=String(raw||"").trim().replace(/^\`\`\`(?:json)?/i,"").replace(/\`\`\`$/,"").trim();
   try{return JSON.parse(text);}catch{return {};}
 }
 
 export function judgeLessonDraft(raw,proofs=[]){
   const draft=parseDraft(raw);
-  const validIds=new Set(proofs.map(p=>p.id));
+  const proofMap=new Map(proofs.map(p=>[p.id,p]));
   const accepted=[];
   const sourceRejected=[];
+  const usedIds=new Set();
 
   for(const item of Array.isArray(draft?.explicacao)?draft.explicacao:[]){
-    const text=cleanText(item?.text||item?.frase||"",260);
+    const text=cleanText(item?.text||item?.frase||"",190);
     const evidenceId=String(item?.evidence_id||"").trim();
-    if(!text||!validIds.has(evidenceId))continue;
+    const supportQuote=cleanText(item?.support_quote||"",520);
+    const proof=proofMap.get(evidenceId);
+    if(!text||!proof||usedIds.has(evidenceId))continue;
+    if(/^\d{1,5}\b/.test(text)||!looksPortuguese(text))continue;
     if(SOURCE_LIKE.some(re=>re.test(text))){
       sourceRejected.push(text);
       continue;
     }
-    accepted.push({text,evidence_id:evidenceId});
-    if(accepted.length>=3)break;
+    if(!quoteBelongsToProof(supportQuote,proof))continue;
+    accepted.push({text,evidence_id:evidenceId,support_quote:supportQuote,claim_id:"C"+(accepted.length+1)});
+    usedIds.add(evidenceId);
+    if(accepted.length>=2)break;
   }
-
-  let pergunta=cleanText(draft?.pergunta||"",180);
-  if(SOURCE_LIKE.some(re=>re.test(pergunta)))pergunta="";
-  if(!pergunta)pergunta="Certo ou errado: essa ideia está apoiada pelas provas mostradas?";
-
-  return {accepted,pergunta,source_rejected:sourceRejected};
+  return {accepted,source_rejected:sourceRejected};
 }
 
-function deterministicIdea(proofs){
-  const idea=firstSentence(proofs[0]?.trecho||"",190);
-  return idea||"A biblioteca trouxe evidências verificadas sobre este tema.";
-}
-
-function rawEvidenceFallback(proofs){
-  return proofs.slice(0,2).map(p=>firstSentence(p.trecho,220)).filter(Boolean);
+export function applyEntailmentVerdicts(raw,claims=[]){
+  const parsed=parseDraft(raw);
+  const verdicts=new Map(
+    (Array.isArray(parsed?.verdicts)?parsed.verdicts:[])
+      .map(v=>[String(v?.claim_id||"").trim(),v?.supported===true])
+  );
+  return claims.filter(c=>verdicts.get(String(c.claim_id))===true);
 }
 
 export async function buildLesson({
-  question,age,mode="aula",evidence=[],profile={},generate=null
+  question,age,mode="aula",evidence=[],profile={},generate=null,verify=null
 }){
   const q=cleanText(question,600);
   const safeMode=["aula","livro","revisao"].includes(String(mode))?String(mode):"aula";
@@ -151,60 +255,54 @@ export async function buildLesson({
   }
 
   const proofs=sanitizeLessonEvidence(evidence);
-  if(proofs.length<2){
-    return {
-      ideia:"Não achei na biblioteca.",
-      explicacao:[],
-      provas:[],
-      analogia:null,
-      pergunta:"Quer tentar a pergunta com outras palavras?",
-      proximo:null,
-      nao_sei:true,
-      modelo:"nenhum",
-      modo:safeMode
-    };
+  if(proofs.length<2)return noEvidence(safeMode);
+  if(typeof generate!=="function"||typeof verify!=="function")return noEvidence(safeMode);
+
+  let generated=null,judged={accepted:[]};
+  try{
+    const prompt=buildLessonGeneratorPrompt({question:q,age,proofs,profile});
+    generated=await generate(prompt,{question:q,proofs,mode:safeMode});
+    judged=judgeLessonDraft(generated?.content ?? generated,proofs);
+  }catch{
+    return noEvidence(safeMode);
+  }
+  if(judged.accepted.length<2)return noEvidence(safeMode);
+
+  let verifiedClaims=[];
+  try{
+    const verifierPrompt=buildEntailmentPrompt({question:q,claims:judged.accepted});
+    const verdict=await verify(verifierPrompt,{question:q,claims:judged.accepted,proofs,mode:safeMode});
+    verifiedClaims=applyEntailmentVerdicts(verdict?.content ?? verdict,judged.accepted);
+  }catch{
+    return noEvidence(safeMode);
   }
 
-  let judged={accepted:[],pergunta:""};
-  let model="v3-cru";
-  if(typeof generate==="function"){
-    try{
-      const prompt=buildLessonGeneratorPrompt({question:q,age,proofs,profile});
-      const generated=await generate(prompt,{question:q,proofs,mode:safeMode});
-      judged=judgeLessonDraft(generated?.content ?? generated,proofs);
-      if(judged.accepted.length)model=String(generated?.model||"qwen3:0.6b");
-    }catch{}
+  const distinct=new Map();
+  for(const claim of verifiedClaims){
+    if(!distinct.has(claim.evidence_id))distinct.set(claim.evidence_id,claim);
   }
+  const claims=[...distinct.values()].slice(0,2);
+  if(claims.length<2)return noEvidence(safeMode);
 
-  let explanation=judged.accepted.map(x=>x.text);
-  if(!explanation.length){
-    explanation=rawEvidenceFallback(proofs);
-    model="v3-cru";
-  }
+  const proofMap=new Map(proofs.map(p=>[p.id,p]));
+  const usedProofs=claims.map(c=>proofMap.get(c.evidence_id)).filter(Boolean);
+  if(usedProofs.length<2||nearDuplicate(usedProofs[0].trecho_original,usedProofs[1].trecho_original))return noEvidence(safeMode);
 
-  if(!explanation.length){
-    return {
-      ideia:"Não achei na biblioteca.",
-      explicacao:[],
-      provas:[],
-      analogia:null,
-      pergunta:"Quer tentar a pergunta com outras palavras?",
-      proximo:null,
-      nao_sei:true,
-      modelo:"nenhum",
-      modo:safeMode
-    };
-  }
+  const idea=cleanText(claims[0].text,190);
+  const explanation=claims.slice(1).map(x=>cleanText(x.text,190)).filter(Boolean);
+  if(!idea||!explanation.length)return noEvidence(safeMode);
 
   return {
-    ideia:deterministicIdea(proofs),
-    explicacao:explanation.slice(0,3),
-    provas:proofs,
+    ideia:idea,
+    explicacao:explanation,
+    provas:usedProofs.map(publicProof),
     analogia:null,
-    pergunta:judged.pergunta||"Certo ou errado: essa ideia está apoiada pelas provas mostradas?",
+    pergunta:buildCheckQuestion(idea),
     proximo:null,
     nao_sei:false,
-    modelo:model,
+    modelo:String(generated?.model||"qwen3:0.6b"),
+    verificador:String((verifiedClaims.length?"qwen3:0.6b":"nenhum")),
+    verificacao:"support_quote_literal+entailment_local",
     modo:safeMode
   };
 }
@@ -217,14 +315,15 @@ export function lessonSpeechText(lesson={}){
 }
 
 export function lessonToPlainText(lesson={}){
-  if(lesson?.nao_sei&&lesson?.guard==="adulto"){
-    return lesson.ideia+"\n\n"+lesson.pergunta;
-  }
+  if(lesson?.nao_sei&&lesson?.guard==="adulto")return lesson.ideia+"\n\n"+lesson.pergunta;
   if(lesson?.nao_sei)return "Não achei na biblioteca.";
-  const proofText=(lesson.provas||[]).map((p,i)=>"Prova "+(i+1)+": "+p.ref+"\n"+p.trecho).join("\n\n");
+  const proofText=(lesson.provas||[]).map((p,i)=>{
+    const label=p.idioma_original&&p.idioma_original!=="pt"?"Trecho original ("+p.idioma_original+")":"Trecho original";
+    return "Prova "+(i+1)+": "+p.ref+"\n"+label+": "+p.trecho_original;
+  }).join("\n\n");
   return [
-    lesson.ideia,
-    ...(lesson.explicacao||[]),
+    "Ideia: "+lesson.ideia,
+    ...(lesson.explicacao||[]).map(x=>"Explicação: "+x),
     proofText,
     "Entendeu? "+String(lesson.pergunta||"")
   ].filter(Boolean).join("\n\n");
