@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import {readFile,readdir} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {buildV3EvidenceIndex,searchV3Evidence} from "./v3-evidence-core.mjs";
-import {buildLesson,lessonToPlainText,sanitizeLessonEvidence} from "./v4-lesson-core.mjs";
+import {buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer} from "./v3-evidence-core.mjs";
+import {exactAndMatches} from "./v2-local-core.mjs";
+import {buildLesson,lessonToPlainText,lessonSpeechText,sanitizeLessonEvidence} from "./v4-lesson-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
@@ -133,3 +134,42 @@ console.log("V4_REAL_EXAMPLE="+JSON.stringify({
 },null,2));
 
 console.log("V4_VISIBLE_EXAMPLE=\n"+lessonToPlainText(lesson));
+
+const bookVisible=formatV3EvidenceAnswer(search,"explain");
+assert.ok(bookVisible.length>80,"modo Livro deve continuar exibindo evidência V3 real");
+console.log("V3_BOOK_VISIBLE=\n"+bookVisible.slice(0,1800));
+
+const review=await buildLesson({
+  question:"Revise comigo: o que é o mundo espiritual?",
+  age:12,
+  mode:"revisao",
+  evidence:chosen,
+  profile:{theme:"mundo espiritual",last_check:lesson.pergunta,last_proof_id:lesson.provas[0].id},
+  generate:async()=>({
+    model:"qwen3:0.6b",
+    content:JSON.stringify({explicacao:[
+      {text:"O mundo dos espíritos é relacionado ao período após a morte.",evidence_id:safe[0].id,support_quote:q1},
+      {text:"As fontes recuperadas o relacionam ao período anterior à ressurreição.",evidence_id:safe[1].id,support_quote:q2}
+    ]})
+  }),
+  verify:async()=>({content:JSON.stringify({verdicts:[
+    {claim_id:"C1",supported:true},{claim_id:"C2",supported:true}
+  ]})})
+});
+assert.equal(review.nao_sei,false);
+assert.equal(review.modo,"revisao");
+console.log("V4_REVIEW_VISIBLE=\n"+lessonToPlainText(review));
+
+const dictionary=exactAndMatches(rows,"Adão",{aliases,page:1,pageSize:3});
+assert.ok(dictionary.total>0,"Dicionário V2 real deve continuar encontrando Adão");
+assert.ok(dictionary.matches.length>0);
+console.log("V2_DICTIONARY_VISIBLE="+JSON.stringify({
+  query:"Adão",total:dictionary.total,page:dictionary.page,page_size:dictionary.page_size,
+  first:dictionary.matches.slice(0,3).map(x=>({reference:x.reference,text:String(x.text||"").slice(0,220)}))
+},null,2));
+
+const speech=lessonSpeechText(lesson);
+assert.ok(speech.includes(lesson.ideia));
+assert.ok(!speech.includes("PDF p."),"voz V4 deve ler só ideia e explicação, não referências");
+assert.ok(!speech.includes("Prova 1"),"voz V4 não deve ler os blocos de prova");
+console.log("V4_VOICE_VISIBLE="+speech);
