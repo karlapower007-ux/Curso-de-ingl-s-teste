@@ -916,8 +916,31 @@ async function handleV4Lesson(req,res){
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
 
   const [aliases,profileStore]=await Promise.all([loadAliases(),ensureV4Profile()]);
-  let search=await searchFederatedV3(question,aliases,{limit:16,strict:false,candidate_limit:700});
+  const knowledgeQuery=lessonKnowledgeQuery(question);
+  let search=await searchFederatedV3(knowledgeQuery||question,aliases,{limit:20,strict:false,candidate_limit:900});
   let verifiedEvidence=await v4EvidenceFromAuthority(search.results);
+
+  // Definition/explanation questions benefit from semantic expansion before
+  // falling back to exact dictionary occurrences, so the two proofs are more
+  // likely to explain the concept instead of merely mentioning it.
+  if(verifiedEvidence.length<4){
+    const expanded=await withGeneratorQueue(()=>expandV3WithQwen(knowledgeQuery||question));
+    if(expanded.length){
+      const expandedSearch=await searchFederatedV3(knowledgeQuery||question,aliases,{
+        limit:24,strict:false,candidate_limit:1200,extraExpansions:expanded
+      });
+      const expandedEvidence=await v4EvidenceFromAuthority(expandedSearch.results);
+      const merged=[...verifiedEvidence,...expandedEvidence];
+      const seen=new Set();
+      verifiedEvidence=merged.filter(item=>{
+        const key=String(item?.document_id||"")+"|"+String(item?.page||"")+"|"+
+          normalizeAuthorityText(item?.text||"").slice(0,260);
+        if(seen.has(key))return false;
+        seen.add(key);return true;
+      }).slice(0,12);
+      if(expandedSearch.results?.length)search=expandedSearch;
+    }
+  }
 
   // If the Evidence Engine cannot form two verified lesson proofs, reuse the
   // already-proven Dicionário V2 strict-AND retrieval before giving up. This
@@ -927,24 +950,6 @@ async function handleV4Lesson(req,res){
     const dictionaryEvidence=await v4DictionaryFallbackEvidence(question,aliases,10);
     if(dictionaryEvidence.length){
       const merged=[...verifiedEvidence,...dictionaryEvidence];
-      const seen=new Set();
-      verifiedEvidence=merged.filter(item=>{
-        const key=String(item?.document_id||"")+"|"+String(item?.page||"")+"|"+
-          normalizeAuthorityText(item?.text||"").slice(0,260);
-        if(seen.has(key))return false;
-        seen.add(key);return true;
-      }).slice(0,10);
-    }
-  }
-
-  if(verifiedEvidence.length<2){
-    const expanded=await withGeneratorQueue(()=>expandV3WithQwen(question));
-    if(expanded.length){
-      search=await searchFederatedV3(question,aliases,{
-        limit:16,strict:false,candidate_limit:1000,extraExpansions:expanded
-      });
-      const expandedEvidence=await v4EvidenceFromAuthority(search.results);
-      const merged=[...verifiedEvidence,...expandedEvidence];
       const seen=new Set();
       verifiedEvidence=merged.filter(item=>{
         const key=String(item?.document_id||"")+"|"+String(item?.page||"")+"|"+
@@ -986,6 +991,8 @@ async function handleV4Lesson(req,res){
     provider:"v4-lesson-local",
     dictionary_frozen:true,
     dictionary_fallback_enabled:true,
+    knowledge_query:knowledgeQuery,
+    verified_evidence_candidates:verifiedEvidence.length,
     external_writer_enabled:EXTERNAL_WRITER_ENABLED
   });
 }
