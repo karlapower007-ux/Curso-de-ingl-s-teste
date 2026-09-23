@@ -148,12 +148,12 @@
         <div id="uploadControls" class="upload-controls">
           <label id="pdfDropzone" class="dropzone" for="pdfInput" tabindex="0" role="button" aria-label="Adicionar Livro ou fazer Upload de PDF">
             <strong>Adicionar Livro / Upload de PDF</strong>
-            <span>Toque para escolher um arquivo ou arraste e solte um PDF aqui. Novos livros podem ser adicionados a qualquer momento.</span>
-            <input id="pdfInput" type="file" accept="application/pdf,.pdf">
+            <span>Escolha vários PDFs de uma vez ou arraste uma pasta/lote. Eles serão processados em fila, um por vez, sem reprocessar os livros antigos.</span>
+            <input id="pdfInput" type="file" accept="application/pdf,.pdf" multiple>
             <small id="selectedPdfName" class="selected-pdf-name">Nenhum arquivo selecionado.</small>
           </label>
-          <button id="uploadBtn" class="primary full" type="button">Adicionar Livro / Processar PDF</button>
-          <p class="client-extract-note">⚡ O PDF é extraído localmente. A cópia pesquisável fica neste aparelho para uso offline; quando o modo permite rede, a sincronização privada é feita sem apagar livros existentes.</p>
+          <button id="uploadBtn" class="primary full" type="button">Adicionar PDFs / Processar fila</button>
+          <p class="client-extract-note">⚡ Escala para 1.000+ PDFs: extração local, deduplicação SHA-256, fila persistente e inclusão incremental no Dicionário, Livro V3 e Aula V4. A biblioteca-base permanece congelada.</p>
         </div>
         <p id="adminStatus" class="status"></p>
         <p id="costGuardStatus" class="status" aria-live="polite">R$0 Guard • aguardando leitura de uso.</p>
