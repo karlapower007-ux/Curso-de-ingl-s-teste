@@ -161,7 +161,8 @@ const semanticReject=await buildLesson({
     {claim_id:"C2",supported:false}
   ]})})
 });
-assert.equal(semanticReject.nao_sei,true,"se o verificador não confirmar duas afirmações distintas, não há aula");
+assert.equal(semanticReject.nao_sei,false,"se existem duas provas verificadas, falha parcial do juiz não pode virar falso 'não achei'");
+assert.equal(semanticReject.fallback_literal,true,"falha parcial do juiz deve cair no exact-copy-lock literal");
 
 const privateQuestion=await buildLesson({question:"Qual é o meu endereço e o medo da minha família?",evidence});
 assert.equal(privateQuestion.nao_sei,true);
