@@ -2,7 +2,7 @@ import path from "node:path";
 import {mkdir} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
 import {
-  splitConcepts,paragraphBlocks,strictParagraphAudit,sanitizePublicTitle,queryTerms
+  splitConcepts,paragraphBlocks,strictParagraphAudit,sanitizePublicTitle,queryTerms,isStandardWorksRow
 } from "./v2-local-core.mjs";
 import {searchV3Evidence} from "./v3-evidence-core.mjs";
 
@@ -357,6 +357,7 @@ export async function createIncrementalLibrary(root){
         id:String(row.id),document_id:String(row.document_id||""),title,
         page:Number(row.page||0)||null,chunk_index:Number(row.block_index||0),
         text:String(row.text||""),
+        standard_works:isStandardWorksRow(row),
         reference:[title,Number(row.page||0)?("PDF p. "+Number(row.page)):""].filter(Boolean).join(" • "),
         aliases:audit.matched.map(x=>x.alias),concepts:audit.matched.map(x=>x.label),score:1
       });
