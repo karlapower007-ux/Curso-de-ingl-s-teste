@@ -268,6 +268,56 @@ async function v4EvidenceFromAuthority(candidates=[]){
   return out;
 }
 
+async function v4DictionaryFallbackEvidence(question,aliases,limit=10){
+  await loadLibrary();
+  const safeLimit=Math.max(2,Math.min(20,Number(limit||10)));
+  const pageSize=Math.max(20,safeLimit*4);
+  const inc=await ensureIncrementalLibrary();
+  const base=exactAndMatches(rows,question,{aliases,page:1,pageSize});
+  const added=inc.searchDictionary(question,{aliases,page:1,pageSize});
+  const combined=[...(base.matches||[]),...(added.matches||[])];
+  const out=[],seen=new Set();
+
+  for(const hit of combined){
+    if(out.length>=safeLimit)break;
+    const authority=await candidateAuthorityRow(hit);
+    if(!authority)continue;
+    const needle=normalizeAuthorityText(hit?.text||"");
+    if(!needle||!normalizeAuthorityText(authority?.text||"").includes(needle))continue;
+
+    const scripture=Boolean(hit?.standard_works)||isStandardWorksRow(authority||hit);
+    if(scripture){
+      const decorated=await decorateDictionaryReference(hit);
+      const reference=String(decorated?.reference||"").replace(/\s+/g," ").trim();
+      if(!reference||reference==="Obras Padrão")continue;
+      const item={
+        ...hit,
+        kind:"dictionary-exact-proof",
+        reference,
+        citation_reference:reference,
+        citation_verified:true,
+        verified:true,
+        title:"",
+        pdf_page:Number(hit?.page||0)||null,
+        printed_page:null,
+        page_basis:"canonical-scripture",
+        source_verified:true,
+        source_verification:"dictionary-strict-and+authoritative-page-substring"
+      };
+      const key=String(item.document_id||"")+"|"+String(item.page||"")+"|"+needle.slice(0,260);
+      if(seen.has(key))continue;
+      seen.add(key);out.push(item);continue;
+    }
+
+    const verified=(await v4EvidenceFromAuthority([hit]))[0];
+    if(!verified)continue;
+    const key=String(verified.document_id||"")+"|"+String(verified.page||"")+"|"+normalizeAuthorityText(verified.text).slice(0,260);
+    if(seen.has(key))continue;
+    seen.add(key);out.push(verified);
+  }
+  return out;
+}
+
 function json(res,data,status=200,extra={}){
   res.statusCode=status;
   res.setHeader("Content-Type","application/json; charset=utf-8");
@@ -834,13 +884,40 @@ async function handleV4Lesson(req,res){
   const [aliases,profileStore]=await Promise.all([loadAliases(),ensureV4Profile()]);
   let search=await searchFederatedV3(question,aliases,{limit:16,strict:false,candidate_limit:700});
   let verifiedEvidence=await v4EvidenceFromAuthority(search.results);
+
+  // If the Evidence Engine cannot form two verified lesson proofs, reuse the
+  // already-proven Dicionário V2 strict-AND retrieval before giving up. This
+  // is especially important for core doctrinal terms present in Standard Works,
+  // where a page may be searchable even when verse segmentation is imperfect.
+  if(verifiedEvidence.length<2){
+    const dictionaryEvidence=await v4DictionaryFallbackEvidence(question,aliases,10);
+    if(dictionaryEvidence.length){
+      const merged=[...verifiedEvidence,...dictionaryEvidence];
+      const seen=new Set();
+      verifiedEvidence=merged.filter(item=>{
+        const key=String(item?.document_id||"")+"|"+String(item?.page||"")+"|"+
+          normalizeAuthorityText(item?.text||"").slice(0,260);
+        if(seen.has(key))return false;
+        seen.add(key);return true;
+      }).slice(0,10);
+    }
+  }
+
   if(verifiedEvidence.length<2){
     const expanded=await withGeneratorQueue(()=>expandV3WithQwen(question));
     if(expanded.length){
       search=await searchFederatedV3(question,aliases,{
         limit:16,strict:false,candidate_limit:1000,extraExpansions:expanded
       });
-      verifiedEvidence=await v4EvidenceFromAuthority(search.results);
+      const expandedEvidence=await v4EvidenceFromAuthority(search.results);
+      const merged=[...verifiedEvidence,...expandedEvidence];
+      const seen=new Set();
+      verifiedEvidence=merged.filter(item=>{
+        const key=String(item?.document_id||"")+"|"+String(item?.page||"")+"|"+
+          normalizeAuthorityText(item?.text||"").slice(0,260);
+        if(seen.has(key))return false;
+        seen.add(key);return true;
+      }).slice(0,10);
     }
   }
 
@@ -874,6 +951,7 @@ async function handleV4Lesson(req,res){
     speech_text:lessonSpeechText({...lesson,provas:lessonProofs}),
     provider:"v4-lesson-local",
     dictionary_frozen:true,
+    dictionary_fallback_enabled:true,
     external_writer_enabled:EXTERNAL_WRITER_ENABLED
   });
 }
