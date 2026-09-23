@@ -587,6 +587,10 @@ body,.app,.chat-section{background-color:#0a0a0a!important;color:#e0e0e0!importa
 .dictionary-result-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
 .dictionary-result-head strong{color:#f8fafc}
 .dictionary-result-ref{color:#7dd3fc;font-size:.8rem;white-space:nowrap}
+.dictionary-source-link,.source-pdf-link{color:#f8fafc;text-decoration:underline;text-decoration-color:#38bdf8;text-underline-offset:3px;font-weight:700}
+.dictionary-source-link:hover,.dictionary-source-link:focus,.source-pdf-link:hover,.source-pdf-link:focus{color:#7dd3fc}
+.dictionary-source-open{text-decoration:none;font-weight:700;border:1px solid #256d85;border-radius:999px;padding:3px 8px;background:#0b2230}
+.dictionary-source-open:hover,.dictionary-source-open:focus{background:#103247;color:#bae6fd}
 .dictionary-result-text{white-space:pre-wrap;line-height:1.65;color:#e2e8f0}
 .dictionary-pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:18px}
 .dictionary-pager span{color:var(--muted);font-size:.88rem}
