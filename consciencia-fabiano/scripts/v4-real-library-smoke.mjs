@@ -160,6 +160,15 @@ assert.equal(review.nao_sei,false);
 assert.equal(review.modo,"revisao");
 console.log("V4_REVIEW_VISIBLE=\n"+lessonToPlainText(review));
 
+const atonementDictionary=exactAndMatches(rows,"expiação",{aliases,page:1,pageSize:12});
+assert.ok(atonementDictionary.total>=2,"A biblioteca real deve conter pelo menos duas ocorrências verificáveis de expiação para fallback da Aula");
+assert.ok(atonementDictionary.matches.length>=2,"Fallback doutrinário precisa de duas provas estritas para expiação");
+console.log("V4_ATONEMENT_DICTIONARY_FALLBACK="+JSON.stringify({
+  query:"expiação",
+  total:atonementDictionary.total,
+  proofs:atonementDictionary.matches.slice(0,3).map(x=>({document_id:x.document_id,page:x.page,reference:x.reference,text:String(x.text||"").slice(0,260)}))
+},null,2));
+
 const dictionary=exactAndMatches(rows,"Adão",{aliases,page:1,pageSize:3});
 assert.ok(dictionary.total>0,"Dicionário V2 real deve continuar encontrando Adão");
 assert.ok(dictionary.matches.length>0);
