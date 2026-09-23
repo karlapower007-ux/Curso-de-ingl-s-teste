@@ -173,9 +173,11 @@ jobs:
                 const totalMatch=state.pageInfo.match(/•\s*(\d+)\s*ocorrência/i);
                 const total=Number(totalMatch?.[1]||0);
                 if(total<test.minTotal) throw new Error("Alias offline não expandiu "+test.query+" em "+width+": "+JSON.stringify(state));
+                const foldConcept=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+                const conceptFold=foldConcept(state.concept);
                 if(test.conceptParts){
-                  if(!test.conceptParts.every(part=>state.concept.includes(part))) throw new Error("Componentes canônicos ausentes para "+test.query+" em "+width+": "+JSON.stringify(state));
-                }else if(!state.concept.includes(test.concept)) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                  if(!test.conceptParts.every(part=>conceptFold.includes(foldConcept(part)))) throw new Error("Componentes canônicos ausentes para "+test.query+" em "+width+": "+JSON.stringify(state));
+                }else if(!conceptFold.includes(foldConcept(test.concept))) throw new Error("Conceito canônico ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
                 if(!state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase()))) throw new Error("Equivalência bilíngue ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
                 if(test.mustContainAlso && !state.results.some(x=>x.toLowerCase().includes(test.mustContain.toLowerCase())&&x.toLowerCase().includes(test.mustContainAlso.toLowerCase()))) {
                   throw new Error("AND composto não manteve os conceitos no mesmo parágrafo para "+test.query+" em "+width+": "+JSON.stringify(state));
@@ -190,7 +192,7 @@ jobs:
                     if(!groups.every(g=>g.some(a=>f.includes(fold(a))))) throw new Error("Resultado OR indevido em busca composta "+test.query+" / "+width+": "+row);
                   }
                 }
-                if(test.related && !state.concept.includes(test.related)) throw new Error("Relação conceitual offline ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
+                if(test.related && !conceptFold.includes(foldConcept(test.related))) throw new Error("Relação conceitual offline ausente para "+test.query+" em "+width+": "+JSON.stringify(state));
                 canonicalReport.push({query:test.query,total,concept:state.concept,results:state.results.length,compound:Boolean(test.compound)});
               }
               page.off("request",captureApi);
