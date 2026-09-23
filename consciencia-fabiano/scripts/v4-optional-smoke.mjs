@@ -46,7 +46,7 @@ assert.ok(gateway.includes('const HOST="127.0.0.1"'),"gateway móvel deve perman
 assert.ok(gateway.includes('const PORT=Math.max(1,Number(process.env.FNS_MOBILE_PORT||8790))'));
 assert.ok(gateway.includes('const TARGET="http://127.0.0.1:8788"'),"gateway deve encaminhar para 8788 sem expô-la");
 assert.ok(gateway.includes("FNS_MOBILE_TOKEN"),"gateway precisa exigir token");
-assert.ok(gateway.includes("HttpOnly; SameSite=Strict"),"token móvel deve virar cookie protegido");
+assert.ok(gateway.includes("HttpOnly; Secure; SameSite=Strict"),"token móvel deve virar cookie protegido por HTTPS");
 assert.ok(!gateway.includes('0.0.0.0'),"gateway móvel não pode bindar publicamente");
 
 assert.ok(enableMobile.includes("tailscale serve --bg http://127.0.0.1:8790"),"Tailscale deve servir só o gateway autenticado");
