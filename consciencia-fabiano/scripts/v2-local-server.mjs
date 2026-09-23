@@ -1108,6 +1108,17 @@ async function handleHealth(req,res){
     ollama:{url:"localhost:11434",reachable:models.length>0,installed:models},
     hardware:{ram_gb:ramGb(),recommended:recommendedByHardware(),selected:autoModel(models),context_tokens:contextTokensByHardware()},
     embeddings:{model:EMBED_MODEL,installed:models.includes(EMBED_MODEL)},
+    source_link:{
+      enabled:true,
+      name:"Fonte Viva",
+      dictionary:true,
+      chat:true,
+      lesson:true,
+      original_upload_endpoint:"/api/v3/source/original",
+      pdf_view_endpoint:"/api/v3/source/pdf",
+      exact_pdf_page_fragment:true,
+      range_requests:true
+    },
     library:{
       ...lib,
       base_chunks:lib.chunks,
