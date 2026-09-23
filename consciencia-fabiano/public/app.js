@@ -3040,6 +3040,59 @@
     }
   }
 
+  async function localV3Api(pathname,options={},timeoutMs=180000){
+    const candidates=[];
+    const explicit=String(window.__FNS_V2_API_BASE||"").replace(/\/$/,"");
+    if(explicit)candidates.push(explicit);
+    if(location.hostname==="127.0.0.1"||location.hostname==="localhost")candidates.push("");
+    else candidates.push("http://127.0.0.1:8788");
+    let lastError=null;
+    for(const base of [...new Set(candidates)]){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),timeoutMs);
+      try{
+        const headers=new Headers(options.headers||{});
+        if(options.body && !headers.has("Content-Type"))headers.set("Content-Type","application/json");
+        const res=await fetch(base+pathname,{...options,headers,signal:controller.signal,cache:"no-store"});
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok)throw new Error(data?.error||data?.message||("HTTP "+res.status));
+        return data;
+      }catch(error){lastError=error;}
+      finally{clearTimeout(timer);}
+    }
+    throw lastError||new Error("Servidor local V3 indisponível.");
+  }
+
+  async function submitExtractedTextIncremental(extracted){
+    const common={
+      filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,
+      title:extracted.title||extracted.filename,author:extracted.author||"",
+      language:"",content_sha256:extracted.content_sha256
+    };
+    const started=await localV3Api("/api/v3/library/start",{
+      method:"POST",body:JSON.stringify(common)
+    });
+    if(started.duplicate)return {...started,searchable_immediately:true};
+    const batches=pageBatches(extracted.pages);
+    for(let i=0;i<batches.length;i++){
+      $("adminStatus").textContent="V3 incremental: enviando lote "+(i+1)+"/"+batches.length+" • "+extracted.filename;
+      await localV3Api("/api/v3/library/append",{
+        method:"POST",body:JSON.stringify({job_id:started.job_id,pages:batches[i]})
+      });
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    return localV3Api("/api/v3/library/commit",{
+      method:"POST",body:JSON.stringify({job_id:started.job_id})
+    },300000);
+  }
+
+  async function fetchV3LocalCatalog(){
+    try{
+      const data=await localV3Api("/api/v3/library/catalog",{},30000);
+      return Array.isArray(data?.books)?data.books:[];
+    }catch{return [];}
+  }
+
   async function submitExtractedTextLocal(extracted,originalR2Key=""){
     const common={filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,title:extracted.title,author:extracted.author,content_sha256:extracted.content_sha256,original_r2_key:originalR2Key};
     const started=await api("/api/admin/local-ingest-start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(common)});
@@ -3082,13 +3135,37 @@
         updated_at:Date.now()
       });
 
+      let incremental=null;
+      try{
+        incremental=await submitExtractedTextIncremental(extracted);
+        await saveLocalCatalogEntry({
+          document_id:localId,
+          arquivo:extracted.filename,
+          titulo:extracted.title || extracted.filename,
+          autor:extracted.author || "",
+          paginas:Number(extracted.page_count || extracted.pages?.length || 0),
+          chunks:Number(incremental?.document?.chunk_count||extracted.pages?.length||0),
+          idioma:"pt",
+          status:incremental?.duplicate?"já-existente":"V3/V4-pronto",
+          content_sha256:String(extracted.content_sha256||""),
+          ready_for_search:true,
+          updated_at:Date.now()
+        });
+      }catch(error){
+        console.warn("V3 incremental indisponível; mantendo cópia local IndexedDB.",error);
+      }
+
       await enqueueCloudSync(extracted);
       await queueOfflineVectorization(extracted);
       $("pdfInput").value="";
       await loadBooks();
 
       const seconds=((performance.now()-startedAt)/1000).toFixed(1);
-      $("adminStatus").textContent="PDF salvo localmente e já pesquisável • embeddings em segundo plano • sincronização em nuvem na fila • "+seconds+"s";
+      $("adminStatus").textContent=incremental?.duplicate
+        ?"PDF já existente • nenhuma duplicação criada • "+seconds+"s"
+        :incremental?.searchable_immediately
+          ?"PDF computado • Dicionário + Livro V3 + Aula V4 prontos • "+seconds+"s"
+          :"PDF salvo no navegador; V3 local aguardando conexão • "+seconds+"s";
 
       // Tenta sincronizar agora; se a Cloudflare estiver em 429, a fila fica preservada para o próximo ciclo.
       processSyncQueue().catch(()=>{});
@@ -3101,14 +3178,39 @@
     }
   }
 
+  let bulkUploadRunning=false;
+  async function uploadPdfQueue(files){
+    const list=Array.from(files||[]).filter(file=>file && (file.type==="application/pdf"||/\.pdf$/i.test(String(file.name||""))));
+    if(!list.length){$("adminStatus").textContent="Escolha um ou mais PDFs.";return;}
+    if(bulkUploadRunning){$("adminStatus").textContent="A fila atual ainda está sendo processada.";return;}
+    bulkUploadRunning=true;
+    $("uploadBtn").disabled=true;
+    let ok=0,failed=0;
+    try{
+      for(let i=0;i<list.length;i++){
+        $("adminStatus").textContent="Fila "+(i+1)+"/"+list.length+" • preparando "+list[i].name;
+        try{await uploadPdf(list[i]);ok++;}catch{failed++;}
+      }
+      $("adminStatus").textContent="Fila concluída • "+ok+" PDF(s) processado(s)"+(failed?" • "+failed+" falha(s)":"")+" • biblioteca antiga preservada.";
+      if($("pdfInput"))$("pdfInput").value="";
+      await loadBooks();
+    }finally{
+      bulkUploadRunning=false;
+      $("uploadBtn").disabled=false;
+      delete $("uploadBtn").dataset.busy;
+    }
+  }
+
   function bindPdfUploadUi(){
     const input=$("pdfInput");
     const zone=$("pdfDropzone");
     const selected=$("selectedPdfName");
     if(input){
       input.addEventListener("change",()=>{
-        const file=input.files?.[0];
-        if(selected) selected.textContent=file?.name || "Nenhum arquivo selecionado.";
+        const files=Array.from(input.files||[]);
+        if(selected) selected.textContent=files.length
+          ?(files.length===1?files[0].name:(files.length+" PDFs selecionados"))
+          :"Nenhum arquivo selecionado.";
       });
     }
     if(!zone) return;
@@ -3129,15 +3231,15 @@
       event.preventDefault();
       event.stopPropagation();
       deactivate();
-      const file=Array.from(event.dataTransfer?.files || []).find(item=>
+      const files=Array.from(event.dataTransfer?.files || []).filter(item=>
         item?.type==="application/pdf" || /\.pdf$/i.test(String(item?.name || ""))
       );
-      if(!file){
-        $("adminStatus").textContent="Arraste um arquivo PDF válido.";
+      if(!files.length){
+        $("adminStatus").textContent="Arraste um ou mais arquivos PDF válidos.";
         return;
       }
-      if(selected) selected.textContent=file.name;
-      uploadPdf(file);
+      if(selected) selected.textContent=files.length===1?files[0].name:(files.length+" PDFs na fila");
+      uploadPdfQueue(files);
     });
     zone.addEventListener("keydown",event=>{
       if(event.key==="Enter" || event.key===" "){
@@ -3206,8 +3308,17 @@
 
   async function ensureLibraryAlwaysAvailable(){
     await enforcePersistentStorage().catch(()=>false);
-    const local=await localBookCatalog();
-    renderBooks(local,false);
+    let local=await localBookCatalog();
+    const v3Local=await fetchV3LocalCatalog();
+    if(v3Local.length){
+      local=mergeBookLists(local,v3Local);
+      renderBooks(local,false);
+      const baseCount=v3Local.filter(x=>x.immutable===true||x.source==="v3-base-frozen").length;
+      const incrementalCount=v3Local.filter(x=>x.source==="v3-incremental").length;
+      $("adminStatus").textContent="Biblioteca V3 local • "+baseCount+" documento(s) antigos preservados • "+incrementalCount+" PDF(s) novos incrementais.";
+    }else{
+      renderBooks(local,false);
+    }
     setUploadGate(false);
 
     if(!navigator.onLine){
@@ -3324,7 +3435,7 @@
   });
   // O botão micBtn é controlado exclusivamente pelo Whisper local em whisper-local.js.
   $("stopAudioBtn").onclick = stopAudioPlayback;
-  $("uploadBtn").onclick = () => uploadPdf();
+  $("uploadBtn").onclick = () => uploadPdfQueue(Array.from($("pdfInput").files||[]));
   $("reindexBtn").onclick = reindex;
   bindPdfUploadUi();
   setUploadGate(true);
