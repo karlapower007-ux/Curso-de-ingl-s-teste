@@ -137,6 +137,86 @@ export async function ensurePersistentV3({root,publicDir,buildIndex,loadRows}){
   };
 }
 
+
+export function persistentV3HasDocument(state,documentId){
+  const id=String(documentId||"").trim();
+  if(!id)return false;
+  if(!state?.persistent||!state?.db){
+    return Boolean((state?.index?.units||[]).some(u=>String(u.document_id||"")===id));
+  }
+  return Boolean(state.db.prepare("SELECT 1 AS ok FROM units WHERE document_id=? LIMIT 1").get(id)?.ok);
+}
+
+export function appendPersistentV3(state,sourceRows,buildIndex){
+  const rows=Array.isArray(sourceRows)?sourceRows.filter(r=>String(r?.text||"").trim()):[];
+  if(!rows.length)return {ok:true,added_source_rows:0,added_units:0,total_units:Number(state?.evidence_units||state?.index?.units?.length||0)};
+  const index=buildIndex(rows);
+
+  if(!state?.persistent||!state?.db){
+    if(!state.index)state.index={version:index.version,source_rows:0,units:[],counts:{}};
+    const existing=new Set((state.index.units||[]).map(u=>String(u.id||"")));
+    let added=0;
+    for(const u of index.units||[]){
+      if(existing.has(String(u.id||"")))continue;
+      existing.add(String(u.id||""));
+      state.index.units.push(u);added++;
+    }
+    state.index.source_rows=Number(state.index.source_rows||0)+index.source_rows;
+    for(const [k,v] of Object.entries(index.counts||{}))state.index.counts[k]=Number(state.index.counts[k]||0)+Number(v||0);
+    state.source_rows=state.index.source_rows;
+    state.evidence_units=state.index.units.length;
+    state.counts=state.index.counts;
+    return {ok:true,added_source_rows:index.source_rows,added_units:added,total_units:state.evidence_units};
+  }
+
+  const db=state.db;
+  const existingDocIds=[...new Set(rows.map(r=>String(r.document_id||r.doc_key||"")).filter(Boolean))];
+  const already=new Set();
+  for(const docId of existingDocIds){
+    if(db.prepare("SELECT 1 AS ok FROM units WHERE document_id=? LIMIT 1").get(docId)?.ok)already.add(docId);
+  }
+  const filteredUnits=(index.units||[]).filter(u=>!already.has(String(u.document_id||"")));
+  if(!filteredUnits.length)return {ok:true,added_source_rows:0,added_units:0,total_units:Number(db.prepare("SELECT COUNT(*) AS n FROM units").get()?.n||0),duplicate_documents:[...already]};
+
+  const ins=db.prepare("INSERT OR IGNORE INTO units(id,kind,document_id,source_chunk_id,title,author,language,page,reference,text,verified) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+  const fts=db.prepare("INSERT INTO units_fts(id,text,title,reference) VALUES(?,?,?,?)");
+  const before=Number(db.prepare("SELECT COUNT(*) AS n FROM units").get()?.n||0);
+  const previousCounts=JSON.parse(getMeta(db,"counts")||"{}");
+  let inserted=0;
+
+  db.exec("BEGIN IMMEDIATE;");
+  try{
+    for(const u of filteredUnits){
+      const result=ins.run(
+        String(u.id||""),String(u.kind||""),String(u.document_id||""),String(u.source_chunk_id||""),
+        String(u.title||""),String(u.author||""),String(u.language||""),
+        Number(u.page||0)||null,String(u.reference||""),String(u.text||""),u.verified===false?0:1
+      );
+      if(Number(result?.changes||0)>0){
+        fts.run(String(u.id||""),String(u.text||""),String(u.title||""),String(u.reference||""));
+        inserted++;
+      }
+    }
+    const acceptedRows=rows.filter(r=>!already.has(String(r.document_id||r.doc_key||""))).length;
+    const nextCounts={...previousCounts};
+    for(const [k,v] of Object.entries(index.counts||{}))nextCounts[k]=Number(nextCounts[k]||0)+Number(v||0);
+    const nextSourceRows=Number(getMeta(db,"source_rows")||0)+acceptedRows;
+    setMeta(db,"source_rows",nextSourceRows);
+    setMeta(db,"counts",JSON.stringify(nextCounts));
+    setMeta(db,"incremental_updated_at",new Date().toISOString());
+    db.exec("COMMIT;");
+
+    const total=before+inserted;
+    state.source_rows=nextSourceRows;
+    state.evidence_units=total;
+    state.counts=nextCounts;
+    return {ok:true,added_source_rows:acceptedRows,added_units:inserted,total_units:total,duplicate_documents:[...already]};
+  }catch(error){
+    try{db.exec("ROLLBACK;");}catch{}
+    throw error;
+  }
+}
+
 export function searchPersistentV3(state,query,aliases={},options={}){
   if(!state?.persistent||!state?.db){
     return searchV3Evidence(state?.index||{units:[]},query,aliases,options);
