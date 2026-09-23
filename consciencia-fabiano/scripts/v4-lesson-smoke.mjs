@@ -51,6 +51,14 @@ assert.equal(lesson.explicacao.length,2,"juiz deve apagar frase com referência 
 assert.ok(lesson.explicacao.every(x=>!x.includes("Alma 40:11")));
 assert.ok(lessonToPlainText(lesson).includes("Entendeu?"));
 
+const oneProof=await buildLesson({
+  question:"Tema com evidência insuficiente",
+  evidence:[evidence[0]]
+});
+assert.equal(oneProof.nao_sei,true,"Aula V4 exige no mínimo duas provas verificadas");
+assert.equal(oneProof.ideia,"Não achei na biblioteca.");
+assert.equal(oneProof.provas.length,0);
+
 const noEvidence=await buildLesson({question:"Tema inexistente",evidence:[]});
 assert.equal(noEvidence.nao_sei,true);
 assert.equal(noEvidence.ideia,"Não achei na biblioteca.");
