@@ -8,6 +8,7 @@ on:
       - "consciencia-fabiano/public/v2-*.js"
       - "consciencia-fabiano/public/v2-*.json"
       - "consciencia-fabiano/public/index.html"
+      - "consciencia-fabiano/public/app.js"
       - "consciencia-fabiano/public/style.css"
       - "consciencia-fabiano/public/sw-v3.js"
       - "consciencia-fabiano/public/opfs-sqlite-worker.js"
