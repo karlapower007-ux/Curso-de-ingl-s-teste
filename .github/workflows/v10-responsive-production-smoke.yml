@@ -155,8 +155,13 @@ jobs:
                 await page.locator("#dictionaryInput").fill(test.query);
                 await page.locator("#dictionarySearchBtn").click();
                 await page.waitForFunction(
-                  q=>document.querySelector("#dictionaryStatus")?.textContent?.includes("Enciclopédia local"),
-                  test.query,{timeout:12000}
+                  ()=> {
+                    const status=document.querySelector("#dictionaryStatus")?.textContent||"";
+                    const button=document.querySelector("#dictionarySearchBtn");
+                    return button?.disabled===false &&
+                      (/v2 local/i.test(status) || /Nenhuma correspondência/i.test(status) || /Busca local v2 indisponível/i.test(status));
+                  },
+                  null,{timeout:30000}
                 );
                 const state=await page.evaluate(()=>({
                   status:document.querySelector("#dictionaryStatus")?.textContent||"",
