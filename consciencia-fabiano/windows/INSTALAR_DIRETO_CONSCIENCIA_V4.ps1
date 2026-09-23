@@ -72,6 +72,13 @@ try {
   }
   if(-not ($v2.ok -and $v3.ok -and $v4.ok)){ throw "A instalação terminou, mas V2/V3/V4 não responderam corretamente na porta local 8788." }
   if(-not $v4.dictionary_frozen){ throw "A V4 não confirmou o Dicionário congelado. Instalação interrompida." }
+  if(-not $v2.source_link.enabled){ throw "A Fonte Viva não foi confirmada no servidor local." }
+  if(-not $v2.source_link.dictionary){ throw "A Fonte Viva não foi confirmada no Dicionário." }
+  if(-not $v2.source_link.chat){ throw "A Fonte Viva não foi confirmada no Chat." }
+  if(-not $v2.source_link.lesson){ throw "A Fonte Viva não foi confirmada na Aula." }
+  if($v2.source_link.original_upload_endpoint -ne "/api/v3/source/original"){ throw "Endpoint de preservação do PDF original não confirmado." }
+  if($v2.source_link.pdf_view_endpoint -ne "/api/v3/source/pdf"){ throw "Endpoint de leitura do PDF original não confirmado." }
+  if(-not $v2.source_link.range_requests){ throw "Leitura parcial Range do PDF não foi confirmada." }
 
   $library50k=Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v3/library/status" -TimeoutSec 30
   if(-not $library50k.ok){ throw "A biblioteca incremental 50K não respondeu." }
@@ -139,6 +146,12 @@ try {
     dictionary_frozen=$v4.dictionary_frozen
     dictionary_query="Adão"
     dictionary_total=$dict.total
+    fonte_viva_enabled=$v2.source_link.enabled
+    fonte_viva_dictionary=$v2.source_link.dictionary
+    fonte_viva_chat=$v2.source_link.chat
+    fonte_viva_lesson=$v2.source_link.lesson
+    fonte_viva_pdf_view=$v2.source_link.pdf_view_endpoint
+    fonte_viva_exact_page=$v2.source_link.exact_pdf_page_fragment
     qwen_model=$lesson.modelo
     semantic_verification=$lesson.verificacao
     lesson_nao_sei=$lesson.nao_sei
@@ -166,6 +179,7 @@ try {
     "Biblioteca 50K: "+$library50k.incremental.version+[Environment]::NewLine+
     "Pasta massiva: C:\ConscienciaFabiano\ImportarPDFs"+[Environment]::NewLine+
     "Dicionário V2: preservado ("+$dict.total+" ocorrências para Adão)"+[Environment]::NewLine+
+    "Fonte Viva: Dicionário + Chat + Aula • PDF original na página citada"+[Environment]::NewLine+
     "Voz técnica: "+$voiceStatus+[Environment]::NewLine+
     "Relatório: C:\ConscienciaFabiano\.fns-local\install-validation.json"+[Environment]::NewLine+
     "Biblioteca hash: "+$v4.library_hash
