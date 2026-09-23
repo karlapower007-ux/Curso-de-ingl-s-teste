@@ -463,7 +463,8 @@ function renderDictionary(data){
     const card=document.createElement("article");card.className="dictionary-result v2-dictionary-result";
     const head=document.createElement("div");head.className="dictionary-result-head";
     const ref=document.createElement("strong");ref.textContent=String(hit.reference||hit.title||"Fonte");
-    const page=document.createElement("span");page.className="dictionary-result-ref";page.textContent=hit.page?"página "+hit.page:"";
+    const page=document.createElement("span");page.className="dictionary-result-ref";
+    page.textContent=hit.page?(hit.dictionary_scripture_reference?"PDF p. "+hit.page:"página "+hit.page):"";
     head.append(ref,page);
     const body=document.createElement("div");body.className="dictionary-result-text";body.textContent=String(hit.text||"");
     const alias=document.createElement("small");alias.className="dictionary-source";
