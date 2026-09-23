@@ -2,7 +2,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {readFile,readdir,stat,mkdir,appendFile,opendir} from "node:fs/promises";
+import {readFile,readdir,stat,mkdir,appendFile,opendir,statfs} from "node:fs/promises";
 import {spawn} from "node:child_process";
 import {createHash} from "node:crypto";
 import {
@@ -37,6 +37,7 @@ const DATA_DIR=path.join(ROOT,".fns-local");
 const MASS_IMPORT_DIR=path.join(ROOT,"ImportarPDFs");
 const PDF_INGEST_WORKER=path.join(ROOT,"scripts","v3-pdf-ingest-worker.mjs");
 const MASS_SCAN_MS=Math.max(60000,Number(process.env.FNS_MASS_SCAN_MS||600000));
+const MASS_MIN_FREE_GB=Math.max(1,Number(process.env.FNS_MIN_FREE_GB||5));
 const VECTOR_LOG=path.join(DATA_DIR,"qwen-v2-vector-cache.jsonl");
 const LOCAL_RUNTIME_BUILD="2026-09-23-v4-entailment-r2";
 const MAX_BODY=4*1024*1024;
@@ -65,7 +66,7 @@ let massPumpRunning=false;
 let activePdfChild=null;
 const massImportState={
   started:false,last_scan:null,last_file:null,last_result:null,discovered_last_scan:0,
-  import_dir:MASS_IMPORT_DIR
+  import_dir:MASS_IMPORT_DIR,paused_reason:"",free_gb:null
 };
 const embedCache=new Map();
 
@@ -387,10 +388,22 @@ async function pumpMassImportQueue(){
   try{
     const inc=await ensureIncrementalLibrary();
     while(true){
+      let freeBytes=Number.POSITIVE_INFINITY;
+      try{
+        const fsInfo=await statfs(ROOT);
+        freeBytes=Number(fsInfo.bavail||fsInfo.bfree||0)*Number(fsInfo.bsize||fsInfo.frsize||4096);
+        massImportState.free_gb=Math.round((freeBytes/1024/1024/1024)*10)/10;
+      }catch{}
+      if(freeBytes<MASS_MIN_FREE_GB*1024*1024*1024){
+        massImportState.paused_reason="Pouco espaço em disco: mínimo livre "+MASS_MIN_FREE_GB+" GB.";
+        break;
+      }
       if(generatorBusy>0||os.freemem()<600*1024*1024){
+        massImportState.paused_reason=generatorBusy>0?"Qwen em uso":"Memória RAM livre abaixo do limite seguro";
         await new Promise(resolve=>setTimeout(resolve,3000));
         continue;
       }
+      massImportState.paused_reason="";
       const item=inc.nextFolderFile();
       if(!item)break;
       massImportState.last_file=item.source_path;
@@ -423,6 +436,13 @@ async function startMassImporter(){
   await mkdir(MASS_IMPORT_DIR,{recursive:true});
   const inc=await ensureIncrementalLibrary();
   inc.requeueInterrupted();
+  // Migra somente o índice incremental experimental antigo, em lotes pequenos.
+  // O baú/base congelado nunca participa desta migração.
+  for(let i=0;i<20;i++){
+    const migrated=inc.backfillLegacyBlocks(25);
+    if(!migrated.remaining)break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
   await scanMassImportFolder();
   pumpMassImportQueue().catch(()=>{});
   setInterval(()=>{
