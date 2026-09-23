@@ -170,7 +170,7 @@ export async function buildLesson({
   if(typeof generate==="function"){
     try{
       const prompt=buildLessonGeneratorPrompt({question:q,age,proofs,profile});
-      const generated=await generate(prompt);
+      const generated=await generate(prompt,{question:q,proofs,mode:safeMode});
       judged=judgeLessonDraft(generated?.content ?? generated,proofs);
       if(judged.accepted.length)model=String(generated?.model||"qwen3:0.6b");
     }catch{}
