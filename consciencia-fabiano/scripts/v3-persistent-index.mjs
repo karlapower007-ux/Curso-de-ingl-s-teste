@@ -79,7 +79,16 @@ export async function ensurePersistentV3({root,publicDir,buildIndex,loadRows}){
   try{db=openDb(api.DatabaseSync,dbPath);}
   catch{
     await rm(dbPath,{force:true}).catch(()=>{});
-    db=openDb(api.DatabaseSync,dbPath);
+    try{db=openDb(api.DatabaseSync,dbPath);}
+    catch(error){
+      const rows=await loadRows();
+      const index=buildIndex(rows);
+      return {
+        ok:true,persistent:false,fts5:false,
+        reason:"SQLite/FTS5 indisponível: "+String(error?.message||error),
+        library_hash:hashInfo.hash,index,db:null,reused:false
+      };
+    }
   }
 
   const same=getMeta(db,"library_hash")===hashInfo.hash && getMeta(db,"db_version")===DB_VERSION;
