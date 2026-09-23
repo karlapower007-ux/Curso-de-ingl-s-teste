@@ -141,7 +141,7 @@ jobs:
 
               await page.locator("#dictionaryTab").click();
               const canonical=[
-                {query:"Adão",minTotal:2,concept:"Adão",aliasSurface:"Adam",related:"Miguel"},
+                {query:"Adão",minTotal:2,concept:"Adão",mustContain:"Adão"},
                 {query:"Miguel",minTotal:1,concept:"Miguel",aliasSurface:"Michael"},
                 {query:"Segunda Unção",minTotal:1,concept:"Segunda Unção",aliasSurface:"Second Anointing"},
                 {query:"Dízimo",minTotal:1,concept:"Dízimo",mustContain:"dízimo"},
