@@ -268,24 +268,52 @@ async function v4EvidenceFromAuthority(candidates=[]){
   return out;
 }
 
+function v4DictionaryEvidenceQuality(hit={}){
+  const text=normalizeAuthorityText(hit?.text||"");
+  if(!text||/\b(?:GEE|TJS)\b/i.test(text))return -1;
+  const words=text.split(/\s+/).filter(Boolean);
+  if(words.length<18||text.length<100)return -1;
+  const refNoise=(text.match(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{1,5}\.\s*\d+/gu)||[]).length;
+  const sentenceMarks=(text.match(/[.!?;:]/g)||[]).length;
+  let score=Math.min(8,text.length/180)+Math.min(3,sentenceMarks*0.35);
+  if(refNoise>4)score-=Math.min(6,refNoise*0.5);
+  if(/\bCAP[IÍ]TULO\b/i.test(text))score+=0.5;
+  return score;
+}
 async function v4DictionaryFallbackEvidence(question,aliases,limit=10){
   await loadLibrary();
   const safeLimit=Math.max(2,Math.min(20,Number(limit||10)));
-  const pageSize=Math.max(20,safeLimit*4);
+  const pageSize=100;
   const inc=await ensureIncrementalLibrary();
   const normalizedQuery=lessonKnowledgeQuery(question);
   const queries=[normalizedQuery,String(question||"").trim()].filter((x,i,a)=>x&&a.indexOf(x)===i);
   const combined=[];
+
   for(const query of queries){
-    const base=exactAndMatches(rows,query,{aliases,page:1,pageSize});
-    const added=inc.searchDictionary(query,{aliases,page:1,pageSize});
-    combined.push(...(base.matches||[]),...(added.matches||[]));
-    if(combined.length>=safeLimit*2)break;
+    const firstBase=exactAndMatches(rows,query,{aliases,page:1,pageSize});
+    combined.push(...(firstBase.matches||[]));
+    const basePages=Math.min(8,Math.max(1,Number(firstBase.pages||1)));
+    for(let page=2;page<=basePages;page++){
+      const next=exactAndMatches(rows,query,{aliases,page,pageSize});
+      combined.push(...(next.matches||[]));
+    }
+
+    const firstInc=inc.searchDictionary(query,{aliases,page:1,pageSize});
+    combined.push(...(firstInc.matches||[]));
+    const incPages=Math.min(5,Math.max(1,Number(firstInc.pages||1)));
+    for(let page=2;page<=incPages;page++){
+      const next=inc.searchDictionary(query,{aliases,page,pageSize});
+      combined.push(...(next.matches||[]));
+    }
+    if(combined.length>=safeLimit*3)break;
   }
+
+  combined.sort((a,b)=>v4DictionaryEvidenceQuality(b)-v4DictionaryEvidenceQuality(a));
   const out=[],seen=new Set();
 
   for(const hit of combined){
     if(out.length>=safeLimit)break;
+    if(v4DictionaryEvidenceQuality(hit)<0)continue;
     const authority=await candidateAuthorityRow(hit);
     if(!authority)continue;
     const needle=normalizeAuthorityText(hit?.text||"");
