@@ -4,7 +4,7 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer} from "./v3-evidence-core.mjs";
 import {exactAndMatches} from "./v2-local-core.mjs";
-import {buildLesson,lessonToPlainText,lessonSpeechText,sanitizeLessonEvidence} from "./v4-lesson-core.mjs";
+import {buildLesson,lessonToPlainText,lessonSpeechText,sanitizeLessonEvidence,lessonKnowledgeQuery} from "./v4-lesson-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
@@ -160,11 +160,15 @@ assert.equal(review.nao_sei,false);
 assert.equal(review.modo,"revisao");
 console.log("V4_REVIEW_VISIBLE=\n"+lessonToPlainText(review));
 
-const atonementDictionary=exactAndMatches(rows,"expiação",{aliases,page:1,pageSize:12});
+const atonementQuestion="O que é a expiação?";
+const atonementQuery=lessonKnowledgeQuery(atonementQuestion);
+assert.equal(atonementQuery,"expiação","Aula deve reduzir pergunta natural ao conceito pesquisável sem alterar o Dicionário V2");
+const atonementDictionary=exactAndMatches(rows,atonementQuery,{aliases,page:1,pageSize:12});
 assert.ok(atonementDictionary.total>=2,"A biblioteca real deve conter pelo menos duas ocorrências verificáveis de expiação para fallback da Aula");
 assert.ok(atonementDictionary.matches.length>=2,"Fallback doutrinário precisa de duas provas estritas para expiação");
 console.log("V4_ATONEMENT_DICTIONARY_FALLBACK="+JSON.stringify({
-  query:"expiação",
+  question:atonementQuestion,
+  query:atonementQuery,
   total:atonementDictionary.total,
   proofs:atonementDictionary.matches.slice(0,3).map(x=>({document_id:x.document_id,page:x.page,reference:x.reference,text:String(x.text||"").slice(0,260)}))
 },null,2));
