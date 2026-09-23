@@ -17,6 +17,7 @@ foreach($l in @($listeners)){
 }
 if(-not $running){
   $env:FNS_MOBILE_TOKEN=$token
+  $env:FNS_MOBILE_HOST="0.0.0.0"
   Start-Process -FilePath "node.exe" -ArgumentList @($Gateway) -WorkingDirectory $Root -WindowStyle Hidden
   for($i=0;$i -lt 20;$i++){
     if(Get-NetTCPConnection -LocalPort 8790 -State Listen -ErrorAction SilentlyContinue){break}
