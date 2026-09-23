@@ -1,6 +1,7 @@
 const V2_KEY_MODEL="fns_v2_local_model";
 const V2_KEY_RESPONSE="fns_v2_response_mode";
 const V2_KEY_SPEAK="fns_v2_speak_answers_v1";
+const V4_KEY_EXPERIENCE="fns_v4_experience_v1";
 let v2SpeechSerial=0;
 let localReady=false;
 let browserOnly=false;
@@ -94,6 +95,7 @@ function initV2Voice(){
 }
 function selectedModel(){return String(localStorage.getItem(V2_KEY_MODEL)||"auto");}
 function selectedResponse(){const v=String(localStorage.getItem(V2_KEY_RESPONSE)||"explain");return ["short","explain","compare","timeline","exact"].includes(v)?v:"explain";}
+function selectedExperience(){const v=String(localStorage.getItem(V4_KEY_EXPERIENCE)||"livro");return ["livro","aula","revisao"].includes(v)?v:"livro";}
 function resolvedModelForRequest(){
   const chosen=selectedModel();
   if(chosen!=="auto")return chosen;
@@ -128,6 +130,20 @@ function addControls(){
   model.onchange=()=>{localStorage.setItem(V2_KEY_MODEL,model.value);updateV2Status();};
   modelLabel.append(modelTitle,model);
 
+  const experienceLabel=document.createElement("label");
+  experienceLabel.className="mode-option v2-control";
+  experienceLabel.htmlFor="v4Experience";
+  const experienceTitle=document.createElement("span");experienceTitle.textContent="Experiência";
+  const experience=document.createElement("select");experience.id="v4Experience";experience.setAttribute("aria-label","Experiência de estudo");
+  [
+    ["livro","Livro"],
+    ["aula","Aula"],
+    ["revisao","Revisão"]
+  ].forEach(x=>experience.appendChild(createOption(...x)));
+  experience.value=selectedExperience();
+  experience.onchange=()=>{localStorage.setItem(V4_KEY_EXPERIENCE,experience.value);updateV2Status();};
+  experienceLabel.append(experienceTitle,experience);
+
   const responseLabel=document.createElement("label");
   responseLabel.className="mode-option v2-control";
   responseLabel.htmlFor="v2ResponseMode";
@@ -150,6 +166,7 @@ function addControls(){
 
   options.prepend(status);
   options.prepend(responseLabel);
+  options.prepend(experienceLabel);
   options.prepend(modelLabel);
   options.appendChild(prepare);
 
@@ -184,6 +201,25 @@ function browserDeterministicAnswer(mode,question,evidence=[]){
     return [...groups.entries()].map(([source,items])=>source+"\n"+items.slice(0,3).map(x=>"• "+String(x.text||"").trim()).join("\n")).join("\n\n");
   }
   return "Resposta determinística local — sem LLM\n\n"+rows.map((row,i)=>"["+(i+1)+"] "+String(row.text||"").trim()+"\n"+ref(row)).join("\n\n");
+}
+function lessonDisplayText(data={}){
+  if(data?.nao_sei)return data?.guard==="adulto"
+    ?String(data.ideia||"")+"
+
+"+String(data.pergunta||"")
+    :"Não achei na biblioteca.";
+  const proofs=(data.provas||[]).map((p,i)=>"Prova "+(i+1)+": "+String(p.ref||"")+"
+"+String(p.trecho||"")).join("
+
+");
+  return [
+    String(data.ideia||""),
+    proofs,
+    ...(data.explicacao||[]).map(String),
+    "Entendeu? "+String(data.pergunta||"")
+  ].filter(Boolean).join("
+
+");
 }
 function appendMessage(role,content,sources=[]){
   const host=$("messages");if(!host)return;
@@ -230,7 +266,7 @@ function setBusy(on,label=""){
 }
 async function call(path,body,timeout=300000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
-  const target=(apiBase&&/^\/api\/v[23]\//.test(String(path)))?apiBase+path:path;
+  const target=(apiBase&&/^\/api\/v[234]\//.test(String(path)))?apiBase+path:path;
   try{
     const res=await fetch(target,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:controller.signal,mode:"cors"});
     const data=await res.json().catch(()=>({}));
@@ -240,12 +276,33 @@ async function call(path,body,timeout=300000){
 }
 async function sendLocal(){
   const input=$("questionInput"),q=String(input?.value||"").trim();if(!q)return;
-  const mode=selectedResponse(),model=resolvedModelForRequest();
+  const mode=selectedResponse(),model=resolvedModelForRequest(),experience=selectedExperience();
   const lowRam=Number(health?.hardware?.ram_gb||navigator.deviceMemory||4)<=5;
   try{window.speechSynthesis?.resume();window.speechSynthesis?.getVoices();}catch{}
   appendMessage("user",q);input.value="";setBusy(true,mode==="exact"?"Buscando citação literal…":"Consultando Evidence Engine V3…");
   try{
     if(apiBase){
+      if(experience==="aula"||experience==="revisao"){
+        const lesson=await call("/api/v4/lesson",{
+          question:q,
+          age:null,
+          mode:experience
+        },300000);
+        const proofSources=(lesson.provas||[]).map(p=>({
+          reference:p.ref,
+          text:p.trecho,
+          citation_verified:p.verified===true
+        }));
+        const rendered=lessonDisplayText(lesson);
+        appendMessage("assistant",rendered,proofSources);
+        speakV2Answer(lesson.speech_text||rendered).catch(()=>{});
+        const backend=$("backendText");
+        if(backend)backend.textContent="v4 Aula • 1 ideia • até 3 provas verificadas • Qwen sem autoridade de fonte";
+        const dot=$("backendDot");if(dot)dot.className="dot ok";
+        const state=$("avatarState");if(state)state.textContent="Pronto";
+        return;
+      }
+
       const data=await call("/api/v3/chat",{
         question:q,
         mode,
