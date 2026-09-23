@@ -24,6 +24,19 @@ try{
   if($LASTEXITCODE -ne 0){ throw "Falha ao instalar o leitor PDF local para a biblioteca massiva." }
 }finally{ Pop-Location }
 
+# Força a troca do código em memória sem tocar no Ollama nem no acervo.
+$listeners=Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
+foreach($listener in @($listeners)){
+  try{
+    $proc=Get-Process -Id $listener.OwningProcess -ErrorAction Stop
+    if($proc.ProcessName -match "node"){ Stop-Process -Id $proc.Id -Force -ErrorAction Stop }
+    else{ throw "A porta 8788 está ocupada por outro programa: $($proc.ProcessName)." }
+  }catch{
+    if($_.Exception.Message -match "outro programa"){ throw }
+  }
+}
+Start-Sleep -Milliseconds 800
+
 $desktop=[Environment]::GetFolderPath("Desktop")
 $wsh=New-Object -ComObject WScript.Shell
 $start=$wsh.CreateShortcut((Join-Path $desktop "Iniciar Consciência Fabiano.lnk"))
