@@ -4,6 +4,7 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {readFile,readdir,stat,mkdir,appendFile,opendir,statfs} from "node:fs/promises";
 import {spawn} from "node:child_process";
+import {watch as fsWatch} from "node:fs";
 import {createHash} from "node:crypto";
 import {
   V2_VERSION, DEFAULT_EMBED_MODEL, RESPONSE_MODES,
@@ -64,6 +65,8 @@ let generatorBusy=0;
 let massScanRunning=false;
 let massPumpRunning=false;
 let activePdfChild=null;
+let massFolderWatcher=null;
+let massWatchTimer=null;
 const massImportState={
   started:false,last_scan:null,last_file:null,last_result:null,discovered_last_scan:0,
   import_dir:MASS_IMPORT_DIR,paused_reason:"",free_gb:null
@@ -454,6 +457,18 @@ async function startMassImporter(){
   }
   await scanMassImportFolder();
   pumpMassImportQueue().catch(()=>{});
+
+  // No Windows, fs.watch recursivo dispara um único rescan debounced mesmo durante lotes enormes.
+  try{
+    massFolderWatcher=fsWatch(MASS_IMPORT_DIR,{recursive:process.platform==="win32"},()=>{
+      if(massWatchTimer)clearTimeout(massWatchTimer);
+      massWatchTimer=setTimeout(()=>{
+        scanMassImportFolder().then(()=>pumpMassImportQueue()).catch(()=>{});
+      },5000);
+    });
+    massFolderWatcher.unref?.();
+  }catch{}
+
   setInterval(()=>{
     scanMassImportFolder().then(()=>pumpMassImportQueue()).catch(()=>{});
   },MASS_SCAN_MS).unref?.();
