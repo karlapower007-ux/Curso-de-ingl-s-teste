@@ -153,7 +153,13 @@
             <small id="selectedPdfName" class="selected-pdf-name">Nenhum arquivo selecionado.</small>
           </label>
           <button id="uploadBtn" class="primary full" type="button">Adicionar PDFs / Processar fila</button>
-          <p class="client-extract-note">⚡ Escala para 1.000+ PDFs: extração local, deduplicação SHA-256, fila persistente e inclusão incremental no Dicionário, Livro V3 e Aula V4. A biblioteca-base permanece congelada.</p>
+          <p class="client-extract-note">⚡ Escala para 50.000+ PDFs: os livros antigos ficam congelados e os novos entram em índice incremental separado, pesquisado junto com o acervo antigo.</p>
+          <div class="library-note">
+            <strong>Importação massiva 50K</strong>
+            <p>Para lotes enormes, use a pasta <code>C:\ConscienciaFabiano\ImportarPDFs</code>. Pode criar subpastas. O sistema processa um PDF por vez e retoma após reiniciar.</p>
+            <p id="massImportStatus" class="status" aria-live="polite">Fila 50K • verificando servidor local…</p>
+            <button id="massScanBtn" class="secondary" type="button">Verificar pasta agora</button>
+          </div>
         </div>
         <p id="adminStatus" class="status"></p>
         <p id="costGuardStatus" class="status" aria-live="polite">R$0 Guard • aguardando leitura de uso.</p>
