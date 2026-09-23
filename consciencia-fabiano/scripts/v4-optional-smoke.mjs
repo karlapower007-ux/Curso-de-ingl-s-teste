@@ -78,7 +78,7 @@ assert.ok(winInstall.includes("ConscienciaFabianoV4"),"instalador deve criar tar
 assert.ok(winInstall.includes("Consciência Fabiano - Celular.lnk"),"instalador deve criar atalho de celular");
 assert.ok(winStart.includes('Start-Process "http://127.0.0.1:8788/?v4=1"'),"PC deve abrir interface local para funcionar sem internet");
 assert.ok(!/ollama|11434/i.test(winStop),"atalho Parar não pode encerrar Ollama");
-assert.ok(directInstall.includes("consciencia-cloudflare-native-v1.zip"),"instalador direto deve baixar a branch canônica");
+assert.ok(directInstall.includes("/branches/consciencia-cloudflare-native-v1")&&directInstall.includes("branchSha")&&directInstall.includes('archive/"+$branchSha+".zip'),"instalador direto deve resolver a branch canônica e baixar o commit SHA exato");
 assert.ok(directInstall.includes("/api/v2/health")&&directInstall.includes("/api/v3/health")&&directInstall.includes("/api/v4/health"),"instalador direto deve validar V2/V3/V4");
 assert.ok(directInstall.includes("/api/v2/dictionary"),"instalador direto deve validar Dicionário V2");
 assert.ok(directInstall.includes("/api/v4/lesson"),"instalador direto deve executar uma Aula real no Qwen local");
