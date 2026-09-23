@@ -10,6 +10,10 @@ Set-Content -Path (Join-Path $dir "mobile-token.txt") -Value $token -NoNewline -
 
 & (Join-Path $Root "windows\start-mobile-gateway.ps1")
 
+# Publica somente o gateway autenticado 8790 dentro do tailnet.
+# A porta 8788 permanece loopback e nunca é exposta.
+& tailscale serve --bg http://127.0.0.1:8790 | Out-Null
+
 $status=& tailscale status --json | ConvertFrom-Json
 $dns=([string]$status.Self.DNSName).TrimEnd(".")
 if(-not $dns){ throw "Não foi possível descobrir o endereço Tailscale deste PC." }
