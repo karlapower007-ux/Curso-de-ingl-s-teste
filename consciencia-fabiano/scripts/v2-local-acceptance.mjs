@@ -135,7 +135,7 @@ assert.ok(prompt.includes("EVIDÊNCIA 1"));
 assert.ok(prompt.includes("4 a 8 pontos substantivos"),"modo Explicação deve pedir resposta mais rica sem sair do foco");
 assert.equal(chooseInstalledModel(["qwen3:4b","qwen3:1.7b"],"qwen3:4b"),"qwen3:4b");
 
-const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart,incremental]=await Promise.all([
+const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart,incremental,app]=await Promise.all([
   readFile(path.join(root,"scripts","v2-local-server.mjs"),"utf8"),
   readFile(path.join(root,"public","v2-local-ui.js"),"utf8"),
   readFile(path.join(root,"public","v2-local-engine.js"),"utf8"),
@@ -147,7 +147,8 @@ const [server,ui,engine,opfs,index,css,sw,pkg,whisper,v3core,restart,incremental
   readFile(path.join(root,"public","whisper-local.js"),"utf8"),
   readFile(path.join(root,"scripts","v3-evidence-core.mjs"),"utf8"),
   readFile(path.join(root,"scripts","reiniciar-cerebro-v2.ps1"),"utf8"),
-  readFile(path.join(root,"scripts","v3-incremental-library.mjs"),"utf8")
+  readFile(path.join(root,"scripts","v3-incremental-library.mjs"),"utf8"),
+  readFile(path.join(root,"public","app.js"),"utf8")
 ]);
 
 for(const forbidden of ["api.groq.com","api.x.ai","generativelanguage.googleapis.com"]){
