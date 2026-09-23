@@ -58,6 +58,8 @@ $files = @(
   "scripts/v3-evidence-core.mjs",
   "scripts/v3-persistent-index.mjs",
   "scripts/v4-lesson-core.mjs",
+  "scripts/v4-piper-tts.mjs",
+  "scripts/v4-mobile-gateway.mjs",
   "public/v2-local-ui.js",
   "public/v2-local-engine.js",
   "public/v2-aliases.json",
