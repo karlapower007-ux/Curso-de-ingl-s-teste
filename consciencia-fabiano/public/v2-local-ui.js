@@ -12,6 +12,9 @@ let apiBase="";
 let dictionaryState={query:"",page:1,pageSize:50,total:0,pages:0};
 
 const $=id=>document.getElementById(id);
+function localApiConnected(){
+  return localReady===true && browserOnly===false && Boolean(health?.local_only);
+}
 
 function v2SpeakEnabled(){
   const box=$("v2SpeakAnswers");
@@ -89,7 +92,7 @@ async function speakV2Answer(text){
 }
 async function speakV4Lesson(lesson={}){
   if(!v2SpeakEnabled())return;
-  if(apiBase){
+  if(localApiConnected()){
     try{
       stopV2Speech();
       const target=apiBase+"/api/v4/tts";
@@ -349,7 +352,7 @@ async function sendLocal(){
     :(mode==="exact"?"Buscando citação literal…":"Consultando Evidence Engine V3…");
   setBusy(true,busyLabel);
   try{
-    if(apiBase){
+    if(localApiConnected()){
       if(experience==="aula"||experience==="revisao"){
         const lesson=await call("/api/v4/lesson",{
           question:q,
@@ -398,7 +401,7 @@ async function sendLocal(){
       localState=await engine.counts();
     }catch{}
 
-    if(mode==="exact"&&engine&&Number(localState?.chunks||0)>0&&!apiBase){
+    if(mode==="exact"&&engine&&Number(localState?.chunks||0)>0&&!localApiConnected()){
       const exact=await engine.exactSearch(q,{page:1,pageSize:25});
       const answer=engine.formatExact(exact.matches||[]);
       appendMessage("assistant",answer,exact.matches||[]);
@@ -425,7 +428,7 @@ async function sendLocal(){
         evidence=[...merged.values()].slice(0,90);
       }catch{}
     }
-    if(browserOnly&&!apiBase){
+    if(browserOnly&&!localApiConnected()){
       const answer=browserDeterministicAnswer(mode,q,evidence);
       appendMessage("assistant",answer,evidence);
       speakV2Answer(answer).catch(()=>{});
@@ -595,7 +598,7 @@ function updateV2Status(){
   const model=selectedModel()==="auto"?String(health?.hardware?.selected||health?.hardware?.recommended||"auto"):selectedModel();
   el.textContent=browserOnly
     ?"Local no navegador • biblioteca offline • respostas determinísticas sem LLM"
-    :(apiBase?"Ollama local conectado • ":"Local grátis • ")+(ollama?model:"sem LLM • fallback determinístico")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
+    :(localApiConnected()?"Ollama local conectado • ":"Local grátis • ")+(ollama?model:"sem LLM • fallback determinístico")+" • embeddings "+(embed?"Qwen prontos":"Qwen pendentes");
   el.classList.toggle("ok",browserOnly||ollama);
   const settings=$("v2SettingsInfo");
   if(settings)settings.textContent="RAM detectada: "+String(health?.hardware?.ram_gb||"?")+" GB • recomendado: "+String(health?.hardware?.recommended||"?")+" • biblioteca local: "+String(health?.library?.chunks||0)+" chunks.";
