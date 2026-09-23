@@ -164,6 +164,9 @@ assert.ok(ui.includes('hit.dictionary_scripture_source?"PDF p. "'),"UI do Dicion
 assert.ok(incremental.includes("standard_works:isStandardWorksRow(row)"),"Índice incremental 50K deve preservar o marcador de Obras Padrão");
 assert.ok(restart.includes('"scripts/v3-incremental-library.mjs"'),"Atualizador Windows deve baixar o motor incremental 50K junto com a correção do Dicionário");
 assert.ok(server.includes("dictionary_frozen:true"),"V3 deve declarar o Dicionário congelado");
+assert.ok(app.includes("promoteLegacyLocalBooksToV3"),"PDFs antigos somente no IndexedDB devem migrar automaticamente ao índice 50K");
+assert.ok(app.includes("legacy-to-50k-promotion"),"migração ao 50K deve reutilizar os chunks locais, sem exigir novo upload");
+assert.ok(app.includes("local-pendente-50K"),"falha de migração ao 50K deve ficar marcada no catálogo");
 assert.ok(ui.includes('call("/api/v3/chat"'),"Chat oficial deve usar o Evidence Engine V3");
 assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário oficial deve continuar usando exatamente a rota V2");
 assert.ok(!ui.includes('call("/api/v3/dictionary"'),"V3 não pode substituir ou reindexar o Dicionário");
