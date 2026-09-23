@@ -48,18 +48,20 @@ assert.ok(ui.includes("async function speakV4Lesson"),"UI deve tentar voz V4");
 assert.ok(ui.includes('/api/v4/tts'),"UI deve tentar Piper local");
 assert.ok(ui.includes("return speakV2Answer"),"Piper deve ter fallback de voz do navegador");
 
-assert.ok(gateway.includes('const HOST="127.0.0.1"'),"gateway móvel deve permanecer loopback");
+assert.ok(gateway.includes('process.env.FNS_MOBILE_HOST||"127.0.0.1"'),"gateway deve nascer loopback e só abrir LAN por flag explícita");
 assert.ok(gateway.includes('const PORT=Math.max(1,Number(process.env.FNS_MOBILE_PORT||8790))'));
 assert.ok(gateway.includes('const TARGET="http://127.0.0.1:8788"'),"gateway deve encaminhar para 8788 sem expô-la");
 assert.ok(gateway.includes("FNS_MOBILE_TOKEN"),"gateway precisa exigir token");
-assert.ok(gateway.includes("HttpOnly; Secure; SameSite=Strict"),"token móvel deve virar cookie protegido por HTTPS");
-assert.ok(!gateway.includes('0.0.0.0'),"gateway móvel não pode bindar publicamente");
+assert.ok(gateway.includes("SameSite=Strict"),"token móvel deve virar cookie HttpOnly/SameSite");
+assert.ok(gateway.includes('forwarded==="https"'),"cookie deve usar Secure quando o acesso vier por HTTPS/Tailscale");
+assert.ok(gateway.includes('const TARGET="http://127.0.0.1:8788"'),"mesmo em LAN, 8788 deve continuar apenas como alvo local");
 
 assert.ok(enableMobile.includes("tailscale serve --bg http://127.0.0.1:8790"),"Tailscale deve servir só o gateway autenticado");
 const serveLines=enableMobile.split(/\r?\n/).filter(line=>/tailscale\s+serve/i.test(line) && !/^\s*#/.test(line));
 assert.ok(serveLines.length>=1,"habilitador móvel deve possuir comando tailscale serve");
 assert.ok(serveLines.every(line=>!line.includes("8788")),"nenhum comando tailscale serve pode publicar a porta 8788");
 assert.ok(disableMobile.includes("tailscale serve reset"),"desabilitar celular deve remover o Tailscale Serve");
+assert.ok(disableMobile.includes("Consciencia Fabiano Mobile 8790"),"desabilitar celular deve remover a regra LAN 8790");
 assert.ok(disableExternal.includes('"FNS_EXTERNAL_WRITER_ENABLED","0","User"'),"deve existir desligamento explícito do redator externo");
 
 assert.ok(worker.includes('"Xenova/whisper-tiny"'),"STT local deve usar Whisper tiny");
@@ -83,6 +85,10 @@ assert.ok(directInstall.includes("install-validation.json"),"instalador deve gra
 assert.ok(directInstall.includes("piper-wav-generated"),"instalador deve testar WAV local quando Piper estiver disponível");
 assert.ok(directInstall.includes("browser-fallback-pending-user-audio"),"instalador deve distinguir fallback de voz ainda dependente do dispositivo");
 assert.ok(mobileVbs.includes("HABILITAR_CELULAR_TAILSCALE.ps1"),"atalho de celular deve usar gateway autenticado");
+assert.ok(enableMobile.includes("LocalSubnet"),"LAN deve ser limitada à sub-rede local pelo firewall");
+assert.ok(enableMobile.includes("MESMA WI-FI"),"habilitador deve exibir endereço LAN real");
+assert.ok(enableMobile.includes("TAILSCALE"),"habilitador deve exibir endereço Tailscale quando disponível");
+assert.ok(enableMobile.includes(":8790/?token="),"LAN deve usar somente o gateway autenticado 8790");
 assert.ok(legacyWorkflow.includes("LEGACY_DEPLOY_BLOCKED=true"),"workflow legado deve bloquear HEAD local-first");
 assert.ok(legacyWorkflow.includes("if: env.LEGACY_DEPLOY_BLOCKED != 'true'"),"etapas legadas de deploy devem ser puladas quando V2/V3/V4 estiverem presentes");
 
@@ -91,7 +97,7 @@ console.log(JSON.stringify({
   external_writer_default:"off",
   external_payload:"question+proof_text_only",
   piper:"local_optional",
-  mobile:"tailscale-token-gateway-8790",
+  mobile:"lan-or-tailscale-token-gateway-8790",
   port_8788:"loopback-only",
   whisper:"tiny-lazy",
   dictionary:"v2-frozen",
