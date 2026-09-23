@@ -208,6 +208,16 @@ textarea:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(
 .status{min-height:22px;color:var(--muted);margin:12px 0 0}
 .library-note{margin-top:20px;padding:14px;border-radius:10px;background:#172236;border:1px solid var(--line)}
 .library-note p{margin:6px 0 0;color:var(--muted)}
+.fiftyk-ledger{margin-top:14px;padding:12px;border:1px solid rgba(56,189,248,.28);border-radius:10px;background:rgba(7,18,31,.42)}
+.fiftyk-ledger-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.fiftyk-ledger-head small{display:block;margin-top:4px;color:var(--muted);line-height:1.35}
+.fiftyk-ledger-list{margin-top:10px;display:grid;gap:6px;max-height:520px;overflow:auto;padding-right:4px}
+.fiftyk-ledger-row{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:8px;background:#101a2b}
+.fiftyk-ledger-number{display:grid;place-items:center;width:28px;height:28px;border-radius:999px;background:rgba(56,189,248,.12);color:#7dd3fc;font-weight:800;font-size:.75rem}
+.fiftyk-ledger-body{min-width:0}
+.fiftyk-ledger-body strong{display:block;overflow-wrap:anywhere}
+.fiftyk-ledger-body small{display:block;color:var(--muted);margin-top:3px}
+.fiftyk-ready-badge{white-space:nowrap;border:1px solid rgba(74,222,128,.35);background:rgba(22,101,52,.22);color:#86efac;border-radius:999px;padding:4px 8px;font-size:.7rem;font-weight:800}
 .books{margin-top:16px;display:grid;gap:10px}
 .book{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:13px 14px;border:1px solid var(--line);border-radius:10px;background:#172236}
 .book small{display:block;color:var(--muted);margin-top:4px}
@@ -242,6 +252,9 @@ textarea:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(
   .input-area{display:grid;grid-template-columns:1fr 1fr}
   .input-area .primary,.input-area .secondary{min-width:0}
   .section-heading{align-items:flex-start;flex-direction:column}
+  .fiftyk-ledger-head{flex-direction:column}
+  .fiftyk-ledger-row{grid-template-columns:32px minmax(0,1fr)}
+  .fiftyk-ready-badge{grid-column:2;justify-self:start}
 }
 
 .client-extract-note{margin:8px 0 0;color:#bae6fd;font-size:.82rem;line-height:1.45;padding:10px 12px;border:1px solid rgba(56,189,248,.28);border-radius:8px;background:rgba(56,189,248,.06)}
