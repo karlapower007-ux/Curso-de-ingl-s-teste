@@ -194,7 +194,7 @@ jobs:
                   throw new Error("AND composto não manteve os conceitos no mesmo parágrafo para "+test.query+" em "+width+": "+JSON.stringify(state));
                 }
                 if(test.compound){
-                  const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+                  const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ").trim();
                   const groups=test.query.startsWith("Plano")
                     ? [["plano de salvacao","plano de redencao","plan of salvation","plan of redemption"],["vida pre mortal","vida pre-mortal","premortal life","pre-mortal life","preexistence","pre-existence","preexistencia"]]
                     : [["batismo","baptism"],["sacramento","sacrament"]];
