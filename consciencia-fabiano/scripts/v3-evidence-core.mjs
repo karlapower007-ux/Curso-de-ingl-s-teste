@@ -343,6 +343,17 @@ export function searchV3Evidence(index,query,aliasObject={},options={}){
   return {query,expansions,total:out.length,results:final};
 }
 
+export function v3DisplayReference(row={}){
+  const kind=String(row?.kind||"");
+  if(kind==="book-paragraph"){
+    const title=String(row?.title||"").replace(/\.pdf$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+    const page=Number(row?.page||0)||null;
+    if(title&&page)return title+" • PDF p. "+page;
+    if(title)return title;
+  }
+  return String(row?.reference||"").trim();
+}
+
 export function formatV3EvidenceAnswer(searchResult,mode="explain"){
   const results=searchResult?.results||[];
   if(!results.length)return "A V3 não encontrou evidências documentais verificadas suficientes para responder a essa pergunta.";
@@ -352,6 +363,6 @@ export function formatV3EvidenceAnswer(searchResult,mode="explain"){
     ?"Citações documentais verificadas:"
     :"Resposta documental V3 — somente evidências verificadas da biblioteca:";
   return header+"\n\n"+picked.map((row,i)=>
-    "["+(i+1)+"] "+String(row.text||"").trim()+"\n✓ Fonte verificada: "+row.reference
+    "["+(i+1)+"] "+String(row.text||"").trim()+"\n✓ Fonte verificada: "+v3DisplayReference(row)
   ).join("\n\n");
 }
