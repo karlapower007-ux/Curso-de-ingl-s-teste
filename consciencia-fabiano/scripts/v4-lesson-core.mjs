@@ -107,6 +107,25 @@ function buildCheckQuestion(idea=""){
   return clean?"Certo ou errado: "+clean+"?":"Entendeu a ideia principal?";
 }
 
+export function lessonKnowledgeQuery(question=""){
+  const original=cleanText(question,600).replace(/[?!.,;:]+$/g,"").trim();
+  let q=original;
+  const prefixes=[
+    /^(?:por\s+favor\s+)?(?:me\s+)?(?:explique|explica|explicar|defina|definir|descreva|diga|conte)\s+/iu,
+    /^(?:o\s+que\s+(?:é|eh|são|sao|significa)|quem\s+(?:é|eh|foi)|qual\s+(?:é|eh)|quais\s+(?:são|sao))\s+/iu,
+    /^(?:quero\s+saber\s+)(?:sobre|a\s+respeito\s+de)\s+/iu,
+    /^(?:fale|falar|me\s+fale)\s+(?:sobre|a\s+respeito\s+de)\s+/iu,
+    /^(?:o\s+que\s+(?:diz|fala)\s+(?:sobre|a\s+respeito\s+de))\s+/iu
+  ];
+  for(let pass=0;pass<3;pass++){
+    const before=q;
+    for(const re of prefixes)q=q.replace(re,"").trim();
+    q=q.replace(/^(?:o|a|os|as|um|uma)\s+/iu,"").trim();
+    if(q===before)break;
+  }
+  return q||original;
+}
+
 export function isSensitivePersonalQuestion(question=""){
   return PRIVATE_PATTERNS.some(re=>re.test(String(question||"")));
 }
