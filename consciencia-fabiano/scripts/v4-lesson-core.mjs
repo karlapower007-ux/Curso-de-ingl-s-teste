@@ -209,6 +209,13 @@ export async function buildLesson({
   };
 }
 
+export function lessonSpeechText(lesson={}){
+  if(lesson?.nao_sei)return lesson?.guard==="adulto"
+    ?[lesson.ideia,lesson.pergunta].filter(Boolean).join("\n")
+    :"Não achei na biblioteca.";
+  return [lesson.ideia,...(lesson.explicacao||[])].filter(Boolean).join("\n");
+}
+
 export function lessonToPlainText(lesson={}){
   if(lesson?.nao_sei&&lesson?.guard==="adulto"){
     return lesson.ideia+"\n\n"+lesson.pergunta;
