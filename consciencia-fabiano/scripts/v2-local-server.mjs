@@ -11,7 +11,7 @@ import {
   focusEvidence, answerStaysOnFocus, citationIntegrity, hasSubstantiveFocus, focusedEvidenceWindow
 } from "./v2-local-core.mjs";
 import {
-  buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer
+  buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer,v3DisplayReference
 } from "./v3-evidence-core.mjs";
 import {
   ensurePersistentV3,searchPersistentV3,persistentV3Health
@@ -355,7 +355,7 @@ async function handleV3Chat(req,res){
     evidence_count:result.results.length,
     index_version:persistentV3Health(index).version,
     matches:result.results.slice(0,mode==="short"?4:14).map(row=>({
-      reference:row.reference,
+      reference:v3DisplayReference(row),
       citation_verified:true,
       kind:row.kind,
       title:row.title||"",
