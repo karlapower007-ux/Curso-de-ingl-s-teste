@@ -3,7 +3,7 @@ import {readFile,readdir} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {buildV3EvidenceIndex,searchV3Evidence} from "./v3-evidence-core.mjs";
-import {buildLesson} from "./v4-lesson-core.mjs";
+import {buildLesson,lessonToPlainText,sanitizeLessonEvidence} from "./v4-lesson-core.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(__dirname,"..");
@@ -15,41 +15,121 @@ for(const name of names){
   const chunks=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.chunks)?parsed.chunks:[]);
   for(const row of chunks)if(String(row?.text||"").trim())rows.push(row);
 }
+
+const normalize=v=>String(v||"").replace(/\s+/g," ").trim();
+const rowId=row=>String(row?.id||row?.key||"").trim();
+const byId=new Map(rows.map(row=>[rowId(row),row]).filter(([id])=>id));
+
+function explicitPrintedPage(row={}){
+  for(const key of ["printed_page","page_printed","printedPage","physical_page","physicalPage"]){
+    const v=String(row?.[key]??"").trim();
+    if(v)return v;
+  }
+  return null;
+}
+function publicTitle(row={},fallback=""){
+  const raw=String(row.title||row.source_title||fallback||"").replace(/\.pdf$/i,"");
+  return raw.replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+}
+function verifiedBookCandidate(candidate){
+  const source=byId.get(String(candidate.source_chunk_id||"").trim());
+  if(!source)return null;
+  if(!normalize(source.text).includes(normalize(candidate.text)))return null;
+  const title=publicTitle(source,candidate.title);
+  const pdfPage=Number(source.pdf_page??source.page??candidate.page??0)||null;
+  const printedPage=explicitPrintedPage(source);
+  const reference=printedPage
+    ?title+" • página impressa "+printedPage+(pdfPage?" • PDF p. "+pdfPage:"")
+    :(pdfPage?title+" • PDF p. "+pdfPage:title);
+  return {
+    ...candidate,
+    title,
+    reference,
+    verified:true,
+    citation_verified:true,
+    pdf_page:pdfPage,
+    printed_page:printedPage,
+    page_basis:printedPage?"printed+pdf":(pdfPage?"pdf":"title-only"),
+    authority:source
+  };
+}
+
 const aliases=JSON.parse(await readFile(path.join(root,"public","v2-aliases.json"),"utf8"));
 const index=buildV3EvidenceIndex(rows);
-const search=searchV3Evidence(index,"O que é o mundo espiritual?",aliases,{limit:12,strict:false});
-assert.ok(search.results.length>=3,"V4 precisa de pelo menos três evidências candidatas reais");
+const search=searchV3Evidence(index,"O que é o mundo espiritual?",aliases,{limit:20,strict:false});
+const verified=search.results.map(verifiedBookCandidate).filter(Boolean);
+assert.ok(verified.length>=2,"V4 precisa de pelo menos duas evidências reais que possam voltar ao registro autoritativo");
+
+const chosen=verified.slice(0,3);
+for(const item of chosen){
+  assert.ok(item.title,"título público precisa existir no registro");
+  assert.ok(normalize(item.authority.text).includes(normalize(item.text)),"trecho V3 precisa existir literalmente no registro");
+  if(item.printed_page){
+    assert.ok(item.reference.includes("página impressa "+item.printed_page));
+    if(item.pdf_page)assert.ok(item.reference.includes("PDF p. "+item.pdf_page));
+  }else if(item.pdf_page){
+    assert.ok(item.reference.includes("PDF p. "+item.pdf_page),"sem metadado impresso explícito, página deve ser rotulada como PDF");
+  }
+}
+
+const safe=sanitizeLessonEvidence(chosen);
+assert.ok(safe.length>=2);
+const q1=safe[0].trecho_original;
+const q2=safe[1].trecho_original;
 
 const lesson=await buildLesson({
   question:"O que é o mundo espiritual?",
   age:12,
   mode:"aula",
-  evidence:search.results.slice(0,6).map(x=>({...x,citation_verified:x.verified===true})),
+  evidence:chosen,
   profile:{theme:"",last_check:"",last_proof_id:""},
-  generate:async prompt=>{
-    const ids=[...String(prompt).matchAll(/^(E\d+-[^ |]+)\s*\|/gm)].map(m=>m[1]);
-    return {
-      model:"qwen3:0.6b",
-      content:JSON.stringify({
-        explicacao:[
-          {text:"É um estado relacionado à condição dos espíritos após a morte.",evidence_id:ids[0]},
-          {text:"As provas recuperadas mostram que esse estado antecede a ressurreição.",evidence_id:ids[1]||ids[0]}
-        ],
-        pergunta:"Certo ou errado: o mundo dos espíritos é apresentado como um estado temporário?"
-      })
-    };
-  }
+  generate:async()=>({
+    model:"qwen3:0.6b",
+    content:JSON.stringify({explicacao:[
+      {
+        text:"O mundo dos espíritos é apresentado como uma condição relacionada ao período após a morte.",
+        evidence_id:safe[0].id,
+        support_quote:q1
+      },
+      {
+        text:"Nesse estado, as fontes recuperadas descrevem continuidade antes da ressurreição.",
+        evidence_id:safe[1].id,
+        support_quote:q2
+      }
+    ]})
+  }),
+  verify:async()=>({
+    model:"qwen3:0.6b",
+    content:JSON.stringify({verdicts:[
+      {claim_id:"C1",supported:true},
+      {claim_id:"C2",supported:true}
+    ]})
+  })
 });
 
 assert.equal(lesson.nao_sei,false);
-assert.ok(lesson.provas.length>=2&&lesson.provas.length<=3);
+assert.equal(lesson.provas.length,2);
 assert.ok(lesson.provas.every(p=>p.verified===true));
-assert.ok(lesson.provas.every(p=>!/(?:GEE|TJS)/i.test(p.trecho)));
+assert.ok(lesson.provas.every(p=>!/(?:GEE|TJS)/i.test(p.trecho_original)));
 assert.ok(lesson.provas.every(p=>!/\.pdf|standard-works/i.test(p.ref)));
-assert.ok(lesson.explicacao.length>=1&&lesson.explicacao.length<=3);
+assert.ok(lesson.provas.every(p=>p.traducao_pt===null),"trecho original não pode ser disfarçado de tradução");
+assert.ok(!/^\d/.test(lesson.ideia));
+assert.ok(/[áàâãéêíóôõúç]|\b(o|a|de|do|da|é|como|uma|um|após|estado)\b/i.test(lesson.ideia),"ideia deve estar em português");
+assert.equal(lesson.explicacao.length,1);
 assert.ok(!JSON.stringify(lesson).includes("standard-works"));
+
+console.log("V4_REAL_AUTHORITY_PROOF="+JSON.stringify(chosen.slice(0,2).map(x=>({
+  title:x.title,
+  reference:x.reference,
+  pdf_page:x.pdf_page,
+  printed_page:x.printed_page,
+  source_chunk_id:x.source_chunk_id,
+  excerpt_verified:normalize(x.authority.text).includes(normalize(x.text))
+})),null,2));
 
 console.log("V4_REAL_EXAMPLE="+JSON.stringify({
   question:"O que é o mundo espiritual?",
   lesson
 },null,2));
+
+console.log("V4_VISIBLE_EXAMPLE=\n"+lessonToPlainText(lesson));
