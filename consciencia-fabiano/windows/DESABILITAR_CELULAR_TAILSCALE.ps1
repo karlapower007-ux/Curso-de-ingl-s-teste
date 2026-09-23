@@ -11,4 +11,5 @@ foreach($l in @($listeners)){
 Remove-Item (Join-Path $Root ".fns-local\mobile-token.txt") -Force
 Remove-Item (Join-Path $Root ".fns-local\mobile-url.txt") -Force
 schtasks.exe /Delete /TN "ConscienciaFabianoMobile" /F | Out-Null
-Write-Host "Acesso móvel Tailscale da Consciência Fabiano desabilitado." -ForegroundColor Green
+Get-NetFirewallRule -DisplayName "Consciencia Fabiano Mobile 8790" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+Write-Host "Acesso móvel LAN/Tailscale da Consciência Fabiano desabilitado." -ForegroundColor Green
