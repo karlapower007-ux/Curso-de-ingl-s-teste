@@ -3591,7 +3591,10 @@
   // Heartbeat exato enquanto a página está ativa; o Service Worker também usa Periodic Background Sync quando o navegador permite.
   setInterval(()=>{if(networkAllowed())tickPhantomDaemon();},PHANTOM_DAEMON_INTERVAL_MS);
 
-  setInterval(()=>loadMassImportStatus(false).catch(()=>{}),15000);
+  setInterval(()=>{
+    const localPage=location.hostname==="127.0.0.1"||location.hostname==="localhost";
+    if(!isOfflineOnly()||localPage)loadMassImportStatus(false).catch(()=>{});
+  },15000);
 
   setInterval(()=>{
     if(!heavyLocalSubsystemsActivated || !networkAllowed()) return;
