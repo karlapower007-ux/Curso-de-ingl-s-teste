@@ -522,7 +522,9 @@ async function probe(){
   browserOnly=false;
   apiBase="";
   health=null;
-  const candidates=[
+  const localPage=location.hostname==="127.0.0.1"||location.hostname==="localhost";
+  const forcedOffline=String(localStorage.getItem("fns_operating_mode_v10")||"auto")==="offline";
+  const candidates=(forcedOffline&&!localPage)?[]:[
     {base:"",url:"/api/v2/health"},
     {base:"http://127.0.0.1:8788",url:"http://127.0.0.1:8788/api/v2/health"},
     {base:"http://localhost:8788",url:"http://localhost:8788/api/v2/health"}
