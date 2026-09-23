@@ -423,16 +423,35 @@ export async function createIncrementalLibrary(root){
     return {migrated_documents:migratedDocuments,migrated_blocks:migratedBlocks,remaining:Number(db.prepare("SELECT COUNT(*) AS n FROM documents WHERE block_count=0 AND chunk_count>0").get()?.n||0)};
   };
 
-  const enqueueFolderFile=(sourcePath,sizeBytes,mtimeMs)=>{
-    const p=String(sourcePath||"").trim();
-    if(!p)return false;
+  const enqueueFolderBatch=(entries=[])=>{
+    const list=Array.isArray(entries)?entries:[];
+    if(!list.length)return {added:0,checked:0};
+    const find=db.prepare("SELECT size_bytes,mtime_ms,status FROM folder_queue WHERE source_path=?");
+    const upsert=db.prepare("INSERT INTO folder_queue(source_path,size_bytes,mtime_ms,status,attempts,last_error,discovered_at,updated_at) VALUES(?,?,?,'queued',0,'',?,?) ON CONFLICT(source_path) DO UPDATE SET size_bytes=excluded.size_bytes,mtime_ms=excluded.mtime_ms,status='queued',last_error='',updated_at=excluded.updated_at");
+    let added=0,checked=0;
     const now=new Date().toISOString();
-    const existing=db.prepare("SELECT source_path,size_bytes,mtime_ms,status FROM folder_queue WHERE source_path=?").get(p);
-    if(existing && Number(existing.size_bytes)===Number(sizeBytes||0) && Number(existing.mtime_ms)===Number(mtimeMs||0) && ["queued","processing","done","duplicate","failed","needs_ocr"].includes(String(existing.status)))return false;
-    db.prepare("INSERT INTO folder_queue(source_path,size_bytes,mtime_ms,status,attempts,last_error,discovered_at,updated_at) VALUES(?,?,?,'queued',0,'',?,?) ON CONFLICT(source_path) DO UPDATE SET size_bytes=excluded.size_bytes,mtime_ms=excluded.mtime_ms,status='queued',last_error='',updated_at=excluded.updated_at")
-      .run(p,Math.max(0,Number(sizeBytes||0)),Math.max(0,Number(mtimeMs||0)),now,now);
-    return true;
+    db.exec("BEGIN IMMEDIATE;");
+    try{
+      for(const entry of list){
+        const p=String(entry?.source_path||entry?.path||"").trim();
+        if(!p)continue;
+        checked++;
+        const size=Math.max(0,Number(entry?.size_bytes||entry?.size||0));
+        const mtime=Math.max(0,Number(entry?.mtime_ms||0));
+        const existing=find.get(p);
+        if(existing && Number(existing.size_bytes)===size && Number(existing.mtime_ms)===mtime &&
+          ["queued","processing","done","duplicate","failed","needs_ocr"].includes(String(existing.status)))continue;
+        upsert.run(p,size,mtime,now,now);added++;
+      }
+      db.exec("COMMIT;");
+      return {added,checked};
+    }catch(error){
+      try{db.exec("ROLLBACK;");}catch{}
+      throw error;
+    }
   };
+  const enqueueFolderFile=(sourcePath,sizeBytes,mtimeMs)=>
+    enqueueFolderBatch([{source_path:sourcePath,size_bytes:sizeBytes,mtime_ms:mtimeMs}]).added>0;
   const requeueInterrupted=()=>{
     db.prepare("UPDATE folder_queue SET status='queued',updated_at=? WHERE status='processing'").run(new Date().toISOString());
   };
@@ -451,6 +470,6 @@ export async function createIncrementalLibrary(root){
   return {
     version:VERSION,db_path:dbPath,start,append,commit,listDocuments,counts,getChunk,getPage,
     rowsForDocument,allReadyDocumentIds,searchDictionary,searchV3,backfillLegacyBlocks,
-    enqueueFolderFile,requeueInterrupted,nextFolderFile,finishFolderFile,checkpoint
+    enqueueFolderFile,enqueueFolderBatch,requeueInterrupted,nextFolderFile,finishFolderFile,checkpoint
   };
 }
