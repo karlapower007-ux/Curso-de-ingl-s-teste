@@ -2696,7 +2696,7 @@
     // Existing IndexedDB/R2/DO content is preserved; duplicate detection remains in the ingest pipeline.
     const controls=$("uploadControls");
     if(controls)controls.classList.remove("hidden");
-    if($("uploadBtn") && !$("uploadBtn").dataset.busy) $("uploadBtn").disabled=false;
+    if($("uploadBtn") && !$("uploadBtn").dataset.busy && !bulkUploadRunning) $("uploadBtn").disabled=false;
   }
 
   function renderBooks(list,cloudAvailable=true){
