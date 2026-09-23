@@ -3150,11 +3150,38 @@
     }
   }
 
-  async function submitExtractedTextIncremental(extracted){
+  async function storeOriginalPdfForSourceLink(file,documentId){
+    const id=String(documentId||"").trim().toLowerCase();
+    if(!/^[0-9a-f]{64}$/.test(id))throw new Error("SHA-256 inválido para preservar o PDF original.");
+    const candidates=[];
+    const explicit=String(window.__FNS_V2_API_BASE||"").replace(/\/$/,"");
+    if(explicit)candidates.push(explicit);
+    if(location.hostname==="127.0.0.1"||location.hostname==="localhost")candidates.push("");
+    else candidates.push("http://127.0.0.1:8788");
+    let lastError=null;
+    for(const base of [...new Set(candidates)]){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),15*60*1000);
+      try{
+        const target=base+"/api/v3/source/original?document_id="+encodeURIComponent(id);
+        const res=await fetch(target,{
+          method:"PUT",headers:{"Content-Type":"application/pdf"},body:file,
+          signal:controller.signal,cache:"no-store",mode:"cors"
+        });
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok||data?.ok===false)throw new Error(data?.error||("HTTP "+res.status));
+        return data;
+      }catch(error){lastError=error;}
+      finally{clearTimeout(timer);}
+    }
+    throw lastError||new Error("Servidor local indisponível para preservar o PDF original.");
+  }
+
+  async function submitExtractedTextIncremental(extracted,sourceToken=""){
     const common={
       filename:extracted.filename,size_bytes:extracted.size_bytes,page_count:extracted.page_count,
       title:extracted.title||extracted.filename,author:extracted.author||"",
-      language:"",content_sha256:extracted.content_sha256
+      language:"",content_sha256:extracted.content_sha256,source_token:String(sourceToken||"")
     };
     const started=await localV3Api("/api/v3/library/start",{
       method:"POST",body:JSON.stringify(common)
@@ -3204,6 +3231,15 @@
     try{
       const extracted=await extractPdfLocally(file);
       const localId=String(extracted.content_sha256 || extracted.filename);
+      const localRequired=location.hostname==="127.0.0.1"||location.hostname==="localhost"||Boolean(window.__FNS_V2_API_BASE);
+      let sourceRecord=null;
+      try{
+        $("adminStatus").textContent="Preservando PDF original para abrir a fonte no Dicionário e no Chat…";
+        sourceRecord=await storeOriginalPdfForSourceLink(file,extracted.content_sha256);
+      }catch(error){
+        console.warn("Fonte Viva não conseguiu preservar o PDF original.",error);
+        if(localRequired)throw new Error("Falha ao preservar o PDF original para abrir a fonte depois: "+String(error?.message||error));
+      }
 
       $("adminStatus").textContent="Texto extraído. Salvando livro no IndexedDB/OPFS local…";
       await ensureRagCascade("on-demand-local");
@@ -3224,7 +3260,7 @@
 
       let incremental=null;
       try{
-        incremental=await submitExtractedTextIncremental(extracted);
+        incremental=await submitExtractedTextIncremental(extracted,String(sourceRecord?.source_token||""));
         await saveLocalCatalogEntry({
           document_id:localId,
           arquivo:extracted.filename,
@@ -3240,7 +3276,6 @@
         });
       }catch(error){
         console.warn("V3 incremental indisponível.",error);
-        const localRequired=location.hostname==="127.0.0.1"||location.hostname==="localhost"||Boolean(window.__FNS_V2_API_BASE);
         if(localRequired)throw new Error("Falha ao registrar o PDF no índice incremental V3: "+String(error?.message||error));
       }
 
@@ -3258,7 +3293,7 @@
       $("adminStatus").textContent=incremental?.duplicate
         ?"PDF já existente • nenhuma duplicação criada • "+seconds+"s"
         :incremental?.searchable_immediately
-          ?"PDF computado • Dicionário + Livro V3 + Aula V4 prontos • "+seconds+"s"
+          ?"PDF computado • Fonte Viva + Dicionário + Chat V3 + Aula V4 prontos • "+seconds+"s"
           :"PDF salvo no navegador; V3 local aguardando conexão • "+seconds+"s";
 
       // Tenta sincronizar agora; se a Cloudflare estiver em 429, a fila fica preservada para o próximo ciclo.
