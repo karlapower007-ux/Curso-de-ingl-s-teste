@@ -72,11 +72,12 @@ Write-Host "Baixando/verificando o cérebro local..." -ForegroundColor Yellow
 ollama pull $brain
 if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar $brain." }
 
-if (-not (Test-Path "node_modules")) {
-  Write-Host "Instalando dependências locais..." -ForegroundColor Yellow
-  npm install --ignore-scripts
+if (-not (Test-Path "node_modules\pdfjs-dist")) {
+  Write-Host "Instalando dependências locais da biblioteca massiva..." -ForegroundColor Yellow
+  npm install --omit=dev --ignore-scripts --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "Falha no npm install." }
 }
+New-Item -ItemType Directory -Path (Join-Path $project "ImportarPDFs") -Force | Out-Null
 
 $existing = Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
 if ($existing) {
