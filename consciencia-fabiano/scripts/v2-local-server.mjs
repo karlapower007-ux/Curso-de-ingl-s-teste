@@ -13,6 +13,9 @@ import {
 import {
   buildV3EvidenceIndex,searchV3Evidence,formatV3EvidenceAnswer
 } from "./v3-evidence-core.mjs";
+import {
+  ensurePersistentV3,searchPersistentV3,persistentV3Health
+} from "./v3-persistent-index.mjs";
 
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(__dirname,"..");
@@ -178,9 +181,13 @@ async function ensureV3Index(){
   if(v3IndexPromise)return v3IndexPromise;
   v3IndexPromise=(async()=>{
     const started=Date.now();
-    await loadLibrary();
-    const index=buildV3EvidenceIndex(rows);
-    return {...index,build_ms:Date.now()-started};
+    const state=await ensurePersistentV3({
+      root:ROOT,
+      publicDir:PUBLIC,
+      buildIndex:buildV3EvidenceIndex,
+      loadRows:async()=>{await loadLibrary();return rows;}
+    });
+    return {...state,build_ms:Date.now()-started};
   })();
   return v3IndexPromise;
 }
@@ -212,16 +219,18 @@ async function expandV3WithQwen(question){
   }catch{return [];}
 }
 async function handleV3Health(req,res){
-  const index=await ensureV3Index();
+  const state=await ensureV3Index();
+  const persistent=persistentV3Health(state);
   json(res,{
     ok:true,
-    version:index.version,
+    version:persistent.version,
     engine:"Evidence Engine V3",
     dictionary_frozen:true,
-    source_rows:index.source_rows,
-    evidence_units:index.units.length,
-    counts:index.counts,
-    build_ms:index.build_ms
+    source_rows:persistent.source_rows,
+    evidence_units:persistent.evidence_units,
+    counts:persistent.counts,
+    build_ms:state.build_ms,
+    persistent_index:persistent
   });
 }
 async function handleV3Chat(req,res){
@@ -231,12 +240,12 @@ async function handleV3Chat(req,res){
   if(!question){json(res,{ok:false,error:"Pergunta vazia."},400);return;}
   const [index,aliases]=await Promise.all([ensureV3Index(),loadAliases()]);
   const strict=mode==="exact" && body.strict_phrase===true;
-  let result=searchV3Evidence(index,question,aliases,{limit:mode==="exact"?25:40,strict});
+  let result=searchPersistentV3(index,question,aliases,{limit:mode==="exact"?25:40,strict});
   let query_expansions=[];
   if(mode!=="exact" && !strict && result.results.length<8 && body.allow_query_expansion!==false){
     query_expansions=await expandV3WithQwen(question);
     if(query_expansions.length){
-      result=searchV3Evidence(index,question,aliases,{
+      result=searchPersistentV3(index,question,aliases,{
         limit:40,strict:false,extraExpansions:query_expansions
       });
     }
@@ -252,7 +261,7 @@ async function handleV3Chat(req,res){
     query_expansions,
     total_candidates:result.total,
     evidence_count:result.results.length,
-    index_version:index.version,
+    index_version:persistentV3Health(index).version,
     matches:result.results.slice(0,mode==="short"?4:14).map(row=>({
       reference:row.reference,
       citation_verified:true,
