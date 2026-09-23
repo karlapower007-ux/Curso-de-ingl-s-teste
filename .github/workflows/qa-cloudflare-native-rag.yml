@@ -261,7 +261,7 @@ jobs:
           grep -q 'mergeSequentialOfflineCards' public/app.js
 
           # Service-worker cache and V7 manifest
-          grep -Eq 'CACHE_NAME="(fns-consiencia-v10-1-private-offline-online-alias-v2|fns-consiencia-v2-local-first-20260922)"' public/sw-v3.js
+          grep -Eq 'CACHE_NAME="(fns-consiencia-v10-1-private-offline-online-alias-v2|fns-consiencia-v2-local-first-20260922|fns-consiencia-v2-local-first-20260923-v411-repair)"' public/sw-v3.js
           if test -f public/v2-local-ui.js; then
             grep -q '"/v2-local-ui.js"' public/sw-v3.js
             grep -q '"/v2-local-engine.js"' public/sw-v3.js
