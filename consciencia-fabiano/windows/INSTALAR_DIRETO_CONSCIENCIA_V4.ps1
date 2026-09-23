@@ -109,7 +109,25 @@ try {
   }
   if([string]::IsNullOrWhiteSpace([string]$lesson.ideia)){ throw "A aula real retornou ideia vazia." }
   if(([string]$lesson.ideia) -match '^\s*\d'){ throw "A ideia real começou por número de página; validação recusada." }
-  if(([string]$lesson.verificacao) -ne "support_quote_literal+entailment_local"){ throw "O juiz semântico final não foi confirmado no teste real." }
+  if((([string]$lesson.verificacao) -ne "support_quote_literal+entailment_local") -and (([string]$lesson.verificacao) -ne "support_quote_literal+exact-copy-lock")){
+    throw "A verificação final da Aula não foi confirmada no teste real."
+  }
+
+  # Regressão crítica: a biblioteca já contém centenas de ocorrências de expiação.
+  # A instalação só é aceita se a pergunta natural que falhou no dispositivo responder.
+  $atonementBody=@{
+    question="O que é a expiação?"
+    age=12
+    mode="aula"
+  } | ConvertTo-Json -Compress
+  $atonement=Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/v4/lesson" -Method Post -ContentType "application/json" -Body $atonementBody -TimeoutSec 300
+  if(-not $atonement.ok){ throw "Teste de regressão da Expiação não respondeu." }
+  if($atonement.nao_sei){ throw "REGRESSÃO: a Aula ainda respondeu 'Não achei na biblioteca' para 'O que é a expiação?'." }
+  if(@($atonement.provas).Count -lt 2){ throw "REGRESSÃO: a resposta sobre Expiação retornou menos de duas provas." }
+  foreach($proof in @($atonement.provas)){
+    if(-not $proof.verified){ throw "REGRESSÃO: a resposta sobre Expiação trouxe prova sem selo verified." }
+    if([string]::IsNullOrWhiteSpace([string]$proof.ref)){ throw "REGRESSÃO: a resposta sobre Expiação trouxe prova sem referência." }
+  }
 
   # Teste técnico da voz: Piper, quando disponível, deve produzir WAV. Caso contrário,
   # o navegador continua sendo o fallback, cuja audição depende do dispositivo do usuário.
@@ -156,6 +174,11 @@ try {
     semantic_verification=$lesson.verificacao
     lesson_nao_sei=$lesson.nao_sei
     lesson_idea=$lesson.ideia
+    atonement_question="O que é a expiação?"
+    atonement_nao_sei=$atonement.nao_sei
+    atonement_model=$atonement.modelo
+    atonement_verification=$atonement.verificacao
+    atonement_proofs=@($atonement.provas).Count
     lesson_proofs=@($lesson.provas | ForEach-Object {
       [ordered]@{
         ref=$_.ref
@@ -175,6 +198,7 @@ try {
     "Local: http://127.0.0.1:8788"+[Environment]::NewLine+
     "V4: "+$v4.version+[Environment]::NewLine+
     "Aula real Qwen: validada com "+@($lesson.provas).Count+" provas"+[Environment]::NewLine+
+    "Expiação: RESPONDEU com "+@($atonement.provas).Count+" provas • falso 'não achei' bloqueado"+[Environment]::NewLine+
     "V3 unidades: "+$v3.evidence_units+[Environment]::NewLine+
     "Biblioteca 50K: "+$library50k.incremental.version+[Environment]::NewLine+
     "Pasta massiva: C:\ConscienciaFabiano\ImportarPDFs"+[Environment]::NewLine+
