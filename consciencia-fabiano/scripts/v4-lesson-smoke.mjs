@@ -215,6 +215,9 @@ assert.ok(server.includes("authoritative-record+exact-substring"),"trecho precis
 assert.ok(server.includes("verify:verifyLessonWithQwen"),"V4 deve executar verificador semântico local");
 assert.ok(server.includes('" • PDF p. "'),"livros sem página impressa explícita devem rotular página do PDF");
 assert.ok(ui.includes('call("/api/v4/lesson"'),"UI Aula deve chamar V4");
+assert.ok(ui.includes("function localApiConnected()"),"UI deve distinguir servidor local conectado de apiBase vazio em mesma origem");
+assert.ok(ui.includes("if(localApiConnected()){"),"Aula local em 127.0.0.1 deve entrar na rota V4 mesmo quando apiBase é string vazia");
+assert.ok(ui.includes("!localApiConnected()"),"Fallback de navegador não pode sequestrar o servidor local em mesma origem");
 assert.ok(ui.includes('call("/api/v3/chat"'),"modo Livro deve preservar V3");
 assert.ok(ui.includes('call("/api/v2/dictionary"'),"Dicionário deve continuar na V2");
 assert.ok(ui.includes("Trecho original ("),"UI deve distinguir trecho original de síntese em português");
