@@ -1,0 +1,62 @@
+name: QA split Windows 10 ISO for local VM
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  split-win10-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download verified Windows 10 ISO parts artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: win10e-iso-parts
+          path: src
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36065249477
+          github-token: ${{ github.token }}
+      - name: Reconstruct and split below connector limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat src/win10e.part.* > win10e.iso
+          echo 'ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668  win10e.iso' | sha256sum -c -
+          split -b 480M -d -a 2 win10e.iso iso.part.
+          sha256sum iso.part.* > iso.parts.sha256
+          ls -lh iso.part.*
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p00, path: iso.part.00, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p01, path: iso.part.01, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p02, path: iso.part.02, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p03, path: iso.part.03, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p04, path: iso.part.04, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p05, path: iso.part.05, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p06, path: iso.part.06, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p07, path: iso.part.07, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p08, path: iso.part.08, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p09, path: iso.part.09, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p10, path: iso.part.10, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-p11, path: iso.part.11, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso.part.12') != '' }}
+        with: {name: win10e-p12, path: iso.part.12, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso.part.13') != '' }}
+        with: {name: win10e-p13, path: iso.part.13, retention-days: 1, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: win10e-parts-manifest, path: iso.parts.sha256, retention-days: 1}
