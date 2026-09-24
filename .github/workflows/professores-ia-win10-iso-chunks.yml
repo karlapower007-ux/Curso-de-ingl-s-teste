@@ -1,0 +1,111 @@
+name: QA Windows 10 ISO chunks
+on:
+  push:
+    branches: [professores-ia-iso-chunks]
+
+permissions:
+  contents: read
+
+jobs:
+  split-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download and verify official Windows 10 Enterprise Evaluation x64 ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://software-static.download.prss.microsoft.com/dbazure/988969d5-f34g-4e03-ac9d-1f9786c66750/19045.2006.220908-0225.22h2_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso'
+          expected='ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668'
+          curl -fL --retry 5 --retry-delay 3 "$url" -o win10e.iso
+          actual=$(sha256sum win10e.iso | awk '{print $1}')
+          test "$actual" = "$expected"
+          split -b 430M -d -a 2 win10e.iso win10e.part.
+          test "$(ls win10e.part.* | wc -l)" -eq 13
+          sha256sum win10e.part.* > parts.sha256
+          printf '{"source":"%s","sha256":"%s","bytes":%s,"chunks":13}\n' "$url" "$actual" "$(stat -c%s win10e.iso)" > iso-evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-metadata
+          path: |
+            parts.sha256
+            iso-evidence.json
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-00
+          path: win10e.part.00
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-01
+          path: win10e.part.01
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-02
+          path: win10e.part.02
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-03
+          path: win10e.part.03
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-04
+          path: win10e.part.04
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-05
+          path: win10e.part.05
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-06
+          path: win10e.part.06
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-07
+          path: win10e.part.07
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-08
+          path: win10e.part.08
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-09
+          path: win10e.part.09
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-10
+          path: win10e.part.10
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-11
+          path: win10e.part.11
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-part-12
+          path: win10e.part.12
+          retention-days: 1
+          compression-level: 0
