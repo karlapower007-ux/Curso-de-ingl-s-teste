@@ -1,0 +1,31 @@
+name: QA QEMU rootfs bootstrap
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+
+permissions:
+  contents: read
+
+jobs:
+  build-qemu-rootfs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Build Debian trixie rootfs with QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          cid=$(docker create debian:trixie sleep infinity)
+          docker start "$cid"
+          docker exec "$cid" bash -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf genisoimage ca-certificates && rm -rf /var/lib/apt/lists/*'
+          docker export "$cid" | gzip -1 > qemu-rootfs-trixie.tar.gz
+          docker rm -f "$cid"
+          sha256sum qemu-rootfs-trixie.tar.gz > qemu-rootfs-trixie.tar.gz.sha256
+          ls -lh qemu-rootfs-trixie.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-rootfs-trixie
+          path: |
+            qemu-rootfs-trixie.tar.gz
+            qemu-rootfs-trixie.tar.gz.sha256
+          retention-days: 1
+          compression-level: 0
