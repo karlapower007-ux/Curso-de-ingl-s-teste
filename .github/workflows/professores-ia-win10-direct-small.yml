@@ -1,0 +1,195 @@
+name: QA direct Windows 10 ISO small parts
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+
+permissions:
+  contents: read
+
+jobs:
+  direct-win10-small:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download official verified Windows 10 Enterprise Evaluation x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://software-static.download.prss.microsoft.com/dbazure/988969d5-f34g-4e03-ac9d-1f9786c66750/19045.2006.220908-0225.22h2_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso'
+          curl -fL --retry 5 --retry-delay 3 "$url" -o win10e.iso
+          echo 'ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668  win10e.iso' | sha256sum -c -
+          split -b 240M -d -a 2 win10e.iso small.part.
+          sha256sum small.part.* > small.parts.sha256
+          ls -lh small.part.*
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.00') != '' }}
+        with:
+          name: win10e-direct-small-00
+          path: small.part.00
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.01') != '' }}
+        with:
+          name: win10e-direct-small-01
+          path: small.part.01
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.02') != '' }}
+        with:
+          name: win10e-direct-small-02
+          path: small.part.02
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.03') != '' }}
+        with:
+          name: win10e-direct-small-03
+          path: small.part.03
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.04') != '' }}
+        with:
+          name: win10e-direct-small-04
+          path: small.part.04
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.05') != '' }}
+        with:
+          name: win10e-direct-small-05
+          path: small.part.05
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.06') != '' }}
+        with:
+          name: win10e-direct-small-06
+          path: small.part.06
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.07') != '' }}
+        with:
+          name: win10e-direct-small-07
+          path: small.part.07
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.08') != '' }}
+        with:
+          name: win10e-direct-small-08
+          path: small.part.08
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.09') != '' }}
+        with:
+          name: win10e-direct-small-09
+          path: small.part.09
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.10') != '' }}
+        with:
+          name: win10e-direct-small-10
+          path: small.part.10
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.11') != '' }}
+        with:
+          name: win10e-direct-small-11
+          path: small.part.11
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.12') != '' }}
+        with:
+          name: win10e-direct-small-12
+          path: small.part.12
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.13') != '' }}
+        with:
+          name: win10e-direct-small-13
+          path: small.part.13
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.14') != '' }}
+        with:
+          name: win10e-direct-small-14
+          path: small.part.14
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.15') != '' }}
+        with:
+          name: win10e-direct-small-15
+          path: small.part.15
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.16') != '' }}
+        with:
+          name: win10e-direct-small-16
+          path: small.part.16
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.17') != '' }}
+        with:
+          name: win10e-direct-small-17
+          path: small.part.17
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.18') != '' }}
+        with:
+          name: win10e-direct-small-18
+          path: small.part.18
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.19') != '' }}
+        with:
+          name: win10e-direct-small-19
+          path: small.part.19
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.20') != '' }}
+        with:
+          name: win10e-direct-small-20
+          path: small.part.20
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.21') != '' }}
+        with:
+          name: win10e-direct-small-21
+          path: small.part.21
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.22') != '' }}
+        with:
+          name: win10e-direct-small-22
+          path: small.part.22
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('small.part.23') != '' }}
+        with:
+          name: win10e-direct-small-23
+          path: small.part.23
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-direct-small-manifest
+          path: small.parts.sha256
+          retention-days: 1
