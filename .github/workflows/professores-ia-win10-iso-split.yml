@@ -1,0 +1,73 @@
+name: QA split Windows 10 ISO for local VM
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  split-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download validated ISO artifact from bootstrap run
+        uses: actions/download-artifact@v4
+        with:
+          name: win10e-iso-parts
+          path: iso-parts
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36065249477
+          github-token: ${{ github.token }}
+      - name: Reassemble and split below connector limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd iso-parts
+          cat win10e.part.* > ../win10e.iso
+          cd ..
+          expected='ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668'
+          actual=$(sha256sum win10e.iso | awk '{print $1}')
+          test "$actual" = "$expected"
+          split -b 350M -d -a 2 win10e.iso winiso.chunk.
+          sha256sum winiso.chunk.* > winiso-chunks.sha256
+          ls -lh winiso.chunk.*
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-00, path: winiso.chunk.00, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-01, path: winiso.chunk.01, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-02, path: winiso.chunk.02, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-03, path: winiso.chunk.03, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-04, path: winiso.chunk.04, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-05, path: winiso.chunk.05, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-06, path: winiso.chunk.06, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-07, path: winiso.chunk.07, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-08, path: winiso.chunk.08, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-09, path: winiso.chunk.09, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-10, path: winiso.chunk.10, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-11, path: winiso.chunk.11, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-12, path: winiso.chunk.12, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-13, path: winiso.chunk.13, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: winiso-chunk-14, path: winiso.chunk.14, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winiso-chunk-15
+          path: |
+            winiso.chunk.15
+            winiso-chunks.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
