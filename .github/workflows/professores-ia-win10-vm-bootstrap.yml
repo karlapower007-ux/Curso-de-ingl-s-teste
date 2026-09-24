@@ -1,0 +1,61 @@
+name: QA bootstrap Windows 10 client VM
+on:
+  push:
+    branches: [professores-ia-runtime-qa]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qemu-debs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Debian trixie QEMU packages and recursive dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm -v "$PWD/out:/out" debian:trixie bash -lc '
+            set -e
+            apt-get update
+            apt-get install -y apt-rdepends ca-certificates
+            cd /out
+            pkgs=$(apt-rdepends qemu-system-x86 qemu-utils ovmf genisoimage 2>/dev/null | awk "/^[a-zA-Z0-9][a-zA-Z0-9+.-]+$/ {print}" | sort -u)
+            apt-get download $pkgs
+          '
+          tar -C out -cf qemu-debs-trixie.tar .
+          sha256sum qemu-debs-trixie.tar > qemu-debs-trixie.tar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-debs-trixie
+          path: |
+            qemu-debs-trixie.tar
+            qemu-debs-trixie.tar.sha256
+          retention-days: 1
+          compression-level: 0
+
+  win10-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download official Windows 10 Enterprise Evaluation x64 ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://software-static.download.prss.microsoft.com/dbazure/988969d5-f34g-4e03-ac9d-1f9786c66750/19045.2006.220908-0225.22h2_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso'
+          expected='ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668'
+          curl -fL --retry 5 --retry-delay 3 "$url" -o win10e.iso
+          actual=$(sha256sum win10e.iso | awk '{print $1}')
+          test "$actual" = "$expected"
+          printf '{"source":"%s","sha256":"%s","bytes":%s}\n' "$url" "$actual" "$(stat -c%s win10e.iso)" > iso-evidence.json
+          split -b 1400M -d -a 2 win10e.iso win10e.part.
+          sha256sum win10e.part.* > parts.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-iso-parts
+          path: |
+            win10e.part.*
+            parts.sha256
+            iso-evidence.json
+          retention-days: 1
+          compression-level: 0
