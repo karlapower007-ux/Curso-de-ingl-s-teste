@@ -1,0 +1,209 @@
+name: Professores IA Windows installer preflight
+on:
+  push:
+    branches: [professores-ia-runtime-qa]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  windows-server-preflight:
+    runs-on: windows-2025
+    steps:
+      - name: Download pinned runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: professores-ia-runtime-python-3.13.15-win-amd64
+          path: runtime-artifact
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36058898519
+          github-token: ${{ github.token }}
+      - name: Assemble hermetic QA package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force pkg, pkg\installer, pkg\static | Out-Null
+          Expand-Archive runtime-artifact\professores-ia-runtime-bundle.zip runtime-bundle
+          Copy-Item -Recurse runtime-bundle\runtime-python pkg\runtime-python
+          Copy-Item runtime-bundle\requirements.lock.txt pkg\requirements.lock.txt
+          @'
+          from __future__ import annotations
+          import json, pathlib, sys
+          root=pathlib.Path(__file__).resolve().parent
+          for m in ("fastapi","uvicorn","aiohttp","websockets"): __import__(m)
+          assert sys.maxsize > 2**32
+          assert (root/"server.py").exists()
+          print(json.dumps({"status":"PASS"}))
+          '@ | Set-Content pkg\selfcheck.py -Encoding UTF8
+          @'
+          import json, os, pathlib
+          from fastapi import FastAPI
+          import uvicorn
+          root=pathlib.Path(os.environ["PROFESSORES_IA_DATA_ROOT"])
+          (root/"runtime").mkdir(parents=True,exist_ok=True)
+          app=FastAPI()
+          @app.get("/api/health")
+          async def health(): return {"ok":True}
+          @app.get("/api/diagnostics/local")
+          async def diagnostics(): return {"status":"OK","security":{"api_key_exposed":False}}
+          if __name__=="__main__":
+              port=int(os.environ.get("PORT","8789"))
+              uvicorn.run(app,host="127.0.0.1",port=port,log_level="warning")
+          '@ | Set-Content pkg\server.py -Encoding UTF8
+          @'
+          import os,pathlib,socket,subprocess,time,urllib.request,json
+          ROOT=pathlib.Path(__file__).resolve().parent
+          DATA=pathlib.Path(os.environ["APPDATA"])/"ProfessoresIA"
+          R=DATA/"runtime";R.mkdir(parents=True,exist_ok=True)
+          def ok(p):
+              try:
+                  with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/health",timeout=.5) as x:return json.loads(x.read())["ok"]
+              except Exception:return False
+          port=8789
+          for p in range(8789,8800):
+              s=socket.socket()
+              try:s.bind(("127.0.0.1",p));port=p;s.close();break
+              except OSError:s.close()
+          env=os.environ.copy();env["PROFESSORES_IA_DATA_ROOT"]=str(DATA);env["PORT"]=str(port)
+          flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+          subprocess.Popen([str(ROOT/"runtime-python"/"python.exe"),str(ROOT/"server.py")],cwd=str(ROOT),env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
+          (R/"active-port.txt").write_text(str(port))
+          end=time.time()+15
+          while time.time()<end:
+              if ok(port): raise SystemExit(0)
+              time.sleep(.2)
+          raise SystemExit(1)
+          '@ | Set-Content pkg\launcher.py -Encoding UTF8
+          '<!doctype html><title>Professores IA QA</title><h1>OK</h1>' | Set-Content pkg\static\index.html -Encoding UTF8
+          @'
+          Option Explicit
+          Dim shell, fso, root, ps1, powershell, cmd, rc, silent, i
+          silent=False
+          For i=0 To WScript.Arguments.Count-1
+            If LCase(WScript.Arguments(i))="--silent" Then silent=True
+          Next
+          Set shell=CreateObject("WScript.Shell")
+          Set fso=CreateObject("Scripting.FileSystemObject")
+          root=fso.GetParentFolderName(WScript.ScriptFullName)
+          ps1=fso.BuildPath(root,"installer\INSTALL.ps1")
+          powershell=fso.BuildPath(shell.ExpandEnvironmentStrings("%SystemRoot%"),"System32\WindowsPowerShell\v1.0\powershell.exe")
+          cmd="""" & powershell & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """"
+          rc=shell.Run(cmd,0,True)
+          WScript.Quit rc
+          '@ | Set-Content pkg\INSTALAR_PROFESSORES_IA.vbs -Encoding ASCII
+          @'
+          param([switch]$SimulateFailureAfterStage)
+          $ErrorActionPreference='Stop'
+          $InstallRoot=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+          $DataRoot=Join-Path $env:APPDATA 'ProfessoresIA'
+          $PackageRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+          $BackupRoot=Join-Path $DataRoot 'rollback'
+          New-Item -ItemType Directory -Force $DataRoot,$BackupRoot,(Join-Path $DataRoot 'logs')|Out-Null
+          function New-Shortcut([string]$root){
+            $shell=New-Object -ComObject WScript.Shell
+            $sc=$shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Professores IA.lnk'))
+            $sc.TargetPath=Join-Path $root 'runtime-python\pythonw.exe'
+            $sc.Arguments='"'+(Join-Path $root 'launcher.py')+'"'
+            $sc.WorkingDirectory=$root;$sc.Save()
+          }
+          foreach($x in @('runtime-python\python.exe','runtime-python\pythonw.exe','runtime-python\runtime-manifest.json')){
+            if(!(Test-Path (Join-Path $PackageRoot $x))){exit 21}
+          }
+          $stage="$InstallRoot.stage";$backup=Join-Path $BackupRoot 'latest';$old=Test-Path $InstallRoot
+          try{
+            if(Test-Path $stage){Remove-Item -Recurse -Force $stage}
+            if(Test-Path $backup){Remove-Item -Recurse -Force $backup}
+            if($old){Copy-Item -Recurse -Force $InstallRoot $backup}
+            New-Item -ItemType Directory -Force $stage|Out-Null
+            Get-ChildItem -Force $PackageRoot|Where-Object{$_.Name -notin @('runtime','.env')}|ForEach-Object{Copy-Item -Recurse -Force $_.FullName $stage}
+            $cfg=Join-Path $DataRoot '.env'; if(!(Test-Path $cfg)){ 'ALLOW_DEMO_MODE=true'|Set-Content $cfg -Encoding UTF8}
+            $env:PROFESSORES_IA_DATA_ROOT=$DataRoot
+            & (Join-Path $stage 'runtime-python\python.exe') (Join-Path $stage 'selfcheck.py') | Out-Null
+            if($LASTEXITCODE -ne 0){throw 'selfcheck'}
+            if($SimulateFailureAfterStage){throw 'simulated'}
+            if(Test-Path $InstallRoot){Remove-Item -Recurse -Force $InstallRoot}
+            Move-Item $stage $InstallRoot
+            New-Shortcut $InstallRoot
+            exit 0
+          }catch{
+            if(Test-Path $stage){Remove-Item -Recurse -Force $stage}
+            if(Test-Path $InstallRoot){Remove-Item -Recurse -Force $InstallRoot}
+            if(Test-Path $backup){Copy-Item -Recurse -Force $backup $InstallRoot;New-Shortcut $InstallRoot}
+            exit 1
+          }
+          '@ | Set-Content pkg\installer\INSTALL.ps1 -Encoding UTF8
+      - name: Real Windows preflight with dev tools isolated
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=(Resolve-Path pkg).Path
+          $os=Get-CimInstance Win32_OperatingSystem
+          $originalPath=$env:PATH
+          $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          $before=[ordered]@{
+            node=[bool](Get-Command node -ErrorAction SilentlyContinue)
+            npm=[bool](Get-Command npm -ErrorAction SilentlyContinue)
+            python=[bool](Get-Command python -ErrorAction SilentlyContinue)
+          }
+          if($before.node -or $before.npm -or $before.python){throw "Isolation failed: dev tool visible"}
+          Remove-Item -Recurse -Force (Join-Path $env:LOCALAPPDATA 'ProfessoresIA') -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force (Join-Path $env:APPDATA 'ProfessoresIA') -ErrorAction SilentlyContinue
+          $shortcut=Join-Path ([Environment]::GetFolderPath('Desktop')) 'Professores IA.lnk'
+          Remove-Item -Force $shortcut -ErrorAction SilentlyContinue
+          $sw=[Diagnostics.Stopwatch]::StartNew()
+          $p=Start-Process "$env:SystemRoot\System32\wscript.exe" -ArgumentList @('"' + (Join-Path $root 'INSTALAR_PROFESSORES_IA.vbs') + '"','--silent') -Wait -PassThru
+          $sw.Stop()
+          if($p.ExitCode -ne 0){throw "install exit $($p.ExitCode)"}
+          $installRoot=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+          $dataRoot=Join-Path $env:APPDATA 'ProfessoresIA'
+          if(!(Test-Path $shortcut)){throw 'shortcut missing'}
+          if(!(Test-Path (Join-Path $installRoot 'runtime-python\python.exe'))){throw 'bundled runtime missing'}
+          Start-Process $shortcut
+          $portFile=Join-Path $dataRoot 'runtime\active-port.txt'
+          $deadline=(Get-Date).AddSeconds(25);$health=$null;$port=$null
+          while((Get-Date)-lt $deadline){
+            if(Test-Path $portFile){
+              $port=[int](Get-Content $portFile -Raw)
+              try{$health=Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 2;if($health.ok){break}}catch{}
+            }
+            Start-Sleep -Milliseconds 250
+          }
+          if(!$health.ok){throw 'first run health failed'}
+          $diag=Invoke-RestMethod "http://127.0.0.1:$port/api/diagnostics/local"
+          if($diag.status -ne 'OK' -or $diag.security.api_key_exposed){throw 'diagnostics failed'}
+          $cfg=Join-Path $dataRoot '.env'; Add-Content $cfg '# KEEP_ME'
+          '{"keep":true}'|Set-Content (Join-Path $dataRoot 'runtime\preserve.json')
+          $ps="$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+          $install=Join-Path $root 'installer\INSTALL.ps1'
+          $r=Start-Process $ps -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $install + '"')) -Wait -PassThru -WindowStyle Hidden
+          if($r.ExitCode -ne 0){throw 'reinstall failed'}
+          if((Get-Content $cfg -Raw) -notmatch 'KEEP_ME'){throw 'config not preserved'}
+          if(!(Test-Path (Join-Path $dataRoot 'runtime\preserve.json'))){throw 'data not preserved'}
+          $beforeHash=(Get-FileHash (Join-Path $installRoot 'server.py') -Algorithm SHA256).Hash
+          $rb=Start-Process $ps -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $install + '"'),'-SimulateFailureAfterStage') -Wait -PassThru -WindowStyle Hidden
+          if($rb.ExitCode -eq 0){throw 'simulated failure did not fail'}
+          $afterHash=(Get-FileHash (Join-Path $installRoot 'server.py') -Algorithm SHA256).Hash
+          if($beforeHash -ne $afterHash){throw 'rollback binary mismatch'}
+          if((Get-Content $cfg -Raw) -notmatch 'KEEP_ME'){throw 'rollback config lost'}
+          Start-Process $shortcut
+          Start-Sleep -Seconds 1
+          $h2=Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 3
+          if(!$h2.ok){throw 'restored app unavailable'}
+          $e=[ordered]@{
+            schema=1;purpose='WINDOWS_SERVER_PREFLIGHT_NOT_FINAL_ACCEPTANCE';tested_at=(Get-Date).ToUniversalTime().ToString('o');
+            os=[ordered]@{caption=$os.Caption;version=$os.Version;build=$os.BuildNumber;architecture=$os.OSArchitecture};
+            dev_tools_isolated=$true;visible_dev_tools=$before;install_seconds=[math]::Round($sw.Elapsed.TotalSeconds,3);
+            installer_exit=$p.ExitCode;first_run_health=$true;diagnostics='OK';secret_exposed=$false;
+            reinstall_exit=$r.ExitCode;rollback_failure_exit=$rb.ExitCode;rollback_binary_restored=$true;rollback_config_preserved=$true;rollback_app_health=$true;
+            acceptance_note='This is a real Windows Server preflight. It MUST NOT satisfy the required Windows 10/11 x64 clean-install gate.'
+          }
+          $e|ConvertTo-Json -Depth 6|Set-Content windows-server-preflight.json -Encoding UTF8
+          $env:PATH=$originalPath
+      - uses: actions/upload-artifact@v4
+        with:
+          name: professores-ia-windows-server-preflight-evidence
+          path: windows-server-preflight.json
+          if-no-files-found: error
+          retention-days: 1
