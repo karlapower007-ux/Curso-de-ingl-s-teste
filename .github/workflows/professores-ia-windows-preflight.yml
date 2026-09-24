@@ -68,7 +68,8 @@ jobs:
               except OSError:s.close()
           env=os.environ.copy();env["PROFESSORES_IA_DATA_ROOT"]=str(DATA);env["PORT"]=str(port)
           flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
-          subprocess.Popen([str(ROOT/"runtime-python"/"python.exe"),str(ROOT/"server.py")],cwd=str(ROOT),env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
+          proc=subprocess.Popen([str(ROOT/"runtime-python"/"python.exe"),str(ROOT/"server.py")],cwd=str(ROOT),env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
+          (R/"server.pid").write_text(str(proc.pid))
           (R/"active-port.txt").write_text(str(port))
           end=time.time()+15
           while time.time()<end:
@@ -101,6 +102,17 @@ jobs:
           $PackageRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
           $BackupRoot=Join-Path $DataRoot 'rollback'
           New-Item -ItemType Directory -Force $DataRoot,$BackupRoot,(Join-Path $DataRoot 'logs')|Out-Null
+          function Stop-InstalledApp(){
+            $pidFile=Join-Path $DataRoot 'runtime\server.pid'
+            if(Test-Path $pidFile){
+              try{
+                $serverPid=[int](Get-Content $pidFile -Raw)
+                $proc=Get-Process -Id $serverPid -ErrorAction SilentlyContinue
+                if($proc){Stop-Process -Id $serverPid -Force -ErrorAction SilentlyContinue;try{Wait-Process -Id $serverPid -Timeout 8 -ErrorAction SilentlyContinue}catch{}}
+              }catch{}
+              Remove-Item -Force $pidFile -ErrorAction SilentlyContinue
+            }
+          }
           function New-Shortcut([string]$root){
             $shell=New-Object -ComObject WScript.Shell
             $sc=$shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Professores IA.lnk'))
@@ -112,6 +124,7 @@ jobs:
             if(!(Test-Path (Join-Path $PackageRoot $x))){exit 21}
           }
           $stage="$InstallRoot.stage";$backup=Join-Path $BackupRoot 'latest';$old=Test-Path $InstallRoot
+          if($old){Stop-InstalledApp}
           try{
             if(Test-Path $stage){Remove-Item -Recurse -Force $stage}
             if(Test-Path $backup){Remove-Item -Recurse -Force $backup}
