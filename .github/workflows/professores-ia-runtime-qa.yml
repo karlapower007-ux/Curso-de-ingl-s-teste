@@ -1,0 +1,93 @@
+name: Professores IA runtime QA
+on:
+  push:
+    branches: [professores-ia-runtime-qa]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-runtime:
+    runs-on: windows-2025
+    steps:
+      - name: Record Windows builder
+        shell: pwsh
+        run: |
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsArchitecture | ConvertTo-Json | Set-Content builder.json
+      - name: Materialize fixed CPython runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $version='3.13.15'
+          $expected='791ada5e20aba24524f8d939cdeb069976d632a699fe5cb65274b23f4545e68a'
+          $url="https://www.python.org/ftp/python/$version/python-$version-embeddable-amd64.zip"
+          Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile python-embed.zip
+          $sha=(Get-FileHash python-embed.zip -Algorithm SHA256).Hash.ToLower()
+          if($sha -ne $expected){ throw "Runtime SHA mismatch: $sha" }
+          New-Item -ItemType Directory -Force runtime-python | Out-Null
+          Expand-Archive python-embed.zip runtime-python
+          $pth=Get-ChildItem runtime-python -Filter 'python*._pth' | Select-Object -First 1
+          $lines=Get-Content $pth.FullName | Where-Object { $_ -notmatch '^#?import site$' -and $_ -ne 'Lib\site-packages' }
+          $lines += 'Lib\site-packages'
+          $lines += 'import site'
+          Set-Content $pth.FullName $lines -Encoding ASCII
+          New-Item -ItemType Directory -Force runtime-python\Lib\site-packages | Out-Null
+          @'
+          fastapi==0.128.2
+          uvicorn==0.48.0
+          aiohttp==3.13.3
+          websockets==16.0
+          starlette==0.50.0
+          pydantic==2.13.4
+          pydantic-core==2.46.4
+          anyio==4.13.0
+          typing-extensions==4.16.0
+          typing-inspection==0.4.2
+          annotated-doc==0.0.4
+          annotated-types==0.7.0
+          aiohappyeyeballs==2.6.2
+          aiosignal==1.4.0
+          attrs==26.1.0
+          frozenlist==1.8.0
+          multidict==6.7.1
+          propcache==0.5.2
+          yarl==1.24.2
+          click==8.1.8
+          h11==0.16.0
+          idna==3.17
+          '@ | Set-Content requirements.lock.txt -Encoding ASCII
+          py -3.13 -m pip install --disable-pip-version-check --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp --abi cp313 --target runtime-python\Lib\site-packages -r requirements.lock.txt
+          if($LASTEXITCODE -ne 0){ throw 'pip target install failed' }
+          .\runtime-python\python.exe -c "import fastapi,uvicorn,aiohttp,websockets; print('runtime-imports-ok')"
+          if($LASTEXITCODE -ne 0){ throw 'embedded runtime import test failed' }
+          .\runtime-python\python.exe -c "import json,importlib.metadata as m,pathlib; names=['fastapi','uvicorn','aiohttp','websockets','starlette','pydantic','pydantic-core','anyio','multidict','yarl','frozenlist','aiosignal','attrs']; out={n:m.version(n) for n in names}; pathlib.Path(r'runtime-python\installed-packages.json').write_text(json.dumps(out,indent=2),encoding='utf-8')"
+          $lockSha=(Get-FileHash requirements.lock.txt -Algorithm SHA256).Hash.ToLower()
+          $manifest=[ordered]@{schema=2;python_version=$version;architecture='win_amd64';built_at=(Get-Date).ToUniversalTime().ToString('o');source_url=$url;source_sha256=$sha;expected_source_sha256=$expected;requirements_lock_sha256=$lockSha;package_manager_in_final_runtime=$false;files=@()}
+          Get-ChildItem runtime-python -Recurse -File | Sort-Object FullName | ForEach-Object {
+            if($_.Name -eq 'runtime-manifest.json'){return}
+            $manifest.files += [ordered]@{path=$_.FullName.Substring((Resolve-Path runtime-python).Path.Length+1).Replace('\','/');size=$_.Length;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()}
+          }
+          $manifest | ConvertTo-Json -Depth 7 | Set-Content runtime-python\runtime-manifest.json -Encoding UTF8
+      - name: Verify runtime integrity
+        shell: pwsh
+        run: |
+          $m=Get-Content runtime-python\runtime-manifest.json -Raw | ConvertFrom-Json
+          if($m.architecture -ne 'win_amd64'){ throw 'wrong architecture' }
+          if($m.source_sha256 -ne $m.expected_source_sha256){ throw 'source hash mismatch' }
+          foreach($f in $m.files){
+            $p=Join-Path runtime-python ($f.path -replace '/','\')
+            if(!(Test-Path $p)){ throw "missing $($f.path)" }
+            $sha=(Get-FileHash $p -Algorithm SHA256).Hash.ToLower()
+            if($sha -ne $f.sha256){ throw "file hash mismatch $($f.path)" }
+          }
+          .\runtime-python\python.exe -c "import fastapi,uvicorn,aiohttp,websockets; print('verified')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: professores-ia-runtime-python-3.13.15-win-amd64
+          path: |
+            runtime-python
+            builder.json
+            requirements.lock.txt
+          if-no-files-found: error
+          retention-days: 1
