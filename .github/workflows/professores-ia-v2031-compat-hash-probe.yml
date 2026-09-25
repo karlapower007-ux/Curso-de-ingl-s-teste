@@ -1,0 +1,76 @@
+name: Professores IA v2.0.3.1 compat hash probe
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build current v2.0.3.1 and compute wrapper-compatible hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf base out .probe-build
+          mkdir -p base out
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d base
+          python3 qa/build_v2031.py --setup base/Professores_IA_v2.0.2_FORBIDDEN_FIX_Setup.exe --patch-gz qa/v203-ui.patch.gz --out out/current.exe --work .probe-build
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct,zipfile,json,hashlib,tempfile,shutil
+          src=Path('out/current.exe'); raw=bytearray(src.read_bytes())
+          e=bytes(raw).rfind(b'PK\x05\x06')
+          _,_,_,_,entries,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',raw,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          old=bytes(raw[start:end]); target=len(old)
+          td=Path(tempfile.mkdtemp(prefix='compat-probe-')); root=td/'root'; root.mkdir()
+          oldzip=td/'old.zip'; oldzip.write_bytes(old)
+          with zipfile.ZipFile(oldzip) as z: z.extractall(root)
+          mp=root/'manifest.sha256.json'; m=json.loads(mp.read_text(encoding='utf-8'))
+          print('INPUT_MANIFEST_VERSION='+str(m.get('version')))
+          m['version']='2.0.2'
+          mp.write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          newzip=td/'new.zip'
+          with zipfile.ZipFile(oldzip,'r') as zin, zipfile.ZipFile(newzip,'w') as zout:
+              for info in zin.infolist():
+                  data=(root/info.filename).read_bytes()
+                  ni=zipfile.ZipInfo(info.filename,info.date_time)
+                  ni.compress_type=info.compress_type; ni.comment=info.comment; ni.extra=info.extra
+                  ni.internal_attr=info.internal_attr; ni.external_attr=info.external_attr; ni.create_system=info.create_system
+                  zout.writestr(ni,data,compress_type=info.compress_type,compresslevel=9)
+          pad=target-newzip.stat().st_size
+          if not (0<=pad<=65535): raise SystemExit(f'bad pad {pad}')
+          if pad:
+              with zipfile.ZipFile(newzip,'a') as z: z.comment=(b'V2031COMPAT|'+b'_'*pad)[:pad]
+          new=newzip.read_bytes(); assert len(new)==target
+          with zipfile.ZipFile(newzip) as z:
+              assert z.testzip() is None
+              mm=json.loads(z.read('manifest.sha256.json')); assert mm['version']=='2.0.2'
+              app=z.read('static/app.js').decode('utf-8'); assert "const BUILD_ID = '2.0.3.1'" in app
+              avatar=z.read('static/avatar-engine.js').decode('utf-8'); assert '_createParametricMouth' not in avatar
+              css=z.read('static/styles.css').decode('utf-8'); assert 'ellipse 47% 25.5% at 50% 72%' in css
+          raw[start:end]=new
+          out=Path('out/compat.exe'); out.write_bytes(raw)
+          sh=lambda b:hashlib.sha256(b).hexdigest()
+          result={
+            'input_setup_sha256':sh(src.read_bytes()),
+            'input_payload_sha256':sh(old),
+            'compat_setup_sha256':sh(out.read_bytes()),
+            'compat_payload_sha256':sh(new),
+            'payload_size':len(new),'entries':entries,'padding':pad,
+            'wrapper_manifest_version':'2.0.2','ui_build_id':'2.0.3.1'
+          }
+          Path('out/COMPAT_HASHES.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          shutil.rmtree(td,ignore_errors=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2031_COMPAT_HASH_PROBE
+          path: out/COMPAT_HASHES.json
+          if-no-files-found: error
+          retention-days: 3
