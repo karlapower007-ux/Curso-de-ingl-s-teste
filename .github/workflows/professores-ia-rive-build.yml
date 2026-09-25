@@ -4,7 +4,7 @@ on:
   push:
     branches: [professores-ia-rive-v210]
     paths:
-      - 'rive/teachers/**'
+      - 'rive/teachers/lily/**'
       - '.github/workflows/professores-ia-rive-build.yml'
   workflow_dispatch:
 
