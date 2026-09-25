@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgles2 libgl1 libx11-6 libxcb1 libxkbcommon0
+          sudo apt-get install -y libegl1 libgles2 libgl1 libx11-6 libxcb1 libxkbcommon0 python3-pil
           curl -fsSL https://releases.rive.app/cli/install.sh | bash
           echo "$HOME/.rive/bin" >> "$GITHUB_PATH"
 
@@ -54,9 +54,33 @@ jobs:
           PY
 
       - name: Headless render proof
+        shell: bash
         run: |
+          set -euxo pipefail
           mkdir -p rive-proof
-          rive rive/teachers/lily --screenshot=rive-proof/lily.png --viewport=500x625 --advance=120
+          rive rive/teachers/lily --screenshot=rive-proof/lily-contain.png --viewport=500x625 --fit=contain --advance=120
+          rive rive/teachers/lily --screenshot=rive-proof/lily-layout.png --viewport=500x625 --fit=layout --advance=120
+          SAMPLE_ROOT="$(rive samples --path)"
+          cp -R "$SAMPLE_ROOT/rml_triangle" rive-proof/sample-triangle
+          rive rive-proof/sample-triangle --screenshot=rive-proof/sample-triangle.png --viewport=500x625 --fit=contain
+
+      - name: Reject blank visual proof
+        shell: python
+        run: |
+          from PIL import Image, ImageStat
+          from pathlib import Path
+          def diversity(path):
+              im=Image.open(path).convert("RGB")
+              extrema=ImageStat.Stat(im).extrema
+              ranges=[hi-lo for lo,hi in extrema]
+              unique=len(set(im.getdata()))
+              print(path, "ranges=", ranges, "unique=", unique)
+              return max(ranges), unique
+          sample_range,sample_unique=diversity("rive-proof/sample-triangle.png")
+          assert sample_range>8 and sample_unique>2, "Rive headless renderer itself produced a blank sample"
+          lily_range,lily_unique=diversity("rive-proof/lily-contain.png")
+          assert lily_range>8 and lily_unique>4, "Lily Rive rendered blank; structural PASS is not visual PASS"
+          Path("rive-proof/VISUAL_GATE_PASS.txt").write_text("RIVE_VISUAL_GATE=PASS\n")
 
       - name: Collect Rive file
         shell: bash
