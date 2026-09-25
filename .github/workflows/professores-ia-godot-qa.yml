@@ -44,3 +44,61 @@ jobs:
         run: |
           set -euo pipefail
           "$GODOT_BIN" --headless --path . --quit-after 5
+
+  godot-web-export:
+    needs: godot-runtime-qa
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot editor and templates
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/professores-godot
+            ~/.local/share/godot/export_templates/4.7.2.stable
+          key: godot-4.7.2-web-templates-v1
+
+      - name: Install Godot 4.7.2 and Web export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/professores-godot"
+          if [ ! -x "$HOME/.cache/professores-godot/godot" ]; then
+            curl -fL --retry 3               -o /tmp/godot.zip               https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+            unzip -q /tmp/godot.zip -d /tmp/godot-editor
+            cp "$(find /tmp/godot-editor -maxdepth 1 -type f -name 'Godot_v4.7.2-stable_linux.x86_64*' | head -n1)"               "$HOME/.cache/professores-godot/godot"
+            chmod +x "$HOME/.cache/professores-godot/godot"
+          fi
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          if [ ! -f "$TEMPLATE_DIR/web_release.zip" ]; then
+            rm -rf /tmp/godot-templates
+            mkdir -p /tmp/godot-templates "$TEMPLATE_DIR"
+            curl -fL --retry 3               -o /tmp/templates.tpz               https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+            unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+            cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+          fi
+
+          "$HOME/.cache/professores-godot/godot" --version
+          test -f "$TEMPLATE_DIR/web_release.zip"
+
+      - name: Export avatar engine for Web
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/godot-web
+          "$HOME/.cache/professores-godot/godot"             --headless --path . --export-release "Web" build/godot-web/index.html
+          test -s build/godot-web/index.html
+          test -s build/godot-web/index.wasm
+          printf 'Godot Web export files:\n'
+          find build/godot-web -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - name: Upload Godot Web avatar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_Godot_Web_v2.2.0
+          path: build/godot-web
+          if-no-files-found: error
+          retention-days: 14
