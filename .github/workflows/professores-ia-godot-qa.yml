@@ -1,0 +1,21 @@
+name: Professores IA Godot Free QA
+
+on:
+  push:
+    branches:
+      - professores-ia-godot-free-v220
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate Godot avatar contract
+        run: python qa/test_godot_avatar_contract.py
