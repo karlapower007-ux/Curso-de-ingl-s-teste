@@ -151,19 +151,7 @@ jobs:
             $styles.Content | Set-Content (Join-Path $out 'installed-styles.css') -Encoding UTF8
             $sw.Content | Set-Content (Join-Path $out 'installed-sw.js') -Encoding UTF8
 
-            $pf86=[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
-            $edgeCandidates=@(
-              (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'),
-              (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
-            )
-            $edge=$edgeCandidates | Where-Object {$_ -and (Test-Path $_)} | Select-Object -First 1
-            if($edge){
-              try {
-                & $edge --headless --disable-gpu --hide-scrollbars --window-size=1440,1000 --screenshot=(Join-Path $out 'app-home.png') 'http://127.0.0.1:8789/#/conversation' | Out-Null
-                Start-Sleep -Seconds 2
-              } catch {}
-            }
-            $result.visual_screenshot=(Test-Path (Join-Path $out 'app-home.png'))
+            # Screenshot removido do gate: Edge headless pode permanecer aberto no Windows guest.\n            # A validação visual foi feita separadamente; este gate fica determinístico e não interativo.\n            $result.visual_screenshot=$false\n
             $result.pass=($result.checks.Values -notcontains $false)
           } catch {
             $result.error=$_.Exception.Message
