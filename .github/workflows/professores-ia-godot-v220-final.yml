@@ -45,7 +45,7 @@ jobs:
           path: accepted
           repository: karlapower007-ux/Curso-de-ingl-s-teste
           run-id: 36099805417
-          github-token: \${{ github.token }}
+          github-token: ${{ github.token }}
 
       - name: Extract accepted installer and prepare animated real art
         shell: bash
