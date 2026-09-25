@@ -16,20 +16,26 @@ assert set(contract["teachers"]) == required_teachers
 assert set(contract["modes"]) == required_modes
 assert set(contract["visemes"]) == required_visemes
 assert required_emotions.issubset(set(contract["emotions"]))
+assert contract["mouth_patch"] is False
+assert contract["renderer"] == "full-frame-expression-crossfade"
 assert 'run/main_scene="res://godot/main.tscn"' in project
 
 for token in [
     "func set_teacher", "func set_mode", "func set_emotion", "func set_viseme",
-    "func set_gaze", "func set_head", "func snapshot", "JavaScriptBridge",
-    "_blink_phase", "_breath", "_draw_mouth"
+    "func set_gaze", "func set_head", "func trigger_event", "func snapshot",
+    "JavaScriptBridge", "_start_blink", "_desired_frame", "_request_frame",
+    "draw_texture_rect"
 ]:
     assert token in src, token
 
+assert "parametric-mouth" not in src
+assert "mouth-skin" not in src
 for v in required_visemes:
     assert f'"{v}"' in src, v
 
-print("PASS godot avatar contract")
+print("PASS godot real-art avatar contract")
 print("teachers:", len(contract["teachers"]))
 print("modes:", len(contract["modes"]))
 print("emotions:", len(contract["emotions"]))
 print("visemes:", len(contract["visemes"]))
+print("mouth_patch:", contract["mouth_patch"])
