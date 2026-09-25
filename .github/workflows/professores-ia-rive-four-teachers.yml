@@ -1,0 +1,230 @@
+name: Professores IA four-teacher Rive lip-sync gate
+
+on:
+  push:
+    branches: [professores-ia-rive-v210]
+    paths:
+      - 'qa/generate_rive_teachers.py'
+      - 'reverse/v202-ui/static/avatar-engine.js'
+      - '.github/workflows/professores-ia-rive-four-teachers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  four-teachers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover accepted v2.0.3.1 artwork and visemes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p accepted
+          gh run download 36099805417 -n Professores_IA_v2.0.3.1_FINAL -D accepted
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile, struct
+          root=Path("accepted")
+          setup=next(root.rglob("Professores_IA_v2.0.3.1_FINAL_Setup.exe"),None)
+          if setup is None:
+              for zpath in root.rglob("*.zip"):
+                  try:
+                      with zipfile.ZipFile(zpath) as z:
+                          n=next((n for n in z.namelist() if n.endswith("Professores_IA_v2.0.3.1_FINAL_Setup.exe")),None)
+                          if n:
+                              z.extract(n,root/"inner"); setup=root/"inner"/n; break
+                  except zipfile.BadZipFile: pass
+          assert setup and setup.exists()
+          raw=setup.read_bytes(); e=raw.rfind(b"PK\x05\x06"); assert e>=0
+          _,_,_,_,_,cd_size,cd_off,comment_len=struct.unpack_from("<4s4H2LH",raw,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          payload=root/"payload.zip"; payload.write_bytes(raw[start:end])
+          out=root/"payload"; out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(payload) as z:z.extractall(out)
+          for teacher in ["lily","oliver","sara","sofia"]:
+              assert (out/"static/avatars"/f"{teacher}-main.jpg").exists()
+              assert len(list((out/"static/avatars/visemes"/teacher).glob("*.webp")))>=12
+          print("ACCEPTED_ARTWORK=PASS")
+          PY
+
+      - name: Install Rive and image tooling
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgles2 libgl1 libx11-6 libxcb1 libxkbcommon0 python3-pil python3-opencv
+          curl -fsSL https://releases.rive.app/cli/install.sh | bash
+          echo "$HOME/.rive/bin" >> "$GITHUB_PATH"
+
+      - name: Generate mouth-clean layered Rive projects
+        run: python qa/generate_rive_teachers.py --payload accepted/payload --out generated-rive
+
+      - name: Validate generated mouth assets
+        shell: python
+        run: |
+          from PIL import Image,ImageStat
+          from pathlib import Path
+          for teacher in ["lily","oliver","sara","sofia"]:
+              root=Path("generated-rive")/teacher
+              assert (root/"base.png").exists()
+              for v in ["REST","A","E","I","O","U","MBP","FV","L","TH","SZ","SHCH"]:
+                  p=root/f"mouth_{v}.png"
+                  im=Image.open(p).convert("RGBA")
+                  a=im.getchannel("A")
+                  assert a.getpixel((0,0))==0 and a.getpixel((im.width-1,im.height-1))==0
+                  assert a.getbbox(), f"empty mouth {teacher}/{v}"
+                  extrema=ImageStat.Stat(a).extrema[0]
+                  assert extrema[0]==0 and extrema[1]>220
+              print("MOUTH_ASSETS=PASS",teacher)
+
+      - name: Compile and inspect all four Rive rigs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p four-proof/riv
+          for teacher in lily oliver sara sofia; do
+            rive "generated-rive/$teacher" --verify --format=json
+            rive "generated-rive/$teacher" --once --format=json
+            rive inspect "generated-rive/$teacher" --json > "four-proof/$teacher-inspect.json"
+            RIV="$(find "generated-rive/$teacher/build" -maxdepth 1 -name '*.riv' | head -1)"
+            test -n "$RIV"
+            cp "$RIV" "four-proof/riv/$teacher.riv"
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          for teacher in ["lily","oliver","sara","sofia"]:
+              p=Path("four-proof")/f"{teacher}-inspect.json"
+              d=json.loads(p.read_text()); text=p.read_text()
+              assert d.get("problems")==[],d.get("problems")
+              for token in ["AvatarStateMachine","Mode","Mouth","BlendState1DInput","visemeIndex",
+                            "isListening","isThinking","isSpeaking","Mouth_REST","Mouth_A","Mouth_O"]:
+                  assert token in text,(teacher,token)
+              assert text.count("BlendAnimation1D")>=12
+              print("RIVE_COMPILED=PASS",teacher)
+          PY
+
+      - name: Install pinned browser runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          npm init -y >/dev/null
+          npm install --no-save @rive-app/canvas-single@2.43.1 esbuild@0.25.9 playwright@1.55.0
+          npx playwright install chromium --with-deps
+          mkdir -p four-proof/web
+          cat > four-proof/runtime-entry.js <<'JS'
+          import * as RivePkg from '@rive-app/canvas-single';
+          export { RivePkg };
+          JS
+          npx esbuild four-proof/runtime-entry.js --bundle --format=iife --global-name=ProfessoresRiveBundle --outfile=four-proof/web/rive-runtime.js
+          cp four-proof/riv/*.riv four-proof/web/
+
+      - name: Browser-test real Rive lip sync for all four teachers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > four-proof/web/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8">
+          <style>html,body{margin:0;background:#ddd}canvas{width:500px;height:625px;display:block}</style>
+          <canvas id="c" width="500" height="625"></canvas>
+          <script src="/rive-runtime.js"></script>
+          <script>
+          const q=new URLSearchParams(location.search), teacher=q.get('teacher')||'lily';
+          const pkg=ProfessoresRiveBundle.RivePkg, canvas=document.getElementById('c');
+          window.__errors=[]; addEventListener('error',e=>__errors.push(String(e.error||e.message)));
+          const app=new pkg.Rive({
+            src:'/'+teacher+'.riv',canvas,artboard:'Avatar',stateMachines:'AvatarStateMachine',autoplay:true,
+            onLoad:()=>{
+              try{
+                app.resizeDrawingSurfaceToCanvas();
+                const inputs=app.stateMachineInputs('AvatarStateMachine')||[];
+                window.__inputs=Object.fromEntries(inputs.map(i=>[i.name,i]));
+                window.__names=inputs.map(i=>i.name); window.__ready=true;
+              }catch(e){__errors.push(String(e))}
+            },
+            onLoadError:e=>__errors.push('load:'+String(e))
+          });
+          window.listen=()=>{
+            for(const n of ['isIdle','isListening','isThinking','isSpeaking'])
+              if(__inputs[n])__inputs[n].value=(n==='isListening');
+          };
+          window.viseme=v=>{ if(__inputs.visemeIndex)__inputs.visemeIndex.value=v; };
+          </script>
+          HTML
+          cat > four-proof/test.mjs <<'JS'
+          import {chromium} from 'playwright';
+          import fs from 'node:fs';
+          const teachers=['lily','oliver','sara','sofia'];
+          const axes={REST:0,A:100/11,O:400/11,TH:900/11};
+          const browser=await chromium.launch({headless:true});
+          const results={};
+          for(const teacher of teachers){
+            const page=await browser.newPage({viewport:{width:500,height:625},deviceScaleFactor:1});
+            const errors=[]; page.on('console',m=>{if(m.type()==='error')errors.push(m.text())}); page.on('pageerror',e=>errors.push(String(e)));
+            await page.goto('http://127.0.0.1:4174/index.html?teacher='+teacher,{waitUntil:'networkidle'});
+            await page.waitForFunction(()=>window.__ready===true,{timeout:15000});
+            const names=await page.evaluate(()=>__names);
+            for(const n of ['visemeIndex','isListening','isThinking','isSpeaking'])if(!names.includes(n))throw new Error(teacher+' missing '+n);
+            await page.evaluate(()=>listen()); await page.waitForTimeout(500);
+            for(const [v,axis] of Object.entries(axes)){
+              await page.evaluate(x=>viseme(x),axis); await page.waitForTimeout(180);
+              await page.locator('#c').screenshot({path:`four-proof/${teacher}-${v}.png`});
+            }
+            const inPage=await page.evaluate(()=>__errors);
+            results[teacher]={inputs:names,errors,inPage};
+            if(errors.length||inPage.length)throw new Error(JSON.stringify(results[teacher]));
+            await page.close();
+          }
+          fs.writeFileSync('four-proof/runtime.json',JSON.stringify(results,null,2));
+          await browser.close();
+          JS
+          python3 -m http.server 4174 --directory four-proof/web > four-proof/http.log 2>&1 &
+          PID=$!; trap 'kill $PID || true' EXIT; sleep 1
+          node four-proof/test.mjs
+
+      - name: Lip-sync visual acceptance
+        shell: python
+        run: |
+          from PIL import Image,ImageStat,ImageChops
+          from pathlib import Path
+          centers={"lily":(385,510),"oliver":(420,620),"sara":(385,635),"sofia":(390,625)}
+          scale=500/768
+          for teacher,(cx,cy) in centers.items():
+              ims={v:Image.open(f"four-proof/{teacher}-{v}.png").convert("RGB") for v in ["REST","A","O","TH"]}
+              for v,im in ims.items():
+                  assert len(set(im.getdata()))>1000,(teacher,v,"flat")
+              sx,sy=int(cx*scale),int(cy*scale)
+              box=(sx-55,sy-45,sx+55,sy+45)
+              crops={v:im.crop(box) for v,im in ims.items()}
+              for a,b in [("REST","A"),("A","O"),("O","TH")]:
+                  d=ImageChops.difference(crops[a],crops[b]).convert("L")
+                  score=sum(i*n for i,n in enumerate(d.histogram()))
+                  print(teacher,a,b,"mouth_diff",score)
+                  assert score>35000,(teacher,a,b,"mouth did not visibly change")
+              # Corners around mouth should remain broadly stable; changes must concentrate centrally.
+              full=ImageChops.difference(ims["REST"],ims["A"]).convert("L")
+              total=sum(i*n for i,n in enumerate(full.histogram()))
+              local=sum(i*n for i,n in enumerate(ImageChops.difference(crops["REST"],crops["A"]).convert("L").histogram()))
+              ratio=local/max(1,total)
+              print(teacher,"mouth_locality",ratio)
+              assert ratio>0.30,(teacher,"viseme changes are not localized enough",ratio)
+          Path("four-proof/LIPSYNC_ACCEPTANCE_PASS.txt").write_text("RIVE_4_TEACHER_LIPSYNC=PASS\n")
+
+      - name: Package proof
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sha256sum four-proof/riv/*.riv > four-proof/RIV_SHA256SUMS.txt
+          rm -rf four-proof/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_Rive_4_Teachers_LipSync
+          path: four-proof/
+          if-no-files-found: error
