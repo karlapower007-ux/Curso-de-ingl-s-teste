@@ -1,0 +1,121 @@
+<Rive version="1" kind="fragment">
+  <Artboard defaultStateMachineId="0:200" styleId="0:5" width="500" height="625" name="Avatar" id="0:2">
+    <LayoutComponentStyle name="Artboard Style" id="0:5"/>
+
+    <Node x="250" y="312.5" name="PortraitRig" id="0:10">
+      <Image x="0" y="0" scaleX="0.651041667" scaleY="0.651041667" assetId="0:900"
+             samplerFilter="bilinear" name="Portrait" id="0:20"/>
+    </Node>
+
+    <Shape x="250" y="312.5" name="Backdrop" id="0:50">
+      <Rectangle width="500" height="625" name="BackdropPath"/>
+      <Fill name="Fill"><SolidColor colorValue="FFF0ECFF" name="Color"/></Fill>
+    </Shape>
+
+    <LinearAnimation fps="60" duration="180" loopValue="loop" name="Idle" id="0:100">
+      <KeyedObject objectId="0:10">
+        <KeyedProperty propertyKey="14">
+          <KeyFrameDouble value="312.5" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="310.5" interpolationType="cubic" frame="90"/>
+          <KeyFrameDouble value="312.5" interpolationType="cubic" frame="180"/>
+        </KeyedProperty>
+        <KeyedProperty propertyKey="15">
+          <KeyFrameDouble value="-0.004" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="0.004" interpolationType="cubic" frame="90"/>
+          <KeyFrameDouble value="-0.004" interpolationType="cubic" frame="180"/>
+        </KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+
+    <LinearAnimation fps="60" duration="1" name="Listening" id="0:101">
+      <KeyedObject objectId="0:10">
+        <KeyedProperty propertyKey="13"><KeyFrameDouble value="246" interpolationType="linear"/></KeyedProperty>
+        <KeyedProperty propertyKey="14"><KeyFrameDouble value="309" interpolationType="linear"/></KeyedProperty>
+        <KeyedProperty propertyKey="15"><KeyFrameDouble value="-0.025" interpolationType="linear"/></KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+
+    <LinearAnimation fps="60" duration="120" loopValue="loop" name="Thinking" id="0:102">
+      <KeyedObject objectId="0:10">
+        <KeyedProperty propertyKey="13">
+          <KeyFrameDouble value="250" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="254" interpolationType="cubic" frame="60"/>
+          <KeyFrameDouble value="250" interpolationType="cubic" frame="120"/>
+        </KeyedProperty>
+        <KeyedProperty propertyKey="15">
+          <KeyFrameDouble value="0.018" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="0.035" interpolationType="cubic" frame="60"/>
+          <KeyFrameDouble value="0.018" interpolationType="cubic" frame="120"/>
+        </KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+
+    <LinearAnimation fps="60" duration="36" loopValue="loop" name="Speaking" id="0:103">
+      <KeyedObject objectId="0:10">
+        <KeyedProperty propertyKey="14">
+          <KeyFrameDouble value="312.5" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="309.5" interpolationType="cubic" frame="18"/>
+          <KeyFrameDouble value="312.5" interpolationType="cubic" frame="36"/>
+        </KeyedProperty>
+        <KeyedProperty propertyKey="17">
+          <KeyFrameDouble value="1" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="1.008" interpolationType="cubic" frame="18"/>
+          <KeyFrameDouble value="1" interpolationType="cubic" frame="36"/>
+        </KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+
+    <StateMachine name="AvatarStateMachine" id="0:200">
+      <StateMachineBool name="isIdle" value="true" id="0:201"/>
+      <StateMachineBool name="isListening" value="false" id="0:202"/>
+      <StateMachineBool name="isThinking" value="false" id="0:203"/>
+      <StateMachineBool name="isSpeaking" value="false" id="0:204"/>
+      <StateMachineBool name="isHappy" value="false" id="0:205"/>
+      <StateMachineBool name="isEncouraging" value="false" id="0:206"/>
+      <StateMachineBool name="isSurprised" value="false" id="0:207"/>
+      <StateMachineBool name="isConfused" value="false" id="0:208"/>
+      <StateMachineBool name="isSerious" value="false" id="0:209"/>
+      <StateMachineBool name="isEmpathetic" value="false" id="0:210"/>
+      <StateMachineNumber name="emotion" value="0" id="0:211"/>
+      <StateMachineNumber name="emotionStrength" value="30" id="0:212"/>
+      <StateMachineNumber name="talkIntensity" value="0" id="0:213"/>
+      <StateMachineNumber name="energyLevel" value="35" id="0:214"/>
+      <StateMachineNumber name="headTurnX" value="0" id="0:215"/>
+      <StateMachineNumber name="headTurnY" value="0" id="0:216"/>
+      <StateMachineNumber name="eyeTargetX" value="0" id="0:217"/>
+      <StateMachineNumber name="eyeTargetY" value="0" id="0:218"/>
+      <StateMachineNumber name="breathLevel" value="0" id="0:219"/>
+      <StateMachineNumber name="visemeIndex" value="0" id="0:220"/>
+      <StateMachineNumber name="visemeStrength" value="0" id="0:221"/>
+
+      <StateMachineLayer name="Mode" id="0:230">
+        <AnyState x="520" y="-120"/>
+        <ExitState x="720" y="-120"/>
+        <EntryState x="0" y="0"><StateTransition stateToId="0:240"/></EntryState>
+
+        <AnimationState x="180" y="0" animationId="0:100" id="0:240">
+          <StateTransition stateToId="0:241" duration="180"><TransitionBoolCondition inputId="0:202" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:242" duration="180"><TransitionBoolCondition inputId="0:203" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:243" duration="120"><TransitionBoolCondition inputId="0:204" opValue="equal"/></StateTransition>
+        </AnimationState>
+        <AnimationState x="180" y="100" animationId="0:101" id="0:241">
+          <StateTransition stateToId="0:240" duration="180"><TransitionBoolCondition inputId="0:201" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:242" duration="180"><TransitionBoolCondition inputId="0:203" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:243" duration="120"><TransitionBoolCondition inputId="0:204" opValue="equal"/></StateTransition>
+        </AnimationState>
+        <AnimationState x="180" y="200" animationId="0:102" id="0:242">
+          <StateTransition stateToId="0:240" duration="180"><TransitionBoolCondition inputId="0:201" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:241" duration="180"><TransitionBoolCondition inputId="0:202" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:243" duration="120"><TransitionBoolCondition inputId="0:204" opValue="equal"/></StateTransition>
+        </AnimationState>
+        <AnimationState x="180" y="300" animationId="0:103" id="0:243">
+          <StateTransition stateToId="0:240" duration="180"><TransitionBoolCondition inputId="0:201" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:241" duration="180"><TransitionBoolCondition inputId="0:202" opValue="equal"/></StateTransition>
+          <StateTransition stateToId="0:242" duration="180"><TransitionBoolCondition inputId="0:203" opValue="equal"/></StateTransition>
+        </AnimationState>
+      </StateMachineLayer>
+    </StateMachine>
+  </Artboard>
+
+  <ImageAsset file="lily-main.jpg" name="LilyPortrait" id="0:900"/>
+</Rive>
