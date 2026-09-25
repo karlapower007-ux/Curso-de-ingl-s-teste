@@ -331,9 +331,12 @@
       for(const k of Performance.RIG_CHANNELS||[]) this.set(k,state[k]);
       const viseme=ctx.viseme&&Performance.VISEMES.includes(ctx.viseme)?ctx.viseme:'REST';
       const visemeIndex=Performance.VISEMES.indexOf(viseme);
-      this._setMany(['viseme','visemeIndex'],visemeIndex);
+      const visemeAxis=(visemeIndex/Math.max(1,Performance.VISEMES.length-1))*100;
+      this.set('viseme',visemeIndex);
+      this.set('visemeIndex',visemeAxis);
       const talk=Math.max(clamp(state.jawOpen||0),clamp(state.mouthRound||0)*.55);
-      this._setMany(['mouth_amount','visemeStrength','talkIntensity'],this.currentMode==='speaking'?talk:0);
+      this._setMany(['mouth_amount','visemeStrength'],this.currentMode==='speaking'?talk:0);
+      this.set('talkIntensity',(this.currentMode==='speaking'?talk:0)*100);
       this.set('energyLevel',clamp(state.bodyEnergy??ctx.energy??.35));
       this.set('headTurnX',clamp(state.headYaw??0,-1,1)); this.set('headTurnY',clamp(state.headPitch??0,-1,1));
       this.set('eyeTargetX',clamp(((state.eyeLeftX??0)+(state.eyeRightX??0))/2,-1,1));
@@ -345,8 +348,11 @@
     event(type,strength=.4){this.set('gesture_strength',clamp(strength));this.set(type,true);}
     viseme(v,amount=.7){
       const name=VISEMES.includes(v)?v:'REST';
-      this._setMany(['viseme','visemeIndex'],VISEMES.indexOf(name));
-      this._setMany(['mouth_amount','visemeStrength','talkIntensity'],clamp(amount));
+      const idx=VISEMES.indexOf(name);
+      this.set('viseme',idx);
+      this.set('visemeIndex',(idx/Math.max(1,VISEMES.length-1))*100);
+      this._setMany(['mouth_amount','visemeStrength'],clamp(amount));
+      this.set('talkIntensity',clamp(amount)*100);
     }
     lookAt(x=0,y=0){this.set('eyeTargetX',clamp(x,-1,1));this.set('eyeTargetY',clamp(y,-1,1));}
     destroy(){
