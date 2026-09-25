@@ -163,7 +163,10 @@ func set_viseme(value: String, strength: float = 1.0) -> void:
     viseme = key
     viseme_strength = clamp(strength, 0.0, 1.0)
     if key != "REST":
+        var was_speaking := mode == "speaking"
         mode = "speaking"
+        if not was_speaking:
+            _transition_frame(_resolve_frame())
         _mouth.texture = _tex("res://godot/art/%s/mouth/%s.png" % [teacher_id, key])
         _mouth.modulate = Color(1,1,1, max(0.55, viseme_strength))
     else:
