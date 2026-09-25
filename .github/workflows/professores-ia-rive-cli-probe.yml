@@ -78,6 +78,14 @@ jobs:
 
           echo "---- samples ----"
           rive samples || true
+          echo "---- keyboard_menu sample RML ----"
+          SAMPLE_ROOT="$(rive samples --path 2>/dev/null || true)"
+          echo "SAMPLE_ROOT=$SAMPLE_ROOT"
+          if [ -n "$SAMPLE_ROOT" ] && [ -f "$SAMPLE_ROOT/keyboard_menu/scene.rml" ]; then
+            cat "$SAMPLE_ROOT/keyboard_menu/scene.rml"
+          fi
+          echo "---- docs image/state/animation matches ----"
+          cat rive-probe/docs.txt || true
 
       - name: Upload probe
         uses: actions/upload-artifact@v4
