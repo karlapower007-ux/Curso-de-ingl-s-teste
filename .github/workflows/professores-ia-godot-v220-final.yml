@@ -107,8 +107,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$HOME/.cache/professores-godot/godot" --headless --path . --editor --quit
-          "$HOME/.cache/professores-godot/godot" --headless --path . --quit-after 4
+          "$HOME/.cache/professores-godot/godot" --headless --path . --editor --quit 2>&1 | tee /tmp/godot-editor.log
+          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-editor.log; then
+            cat /tmp/godot-editor.log
+            exit 41
+          fi
+          "$HOME/.cache/professores-godot/godot" --headless --path . --quit-after 4 2>&1 | tee /tmp/godot-run.log
+          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-run.log; then
+            cat /tmp/godot-run.log
+            exit 42
+          fi
 
       - name: Export Godot real-art renderer for Web
         shell: bash
@@ -131,7 +139,6 @@ jobs:
           mkdir -p candidate
           python qa/build_v220_godot.py             --base-setup "$BASE_SETUP"             --repo .             --godot-web build/godot-web             --out candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe
           sha256sum candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe | tee candidate/CANDIDATE_SHA256.txt
-          cp candidate/V220_BUILD.json candidate/
 
       - name: Static JavaScript and payload integrity QA
         shell: bash
