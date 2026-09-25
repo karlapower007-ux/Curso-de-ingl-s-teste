@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   godot-runtime-qa:
@@ -21,6 +22,41 @@ jobs:
 
       - name: Validate avatar contract
         run: python qa/test_godot_avatar_contract.py
+
+      - name: Recover accepted v2.0.3.1 art and build Godot assets
+        uses: actions/download-artifact@v4
+        with:
+          name: Professores_IA_v2.0.3.1_FINAL
+          path: accepted
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36099805417
+          github-token: ${{ github.token }}
+
+      - name: Prepare mouth-clean real-art layers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pillow numpy opencv-python-headless
+          rm -rf accepted/release .base-payload godot/art
+          mkdir -p accepted/release .base-payload
+          unzip -q accepted/Professores_IA_v2.0.3.1_FINAL.zip -d accepted/release
+          BASE_SETUP="$(find accepted/release -maxdepth 1 -type f -name '*Setup.exe' -print -quit)"
+          test -n "$BASE_SETUP"
+          python3 - "$BASE_SETUP" <<'PY'
+          from pathlib import Path
+          import sys,struct,zipfile
+          setup=Path(sys.argv[1]); raw=setup.read_bytes()
+          e=raw.rfind(b"PK\x05\x06"); assert e>=0
+          _,_,_,_,_,cd_size,cd_off,comment_len=struct.unpack_from("<4s4H2LH",raw,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          Path(".base-payload.zip").write_bytes(raw[start:end])
+          with zipfile.ZipFile(".base-payload.zip") as z:
+              assert z.testzip() is None
+              z.extractall(".base-payload")
+          PY
+          python qa/prepare_godot_avatar_art.py --payload .base-payload --out godot/art
+          test -s godot/art/lily/meta.json
+          test -s godot/art/sofia/mouth/A.png
 
       - name: Install Godot 4.7.2 stable
         shell: bash
