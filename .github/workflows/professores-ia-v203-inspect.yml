@@ -1,0 +1,64 @@
+name: Inspect Professores IA v2.0.2 payload
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extractors
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq innoextract p7zip-full file
+      - name: Extract old final payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf inspect-src extracted fallback out
+          mkdir -p inspect-src extracted fallback out
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d inspect-src
+          setup="$(find inspect-src -type f -name '*.exe' -print -quit)"
+          test -n "$setup"
+          echo "SETUP=$setup"
+          sha256sum "$setup"
+          file "$setup"
+          echo "=== ZIP CONTENT ==="
+          find inspect-src -type f -printf '%p %s bytes\n' | sort
+          echo "=== INNOEXTRACT LIST ==="
+          innoextract -l "$setup" || true
+          echo "=== 7Z LIST (first 400 lines) ==="
+          7z l "$setup" | head -400 || true
+          if innoextract -d extracted "$setup"; then
+            echo "EXTRACT_METHOD=innoextract" | tee out/method.txt
+          else
+            7z x -y -ofallback "$setup" || true
+            cp -a fallback/. extracted/ || true
+            echo "EXTRACT_METHOD=7z_fallback" | tee out/method.txt
+          fi
+          echo "=== EXTRACTED MANIFEST ==="
+          find extracted -type f -printf '%p|%s\n' | sort | tee out/manifest.txt
+          echo "=== WEB/CODE FILES ==="
+          find extracted -type f \( -iname '*.js' -o -iname '*.html' -o -iname '*.css' -o -iname '*.py' -o -iname '*.json' -o -iname '*.txt' \) -printf '%p\n' | sort | tee out/code-files.txt
+          echo "=== IMAGE/AUDIO FILES ==="
+          find extracted -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.svg' -o -iname '*.wav' -o -iname '*.mp3' -o -iname '*.ogg' \) -printf '%p|%s\n' | sort | tee out/media-files.txt
+          echo "=== FEATURE GREP ==="
+          grep -RniE --binary-files=without-match 'walkie|push.?to.?talk|MediaRecorder|getUserMedia|speechSynthesis|AudioContext|mouth|boca|lip.?sync|avatar|microphone|microfone|tts|voice' extracted 2>/dev/null | head -800 | tee out/feature-grep.txt || true
+          echo "=== STATIC APP CANDIDATES ==="
+          find extracted -type f \( -path '*/static/app.js' -o -name 'app.js' -o -name 'index.html' \) -print | tee out/app-candidates.txt
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            sed -n '1,260p' "$f"
+          done < out/app-candidates.txt | tee out/app-candidates-preview.txt
+      - name: Upload inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: professores-ia-v202-payload-inspection
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
