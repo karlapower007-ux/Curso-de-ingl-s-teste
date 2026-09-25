@@ -152,7 +152,10 @@ jobs:
             $styles.Content | Set-Content (Join-Path $out 'installed-styles.css') -Encoding UTF8
             $sw.Content | Set-Content (Join-Path $out 'installed-sw.js') -Encoding UTF8
 
-            # Screenshot removido do gate: Edge headless pode permanecer aberto no Windows guest.\n            # A validação visual foi feita separadamente; este gate fica determinístico e não interativo.\n            $result.visual_screenshot=$false\n
+            # Screenshot removido do gate: Edge headless pode permanecer aberto no Windows guest.
+            # A validação visual foi feita separadamente; este gate fica determinístico e não interativo.
+            $result.visual_screenshot=$false
+
             $result.pass=($result.checks.Values -notcontains $false)
           } catch {
             $result.error=$_.Exception.Message
