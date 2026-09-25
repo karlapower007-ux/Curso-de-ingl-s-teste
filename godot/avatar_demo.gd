@@ -261,32 +261,32 @@ func _process(delta: float) -> void:
     _blink_clock -= delta
     if _blink_clock <= 0.0:
         blink()
-        var interval := lerp(5.8, 2.8, _energy)
+        var interval: float = lerpf(5.8, 2.8, _energy)
         if emotion in ["surprised","excited"]: interval *= 0.78
         if emotion in ["thinking","serious","sarcastic"]: interval *= 1.18
         _blink_clock = interval + fmod(_time * 0.73, 1.8)
 
-    var breath := sin(_time * (1.25 + _energy * 0.45))
-    var talk_bob := 0.0
-    var talk_roll := 0.0
+    var breath: float = sin(_time * (1.25 + _energy * 0.45))
+    var talk_bob: float = 0.0
+    var talk_roll: float = 0.0
     if mode == "speaking":
         talk_bob = sin(_talk_phase * 0.72) * (0.8 + _energy * 1.3)
         talk_roll = sin(_talk_phase * 0.39) * 0.004 * _head_gain
 
-    var listen_tilt := -0.010 * _head_gain if mode == "listening" else 0.0
-    var think_tilt := 0.018 * _head_gain if mode == "thinking" else 0.0
-    var target_rot := head_target.x * 0.045 * _head_gain + listen_tilt + think_tilt + talk_roll
-    var target_pos := VIEW_CENTER + Vector2(
+    var listen_tilt: float = -0.010 * _head_gain if mode == "listening" else 0.0
+    var think_tilt: float = 0.018 * _head_gain if mode == "thinking" else 0.0
+    var target_rot: float = head_target.x * 0.045 * _head_gain + listen_tilt + think_tilt + talk_roll
+    var target_pos: Vector2 = VIEW_CENTER + Vector2(
         eye_target.x * 1.8 * _head_gain,
         head_target.y * 4.0 + breath * (0.55 + _energy * 0.7) + talk_bob
     )
     _rig.rotation = lerp(_rig.rotation, target_rot, 1.0 - exp(-delta * 6.5))
     _rig.position = _rig.position.lerp(target_pos, 1.0 - exp(-delta * 5.8))
-    var s := 1.0 + breath * 0.0018 * _energy
-    _rig.scale = _rig.scale.lerp(Vector2(s,s), 1.0 - exp(-delta * 4.0))
+    var scale_value: float = 1.0 + breath * 0.0018 * _energy
+    _rig.scale = _rig.scale.lerp(Vector2(scale_value,scale_value), 1.0 - exp(-delta * 4.0))
 
     if mode == "speaking" and viseme != "REST":
-        var pulse := 0.94 + abs(sin(_talk_phase)) * 0.06
+        var pulse: float = 0.94 + absf(sin(_talk_phase)) * 0.06
         _mouth.scale = Vector2(1.0, pulse)
     else:
         _mouth.scale = _mouth.scale.lerp(Vector2.ONE, 1.0 - exp(-delta * 10.0))
