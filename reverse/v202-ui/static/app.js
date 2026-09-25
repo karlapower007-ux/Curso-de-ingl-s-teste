@@ -182,11 +182,12 @@
             </div>
             <img id="avatarViseme" class="viseme-layer" src="/static/avatars/visemes/${t.slug}/REST.webp" alt="" aria-hidden="true">
           </div>
+          <canvas id="riveAvatarCanvas" class="rive-avatar-canvas" aria-label="Avatar animado de ${esc(t.name)}" hidden></canvas>
           <div class="breath-pulse" aria-hidden="true"></div>
           <div class="emotion-live"><span class="emotion-dot"></span><span id="emotionLabel">Neutra</span></div>
         </div>
         <h2>${esc(t.name)}</h2><p>${esc(t.personality)}</p>
-        <div class="motor-signature">Performance Engine v1.7 de <b>${esc(t.name)}</b> · rig contínuo, coarticulação, olhar, piscadas, respiração, microexpressões e personalidade corporal em paralelo</div>
+        <div class="motor-signature" id="motorSignature">Performance Engine v2.1 de <b>${esc(t.name)}</b> · carregando o melhor renderer disponível…</div>
         <div class="voice-controls">
           <button class="btn ghost" id="switchTeacher">Trocar professor</button>
           <button class="mic-btn" id="micBtn" title="Iniciar conversa por voz">🎙</button>
@@ -253,6 +254,21 @@
       rig: $('#avatarRig'), img: $('#avatarPortrait'), visemeImg: $('#avatarViseme'), label: $('#emotionLabel'), status: $('#avatarState'),
       storage: window.localStorage
     }).mount();
+    {
+      const controllerAtMount=avatarController;
+      const rig=$('#avatarRig'), canvas=$('#riveAvatarCanvas'), signature=$('#motorSignature');
+      Promise.resolve(window.ProfessoresRive?.attach?.({
+        controller:controllerAtMount, teacherId:state.teacher, rig, canvas,
+        label:$('#emotionLabel'), status:$('#avatarState')
+      })).then(result=>{
+        if(controllerAtMount!==avatarController)return;
+        if(result?.ok){
+          if(signature) signature.innerHTML=`Rive nativo + Performance Engine v2.1 de <b>${esc(t.name)}</b> · olhos, cabeça, respiração, emoção e boca no mesmo rig em tempo real`;
+        }else{
+          if(signature) signature.innerHTML=`Performance Engine v2.1 de <b>${esc(t.name)}</b> · fallback visual ativo enquanto o rig Rive não está disponível`;
+        }
+      }).catch(()=>{});
+    }
     $$('[data-emotion]').forEach(btn => btn.onclick = () => {
       const map = {smile:'happy', joy:'excited', laugh:'amused', sad:'sad', angry:'annoyed', surprise:'surprised', thinking:'thinking', sigh:'disappointed'};
       const e = map[btn.dataset.emotion] || 'neutral';
