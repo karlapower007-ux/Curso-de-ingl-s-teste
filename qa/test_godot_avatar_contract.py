@@ -23,8 +23,8 @@ assert 'run/main_scene="res://godot/main.tscn"' in project
 for token in [
     "func set_teacher", "func set_mode", "func set_emotion", "func set_viseme",
     "func set_gaze", "func set_head", "func trigger_event", "func snapshot",
-    "JavaScriptBridge", "_start_blink", "_desired_frame", "_request_frame",
-    "draw_texture_rect"
+    "JavaScriptBridge", "func blink", "_resolve_frame", "_transition_frame",
+    "_set_rest_mouth", "Sprite2D", "godot/art/"
 ]:
     assert token in src, token
 
