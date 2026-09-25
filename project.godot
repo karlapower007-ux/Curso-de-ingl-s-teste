@@ -1,5 +1,4 @@
 ; Professores IA — Godot Free Avatar Engine
-; Godot 4.7.x / HTML5 compatible.
 config_version=5
 
 [application]
@@ -7,19 +6,13 @@ config/name="Professores IA - Godot Avatar Engine"
 run/main_scene="res://godot/main.tscn"
 
 [display]
-window/size/viewport_width=512
-window/size/viewport_height=640
-window/size/window_width_override=512
-window/size/window_height_override=640
+window/size/viewport_width=768
+window/size/viewport_height=960
+window/size/window_width_override=614
+window/size/window_height_override=768
 window/stretch/mode="canvas_items"
 
 [rendering]
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/default_filters/use_nearest_mipmap_filter=false
-
-[input]
-mode_idle={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":49)]}
-mode_listening={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":50)]}
-mode_thinking={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":51)]}
-mode_speaking={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":52)]}
