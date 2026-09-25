@@ -1,0 +1,519 @@
+name: QA Windows 10 ISO 80MiB chunks
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  split-80:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download and verify official Windows 10 Enterprise Evaluation x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://software-static.download.prss.microsoft.com/dbazure/988969d5-f34g-4e03-ac9d-1f9786c66750/19045.2006.220908-0225.22h2_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso'
+          curl -fL --retry 5 --retry-delay 3 "$url" -o win10e.iso
+          echo 'ef7312733a9f5d7d51cfa04ac497671995674ca5e1058d5164d6028f0938d668  win10e.iso' | sha256sum -c -
+          split -b 80M -d -a 2 win10e.iso iso80.part.
+          sha256sum iso80.part.* > iso80.parts.sha256
+          count=$(find . -maxdepth 1 -name 'iso80.part.*' | wc -l)
+          echo "chunks=$count"
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.00') != '' }}
+        with:
+          name: win10e-80-00
+          path: iso80.part.00
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.01') != '' }}
+        with:
+          name: win10e-80-01
+          path: iso80.part.01
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.02') != '' }}
+        with:
+          name: win10e-80-02
+          path: iso80.part.02
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.03') != '' }}
+        with:
+          name: win10e-80-03
+          path: iso80.part.03
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.04') != '' }}
+        with:
+          name: win10e-80-04
+          path: iso80.part.04
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.05') != '' }}
+        with:
+          name: win10e-80-05
+          path: iso80.part.05
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.06') != '' }}
+        with:
+          name: win10e-80-06
+          path: iso80.part.06
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.07') != '' }}
+        with:
+          name: win10e-80-07
+          path: iso80.part.07
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.08') != '' }}
+        with:
+          name: win10e-80-08
+          path: iso80.part.08
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.09') != '' }}
+        with:
+          name: win10e-80-09
+          path: iso80.part.09
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.10') != '' }}
+        with:
+          name: win10e-80-10
+          path: iso80.part.10
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.11') != '' }}
+        with:
+          name: win10e-80-11
+          path: iso80.part.11
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.12') != '' }}
+        with:
+          name: win10e-80-12
+          path: iso80.part.12
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.13') != '' }}
+        with:
+          name: win10e-80-13
+          path: iso80.part.13
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.14') != '' }}
+        with:
+          name: win10e-80-14
+          path: iso80.part.14
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.15') != '' }}
+        with:
+          name: win10e-80-15
+          path: iso80.part.15
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.16') != '' }}
+        with:
+          name: win10e-80-16
+          path: iso80.part.16
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.17') != '' }}
+        with:
+          name: win10e-80-17
+          path: iso80.part.17
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.18') != '' }}
+        with:
+          name: win10e-80-18
+          path: iso80.part.18
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.19') != '' }}
+        with:
+          name: win10e-80-19
+          path: iso80.part.19
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.20') != '' }}
+        with:
+          name: win10e-80-20
+          path: iso80.part.20
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.21') != '' }}
+        with:
+          name: win10e-80-21
+          path: iso80.part.21
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.22') != '' }}
+        with:
+          name: win10e-80-22
+          path: iso80.part.22
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.23') != '' }}
+        with:
+          name: win10e-80-23
+          path: iso80.part.23
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.24') != '' }}
+        with:
+          name: win10e-80-24
+          path: iso80.part.24
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.25') != '' }}
+        with:
+          name: win10e-80-25
+          path: iso80.part.25
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.26') != '' }}
+        with:
+          name: win10e-80-26
+          path: iso80.part.26
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.27') != '' }}
+        with:
+          name: win10e-80-27
+          path: iso80.part.27
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.28') != '' }}
+        with:
+          name: win10e-80-28
+          path: iso80.part.28
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.29') != '' }}
+        with:
+          name: win10e-80-29
+          path: iso80.part.29
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.30') != '' }}
+        with:
+          name: win10e-80-30
+          path: iso80.part.30
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.31') != '' }}
+        with:
+          name: win10e-80-31
+          path: iso80.part.31
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.32') != '' }}
+        with:
+          name: win10e-80-32
+          path: iso80.part.32
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.33') != '' }}
+        with:
+          name: win10e-80-33
+          path: iso80.part.33
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.34') != '' }}
+        with:
+          name: win10e-80-34
+          path: iso80.part.34
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.35') != '' }}
+        with:
+          name: win10e-80-35
+          path: iso80.part.35
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.36') != '' }}
+        with:
+          name: win10e-80-36
+          path: iso80.part.36
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.37') != '' }}
+        with:
+          name: win10e-80-37
+          path: iso80.part.37
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.38') != '' }}
+        with:
+          name: win10e-80-38
+          path: iso80.part.38
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.39') != '' }}
+        with:
+          name: win10e-80-39
+          path: iso80.part.39
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.40') != '' }}
+        with:
+          name: win10e-80-40
+          path: iso80.part.40
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.41') != '' }}
+        with:
+          name: win10e-80-41
+          path: iso80.part.41
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.42') != '' }}
+        with:
+          name: win10e-80-42
+          path: iso80.part.42
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.43') != '' }}
+        with:
+          name: win10e-80-43
+          path: iso80.part.43
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.44') != '' }}
+        with:
+          name: win10e-80-44
+          path: iso80.part.44
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.45') != '' }}
+        with:
+          name: win10e-80-45
+          path: iso80.part.45
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.46') != '' }}
+        with:
+          name: win10e-80-46
+          path: iso80.part.46
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.47') != '' }}
+        with:
+          name: win10e-80-47
+          path: iso80.part.47
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.48') != '' }}
+        with:
+          name: win10e-80-48
+          path: iso80.part.48
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.49') != '' }}
+        with:
+          name: win10e-80-49
+          path: iso80.part.49
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.50') != '' }}
+        with:
+          name: win10e-80-50
+          path: iso80.part.50
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.51') != '' }}
+        with:
+          name: win10e-80-51
+          path: iso80.part.51
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.52') != '' }}
+        with:
+          name: win10e-80-52
+          path: iso80.part.52
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.53') != '' }}
+        with:
+          name: win10e-80-53
+          path: iso80.part.53
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.54') != '' }}
+        with:
+          name: win10e-80-54
+          path: iso80.part.54
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.55') != '' }}
+        with:
+          name: win10e-80-55
+          path: iso80.part.55
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.56') != '' }}
+        with:
+          name: win10e-80-56
+          path: iso80.part.56
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.57') != '' }}
+        with:
+          name: win10e-80-57
+          path: iso80.part.57
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.58') != '' }}
+        with:
+          name: win10e-80-58
+          path: iso80.part.58
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.59') != '' }}
+        with:
+          name: win10e-80-59
+          path: iso80.part.59
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.60') != '' }}
+        with:
+          name: win10e-80-60
+          path: iso80.part.60
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.61') != '' }}
+        with:
+          name: win10e-80-61
+          path: iso80.part.61
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.62') != '' }}
+        with:
+          name: win10e-80-62
+          path: iso80.part.62
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.63') != '' }}
+        with:
+          name: win10e-80-63
+          path: iso80.part.63
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.64') != '' }}
+        with:
+          name: win10e-80-64
+          path: iso80.part.64
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.65') != '' }}
+        with:
+          name: win10e-80-65
+          path: iso80.part.65
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.66') != '' }}
+        with:
+          name: win10e-80-66
+          path: iso80.part.66
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.67') != '' }}
+        with:
+          name: win10e-80-67
+          path: iso80.part.67
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.68') != '' }}
+        with:
+          name: win10e-80-68
+          path: iso80.part.68
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('iso80.part.69') != '' }}
+        with:
+          name: win10e-80-69
+          path: iso80.part.69
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win10e-80-manifest
+          path: iso80.parts.sha256
+          retention-days: 1
