@@ -1,0 +1,115 @@
+<Rive version="1" kind="fragment">
+  <Artboard defaultStateMachineId="0:200" styleId="0:5" width="500" height="625" name="Avatar" id="0:2">
+    <LayoutComponentStyle name="Artboard Style" id="0:5"/>
+
+    <!-- Face features: RML draws first siblings on top. -->
+    <Node x="250" y="245" name="HeadRig" id="0:10">
+      <Shape x="-58" y="-18" name="EyeLeft" id="0:20">
+        <Ellipse width="48" height="27" name="EyeWhite"/>
+        <Fill name="Fill"><SolidColor colorValue="FFFFFFFF" name="Color"/></Fill>
+      </Shape>
+      <Shape x="58" y="-18" name="EyeRight" id="0:21">
+        <Ellipse width="48" height="27" name="EyeWhite"/>
+        <Fill name="Fill"><SolidColor colorValue="FFFFFFFF" name="Color"/></Fill>
+      </Shape>
+      <Shape x="-55" y="-16" name="PupilLeft" id="0:22">
+        <Ellipse width="15" height="18" name="Pupil"/>
+        <Fill name="Fill"><SolidColor colorValue="FF352A42" name="Color"/></Fill>
+      </Shape>
+      <Shape x="61" y="-16" name="PupilRight" id="0:23">
+        <Ellipse width="15" height="18" name="Pupil"/>
+        <Fill name="Fill"><SolidColor colorValue="FF352A42" name="Color"/></Fill>
+      </Shape>
+      <Shape x="-57" y="-53" rotation="-0.08" name="BrowLeft" id="0:24">
+        <Rectangle width="62" height="9" cornerRadiusTL="5" name="Brow"/>
+        <Fill name="Fill"><SolidColor colorValue="FF7A503F" name="Color"/></Fill>
+      </Shape>
+      <Shape x="57" y="-53" rotation="0.08" name="BrowRight" id="0:25">
+        <Rectangle width="62" height="9" cornerRadiusTL="5" name="Brow"/>
+        <Fill name="Fill"><SolidColor colorValue="FF7A503F" name="Color"/></Fill>
+      </Shape>
+      <Shape x="0" y="57" name="Mouth" id="0:26">
+        <Ellipse width="72" height="15" name="MouthShape"/>
+        <Fill name="Fill"><SolidColor colorValue="FF8F3F50" name="Color"/></Fill>
+      </Shape>
+
+      <!-- Hair front / head -->
+      <Shape x="0" y="-92" name="HairFront" id="0:29">
+        <Ellipse width="280" height="175" name="Hair"/>
+        <Fill name="Fill"><SolidColor colorValue="FFF2C676" name="Color"/></Fill>
+      </Shape>
+      <Shape x="0" y="0" name="Face" id="0:30">
+        <Ellipse width="260" height="300" name="FaceShape"/>
+        <Fill name="Fill"><SolidColor colorValue="FFF0B08D" name="Color"/></Fill>
+      </Shape>
+    </Node>
+
+    <Node x="250" y="500" name="BodyRig" id="0:40">
+      <Shape x="0" y="0" name="Torso" id="0:41">
+        <Rectangle width="300" height="250" cornerRadiusTL="80" name="TorsoShape"/>
+        <Fill name="Fill"><SolidColor colorValue="FF7054C8" name="Color"/></Fill>
+      </Shape>
+    </Node>
+
+    <Shape x="250" y="312.5" name="Background" id="0:50">
+      <Rectangle width="500" height="625" name="BackgroundShape"/>
+      <Fill name="Fill"><SolidColor colorValue="FFF0ECFF" name="Color"/></Fill>
+    </Shape>
+
+    <!-- Always-alive base animation. -->
+    <LinearAnimation fps="60" duration="180" loopValue="loop" name="Idle" id="0:100">
+      <KeyedObject objectId="0:10">
+        <KeyedProperty propertyKey="14">
+          <KeyFrameDouble value="245" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="241" interpolationType="cubic" frame="90"/>
+          <KeyFrameDouble value="245" interpolationType="cubic" frame="180"/>
+        </KeyedProperty>
+        <KeyedProperty propertyKey="15">
+          <KeyFrameDouble value="-0.012" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="0.012" interpolationType="cubic" frame="90"/>
+          <KeyFrameDouble value="-0.012" interpolationType="cubic" frame="180"/>
+        </KeyedProperty>
+      </KeyedObject>
+      <KeyedObject objectId="0:40">
+        <KeyedProperty propertyKey="17">
+          <KeyFrameDouble value="1" interpolationType="cubic" frame="0"/>
+          <KeyFrameDouble value="1.018" interpolationType="cubic" frame="90"/>
+          <KeyFrameDouble value="1" interpolationType="cubic" frame="180"/>
+        </KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+
+    <StateMachine name="AvatarStateMachine" id="0:200">
+      <StateMachineBool name="isIdle" value="true" id="0:201"/>
+      <StateMachineBool name="isListening" value="false" id="0:202"/>
+      <StateMachineBool name="isThinking" value="false" id="0:203"/>
+      <StateMachineBool name="isSpeaking" value="false" id="0:204"/>
+      <StateMachineBool name="isHappy" value="false" id="0:205"/>
+      <StateMachineBool name="isEncouraging" value="false" id="0:206"/>
+      <StateMachineBool name="isSurprised" value="false" id="0:207"/>
+      <StateMachineBool name="isConfused" value="false" id="0:208"/>
+      <StateMachineBool name="isSerious" value="false" id="0:209"/>
+      <StateMachineBool name="isEmpathetic" value="false" id="0:210"/>
+      <StateMachineNumber name="emotion" value="0" id="0:211"/>
+      <StateMachineNumber name="emotionStrength" value="0.3" id="0:212"/>
+      <StateMachineNumber name="talkIntensity" value="0" id="0:213"/>
+      <StateMachineNumber name="energyLevel" value="0.35" id="0:214"/>
+      <StateMachineNumber name="headTurnX" value="0" id="0:215"/>
+      <StateMachineNumber name="headTurnY" value="0" id="0:216"/>
+      <StateMachineNumber name="eyeTargetX" value="0" id="0:217"/>
+      <StateMachineNumber name="eyeTargetY" value="0" id="0:218"/>
+      <StateMachineNumber name="breathLevel" value="0" id="0:219"/>
+      <StateMachineNumber name="visemeIndex" value="0" id="0:220"/>
+      <StateMachineNumber name="visemeStrength" value="0" id="0:221"/>
+
+      <StateMachineLayer name="Base" id="0:230">
+        <AnyState x="420" y="-100"/>
+        <ExitState x="620" y="-100"/>
+        <EntryState x="0" y="0" id="0:231">
+          <StateTransition stateToId="0:232"/>
+        </EntryState>
+        <AnimationState x="200" y="0" animationId="0:100" stateName="Alive" id="0:232"/>
+      </StateMachineLayer>
+    </StateMachine>
+  </Artboard>
+</Rive>
