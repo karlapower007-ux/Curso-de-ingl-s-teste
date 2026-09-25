@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse, hashlib, json, shutil, struct, subprocess, zipfile, gzip
 
 EXPECTED_OLD_SETUP="e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a"
-EXPECTED_NEW_SETUP="fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02"
+EXPECTED_NEW_SETUP="49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d"
 EXPECTED_NEW_PAYLOAD="87e935ace456ec0eb26f755cfa3131f6e96482b78c258392ad9f289d7a883df9"
 
 def sha(b): return hashlib.sha256(b).hexdigest()

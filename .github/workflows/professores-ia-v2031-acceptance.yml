@@ -24,7 +24,7 @@ jobs:
           mkdir -p base oem shared storage verify release
           unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d base
           python3 qa/build_v2031.py --setup base/Professores_IA_v2.0.2_FORBIDDEN_FIX_Setup.exe --patch-gz qa/v203-ui.patch.gz --out oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe --work .v2031-build
-          echo 'fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02  oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe' | sha256sum -c -
+          echo '49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d  oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe' | sha256sum -c -
           cp oem/V2031_BUILD.json shared/
 
       - name: Static integrity and feature gate
@@ -40,14 +40,14 @@ jobs:
           _,_,_,_,entries,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',b,e)
           start=e-cd_size-cd_off; end=e+22+comment_len
           payload=b[start:end]
-          assert hashlib.sha256(payload).hexdigest()=='1b9ce4bc14915b06ddaefb228c597da2e8550f06fd0653544ea4b6d5b2f1bbd5'
+          assert hashlib.sha256(payload).hexdigest()=='87e935ace456ec0eb26f755cfa3131f6e96482b78c258392ad9f289d7a883df9'
           Path('verify/payload.zip').write_bytes(payload)
           with zipfile.ZipFile('verify/payload.zip') as z:
               assert z.testzip() is None
               z.extractall('verify/payload')
           root=Path('verify/payload')
           m=json.loads((root/'manifest.sha256.json').read_text(encoding='utf-8'))
-          assert m['schema']==4 and m['version']=='2.0.2'
+          assert m['schema']==4 and m['version']=='2.0.2'\n          assert (root/'VERSION.txt').read_text(encoding='utf-8').strip()=='2.0.3.1'
           for rel,meta in m['files'].items():
               d=(root/rel).read_bytes()
               assert len(d)==meta['size'], rel
@@ -107,7 +107,7 @@ jobs:
 
             $setup='C:\OEM\Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe'
             $result.setup_sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-            $result.checks.expected_setup_hash=($result.setup_sha256 -eq 'fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02')
+            $result.checks.expected_setup_hash=($result.setup_sha256 -eq '49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d')
             if(!$result.checks.expected_setup_hash){throw 'Unexpected setup hash in Windows guest'}
 
             Start-Process -FilePath $setup | Out-Null
@@ -206,7 +206,7 @@ jobs:
           cp oem/V2031_BUILD.json release/
           cp shared/*.json release/evidence/ || true
           cp shared/*.png release/evidence/ || true
-          printf '%s  %s\n' 'fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02' 'Professores_IA_v2.0.3.1_FINAL_Setup.exe' > release/Professores_IA_v2.0.3.1_FINAL_Setup.exe.sha256
+          printf '%s  %s\n' '49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d' 'Professores_IA_v2.0.3.1_FINAL_Setup.exe' > release/Professores_IA_v2.0.3.1_FINAL_Setup.exe.sha256
           cat > release/LEIA-ME.txt <<'TXT'
           PROFESSORES IA v2.0.3.1 FINAL
 
@@ -222,7 +222,7 @@ jobs:
           - cache v2.0.3.1.
 
           SHA-256 do instalador:
-          fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02
+          49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d
           TXT
           (cd release && zip -q -9 ../Professores_IA_v2.0.3.1_FINAL.zip ./* evidence/*)
           sha256sum Professores_IA_v2.0.3.1_FINAL.zip > Professores_IA_v2.0.3.1_FINAL.zip.sha256
