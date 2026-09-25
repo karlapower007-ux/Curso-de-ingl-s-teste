@@ -1,0 +1,85 @@
+name: Extract Professores IA v2.0.2 exact embedded zip
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Carve exact embedded payload zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src recovered out
+          mkdir -p src recovered out
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d src
+          setup="$(find src -type f -name '*.exe' -print -quit)"
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, json, hashlib
+          p=next(Path('src').glob('*.exe'))
+          b=p.read_bytes()
+          e=b.rfind(b'PK\x05\x06')
+          if e<0: raise SystemExit('EOCD not found')
+          sig,disk,cd_disk,n_disk,n_total,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',b,e)
+          start=e-cd_size-cd_off
+          end=e+22+comment_len
+          z=b[start:end]
+          Path('out/payload.zip').write_bytes(z)
+          meta={'eocd':e,'cd_size':cd_size,'cd_offset':cd_off,'zip_start':start,'zip_end':end,'zip_size':len(z),'entries':n_total,'sha256':hashlib.sha256(z).hexdigest()}
+          Path('out/carve.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+          print(json.dumps(meta,indent=2))
+          PY
+          unzip -t out/payload.zip
+          unzip -q out/payload.zip -d recovered
+          find recovered -type f -printf '%P|%s\n' | sort | tee out/manifest.txt
+          echo "=== KEY FILE SHA256 ==="
+          for f in static/index.html static/app.js static/styles.css static/avatar-engine.js static/performance-engine.js static/avatars/rig-manifest.json static/avatars/frames.json; do
+            if [ -f "recovered/$f" ]; then sha256sum "recovered/$f"; fi
+          done
+          echo "=== APP FEATURES ==="
+          grep -nEi 'walkie|push.?to.?talk|MediaRecorder|getUserMedia|speechSynthesis|AudioContext|mouth|boca|lip.?sync|viseme|avatar|microphone|microfone|tts|voice|pointerdown|pointerup|touchstart|touchend|mousedown|mouseup' recovered/static/app.js recovered/static/avatar-engine.js recovered/static/index.html recovered/static/styles.css 2>/dev/null | tee out/feature-lines.txt || true
+          echo "=== APP.JS line count ==="
+          wc -l recovered/static/app.js
+          echo "=== INDEX ==="
+          sed -n '1,340p' recovered/static/index.html | tee out/index-preview.txt
+          echo "=== APP.JS FEATURE CONTEXT ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          files=['recovered/static/app.js','recovered/static/avatar-engine.js','recovered/static/styles.css']
+          pat=re.compile(r'walkie|push.?to.?talk|MediaRecorder|getUserMedia|speechSynthesis|AudioContext|mouth|boca|lip.?sync|viseme|microphone|microfone|tts|voice|pointerdown|pointerup|touchstart|touchend|mousedown|mouseup',re.I)
+          out=[]
+          for fp in files:
+            p=Path(fp)
+            if not p.exists(): continue
+            lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
+            out.append(f'===== {fp} =====')
+            hit=set()
+            for i,l in enumerate(lines):
+              if pat.search(l):
+                for j in range(max(0,i-5),min(len(lines),i+10)): hit.add(j)
+            for j in sorted(hit):
+              out.append(f'{j+1:05d}: {lines[j]}')
+          Path('out/feature-context.txt').write_text('\n'.join(out),encoding='utf-8')
+          print('\n'.join(out[:5000]))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: professores-ia-v202-extracted-payload
+          path: |
+            out/
+            recovered/static/index.html
+            recovered/static/app.js
+            recovered/static/styles.css
+            recovered/static/avatar-engine.js
+            recovered/static/performance-engine.js
+            recovered/static/avatars/rig-manifest.json
+            recovered/static/avatars/frames.json
+          if-no-files-found: error
+          retention-days: 7
