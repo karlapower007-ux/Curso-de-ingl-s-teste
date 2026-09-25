@@ -133,10 +133,15 @@ func main(){
 
 	// Run the already accepted installer unchanged.
 	cmd:=exec.Command(setupPath)
-	if err=cmd.Start();err==nil{err=cmd.Wait()}
+	err=cmd.Start()
 	ev.Checks["base_setup_executed"]=err==nil
+	if err!=nil{ev.Error="base setup start failed: "+err.Error();writeEvidence(root,ev);message("Professores IA","A instalação base não pôde ser iniciada.");return}
 	baseEvidencePath:=filepath.Join(root,"evidence","acceptance-schema4.json")
-	if !waitFile(baseEvidencePath,10*time.Minute){ev.Error="base installer did not produce acceptance evidence";writeEvidence(root,ev);message("Professores IA","A instalação base não concluiu. Nenhuma atualização visual foi aplicada.");return}
+	if !waitFile(baseEvidencePath,10*time.Minute){_ = cmd.Process.Kill();ev.Error="base installer did not produce acceptance evidence";writeEvidence(root,ev);message("Professores IA","A instalação base não concluiu. Nenhuma atualização visual foi aplicada.");return}
+	// The accepted setup may keep its success dialog open. Evidence is authoritative;
+	// close only that wrapper process so the v2.2 transaction can continue unattended.
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
 	var be baseEvidence
 	if b,e:=os.ReadFile(baseEvidencePath);e==nil{_ = json.Unmarshal(b,&be)}
 	ev.Checks["base_acceptance"]=be.Schema==4 && be.Pass
