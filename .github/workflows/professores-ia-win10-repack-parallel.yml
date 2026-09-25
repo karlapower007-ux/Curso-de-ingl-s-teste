@@ -1,0 +1,87 @@
+name: QA parallel repack Windows 10 ISO chunks
+on:
+  push:
+    branches: [professores-ia-qemu-bootstrap]
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+jobs:
+  repack:
+    strategy:
+      fail-fast: false
+      max-parallel: 23
+      matrix:
+        include:
+          - idx: "00"
+            source: "win10e-direct-small-00"
+          - idx: "01"
+            source: "win10e-direct-small-01"
+          - idx: "02"
+            source: "win10e-direct-small-02"
+          - idx: "03"
+            source: "win10e-direct-small-03"
+          - idx: "04"
+            source: "win10e-direct-small-04"
+          - idx: "05"
+            source: "win10e-direct-small-05"
+          - idx: "06"
+            source: "win10e-direct-small-06"
+          - idx: "07"
+            source: "win10e-direct-small-07"
+          - idx: "08"
+            source: "win10e-direct-small-08"
+          - idx: "09"
+            source: "win10e-direct-small-09"
+          - idx: "10"
+            source: "win10e-direct-small-10"
+          - idx: "11"
+            source: "win10e-direct-small-11"
+          - idx: "12"
+            source: "win10e-direct-small-12"
+          - idx: "13"
+            source: "win10e-direct-small-13"
+          - idx: "14"
+            source: "win10e-direct-small-14"
+          - idx: "15"
+            source: "win10e-direct-small-15"
+          - idx: "16"
+            source: "win10e-direct-small-16"
+          - idx: "17"
+            source: "win10e-direct-small-17"
+          - idx: "18"
+            source: "win10e-direct-small-18"
+          - idx: "19"
+            source: "win10e-direct-small-19"
+          - idx: "20"
+            source: "win10e-direct-small-20"
+          - idx: "21"
+            source: "win10e-direct-small-21"
+          - idx: "22"
+            source: "win10e-direct-small-22"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.source }}
+          path: src
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36074446229
+          github-token: ${{ github.token }}
+      - name: Split source into <=80MiB
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=$(find src -type f | head -1)
+          split -b 80M -d -a 1 "$f" part.
+          sha256sum part.* > hashes.txt
+          ls -lh part.*
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('part.0') != '' }}
+        with: {name: "win80-${{ matrix.idx }}-0", path: part.0, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('part.1') != '' }}
+        with: {name: "win80-${{ matrix.idx }}-1", path: part.1, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('part.2') != '' }}
+        with: {name: "win80-${{ matrix.idx }}-2", path: part.2, compression-level: 0, retention-days: 1}
