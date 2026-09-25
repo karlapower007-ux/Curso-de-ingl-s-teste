@@ -70,3 +70,6 @@ iframe.contentWindow._professoresGodotCommand(JSON.stringify({
 ## Decisão de arquitetura
 
 Não removi Rive. Esta implementação é paralela e reversível. O objetivo é comparar custo zero, qualidade de movimento e facilidade de integração antes de substituir o renderer aceito.
+
+
+Final gate trigger: normalized real-art pipeline + fixed v2.2 packaging.
