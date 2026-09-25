@@ -1,0 +1,45 @@
+name: Recover v2.0.2 UI source snapshot
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+permissions:
+  contents: write
+jobs:
+  recover:
+    if: ${{ !contains(github.event.head_commit.message, 'Recover v2.0.2 UI source snapshot') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract payload and save editable UI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src recovered reverse/v202-ui
+          mkdir -p src recovered reverse/v202-ui/static/avatars
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d src
+          setup="$(find src -type f -name '*.exe' -print -quit)"
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          p=next(Path('src').glob('*.exe')); b=p.read_bytes(); e=b.rfind(b'PK\x05\x06')
+          _,_,_,_,_,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',b,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          Path('payload.zip').write_bytes(b[start:end])
+          PY
+          unzip -q payload.zip -d recovered
+          cp recovered/static/app.js reverse/v202-ui/static/app.js
+          cp recovered/static/avatar-engine.js reverse/v202-ui/static/avatar-engine.js
+          cp recovered/static/performance-engine.js reverse/v202-ui/static/performance-engine.js
+          cp recovered/static/styles.css reverse/v202-ui/static/styles.css
+          cp recovered/static/index.html reverse/v202-ui/static/index.html
+          cp recovered/static/manifest.json reverse/v202-ui/static/manifest.json
+          cp recovered/static/avatars/rig-manifest.json reverse/v202-ui/static/avatars/rig-manifest.json
+          cp recovered/static/avatars/frames.json reverse/v202-ui/static/avatars/frames.json
+          cp recovered/static/avatars/rive-rig-contract.json reverse/v202-ui/static/avatars/rive-rig-contract.json
+          sha256sum reverse/v202-ui/static/* reverse/v202-ui/static/avatars/*.json > reverse/v202-ui/SHA256SUMS.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reverse/v202-ui
+          git diff --cached --quiet && exit 0
+          git commit -m "Recover v2.0.2 UI source snapshot"
+          git push
