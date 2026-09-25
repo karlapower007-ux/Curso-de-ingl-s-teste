@@ -374,7 +374,6 @@ func main() {
 	work := filepath.Join(os.TempDir(), "ProfessoresIA-v220")
 	_ = os.RemoveAll(work)
 	_ = os.MkdirAll(work, 0755)
-	_ = os.MkdirAll(evidenceDir, 0755)
 
 	ev := wrapperEvidence{
 		Schema: 2, Version: "2.2.0", Pass: false,
