@@ -1,0 +1,77 @@
+name: Professores IA native Rive build
+
+on:
+  push:
+    branches: [professores-ia-rive-v210]
+    paths:
+      - 'rive/teachers/**'
+      - '.github/workflows/professores-ia-rive-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-rive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rive CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgles2 libgl1 libx11-6 libxcb1 libxkbcommon0
+          curl -fsSL https://releases.rive.app/cli/install.sh | bash
+          echo "$HOME/.rive/bin" >> "$GITHUB_PATH"
+
+      - name: Verify RML
+        run: rive rive/teachers/lily --verify --format=json
+
+      - name: Build unsigned native Rive
+        run: rive rive/teachers/lily --once --format=json
+
+      - name: Inspect compiled scene
+        shell: bash
+        run: |
+          rive inspect rive/teachers/lily --json > rive/teachers/lily/build/inspect.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("rive/teachers/lily/build/inspect.json")
+          data=json.loads(p.read_text())
+          text=p.read_text()
+          required=[
+            "AvatarStateMachine","isIdle","isListening","isThinking","isSpeaking",
+            "emotionStrength","talkIntensity","eyeTargetX","eyeTargetY",
+            "visemeIndex","visemeStrength","Idle","HeadRig","BodyRig"
+          ]
+          missing=[x for x in required if x not in text]
+          assert not missing, f"missing compiled Rive contract entries: {missing}"
+          print("RIVE_CONTRACT=PASS")
+          PY
+
+      - name: Headless render proof
+        run: |
+          mkdir -p rive-proof
+          rive rive/teachers/lily --screenshot=rive-proof/lily.png --viewport=500x625 --advance=120
+
+      - name: Collect Rive file
+        shell: bash
+        run: |
+          set -eux
+          find rive/teachers/lily/build -maxdepth 1 -type f -print
+          RIV="$(find rive/teachers/lily/build -maxdepth 1 -name '*.riv' | head -1)"
+          test -n "$RIV"
+          cp "$RIV" rive-proof/lily.riv
+          sha256sum rive-proof/lily.riv > rive-proof/lily.riv.sha256
+          cp rive/teachers/lily/build/inspect.json rive-proof/inspect.json
+
+      - name: Upload native Rive proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_Rive_Lily_Prototype
+          path: rive-proof/
+          if-no-files-found: error
