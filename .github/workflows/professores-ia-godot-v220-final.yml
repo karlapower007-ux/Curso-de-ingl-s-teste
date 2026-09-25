@@ -6,6 +6,7 @@ on:
     paths:
       - 'godot/**'
       - 'qa/build_v220_godot.py'
+      - 'qa/prepare_godot_avatar_art.py'
       - 'qa/test_godot_avatar_contract.py'
       - 'project.godot'
       - 'export_presets.cfg'
@@ -30,52 +31,46 @@ jobs:
       - name: Validate Godot source contract
         run: python qa/test_godot_avatar_contract.py
 
-      - name: Download accepted v2.0 final installer
+      - name: Download accepted v2.0.3.1 final installer
         uses: actions/download-artifact@v4
         with:
-          name: Professores_IA_v2.0_FINAL
+          name: Professores_IA_v2.0.3.1_FINAL
           path: accepted
           repository: karlapower007-ux/Curso-de-ingl-s-teste
-          run-id: 36093989304
+          run-id: 36099805417
           github-token: ${{ github.token }}
 
-      - name: Extract accepted installer and prepare real avatar art
+      - name: Extract accepted installer and prepare animated real art
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p accepted/release .base-payload godot/assets
-          unzip -q accepted/Professores_IA_v2.0_FINAL.zip -d accepted/release
+          python -m pip install --disable-pip-version-check pillow numpy opencv-python-headless
+          rm -rf accepted/release .base-payload godot/art
+          mkdir -p accepted/release .base-payload
+          unzip -q accepted/Professores_IA_v2.0.3.1_FINAL.zip -d accepted/release
           BASE_SETUP="$(find accepted/release -maxdepth 1 -type f -name '*Setup.exe' -print -quit)"
           test -n "$BASE_SETUP"
           echo "BASE_SETUP=$BASE_SETUP" >> "$GITHUB_ENV"
-          python3 - <<'PY'
+          python3 - "$BASE_SETUP" <<'PY'
           from pathlib import Path
-          import struct, zipfile, shutil
-          setup=next(Path("accepted/release").glob("*Setup.exe"))
-          raw=setup.read_bytes()
+          import sys,struct,zipfile
+          setup=Path(sys.argv[1]); raw=setup.read_bytes()
           e=raw.rfind(b"PK\x05\x06")
           if e<0: raise SystemExit("embedded ZIP not found")
           _,_,_,_,entries,cd_size,cd_off,comment_len=struct.unpack_from("<4s4H2LH",raw,e)
-          start=e-cd_size-cd_off
-          end=e+22+comment_len
+          start=e-cd_size-cd_off; end=e+22+comment_len
           Path(".base-payload.zip").write_bytes(raw[start:end])
-          root=Path(".base-payload")
-          shutil.rmtree(root,ignore_errors=True); root.mkdir()
           with zipfile.ZipFile(".base-payload.zip") as z:
               assert z.testzip() is None
-              z.extractall(root)
-          src=root/"static"/"avatars"
-          dst=Path("godot/assets")
-          wanted=[]
-          for teacher in ("lily","oliver","sara","sofia"):
-              wanted += sorted(src.glob(teacher+"-*.jpg"))
-          if len(wanted) < 25:
-              raise SystemExit(f"not enough accepted avatar frames: {len(wanted)}")
-          for p in wanted:
-              shutil.copy2(p,dst/p.name)
-          print("accepted frames copied:",len(wanted))
+              z.extractall(".base-payload")
+          print("base payload entries",entries)
           PY
-          find godot/assets -type f -maxdepth 1 -printf '%f %s bytes\n' | sort
+          python qa/prepare_godot_avatar_art.py --payload .base-payload --out godot/art
+          for teacher in lily oliver sara sofia; do
+            test -s "godot/art/$teacher/meta.json"
+            test -s "godot/art/$teacher/mouth/A.png"
+          done
+          find godot/art -type f | wc -l
 
       - name: Restore Godot 4.7.2 Web toolchain cache
         id: godot-cache
