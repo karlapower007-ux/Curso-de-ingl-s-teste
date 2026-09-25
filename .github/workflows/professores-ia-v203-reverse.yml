@@ -1,0 +1,81 @@
+name: Reverse Professores IA v2.0.2 embedded payload
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reverse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reverse inspect binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src out recovered
+          mkdir -p src out recovered
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d src
+          setup="$(find src -type f -name '*.exe' -print -quit)"
+          echo "SETUP=$setup" | tee out/summary.txt
+          sha256sum "$setup" | tee -a out/summary.txt
+          file "$setup" | tee -a out/summary.txt
+          echo "=== GO BUILD INFO ===" | tee out/go-build.txt
+          go version -m "$setup" 2>&1 | tee -a out/go-build.txt || true
+          go tool buildid "$setup" 2>&1 | tee -a out/go-build.txt || true
+          echo "=== IMPORTS / PE ===" | tee out/objdump.txt
+          objdump -x "$setup" 2>&1 | tee -a out/objdump.txt >/dev/null || true
+          echo "=== INTERESTING STRINGS ===" | tee out/strings-interesting.txt
+          strings -a -n 6 "$setup" | grep -Ei 'Professores|127\.0\.0\.1|8789|static|app\.js|index\.html|avatar|mouth|boca|microphone|microfone|audio|voice|tts|MediaRecorder|getUserMedia|speechSynthesis|cache|payload|manifest|install|rollback|forbidden|\.png|\.jpg|\.webp|\.wav|\.mp3|\.json|\.html|\.css|\.js|\.py' | head -5000 | tee -a out/strings-interesting.txt || true
+          python3 - <<'PY'
+          from pathlib import Path
+          p=next(Path('src').glob('*.exe'))
+          b=p.read_bytes()
+          magics={
+            'zip_local':b'PK\x03\x04',
+            'zip_eocd':b'PK\x05\x06',
+            'gzip':b'\x1f\x8b\x08',
+            'xz':b'\xfd7zXZ\x00',
+            'zstd':b'\x28\xb5\x2f\xfd',
+            '7z':b'7z\xbc\xaf\x27\x1c',
+            'bzip2':b'BZh',
+            'png':b'\x89PNG\r\n\x1a\n',
+            'jpg':b'\xff\xd8\xff',
+            'pdf':b'%PDF-',
+          }
+          lines=[]
+          for name,m in magics.items():
+            start=0; offs=[]
+            while True:
+              i=b.find(m,start)
+              if i<0: break
+              offs.append(i); start=i+1
+              if len(offs)>=200: break
+            lines.append(f"{name}: {offs}")
+          Path('out/magic-offsets.txt').write_text('\n'.join(lines),encoding='utf-8')
+          # carve candidate ZIPs
+          offs=[]; start=0
+          while True:
+            i=b.find(b'PK\x03\x04',start)
+            if i<0: break
+            offs.append(i); start=i+1
+          for n,i in enumerate(offs[:30]):
+            Path(f'recovered/candidate-{n:02d}-{i}.bin').write_bytes(b[i:])
+          PY
+          cat out/magic-offsets.txt
+          echo "=== TRY CARVED ZIPS ===" | tee out/carve-results.txt
+          for f in recovered/candidate-*.bin; do
+            [ -e "$f" ] || continue
+            echo "--- $f ---" | tee -a out/carve-results.txt
+            unzip -l "$f" 2>&1 | head -250 | tee -a out/carve-results.txt || true
+          done
+          echo "=== EMBEDDED PATH STRINGS ===" | tee out/path-strings.txt
+          strings -a -n 4 "$setup" | grep -E '(^|/|\\)(static|templates|assets|avatars|frontend|backend|server|app)(/|\\)|\.(html|js|css|png|jpg|jpeg|webp|svg|wav|mp3|json|py)$' | head -5000 | tee -a out/path-strings.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: professores-ia-v202-reverse-inspection
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
