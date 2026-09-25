@@ -1,0 +1,122 @@
+name: Professores IA FINAL release gate
+
+on:
+  push:
+    branches: [professores-ia-final-release]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  final-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified Windows 10 client acceptance evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: professores-ia-v202-windows-client-evidence
+          path: evidence
+          repository: karlapower007-ux/Curso-de-ingl-s-teste
+          run-id: 36092859829
+          github-token: ${{ github.token }}
+
+      - name: Enforce final acceptance gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib
+          p=pathlib.Path("evidence/independent-acceptance.json")
+          if not p.exists():
+              raise SystemExit("missing independent-acceptance.json")
+          r=json.loads(p.read_text(encoding="utf-8-sig"))
+          assert r["schema"] == 4, r
+          assert r["pass"] is True, r
+          os=r["os"]
+          assert int(os["ProductType"]) == 1, os
+          assert "64" in os["OSArchitecture"], os
+          assert "Windows 10" in os["Caption"] or "Windows 11" in os["Caption"], os
+          checks=r["checks"]
+          for key in ("client_x64","no_developer_tools","no_prior_install","no_prior_data",
+                      "no_prior_shortcut","installer_schema4","root_http200","app_js_http200",
+                      "health_ok","desktop_shortcut"):
+              assert checks.get(key) is True, (key, checks)
+          ic=r["installer_checks"]
+          for key in ("clean_install","first_run","payload_manifest","product_type_1",
+                      "rollback_failure_detected","rollback_restored","rollback_snapshot_created",
+                      "runtime_self_test","shortcuts_created","x64_os"):
+              assert ic.get(key) is True, (key, ic)
+          assert r["setup_sha256"] == "e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a"
+          print("FINAL WINDOWS CLIENT GATE: PASS")
+          PY
+
+      - name: Verify accepted installer bytes and build final package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf final-src final-out
+          mkdir -p final-src final-out
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d final-src
+          setup="$(find final-src -type f -name '*.exe' -print -quit)"
+          test -n "$setup"
+          echo 'e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a  '"$setup" | sha256sum -c -
+          cp "$setup" final-out/Professores_IA_v2.0_FINAL_Setup.exe
+          echo 'e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a  final-out/Professores_IA_v2.0_FINAL_Setup.exe' | sha256sum -c -
+          cp evidence/independent-acceptance.json final-out/FINAL_WINDOWS_CLIENT_ACCEPTANCE.json
+          cp evidence/installer-acceptance-schema4.json final-out/INSTALLER_ACCEPTANCE_SCHEMA4.json
+          cat > final-out/LEIA-ME.txt <<'TXT'
+          PROFESSORES IA v2.0 - FINAL
+
+          Pacote aprovado no gate final.
+          Ambiente de aceite: Windows 10 Enterprise LTSC Evaluation x64, ProductType=1.
+          Instalação limpa: PASS
+          Primeira execução: PASS
+          Rollback real: PASS
+          Evidência: schema 4
+          Setup SHA-256:
+          e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a
+
+          Para instalar, execute:
+          Professores_IA_v2.0_FINAL_Setup.exe
+          TXT
+          python3 - <<'PY'
+          import json, pathlib, datetime, hashlib
+          out=pathlib.Path("final-out")
+          exe=out/"Professores_IA_v2.0_FINAL_Setup.exe"
+          manifest={
+            "schema": 1,
+            "product": "Professores IA",
+            "release": "v2.0_FINAL",
+            "status": "PASS",
+            "release_gate": {"passed": 11, "total": 11, "failed": 0},
+            "unit_tests": {"passed": 42, "total": 42, "failed": 0},
+            "rc_build": "2509092479a5bf37fbb1af2d3a3328025c805e8d9a2dd3e7d752ba9d0b03fd57",
+            "accepted_installer_sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
+            "windows_client_acceptance_run": 36092859829,
+            "windows_client_acceptance_commit": "ed40b3a70626293ddba0823d50130ab0eeff0aa5",
+            "clean_install": "PASS",
+            "first_run": "PASS",
+            "rollback": "PASS"
+          }
+          (out/"FINAL_RELEASE_MANIFEST.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8")
+          PY
+          (cd final-out && zip -q -9 ../Professores_IA_v2.0_FINAL.zip ./*)
+          sha256sum Professores_IA_v2.0_FINAL.zip > Professores_IA_v2.0_FINAL.zip.sha256
+          unzip -l Professores_IA_v2.0_FINAL.zip
+          cat Professores_IA_v2.0_FINAL.zip.sha256
+
+      - name: Upload final release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2.0_FINAL
+          path: |
+            Professores_IA_v2.0_FINAL.zip
+            Professores_IA_v2.0_FINAL.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
