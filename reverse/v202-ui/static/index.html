@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#6c4cff" />
+  <meta name="description" content="Professores IA — imersão conversacional em inglês e espanhol" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <title>Professores IA</title>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <button class="brand" data-route="home" aria-label="Ir ao início">
+        <span class="brand-mark">◎</span>
+        <span><strong>Professores IA</strong><small>imersão real, no seu ritmo</small></span>
+      </button>
+      <div class="top-actions">
+        <span id="connectionBadge" class="status-pill">verificando…</span>
+        <button id="installBtn" class="icon-btn" title="Instalar aplicativo" hidden>＋</button>
+        <button class="icon-btn" data-route="settings" title="Configurações">⚙</button>
+      </div>
+    </header>
+
+    <main id="main" class="main"></main>
+
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <button data-route="home" class="nav-btn active"><span>⌂</span><small>Início</small></button>
+      <button data-route="map" class="nav-btn"><span>🗺</span><small>Mapa</small></button>
+      <button data-route="situations" class="nav-btn"><span>◈</span><small>Situações</small></button>
+      <button data-route="words" class="nav-btn"><span>Aa</span><small>Palavras</small></button>
+      <button data-route="phrases" class="nav-btn"><span>❝</span><small>Frases</small></button>
+      <button data-route="progress" class="nav-btn"><span>◔</span><small>Progresso</small></button>
+      <button data-route="costs" class="nav-btn"><span>$</span><small>Custos</small></button>
+      <button data-route="plan" class="nav-btn plan-nav"><span>★</span><small>Plano</small></button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/performance-engine.js" defer></script>
+  <script src="/static/avatar-engine.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

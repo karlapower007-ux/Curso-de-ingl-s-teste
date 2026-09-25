@@ -1,0 +1,10 @@
+{
+  "name":"Professores IA — Imersão em Idiomas",
+  "short_name":"Professores IA",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#f6f5fb",
+  "theme_color":"#6c4cff",
+  "description":"Imersão conversacional com professores virtuais bilíngues.",
+  "icons":[{"src":"/static/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}

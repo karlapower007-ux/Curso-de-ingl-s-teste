@@ -1,0 +1,54 @@
+{
+  "lily": {
+    "main": "lily-main.jpg",
+    "frames": [
+      "neutral",
+      "speaking",
+      "smile",
+      "serious",
+      "surprise",
+      "stern",
+      "sigh",
+      "smirk"
+    ]
+  },
+  "oliver": {
+    "main": "oliver-main.jpg",
+    "frames": [
+      "neutral",
+      "speaking",
+      "smile",
+      "thinking",
+      "surprise",
+      "laugh",
+      "sigh",
+      "agree"
+    ]
+  },
+  "sara": {
+    "main": "sara-main.jpg",
+    "frames": [
+      "neutral",
+      "speaking",
+      "smile",
+      "animated",
+      "surprise",
+      "blink",
+      "laugh",
+      "sigh"
+    ]
+  },
+  "sofia": {
+    "main": "sofia-main.jpg",
+    "frames": [
+      "neutral",
+      "speaking",
+      "smile",
+      "animated",
+      "surprise",
+      "blink",
+      "laugh",
+      "thinking"
+    ]
+  }
+}

@@ -1,0 +1,250 @@
+{
+  "version": "1.7",
+  "adapter": "continuous-parametric-performance-rig",
+  "visemes": [
+    "REST",
+    "A",
+    "E",
+    "I",
+    "O",
+    "U",
+    "MBP",
+    "FV",
+    "L",
+    "TH",
+    "SZ",
+    "SHCH"
+  ],
+  "teachers": {
+    "lily": {
+      "left": 33.5,
+      "top": 45.7,
+      "width": 33.0,
+      "height": 15.6,
+      "sheet": "rig-reference/lily-rig-sheet.webp",
+      "face_patches": {
+        "eyes": {
+          "left": [
+            29.6,
+            34.0,
+            18.8,
+            11.4,
+            -2.5
+          ],
+          "right": [
+            53.6,
+            35.0,
+            18.6,
+            11.4,
+            1.5
+          ]
+        },
+        "brows": {
+          "left": [
+            29.0,
+            27.1,
+            20.5,
+            8.6,
+            4.0
+          ],
+          "right": [
+            52.7,
+            28.7,
+            21.0,
+            8.7,
+            -1.8
+          ]
+        }
+      }
+    },
+    "oliver": {
+      "left": 33.0,
+      "top": 48.5,
+      "width": 34.0,
+      "height": 15.2,
+      "sheet": "rig-reference/oliver-rig-sheet.webp",
+      "face_patches": {
+        "eyes": {
+          "left": [
+            22.5,
+            43.0,
+            21.5,
+            11.8,
+            -8.0
+          ],
+          "right": [
+            51.7,
+            39.1,
+            20.8,
+            11.5,
+            -7.0
+          ]
+        },
+        "brows": {
+          "left": [
+            20.8,
+            35.4,
+            23.0,
+            9.3,
+            -11.0
+          ],
+          "right": [
+            49.0,
+            31.8,
+            23.2,
+            9.0,
+            -8.5
+          ]
+        }
+      }
+    },
+    "sara": {
+      "left": 33.0,
+      "top": 45.8,
+      "width": 34.0,
+      "height": 15.5,
+      "sheet": "rig-reference/sara-rig-sheet.webp",
+      "face_patches": {
+        "eyes": {
+          "left": [
+            30.8,
+            34.5,
+            22.5,
+            12.9,
+            8.0
+          ],
+          "right": [
+            63.1,
+            41.4,
+            22.2,
+            12.8,
+            8.5
+          ]
+        },
+        "brows": {
+          "left": [
+            38.7,
+            25.3,
+            22.0,
+            9.4,
+            12.0
+          ],
+          "right": [
+            65.6,
+            31.3,
+            22.0,
+            9.2,
+            12.0
+          ]
+        }
+      }
+    },
+    "sofia": {
+      "left": 33.0,
+      "top": 45.6,
+      "width": 34.0,
+      "height": 15.5,
+      "sheet": "rig-reference/sofia-rig-sheet.webp",
+      "face_patches": {
+        "eyes": {
+          "left": [
+            34.7,
+            35.6,
+            22.0,
+            13.0,
+            8.0
+          ],
+          "right": [
+            65.0,
+            42.4,
+            22.0,
+            13.0,
+            8.0
+          ]
+        },
+        "brows": {
+          "left": [
+            42.0,
+            27.0,
+            22.0,
+            9.5,
+            11.5
+          ],
+          "right": [
+            69.0,
+            33.2,
+            21.5,
+            9.4,
+            12.5
+          ]
+        }
+      }
+    }
+  },
+  "notes": [
+    "Each viseme is a local feathered WebP sprite extracted from the dedicated character rig sheet.",
+    "The base emotional face remains active during speech; the mouth is rendered independently.",
+    "This is a production-usable raster 2.5D rig, not a binary .riv deformation rig.",
+    "v1.6 adds independent fixed face windows for left/right eyes and brows, each driven without replacing the full emotional frame.",
+    "Blinking swaps only the eye windows to the blink expression frame; gaze is a bounded local translation; brows use bounded vertical/rotational motion.",
+    "All face overlays remain local and cost-free."
+  ],
+  "speech_mode": "deformation-targets-with-coarticulation",
+  "legacy_viseme_assets_preserved": true,
+  "legacy_viseme_assets_active": false,
+  "layers": [
+    "base_pose",
+    "emotion",
+    "speech",
+    "gaze",
+    "blink",
+    "microexpression",
+    "head",
+    "breathing",
+    "body"
+  ],
+  "continuous_channels": [
+    "eyeLeftX",
+    "eyeLeftY",
+    "eyeRightX",
+    "eyeRightY",
+    "eyeOpenLeft",
+    "eyeOpenRight",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "blinkLeft",
+    "blinkRight",
+    "upperLidLeft",
+    "upperLidRight",
+    "lowerLidLeft",
+    "lowerLidRight",
+    "browLeftY",
+    "browRightY",
+    "browLeftAngle",
+    "browRightAngle",
+    "browInnerRaise",
+    "browFrown",
+    "jawOpen",
+    "mouthWidth",
+    "mouthRound",
+    "lipUpperRaise",
+    "lipLowerDrop",
+    "lipPress",
+    "lipCornerLeft",
+    "lipCornerRight",
+    "smile",
+    "frown",
+    "cheekRaiseLeft",
+    "cheekRaiseRight",
+    "cheekPuff",
+    "noseWrinkle",
+    "headYaw",
+    "headPitch",
+    "headRoll",
+    "neckFollow",
+    "chestBreath",
+    "shoulderLift",
+    "posture",
+    "bodyEnergy"
+  ]
+}
