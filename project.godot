@@ -1,5 +1,5 @@
 ; Professores IA — Godot Free Avatar Engine
-; Godot 4.x project kept isolated on branch professores-ia-godot-free-v220.
+; Godot 4.7.x / HTML5 compatible.
 config_version=5
 
 [application]
@@ -7,10 +7,10 @@ config/name="Professores IA - Godot Avatar Engine"
 run/main_scene="res://godot/main.tscn"
 
 [display]
-window/size/viewport_width=900
-window/size/viewport_height=900
-window/size/window_width_override=720
-window/size/window_height_override=720
+window/size/viewport_width=512
+window/size/viewport_height=640
+window/size/window_width_override=512
+window/size/window_height_override=640
 window/stretch/mode="canvas_items"
 
 [rendering]
@@ -23,7 +23,3 @@ mode_idle={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":49)]
 mode_listening={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":50)]}
 mode_thinking={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":51)]}
 mode_speaking={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":52)]}
-emotion_happy={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":72)]}
-emotion_encouraging={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":69)]}
-emotion_surprised={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":83)]}
-emotion_serious={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":82)]}
