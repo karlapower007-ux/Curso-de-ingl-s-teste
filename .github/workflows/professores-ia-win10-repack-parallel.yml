@@ -1,7 +1,7 @@
 name: QA parallel repack Windows 10 ISO chunks
 on:
   push:
-    branches: [professores-ia-qemu-bootstrap]
+    branches: [professores-ia-vm-exec]
   workflow_dispatch:
 permissions:
   actions: read
