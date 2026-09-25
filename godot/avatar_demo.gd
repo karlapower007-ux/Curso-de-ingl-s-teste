@@ -101,6 +101,7 @@ func apply_command(command: Dictionary) -> void:
         "set_gaze": set_gaze(float(command.get("x", 0.0)), float(command.get("y", 0.0)))
         "set_head": set_head(float(command.get("x", 0.0)), float(command.get("y", 0.0)))
         "blink": blink()
+        "event": trigger_event(str(command.get("event","")), float(command.get("strength",0.5)))
         "snapshot": _emit_snapshot()
         _: return
     _last_command = kind
@@ -173,6 +174,21 @@ func set_gaze(x: float, y: float) -> void:
 
 func set_head(x: float, y: float) -> void:
     head_target = Vector2(clamp(x, -1.0, 1.0), clamp(y, -1.0, 1.0))
+
+func trigger_event(event: String, strength: float = 0.5) -> void:
+    var key := event.to_lower()
+    match key:
+        "blink": blink()
+        "laugh": set_emotion("amused", clamp(strength,0.0,1.0))
+        "sigh": set_emotion("disappointed", clamp(strength,0.0,1.0))
+        "look_side": set_gaze(0.75 if fmod(_time,2.0) < 1.0 else -0.75, 0.0)
+        "look_up": set_gaze(0.12, -0.75)
+        "head_nod":
+            head_target.y = clamp(-0.55 * strength, -1.0, 1.0)
+            var tw = create_tween()
+            tw.tween_interval(0.16)
+            tw.tween_callback(func(): head_target.y = 0.0)
+        _: pass
 
 func blink() -> void:
     if _blink_lock:
