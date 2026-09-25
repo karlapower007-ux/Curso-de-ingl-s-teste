@@ -1,0 +1,224 @@
+name: Professores IA Rive real-art browser proof
+
+on:
+  push:
+    branches: [professores-ia-rive-v210]
+    paths:
+      - 'rive/teachers/lily-real/**'
+      - '.github/workflows/professores-ia-rive-real-art.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  real-art:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover accepted Lily artwork from v2.0.3.1
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p accepted
+          gh run download 36099805417 -n Professores_IA_v2.0.3.1_FINAL -D accepted
+          find accepted -maxdepth 3 -type f -print
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile, struct, shutil
+          root=Path("accepted")
+          setup=next(root.rglob("Professores_IA_v2.0.3.1_FINAL_Setup.exe"),None)
+          if setup is None:
+              for zpath in root.rglob("*.zip"):
+                  try:
+                      with zipfile.ZipFile(zpath) as z:
+                          names=z.namelist()
+                          target=next((n for n in names if n.endswith("Professores_IA_v2.0.3.1_FINAL_Setup.exe")),None)
+                          if target:
+                              z.extract(target,root/"inner")
+                              setup=root/"inner"/target
+                              break
+                  except zipfile.BadZipFile:
+                      pass
+          assert setup and setup.exists(), "accepted setup not found"
+          raw=setup.read_bytes()
+          e=raw.rfind(b"PK\x05\x06")
+          assert e>=0, "embedded payload EOCD not found"
+          _,_,_,_,entries,cd_size,cd_off,comment_len=struct.unpack_from("<4s4H2LH",raw,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          payload=root/"payload.zip"; payload.write_bytes(raw[start:end])
+          out=root/"payload"; out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(payload) as z: z.extractall(out)
+          src=out/"static/avatars/lily-main.jpg"
+          assert src.exists() and src.stat().st_size>100000
+          dst=Path("rive/teachers/lily-real/lily-main.jpg")
+          shutil.copy2(src,dst)
+          print("ART_SOURCE=",src,"bytes=",src.stat().st_size,"entries=",entries)
+          PY
+
+      - name: Install Rive CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgles2 libgl1 libx11-6 libxcb1 libxkbcommon0 python3-pil
+          curl -fsSL https://releases.rive.app/cli/install.sh | bash
+          echo "$HOME/.rive/bin" >> "$GITHUB_PATH"
+
+      - name: Verify and build native real-art Rive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rive rive/teachers/lily-real --verify --format=json
+          rive rive/teachers/lily-real --once --format=json
+          rive inspect rive/teachers/lily-real --json > rive/teachers/lily-real/build/inspect.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("rive/teachers/lily-real/build/inspect.json")
+          text=p.read_text()
+          data=json.loads(text)
+          assert data.get("problems")==[], data.get("problems")
+          for token in ["LilyPortrait","AvatarStateMachine","isIdle","isListening","isThinking","isSpeaking",
+                        "Idle","Listening","Thinking","Speaking"]:
+              assert token in text, token
+          assert text.count("StateTransition") >= 13
+          print("RIVE_REAL_ART_STRUCTURE=PASS")
+          PY
+
+      - name: Prepare pinned local Rive web runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p browser-proof/web
+          npm init -y >/dev/null
+          npm install --no-save @rive-app/canvas-single@2.43.1 esbuild@0.25.9 playwright@1.55.0
+          npx playwright install chromium --with-deps
+          cat > browser-proof/runtime-entry.js <<'JS'
+          import * as RivePkg from '@rive-app/canvas-single';
+          export { RivePkg };
+          JS
+          npx esbuild browser-proof/runtime-entry.js --bundle --format=iife --global-name=ProfessoresRiveBundle --outfile=browser-proof/web/rive-runtime.js
+          cp rive/teachers/lily-real/build/lily-real.riv browser-proof/web/lily-real.riv
+
+      - name: Browser-render the actual professor and drive conversation states
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > browser-proof/web/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <style>
+            html,body{margin:0;background:#eee}
+            #stage{width:500px;height:625px}
+            canvas{width:500px;height:625px;display:block}
+          </style>
+          <div id="stage"><canvas id="c" width="500" height="625"></canvas></div>
+          <script src="/rive-runtime.js"></script>
+          <script>
+          const pkg=ProfessoresRiveBundle.RivePkg;
+          const canvas=document.getElementById('c');
+          window.__errors=[];
+          window.addEventListener('error',e=>window.__errors.push(String(e.error||e.message)));
+          const app=new pkg.Rive({
+            src:'/lily-real.riv',
+            canvas,
+            artboard:'Avatar',
+            stateMachines:'AvatarStateMachine',
+            autoplay:true,
+            onLoad:()=>{
+              try{
+                app.resizeDrawingSurfaceToCanvas();
+                const inputs=app.stateMachineInputs('AvatarStateMachine')||[];
+                window.__inputMap=Object.fromEntries(inputs.map(i=>[i.name,i]));
+                window.__inputNames=inputs.map(i=>i.name);
+                window.__rive=app;
+                window.__ready=true;
+              }catch(e){window.__errors.push(String(e));}
+            },
+            onLoadError:e=>window.__errors.push('load:'+String(e))
+          });
+          window.setMode=(mode)=>{
+            const names=['isIdle','isListening','isThinking','isSpeaking'];
+            for(const n of names) if(window.__inputMap?.[n]) window.__inputMap[n].value=(n==='is'+mode[0].toUpperCase()+mode.slice(1));
+          };
+          </script>
+          HTML
+          cat > browser-proof/test.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:500,height:625},deviceScaleFactor:1});
+          const errors=[];
+          page.on('console',msg=>{ if(msg.type()==='error') errors.push(msg.text()); });
+          page.on('pageerror',e=>errors.push(String(e)));
+          await page.goto('http://127.0.0.1:4173/index.html',{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>window.__ready===true,{timeout:15000});
+          const names=await page.evaluate(()=>window.__inputNames);
+          for(const n of ['isIdle','isListening','isThinking','isSpeaking','emotionStrength','talkIntensity','visemeIndex'])
+            if(!names.includes(n)) throw new Error('missing runtime input '+n);
+          const canvas=page.locator('#c');
+          async function shot(mode,file){
+            await page.evaluate(m=>window.setMode(m),mode);
+            await page.waitForTimeout(700);
+            await canvas.screenshot({path:file});
+          }
+          await shot('idle','browser-proof/idle.png');
+          await shot('listening','browser-proof/listening.png');
+          await shot('thinking','browser-proof/thinking.png');
+          await shot('speaking','browser-proof/speaking.png');
+          const inPage=await page.evaluate(()=>window.__errors);
+          fs.writeFileSync('browser-proof/runtime.json',JSON.stringify({inputs:names,consoleErrors:errors,inPageErrors:inPage},null,2));
+          if(errors.length||inPage.length) throw new Error('runtime errors: '+JSON.stringify({errors,inPage}));
+          await browser.close();
+          JS
+          python3 -m http.server 4173 --directory browser-proof/web > browser-proof/http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          sleep 1
+          node browser-proof/test.mjs
+
+      - name: Visual acceptance gate
+        shell: python
+        run: |
+          from PIL import Image, ImageStat, ImageChops
+          from pathlib import Path
+          names=["idle","listening","thinking","speaking"]
+          ims={n:Image.open(f"browser-proof/{n}.png").convert("RGB") for n in names}
+          for n,im in ims.items():
+              ranges=[hi-lo for lo,hi in ImageStat.Stat(im).extrema]
+              unique=len(set(im.getdata()))
+              print(n,"ranges",ranges,"unique",unique)
+              assert max(ranges)>80 and unique>1000, f"{n} is visually blank/flat"
+          def changed(a,b):
+              d=ImageChops.difference(ims[a],ims[b])
+              bbox=d.getbbox()
+              if not bbox:return 0
+              hist=d.convert("L").histogram()
+              return sum(i*v for i,v in enumerate(hist))
+          pairs=[("idle","listening"),("listening","thinking"),("thinking","speaking")]
+          for a,b in pairs:
+              score=changed(a,b); print(a,b,"difference_score",score)
+              assert score>200000, f"state {a}->{b} did not visibly change"
+          Path("browser-proof/VISUAL_ACCEPTANCE_PASS.txt").write_text("RIVE_REAL_ART_BROWSER_VISUAL=PASS\n")
+
+      - name: Collect proof
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp rive/teachers/lily-real/build/lily-real.riv browser-proof/lily-real.riv
+          cp rive/teachers/lily-real/build/inspect.json browser-proof/inspect.json
+          sha256sum browser-proof/lily-real.riv browser-proof/web/rive-runtime.js > browser-proof/SHA256SUMS.txt
+          rm -rf browser-proof/web browser-proof/sample-triangle 2>/dev/null || true
+
+      - name: Upload real-art Rive proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_Rive_Lily_Real_Art
+          path: browser-proof/
+          if-no-files-found: error
