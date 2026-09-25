@@ -1,0 +1,72 @@
+name: Professores IA Rive CLI probe
+
+on:
+  push:
+    branches: [professores-ia-rive-v210]
+    paths:
+      - '.github/workflows/professores-ia-rive-cli-probe.yml'
+      - 'rive/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rive CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fsSL https://releases.rive.app/cli/install.sh | bash
+          echo "$HOME/.rive/bin" >> "$GITHUB_PATH"
+
+      - name: Probe Rive CLI capabilities
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p rive-probe
+          {
+            echo "== version =="
+            rive --version || true
+            echo
+            echo "== help =="
+            rive --help || true
+            echo
+            echo "== doctor =="
+            rive doctor || true
+          } > rive-probe/cli.txt 2>&1
+
+          for term in image asset bone mesh state input animation artboard; do
+            {
+              echo "== schema search: $term =="
+              rive schema --search "$term" || true
+            } > "rive-probe/schema-$term.txt" 2>&1
+          done
+
+          {
+            rive docs --list || true
+            echo
+            rive docs --search state || true
+            echo
+            rive docs --search rig || true
+            echo
+            rive docs --search image || true
+          } > rive-probe/docs.txt 2>&1
+
+          cat rive-probe/cli.txt
+          echo "---- state schema ----"
+          cat rive-probe/schema-state.txt
+          echo "---- image schema ----"
+          cat rive-probe/schema-image.txt
+
+      - name: Upload probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rive-cli-probe
+          path: rive-probe/
+          if-no-files-found: error
