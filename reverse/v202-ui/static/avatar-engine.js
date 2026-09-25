@@ -280,16 +280,79 @@
     lookAt(x=0,y=0){/* controlado pelo GazeEngine do PerformanceEngine */}
   }
 
-  // Adapter de contrato para Rive. É ativado quando um .riv real for fornecido ao projeto.
-  // O motor não carrega SDK remoto e não cria custo recorrente.
+  // Native Rive adapter. The same PerformanceEngine drives both renderers,
+  // so conversation/emotion logic is renderer-independent.
   class RiveAvatarAdapter {
-    constructor(profile, riveInstance){ this.profile=profile;this.rive=riveInstance;this.inputs={}; }
-    bindInputs(inputs){ for(const i of inputs||[]) if(i?.name)this.inputs[i.name]=i; }
-    set(name,value){ const i=this.inputs[name]; if(!i)return; if('value' in i)i.value=value; else if(value && i.fire)i.fire(); }
-    apply(plan){ const a=plan.animation; this.set('mode',MODES.indexOf(plan.mode));this.set('emotion',EMOTIONS.indexOf(plan.emotion));this.set('emotion_intensity',plan.emotion_intensity);this.set('smile',a.smile);this.set('eye_contact',a.eye_contact);this.set('eye_squint',a.eye_squint);this.set('eye_x',a.eye_x??0);this.set('eye_y',a.eye_y??0);this.set('brow_raise',a.brow_raise);this.set('brow_frown',a.brow_frown);this.set('head_tilt',a.head_tilt); }
-    applyRig(state,ctx={}){ for(const k of Performance.RIG_CHANNELS||[]) this.set(k,state[k]); if(ctx.viseme)this.set('viseme',Performance.VISEMES.indexOf(ctx.viseme)); }
-    pulseBrow(strength=.3){this.set('browInnerRaise',clamp(strength));} pulseSmile(strength=.3){this.set('smile',clamp(strength));}
-    event(type,strength=.4){this.set('gesture_strength',strength);this.set(type,true);} viseme(v,amount){this.set('viseme',VISEMES.indexOf(v));this.set('mouth_amount',amount);} destroy(){}
+    constructor(profile, riveInstance, options={}){
+      this.profile=profile; this.rive=riveInstance; this.inputs={};
+      this.rig=options.rig||null; this.canvas=options.canvas||null;
+      this.label=options.label||null; this.status=options.status||null;
+      this.stateMachine=options.stateMachine||'AvatarStateMachine';
+      this.currentMode='idle'; this.currentEmotion=profile.baseline||'neutral';
+    }
+    bindInputs(inputs){
+      this.inputs={};
+      for(const i of inputs||[]) if(i?.name) this.inputs[i.name]=i;
+      return Object.keys(this.inputs);
+    }
+    has(name){return !!this.inputs[name];}
+    set(name,value){
+      const i=this.inputs[name]; if(!i)return false;
+      try{
+        if(typeof i.fire==='function' && value===true){i.fire();return true;}
+        if('value' in i){i.value=value;return true;}
+      }catch(_){}
+      return false;
+    }
+    _setMany(names,value){for(const n of names)this.set(n,value);}
+    _mode(mode){
+      this.currentMode=MODES.includes(mode)?mode:'idle';
+      this.set('mode',MODES.indexOf(this.currentMode));
+      for(const m of MODES)this.set('is'+m[0].toUpperCase()+m.slice(1),m===this.currentMode);
+    }
+    _emotion(emotion,intensity){
+      this.currentEmotion=EMOTIONS.includes(emotion)?emotion:this.profile.baseline;
+      this.set('emotion',EMOTIONS.indexOf(this.currentEmotion));
+      this._setMany(['emotion_intensity','emotionStrength'],clamp(intensity));
+      const emotional=['happy','encouraging','surprised','confused','serious'];
+      for(const e of emotional)this.set('is'+e[0].toUpperCase()+e.slice(1),e===this.currentEmotion);
+      this.set('isEmpathetic',['sad','disappointed'].includes(this.currentEmotion));
+    }
+    apply(plan){
+      const a=plan.animation||{};
+      this._mode(plan.mode); this._emotion(plan.emotion,plan.emotion_intensity);
+      this.set('smile',a.smile??0); this.set('eye_contact',a.eye_contact??0);
+      this.set('eye_squint',a.eye_squint??0); this.set('eye_x',a.eye_x??0); this.set('eye_y',a.eye_y??0);
+      this.set('brow_raise',a.brow_raise??0); this.set('brow_frown',a.brow_frown??0); this.set('head_tilt',a.head_tilt??0);
+      if(this.rig){this.rig.dataset.mode=this.currentMode;this.rig.dataset.emotion=this.currentEmotion;}
+      if(this.label)this.label.textContent=`${this.profile.labels[this.currentEmotion]||this.currentEmotion} · ${Math.round(clamp(plan.emotion_intensity)*100)}%`;
+    }
+    applyRig(state,ctx={}){
+      for(const k of Performance.RIG_CHANNELS||[]) this.set(k,state[k]);
+      const viseme=ctx.viseme&&Performance.VISEMES.includes(ctx.viseme)?ctx.viseme:'REST';
+      const visemeIndex=Performance.VISEMES.indexOf(viseme);
+      this._setMany(['viseme','visemeIndex'],visemeIndex);
+      const talk=Math.max(clamp(state.jawOpen||0),clamp(state.mouthRound||0)*.55);
+      this._setMany(['mouth_amount','visemeStrength','talkIntensity'],this.currentMode==='speaking'?talk:0);
+      this.set('energyLevel',clamp(state.bodyEnergy??ctx.energy??.35));
+      this.set('headTurnX',clamp(state.headYaw??0,-1,1)); this.set('headTurnY',clamp(state.headPitch??0,-1,1));
+      this.set('eyeTargetX',clamp(((state.eyeLeftX??0)+(state.eyeRightX??0))/2,-1,1));
+      this.set('eyeTargetY',clamp(((state.eyeLeftY??0)+(state.eyeRightY??0))/2,-1,1));
+      this.set('breathLevel',clamp(state.chestBreath??0));
+    }
+    pulseBrow(strength=.3){this.set('browInnerRaise',clamp(strength));}
+    pulseSmile(strength=.3){this.set('smile',clamp(strength));}
+    event(type,strength=.4){this.set('gesture_strength',clamp(strength));this.set(type,true);}
+    viseme(v,amount=.7){
+      const name=VISEMES.includes(v)?v:'REST';
+      this._setMany(['viseme','visemeIndex'],VISEMES.indexOf(name));
+      this._setMany(['mouth_amount','visemeStrength','talkIntensity'],clamp(amount));
+    }
+    lookAt(x=0,y=0){this.set('eyeTargetX',clamp(x,-1,1));this.set('eyeTargetY',clamp(y,-1,1));}
+    destroy(){
+      try{this.rive?.cleanup?.();}catch(_){}
+      if(this.rig){this.rig.classList.remove('rive-native-active');delete this.rig.dataset.renderer;}
+    }
   }
 
   class AvatarController {
@@ -302,6 +365,15 @@
     mount(){this.destroyed=false;this._apply();this.performance.start();this.decayTimer=setInterval(()=>{if(this.modeState==='idle'){this.engine.decayTick(1000);this._apply();}},1000);return this;}
     destroy(){this.destroyed=true;clearInterval(this.decayTimer);this.demoTimers.forEach(clearTimeout);this.demoTimers=[];this.performance.destroy();this.adapter.destroy?.();}
     snapshot(){return {emotion:this.engine.snapshot(),performance:this.performance.snapshot()};}
+    upgradeAdapter(adapter){
+      if(!adapter) return this;
+      const previous=this.adapter;
+      this.adapter=adapter;
+      this.performance.adapter=adapter;
+      try{previous?.destroy?.();}catch(_){}
+      this._apply();
+      return this;
+    }
     _apply(extra={}){const e=this.engine.snapshot();const plan=this.planner.plan(e,this.modeState,extra);this.adapter.apply(plan);this.performance.setMode(this.modeState);this.performance.setEmotionState({emotion:e.emotion,intensity:e.intensity,energy:e.energy});return plan;}
     mode(mode){this.modeState=MODES.includes(mode)?mode:'idle';return this._apply();}
     setEmotion(emotion,intensity=.5,reason='manual'){this.engine.transition(emotion,intensity,reason);return this._apply();}
