@@ -273,3 +273,11 @@ button{cursor:pointer}
 .nose-muscle{position:absolute;left:46%;top:42%;width:11%;height:10%;opacity:0;transform-origin:50% 50%;will-change:transform,opacity}
 .nose-muscle i{position:absolute;left:14%;right:14%;height:1px;background:rgba(118,63,55,.25);border-radius:2px;transform:rotate(-4deg)}
 .nose-muscle i:nth-child(1){top:30%}.nose-muscle i:nth-child(2){top:48%;transform:rotate(4deg)}.nose-muscle i:nth-child(3){top:65%;transform:rotate(-2deg)}
+
+
+/* v2.1 — native Rive renderer */
+.rive-avatar-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:4;display:block}
+.avatar-rig.rive-native-active .performance-stack{visibility:hidden;pointer-events:none}
+.avatar-rig.rive-native-active .breath-pulse{display:none}
+.avatar-rig.rive-native-active .rive-avatar-canvas{visibility:visible}
+.avatar-rig[data-renderer="rive"]{background:transparent}
