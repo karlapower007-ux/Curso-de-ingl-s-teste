@@ -77,7 +77,10 @@ def main():
 
     manifest=root/"manifest.sha256.json"
     m=json.loads(manifest.read_text(encoding="utf-8"))
-    # Keep legacy bootstrap manifest version 2.0.2 for installer compatibility.\n    if m.get("version") != "2.0.2": raise SystemExit("unexpected bootstrap manifest version")\n    for rel,meta in m["files"].items():
+    # Keep legacy bootstrap manifest version 2.0.2 for installer compatibility.
+    if m.get("version") != "2.0.2":
+        raise SystemExit("unexpected bootstrap manifest version")
+    for rel,meta in m["files"].items():
         data=(root/rel).read_bytes()
         meta["sha256"]=sha(data); meta["size"]=len(data)
     manifest.write_text(json.dumps(m,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
