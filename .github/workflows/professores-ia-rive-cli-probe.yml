@@ -61,10 +61,23 @@ jobs:
           } > rive-probe/docs.txt 2>&1
 
           cat rive-probe/cli.txt
-          echo "---- state schema ----"
-          cat rive-probe/schema-state.txt
-          echo "---- image schema ----"
-          cat rive-probe/schema-image.txt
+          echo "---- exact schemas ----"
+          for type in Artboard Image ImageAsset Bone StateMachine StateMachineNumber StateMachineBool StateMachineTrigger StateMachineLayer Animation LinearAnimation KeyFrame; do
+            echo "===== $type ====="
+            rive schema "$type" || true
+          done
+
+          echo "---- scaffold ----"
+          rm -rf rive-probe/scaffold
+          rive create rive-probe/scaffold || true
+          find rive-probe/scaffold -maxdepth 2 -type f -print || true
+          echo "===== rive.yaml ====="
+          cat rive-probe/scaffold/rive.yaml 2>/dev/null || true
+          echo "===== scene.rml ====="
+          cat rive-probe/scaffold/scene.rml 2>/dev/null || true
+
+          echo "---- samples ----"
+          rive samples || true
 
       - name: Upload probe
         uses: actions/upload-artifact@v4
