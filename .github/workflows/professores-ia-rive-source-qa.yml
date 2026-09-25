@@ -1,0 +1,52 @@
+name: Professores IA Rive source QA
+
+on:
+  push:
+    branches: [professores-ia-rive-v210]
+    paths:
+      - 'reverse/v202-ui/static/**'
+      - '.github/workflows/professores-ia-rive-source-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: JavaScript syntax
+        run: |
+          node --check reverse/v202-ui/static/performance-engine.js
+          node --check reverse/v202-ui/static/avatar-engine.js
+          node --check reverse/v202-ui/static/rive-avatar-bridge.js
+          node --check reverse/v202-ui/static/app.js
+      - name: Rive integration contract
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          root=Path("reverse/v202-ui/static")
+          contract=json.loads((root/"avatars/rive-rig-contract.json").read_text())
+          assert contract["version"]==4
+          assert contract["state_machine"]=="AvatarStateMachine"
+          assert len(contract["assets"])==4
+          assert contract["runtime"]["network_fallback"] is False
+          for name in ["isIdle","isListening","isThinking","isSpeaking","emotionStrength","talkIntensity","visemeIndex","visemeStrength"]:
+              assert name in contract["high_level_inputs"], name
+          app=(root/"app.js").read_text()
+          bridge=(root/"rive-avatar-bridge.js").read_text()
+          engine=(root/"avatar-engine.js").read_text()
+          html=(root/"index.html").read_text()
+          css=(root/"styles.css").read_text()
+          assert 'id="riveAvatarCanvas"' in app
+          assert "ProfessoresRive?.attach" in app
+          assert "rive-avatar-bridge.js" in html
+          assert "rive-native-active" in css
+          assert "upgradeAdapter(adapter)" in engine
+          assert "class RiveAvatarAdapter" in engine
+          assert "/static/vendor/rive.min.js" in bridge
+          assert "network" not in contract.get("fallback","").lower() or contract["runtime"]["network_fallback"] is False
+          print("RIVE_SOURCE_QA=PASS")
