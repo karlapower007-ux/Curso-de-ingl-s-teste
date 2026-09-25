@@ -1,0 +1,271 @@
+name: Professores IA Windows 10 client base image
+
+on:
+  push:
+    branches: [professores-ia-client-vm-gate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-client-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Verify nested virtualization
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -c /dev/net/tun || sudo modprobe tun
+          ls -l /dev/kvm /dev/net/tun
+          egrep -m1 -o 'vmx|svm' /proc/cpuinfo || true
+
+      - name: Prepare persistent Windows client QA harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p storage shared oem
+          cat > oem/startup-runner.ps1 <<'PS1'
+          $ErrorActionPreference='Continue'
+          Start-Sleep -Seconds 15
+          $log='C:\ProgramData\ProfessoresIA-QA\startup.log'
+          New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
+          Add-Content $log ("START " + (Get-Date).ToUniversalTime().ToString('o'))
+          $deadline=(Get-Date).AddMinutes(10)
+          while((Get-Date) -lt $deadline) {
+            $candidates=@()
+            try { $candidates += Get-CimInstance Win32_CDROMDrive | Where-Object {$_.Drive} | ForEach-Object {$_.Drive} } catch {}
+            $candidates += @('D:','E:','F:','G:')
+            foreach($d in ($candidates | Select-Object -Unique)) {
+              $script=Join-Path $d 'RUN_GATE.ps1'
+              if(Test-Path $script) {
+                Add-Content $log ("FOUND " + $script)
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -MediaRoot $d
+                exit $LASTEXITCODE
+              }
+            }
+            Start-Sleep -Seconds 5
+          }
+          Add-Content $log 'NO_GATE_MEDIA'
+          exit 91
+          PS1
+
+          cat > oem/provision.ps1 <<'PS1'
+          $ErrorActionPreference='Stop'
+          $qa='C:\ProgramData\ProfessoresIA-QA'
+          New-Item -ItemType Directory -Force $qa | Out-Null
+          Copy-Item 'C:\OEM\startup-runner.ps1' (Join-Path $qa 'startup-runner.ps1') -Force
+          $os=Get-CimInstance Win32_OperatingSystem
+          $cs=Get-CimInstance Win32_ComputerSystem
+          $pt=[int]$os.ProductType
+          $arch=[string]$os.OSArchitecture
+          $dev=[ordered]@{
+            node=[bool](Get-Command node.exe -ErrorAction SilentlyContinue)
+            npm=[bool](Get-Command npm.cmd -ErrorAction SilentlyContinue)
+            python=[bool](Get-Command python.exe -ErrorAction SilentlyContinue)
+            py=[bool](Get-Command py.exe -ErrorAction SilentlyContinue)
+          }
+          $pass=($pt -eq 1 -and $arch -match '64' -and -not ($dev.Values -contains $true))
+          $e=[ordered]@{
+            schema=4
+            purpose='WINDOWS_CLIENT_X64_BASE_IMAGE'
+            status=$(if($pass){'PASS'}else{'FAIL'})
+            tested_at=(Get-Date).ToUniversalTime().ToString('o')
+            os=[ordered]@{
+              caption=$os.Caption
+              version=$os.Version
+              build=$os.BuildNumber
+              architecture=$arch
+              product_type=$pt
+              cs_type=$cs.SystemType
+            }
+            clean_baseline=[ordered]@{
+              no_node=$(-not $dev.node)
+              no_npm=$(-not $dev.npm)
+              no_python=$(-not $dev.python)
+              no_py_launcher=$(-not $dev.py)
+            }
+          }
+          $json=$e|ConvertTo-Json -Depth 7
+          $json|Set-Content (Join-Path $qa 'base-evidence.json') -Encoding UTF8
+          schtasks.exe /Create /F /TN 'ProfessoresIA-ClientGate' /SC ONSTART /RU SYSTEM /RL HIGHEST /TR ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $qa 'startup-runner.ps1') + '"') | Out-Null
+          $deadline=(Get-Date).AddMinutes(5)
+          while((Get-Date)-lt $deadline) {
+            if(Test-Path 'Z:\') {
+              Copy-Item (Join-Path $qa 'base-evidence.json') 'Z:\base-evidence.json' -Force
+              Set-Content 'Z:\BASE_READY.txt' -Value 'READY' -Encoding ASCII
+              break
+            }
+            Start-Sleep -Seconds 5
+          }
+          if(!$pass){ exit 41 }
+          shutdown.exe /s /t 5 /f
+          PS1
+
+          cat > oem/install.bat <<'BAT'
+          @echo off
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OEM\provision.ps1 > C:\OEM\provision.log 2>&1
+          exit /b %ERRORLEVEL%
+          BAT
+
+      - name: Build clean Windows 10 x64 client VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull dockurr/windows:latest
+          docker run -d --name professores-win10-client             --device=/dev/kvm             --device=/dev/net/tun             --cap-add NET_ADMIN             --cap-add NET_RAW             -e VERSION=ltsc10             -e RAM_SIZE=6G             -e CPU_CORES=4             -e DISK_SIZE=28G             -e USERNAME=QA             -e PASSWORD='QaPass!234'             -e REGION=en-US             -e KEYBOARD=en-US             -e LOG=Y             -e SHUTDOWN=Y             -v "$PWD/storage:/storage"             -v "$PWD/shared:/shared"             -v "$PWD/oem:/oem"             --stop-timeout 120             dockurr/windows:latest
+          deadline=$((SECONDS+2700))
+          while (( SECONDS < deadline )); do
+            if [ -f shared/BASE_READY.txt ]; then
+              echo "Base evidence received."
+              cat shared/base-evidence.json
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -qx professores-win10-client; then
+              echo "Windows container stopped before evidence."
+              docker logs professores-win10-client || true
+              exit 42
+            fi
+            sleep 15
+          done
+          test -f shared/BASE_READY.txt
+          python3 - <<'PY'
+          import json
+          e=json.load(open('shared/base-evidence.json',encoding='utf-8-sig'))
+          assert e['schema']==4, e
+          assert e['status']=='PASS', e
+          assert e['os']['product_type']==1, e
+          assert '64' in e['os']['architecture'], e
+          PY
+          docker stop -t 120 professores-win10-client || true
+          docker rm professores-win10-client || true
+          find storage -maxdepth 2 -type f -printf '%p %s\n' | sort
+
+      - name: Compress and split client disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils
+          img="$(find storage -maxdepth 2 -type f \( -name 'windows.img' -o -name '*.qcow2' \) | head -1)"
+          test -n "$img"
+          qemu-img info "$img"
+          qemu-img convert -p -O qcow2 -c "$img" win10-client-x64-base.qcow2
+          qemu-img info --output=json win10-client-x64-base.qcow2 > win10-client-x64-base.info.json
+          sha256sum win10-client-x64-base.qcow2 > win10-client-x64-base.sha256
+          cp shared/base-evidence.json .
+          split -b 850M -d -a 2 win10-client-x64-base.qcow2 win10-client-x64-base.part.
+          sha256sum win10-client-x64-base.part.* > win10-client-x64-base.parts.sha256
+          ls -lh win10-client-x64-base.part.*
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-manifest
+          path: |
+            win10-client-x64-base.info.json
+            win10-client-x64-base.sha256
+            win10-client-x64-base.parts.sha256
+            base-evidence.json
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-00
+          path: win10-client-x64-base.part.00
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-01
+          path: win10-client-x64-base.part.01
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-02
+          path: win10-client-x64-base.part.02
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-03
+          path: win10-client-x64-base.part.03
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-04
+          path: win10-client-x64-base.part.04
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-05
+          path: win10-client-x64-base.part.05
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 06
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-06
+          path: win10-client-x64-base.part.06
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-07
+          path: win10-client-x64-base.part.07
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 08
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-08
+          path: win10-client-x64-base.part.08
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 09
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-09
+          path: win10-client-x64-base.part.09
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-10
+          path: win10-client-x64-base.part.10
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+      - name: Upload part 11
+        uses: actions/upload-artifact@v4
+        with:
+          name: win10-client-base-11
+          path: win10-client-x64-base.part.11
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
