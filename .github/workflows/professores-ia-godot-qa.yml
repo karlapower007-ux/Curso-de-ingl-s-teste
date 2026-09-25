@@ -73,13 +73,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --path . --editor --quit
+          "$GODOT_BIN" --headless --path . --editor --quit 2>&1 | tee /tmp/godot-editor.log
+          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-editor.log; then
+            cat /tmp/godot-editor.log
+            exit 41
+          fi
 
       - name: Run avatar scene smoke test
         shell: bash
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --path . --quit-after 5
+          "$GODOT_BIN" --headless --path . --quit-after 5 2>&1 | tee /tmp/godot-run.log
+          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-run.log; then
+            cat /tmp/godot-run.log
+            exit 42
+          fi
 
   godot-web-export:
     needs: godot-runtime-qa
