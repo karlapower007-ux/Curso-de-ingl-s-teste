@@ -3,8 +3,8 @@ from pathlib import Path
 import argparse, hashlib, json, shutil, struct, subprocess, zipfile, gzip
 
 EXPECTED_OLD_SETUP="e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a"
-EXPECTED_NEW_SETUP="18664123a67f76fccbd37b5b6b6d966bc01e6ce2d9bcda8ecbb6d060aa30da66"
-EXPECTED_NEW_PAYLOAD="8754e2b361c113ff404d10644bcd64953a3608fb614e05e1d8d3a7fd6ffc7e0f"
+EXPECTED_NEW_SETUP="fb47f8efe4f84d26656c8130dbf2873cf38e896fb51e95f042c9b562fc188d02"
+EXPECTED_NEW_PAYLOAD="1b9ce4bc14915b06ddaefb228c597da2e8550f06fd0653544ea4b6d5b2f1bbd5"
 
 def sha(b): return hashlib.sha256(b).hexdigest()
 
@@ -77,8 +77,7 @@ def main():
 
     manifest=root/"manifest.sha256.json"
     m=json.loads(manifest.read_text(encoding="utf-8"))
-    m["version"]="2.0.3.1"
-    for rel,meta in m["files"].items():
+    # Keep legacy bootstrap manifest version 2.0.2 for installer compatibility.\n    if m.get("version") != "2.0.2": raise SystemExit("unexpected bootstrap manifest version")\n    for rel,meta in m["files"].items():
         data=(root/rel).read_bytes()
         meta["sha256"]=sha(data); meta["size"]=len(data)
     manifest.write_text(json.dumps(m,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
