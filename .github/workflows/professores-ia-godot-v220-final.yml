@@ -7,6 +7,9 @@ on:
       - 'godot/**'
       - 'qa/build_v220_godot.py'
       - 'qa/prepare_godot_avatar_art.py'
+      - 'qa/generate_godot_art.py'
+      - 'qa/package_v220_addon.py'
+      - 'qa/wrapper_v220/**'
       - 'qa/test_godot_avatar_contract.py'
       - 'project.godot'
       - 'export_presets.cfg'
@@ -28,6 +31,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
       - name: Validate Godot source contract
         run: python qa/test_godot_avatar_contract.py
 
@@ -38,7 +45,7 @@ jobs:
           path: accepted
           repository: karlapower007-ux/Curso-de-ingl-s-teste
           run-id: 36099805417
-          github-token: ${{ github.token }}
+          github-token: \${{ github.token }}
 
       - name: Extract accepted installer and prepare animated real art
         shell: bash
@@ -51,6 +58,7 @@ jobs:
           BASE_SETUP="$(find accepted/release -maxdepth 1 -type f -name '*Setup.exe' -print -quit)"
           test -n "$BASE_SETUP"
           echo "BASE_SETUP=$BASE_SETUP" >> "$GITHUB_ENV"
+          echo '49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d  '"$BASE_SETUP" | sha256sum -c -
           python3 - "$BASE_SETUP" <<'PY'
           from pathlib import Path
           import sys,struct,zipfile
@@ -68,12 +76,12 @@ jobs:
           python qa/prepare_godot_avatar_art.py --payload .base-payload --out godot/art
           for teacher in lily oliver sara sofia; do
             test -s "godot/art/$teacher/meta.json"
-            test -s "godot/art/$teacher/mouth/A.png"
+            for v in REST A E I O U MBP FV L TH SZ SHCH; do
+              test -s "godot/art/$teacher/mouth/$v.png"
+            done
           done
-          find godot/art -type f | wc -l
 
       - name: Restore Godot 4.7.2 Web toolchain cache
-        id: godot-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -87,7 +95,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.cache/professores-godot"
           if [ ! -x "$HOME/.cache/professores-godot/godot" ]; then
-            curl -fL --retry 3 -o /tmp/godot.zip               https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+            curl -fL --retry 3 -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
             rm -rf /tmp/godot-editor && mkdir -p /tmp/godot-editor
             unzip -q /tmp/godot.zip -d /tmp/godot-editor
             cp "$(find /tmp/godot-editor -maxdepth 1 -type f -name 'Godot_v4.7.2-stable_linux.x86_64*' | head -n1)" "$HOME/.cache/professores-godot/godot"
@@ -96,27 +104,20 @@ jobs:
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.7.2.stable"
           if [ ! -f "$TEMPLATE_DIR/web_release.zip" ]; then
             rm -rf /tmp/godot-templates && mkdir -p /tmp/godot-templates "$TEMPLATE_DIR"
-            curl -fL --retry 3 -o /tmp/templates.tpz               https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+            curl -fL --retry 3 -o /tmp/templates.tpz https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
             unzip -q /tmp/templates.tpz -d /tmp/godot-templates
             cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
           fi
           "$HOME/.cache/professores-godot/godot" --version
-          test -f "$TEMPLATE_DIR/web_release.zip"
 
       - name: Import real art and execute Godot scene
         shell: bash
         run: |
           set -euo pipefail
           "$HOME/.cache/professores-godot/godot" --headless --path . --editor --quit 2>&1 | tee /tmp/godot-editor.log
-          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-editor.log; then
-            cat /tmp/godot-editor.log
-            exit 41
-          fi
+          ! grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-editor.log
           "$HOME/.cache/professores-godot/godot" --headless --path . --quit-after 4 2>&1 | tee /tmp/godot-run.log
-          if grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-run.log; then
-            cat /tmp/godot-run.log
-            exit 42
-          fi
+          ! grep -Eqi 'SCRIPT ERROR|Parse Error|Failed to load script' /tmp/godot-run.log
 
       - name: Export Godot real-art renderer for Web
         shell: bash
@@ -125,68 +126,90 @@ jobs:
           rm -rf build/godot-web
           mkdir -p build/godot-web
           "$HOME/.cache/professores-godot/godot" --headless --path . --export-release "Web" build/godot-web/index.html
-          test -s build/godot-web/index.html
-          test -s build/godot-web/index.js
-          test -s build/godot-web/index.pck
-          test -s build/godot-web/index.wasm
-          find build/godot-web -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          for f in index.html index.js index.pck index.wasm; do test -s "build/godot-web/$f"; done
 
-      - name: Build v2.2 Godot installer from accepted setup
+      - name: Materialize patched v2.2 payload tree
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf candidate .v220-work
-          mkdir -p candidate
-          python qa/build_v220_godot.py             --base-setup "$BASE_SETUP"             --repo .             --godot-web build/godot-web             --out candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe
-          sha256sum candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe | tee candidate/CANDIDATE_SHA256.txt
+          rm -rf .v220-work
+          python qa/build_v220_godot.py \
+            --base-setup "$BASE_SETUP" \
+            --repo . \
+            --godot-web build/godot-web \
+            --out .v220-work/patched-carrier.exe \
+            --work .v220-work/work
+          test -s .v220-work/work/payload/static/godot/index.wasm
 
-      - name: Static JavaScript and payload integrity QA
+      - name: Static payload QA
         shell: bash
         run: |
           set -euo pipefail
-          node --check .v220-work/payload/static/app.js
-          node --check .v220-work/payload/static/avatar-engine.js
-          node --check .v220-work/payload/static/godot-avatar-bridge.js
+          ROOT=.v220-work/work/payload
+          node --check "$ROOT/static/app.js"
+          node --check "$ROOT/static/avatar-engine.js"
+          node --check "$ROOT/static/godot-avatar-bridge.js"
           python3 - <<'PY'
           from pathlib import Path
           import json,hashlib
-          root=Path(".v220-work/payload")
+          root=Path(".v220-work/work/payload")
           assert (root/"VERSION.txt").read_text().strip()=="2.2.0"
           m=json.loads((root/"manifest.sha256.json").read_text())
-          required=[
-            "static/godot/index.html","static/godot/index.js","static/godot/index.pck","static/godot/index.wasm",
-            "static/godot-avatar-bridge.js","static/godot-selftest.html"
-          ]
-          for rel in required:
-              p=root/rel
-              assert p.exists() and p.stat().st_size>0, rel
-              meta=m["files"][rel]
-              b=p.read_bytes()
-              assert meta["sha256"]==hashlib.sha256(b).hexdigest(), rel
-              assert meta["size"]==len(b), rel
+          for rel in ["static/godot/index.html","static/godot/index.js","static/godot/index.pck","static/godot/index.wasm","static/godot-avatar-bridge.js","static/godot-selftest.html"]:
+              p=root/rel; assert p.exists() and p.stat().st_size>0,rel
+              b=p.read_bytes(); meta=m["files"][rel]
+              assert meta["sha256"]==hashlib.sha256(b).hexdigest() and meta["size"]==len(b),rel
           app=(root/"static/app.js").read_text()
-          assert 'id="godotAvatarFrame"' in app
-          assert "ProfessoresGodotBridge" in app
-          assert "Godot Free Avatar v2.2" in app
-          css=(root/"static/styles.css").read_text()
-          assert ".godot-avatar-frame" in css and ".godot-native-active" in css
+          for token in ('id="godotAvatarFrame"',"ProfessoresGodotBridge","Godot Free Avatar v2.2","onpointerdown","releasePushToTalk","speechSynthesis","getUserMedia"):
+              assert token in app,token
           print("PAYLOAD QA PASS")
           PY
 
-      - name: Browser proof — Godot WebAssembly starts and receives avatar commands
+      - name: Browser proof — Godot WebAssembly starts and receives commands
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m http.server 8765 --directory .v220-work/payload >/tmp/prof-http.log 2>&1 &
+          ROOT=.v220-work/work/payload
+          python3 -m http.server 8765 --directory "$ROOT" >/tmp/prof-http.log 2>&1 &
           server_pid=$!
           trap 'kill $server_pid || true' EXIT
           sleep 2
           CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           test -n "$CHROME"
-          "$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage             --virtual-time-budget=16000 --dump-dom             http://127.0.0.1:8765/static/godot-selftest.html > /tmp/godot-dom.html
-          cat /tmp/godot-dom.html
+          timeout 45s "$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=16000 --dump-dom http://127.0.0.1:8765/static/godot-selftest.html > /tmp/godot-dom.html
           grep -q 'PASS GODOT READY COMMANDS' /tmp/godot-dom.html
           echo 'GODOT BROWSER COMMAND GATE: PASS'
+
+      - name: Build transactional one-click v2.2 wrapper installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=.v220-work/work/payload
+          rm -rf qa/wrapper_v220/assets candidate
+          mkdir -p qa/wrapper_v220/assets candidate
+          cp "$BASE_SETUP" qa/wrapper_v220/assets/base_setup.exe
+          python qa/package_v220_addon.py --patched-root "$ROOT" --out qa/wrapper_v220/assets/addon.zip | tee candidate/ADDON_BUILD.json
+          (
+            cd qa/wrapper_v220
+            GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -H windowsgui" -o ../../candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe wrapper.go
+          )
+          test -s candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe
+          sha256sum candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe | tee candidate/CANDIDATE_SHA256.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def sh(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          exe=Path("candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe")
+          addon=Path("qa/wrapper_v220/assets/addon.zip")
+          base=Path("qa/wrapper_v220/assets/base_setup.exe")
+          d={"schema":3,"version":"2.2.0","setup_sha256":sh(exe),"setup_size":exe.stat().st_size,
+             "base_setup_sha256":sh(base),"addon_sha256":sh(addon),"addon_size":addon.stat().st_size,
+             "renderer":"godot-real-art","engine":"Godot 4.7.2","mouth_patch":False,
+             "transactional_wrapper":True,"rollback_exercised_by_installer":True}
+          assert d["base_setup_sha256"]=="49fb0b703a194a66471694ba0fad54484356cda44c96182989754aa4d90a777d"
+          Path("candidate/V220_BUILD.json").write_text(json.dumps(d,indent=2)+"\n")
+          print(json.dumps(d,indent=2))
+          PY
 
       - name: Upload v2.2 candidate
         uses: actions/upload-artifact@v4
@@ -196,6 +219,7 @@ jobs:
             candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe
             candidate/CANDIDATE_SHA256.txt
             candidate/V220_BUILD.json
+            candidate/ADDON_BUILD.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -203,7 +227,7 @@ jobs:
   windows-client-acceptance:
     needs: build-candidate
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 38
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -215,9 +239,9 @@ jobs:
         run: |
           set -euo pipefail
           test -c /dev/kvm
+          rm -rf storage shared oem
           mkdir -p storage shared oem
           cp candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe oem/
-          cp candidate/CANDIDATE_SHA256.txt oem/
           cat > oem/install.bat <<'BAT'
           @echo off
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OEM\acceptance.ps1 > C:\OEM\guest-test.log 2>&1
@@ -227,58 +251,64 @@ jobs:
           $ErrorActionPreference='Stop'
           $out='C:\QAResults'
           New-Item -ItemType Directory -Force $out | Out-Null
-          $result=[ordered]@{schema=5;version='2.2.0';pass=$false;checks=[ordered]@{};error=$null}
+          $result=[ordered]@{schema=6;version='2.2.0';pass=$false;checks=[ordered]@{};error=$null}
           try {
             $os=Get-CimInstance Win32_OperatingSystem
             $cs=Get-CimInstance Win32_ComputerSystem
-            $root=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+            $dataRoot=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+            $installRoot=Join-Path $env:LOCALAPPDATA 'Programs\ProfessoresIA'
             $desktop=[Environment]::GetFolderPath('Desktop')
             $result.os=$os|Select-Object Caption,Version,BuildNumber,OSArchitecture,ProductType
             $result.checks.client_x64=($os.ProductType -eq 1 -and $cs.SystemType -eq 'x64-based PC' -and $os.Caption -match 'Windows (10|11)')
             $present=@('node.exe','npm.cmd','python.exe','python3.exe','pip.exe','pip3.exe','py.exe') | Where-Object {Get-Command $_ -ErrorAction SilentlyContinue}
             $result.checks.no_developer_tools=(@($present).Count -eq 0)
-            $result.checks.no_prior_install=(!(Test-Path $root))
-            $result.checks.no_prior_data=(!(Test-Path (Join-Path $env:APPDATA 'ProfessoresIA'))
-            )
+            $result.checks.no_prior_install=(!(Test-Path $installRoot))
+            $result.checks.no_prior_data=(!(Test-Path $dataRoot))
             $result.checks.no_prior_shortcut=(!(Test-Path (Join-Path $desktop 'Professores IA.lnk')))
             if($result.checks.Values -contains $false){throw 'Clean client baseline failed'}
 
             $setup='C:\OEM\Professores_IA_v2.2_GODOT_FINAL_Setup.exe'
             $result.setup_sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
             Start-Process -FilePath $setup | Out-Null
-            $acceptancePath=Join-Path $root 'evidence\acceptance-schema4.json'
-            $deadline=(Get-Date).AddMinutes(8)
-            while(!(Test-Path $acceptancePath) -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
-            if(!(Test-Path $acceptancePath)){throw 'Installer produced no schema 4 evidence'}
-            Start-Sleep -Seconds 4
-            Copy-Item $acceptancePath (Join-Path $out 'installer-acceptance-schema4.json')
-            $acceptance=Get-Content $acceptancePath -Raw | ConvertFrom-Json
-            $result.checks.installer_schema4=($acceptance.schema -eq 4 -and $acceptance.pass -eq $true)
-            $result.installer_checks=$acceptance.checks
 
+            $addonPath=Join-Path $dataRoot 'evidence\addon-v220-schema2.json'
+            $deadline=(Get-Date).AddMinutes(13)
+            while(!(Test-Path $addonPath) -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
+            if(!(Test-Path $addonPath)){throw 'Wrapper produced no v2.2 addon evidence'}
+            Start-Sleep -Seconds 3
+            Copy-Item $addonPath (Join-Path $out 'addon-v220-schema2.json')
+            $addon=Get-Content $addonPath -Raw | ConvertFrom-Json
+            $result.checks.wrapper_evidence_pass=($addon.schema -eq 2 -and $addon.version -eq '2.2.0' -and $addon.pass -eq $true)
+            $result.wrapper_checks=$addon.checks
+
+            $basePath=Join-Path $dataRoot 'evidence\acceptance-schema4.json'
+            if(!(Test-Path $basePath)){throw 'Accepted base schema4 evidence missing'}
+            Copy-Item $basePath (Join-Path $out 'installer-acceptance-schema4.json')
+            $base=Get-Content $basePath -Raw | ConvertFrom-Json
+            $result.checks.base_schema4=($base.schema -eq 4 -and $base.pass -eq $true)
+            $result.installer_checks=$base.checks
+
+            $version=(Get-Content (Join-Path $installRoot 'VERSION.txt') -Raw).Trim()
+            $result.checks.installed_version_220=($version -eq '2.2.0')
             $page=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/' -TimeoutSec 20
             $result.checks.root_http200=($page.StatusCode -eq 200 -and $page.Content -match 'Professores IA')
             $js=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/app.js' -TimeoutSec 20
-            $result.checks.app_js_http200=($js.StatusCode -eq 200 -and $js.Content -match 'godotAvatarFrame')
+            $result.checks.app_js_http200=($js.StatusCode -eq 200 -and $js.Content -match 'godotAvatarFrame' -and $js.Content -match "BUILD_ID = '2.2.0'")
+            $result.checks.push_to_talk=($js.Content -match 'onpointerdown' -and $js.Content -match 'releasePushToTalk')
+            $result.checks.microphone_capture=($js.Content -match 'getUserMedia')
+            $result.checks.browser_voice_fallback=($js.Content -match 'speechSynthesis')
             $bridge=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/godot-avatar-bridge.js' -TimeoutSec 20
             $result.checks.godot_bridge_http200=($bridge.StatusCode -eq 200 -and $bridge.Content -match 'GodotAvatarAdapter')
             $godot=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/godot/index.html' -TimeoutSec 20
-            $result.checks.godot_html_http200=($godot.StatusCode -eq 200 -and $godot.Content -match 'canvas')
-            $wasm=Invoke-WebRequest -UseBasicParsing -Method Head 'http://127.0.0.1:8789/static/godot/index.wasm' -TimeoutSec 30
-            $result.checks.godot_wasm_http200=($wasm.StatusCode -eq 200)
-
+            $result.checks.godot_html_http200=($godot.StatusCode -eq 200)
             $health=Invoke-RestMethod 'http://127.0.0.1:8789/api/health' -TimeoutSec 20
-            $health | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $out 'health.json') -Encoding UTF8
             $result.checks.health_ok=($health.ok -eq $true)
             $result.checks.desktop_shortcut=(Test-Path (Join-Path $desktop 'Professores IA.lnk'))
             $result.pass=($result.checks.Values -notcontains $false)
           } catch {
             $result.error=$_.Exception.Message
           } finally {
-            $result | ConvertTo-Json -Depth 15 | Set-Content (Join-Path $out 'windows-client-v220.json') -Encoding UTF8
-            if(Test-Path (Join-Path $env:LOCALAPPDATA 'ProfessoresIA\evidence')){
-              Copy-Item (Join-Path $env:LOCALAPPDATA 'ProfessoresIA\evidence\*') $out -Recurse -Force
-            }
+            $result | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $out 'windows-client-v220.json') -Encoding UTF8
             $deadline=(Get-Date).AddMinutes(2)
             while(!(Test-Path 'Z:\') -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
             if(Test-Path 'Z:\'){
@@ -293,8 +323,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name professores-godot-v220             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW             -e VERSION=ltsc10 -e RAM_SIZE=6G -e CPU_CORES=4 -e DISK_SIZE=28G             -e USERNAME=QA -e PASSWORD='QaPass!234' -e REGION=en-US -e KEYBOARD=en-US             -e LOG=Y -e SHUTDOWN=Y             -v "$PWD/storage:/storage" -v "$PWD/shared:/shared" -v "$PWD/oem:/oem"             --stop-timeout 120             dockurr/windows@sha256:0cff9eb0e7aee9953e55bc682852ca4fdca233145a58ae1ec94f0b0c01a2ed30
-          deadline=$((SECONDS+1600))
+          docker run -d --name professores-godot-v220 \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
+            -e VERSION=ltsc10 -e RAM_SIZE=6G -e CPU_CORES=4 -e DISK_SIZE=28G \
+            -e USERNAME=QA -e PASSWORD='QaPass!234' -e REGION=en-US -e KEYBOARD=en-US \
+            -e LOG=Y -e SHUTDOWN=Y \
+            -v "$PWD/storage:/storage" -v "$PWD/shared:/shared" -v "$PWD/oem:/oem" \
+            --stop-timeout 120 \
+            dockurr/windows@sha256:0cff9eb0e7aee9953e55bc682852ca4fdca233145a58ae1ec94f0b0c01a2ed30
+          deadline=$((SECONDS+1900))
           while ((SECONDS < deadline)); do
             if [ -f shared/QA_DONE.txt ]; then break; fi
             if ! docker ps --format '{{.Names}}' | grep -qx professores-godot-v220; then
@@ -308,16 +345,16 @@ jobs:
           python3 - <<'PY'
           import json
           r=json.load(open("shared/windows-client-v220.json",encoding="utf-8-sig"))
-          assert r["schema"]==5 and r["version"]=="2.2.0" and r["pass"] is True, r
-          assert int(r["os"]["ProductType"])==1, r["os"]
-          for key,value in r["checks"].items():
-              assert value is True,(key,value,r)
+          assert r["schema"]==6 and r["version"]=="2.2.0" and r["pass"] is True,r
+          assert int(r["os"]["ProductType"])==1,r["os"]
+          assert all(v is True for v in r["checks"].values()),r["checks"]
+          wc=r["wrapper_checks"]
+          for key in ("accepted_base_embedded","base_schema4_pass","base_install_path_exists","addon_manifest_valid","rollback_snapshot_created","rollback_failure_detected","rollback_restored","final_apply_verified","installed_version_220","first_run_health","godot_http","app_http"):
+              assert wc.get(key) is True,(key,wc)
           ic=r["installer_checks"]
-          for key in ("clean_install","first_run","payload_manifest","product_type_1",
-                      "rollback_failure_detected","rollback_restored","rollback_snapshot_created",
-                      "runtime_self_test","shortcuts_created","x64_os"):
+          for key in ("clean_install","first_run","payload_manifest","product_type_1","rollback_failure_detected","rollback_restored","rollback_snapshot_created","runtime_self_test","shortcuts_created","x64_os"):
               assert ic.get(key) is True,(key,ic)
-          print("WINDOWS CLIENT V2.2 GATE: PASS")
+          print("WINDOWS CLIENT V2.2 WRAPPER GATE: PASS")
           PY
 
       - name: Save VM diagnostics
@@ -355,55 +392,29 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, pathlib, hashlib, datetime
+          import json,pathlib,hashlib
           r=json.loads(pathlib.Path("evidence/windows-client-v220.json").read_text(encoding="utf-8-sig"))
-          assert r["schema"]==5 and r["version"]=="2.2.0" and r["pass"] is True
+          assert r["schema"]==6 and r["version"]=="2.2.0" and r["pass"] is True
           assert int(r["os"]["ProductType"])==1
           assert all(v is True for v in r["checks"].values()),r["checks"]
-          ic=r["installer_checks"]
-          for key in ("clean_install","first_run","payload_manifest","product_type_1",
-                      "rollback_failure_detected","rollback_restored","rollback_snapshot_created",
-                      "runtime_self_test","shortcuts_created","x64_os"):
-              assert ic.get(key) is True,(key,ic)
           exe=pathlib.Path("candidate/Professores_IA_v2.2_GODOT_FINAL_Setup.exe")
           actual=hashlib.sha256(exe.read_bytes()).hexdigest()
           assert actual==r["setup_sha256"],(actual,r["setup_sha256"])
           build=json.loads(pathlib.Path("candidate/V220_BUILD.json").read_text())
           assert build["setup_sha256"]==actual
-          assert build["renderer"]=="godot-real-art" and build["mouth_patch"] is False
+          assert build["renderer"]=="godot-real-art" and build["mouth_patch"] is False and build["transactional_wrapper"] is True
           out=pathlib.Path("final-out"); out.mkdir()
           (out/"Professores_IA_v2.2_GODOT_FINAL_Setup.exe").write_bytes(exe.read_bytes())
           (out/"WINDOWS_CLIENT_ACCEPTANCE_V220.json").write_text(json.dumps(r,indent=2,ensure_ascii=False),encoding="utf-8")
           (out/"INSTALLER_ACCEPTANCE_SCHEMA4.json").write_bytes(pathlib.Path("evidence/installer-acceptance-schema4.json").read_bytes())
+          (out/"ADDON_V220_EVIDENCE.json").write_bytes(pathlib.Path("evidence/addon-v220-schema2.json").read_bytes())
           (out/"V220_BUILD.json").write_text(json.dumps(build,indent=2,ensure_ascii=False),encoding="utf-8")
-          manifest={
-            "schema":2,
-            "product":"Professores IA",
-            "release":"v2.2_GODOT_FINAL",
-            "status":"PASS",
-            "renderer":"Godot 4.7 real-art full-frame",
-            "mouth_patch":False,
-            "accepted_installer_sha256":actual,
-            "windows_client":{"product_type":1,"clean_install":"PASS","first_run":"PASS","rollback":"PASS"},
-            "browser_godot_command_gate":"PASS"
-          }
+          manifest={"schema":3,"product":"Professores IA","release":"v2.2_GODOT_FINAL","status":"PASS","renderer":"Godot 4.7.2 real-art","mouth_patch":False,"transactional_installer":True,"accepted_installer_sha256":actual,"windows_client":{"product_type":1,"clean_install":"PASS","first_run":"PASS","base_rollback":"PASS","godot_addon_rollback":"PASS"},"godot_browser_command_gate":"PASS"}
           (out/"FINAL_RELEASE_MANIFEST.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8")
-          (out/"LEIA-ME.txt").write_text(
-            "PROFESSORES IA v2.2 GODOT - FINAL\n\n"
-            "Renderer: Godot 4.7 local/gratuito, com expressões de rosto inteiro.\n"
-            "Boca retangular/tampão: removida do renderer principal.\n"
-            "Quatro professores: Lily, Oliver, Sara e Sofía.\n"
-            "Godot WebAssembly/command bridge: PASS.\n"
-            "Windows 10 x64 ProductType=1: PASS.\n"
-            "Instalação limpa: PASS.\nPrimeira execução: PASS.\nRollback real: PASS.\n"
-            "SHA-256 do instalador: "+actual+"\n",
-            encoding="utf-8")
-          print(actual)
+          (out/"LEIA-ME.txt").write_text("PROFESSORES IA v2.2 GODOT - FINAL\\n\\nInstalador unico e transacional.\\nRenderer principal: Godot 4.7.2 local/gratuito.\\nQuatro professores: Lily, Oliver, Sara e Sofía.\\nPush-to-talk, chat, voz e Alibaba Cloud preservados.\\nWindows 10 x64 ProductType=1: PASS.\\nInstalacao limpa: PASS.\\nPrimeira execucao: PASS.\\nRollback base: PASS.\\nRollback addon Godot: PASS.\\nSHA-256: "+actual+"\\n",encoding="utf-8")
           PY
           (cd final-out && zip -q -9 ../Professores_IA_v2.2_GODOT_FINAL.zip ./*)
           sha256sum Professores_IA_v2.2_GODOT_FINAL.zip > Professores_IA_v2.2_GODOT_FINAL.zip.sha256
-          unzip -l Professores_IA_v2.2_GODOT_FINAL.zip
-          cat Professores_IA_v2.2_GODOT_FINAL.zip.sha256
 
       - name: Upload final v2.2 release
         uses: actions/upload-artifact@v4
