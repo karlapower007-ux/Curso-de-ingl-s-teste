@@ -403,7 +403,7 @@ func main() {
 
 	// Run the already accepted installer unchanged. Poll its own schema-4 PASS
 	// instead of depending on a GUI/message-box lifetime.
-	baseCmd := exec.Command(basePath, "--no-browser")
+	baseCmd := exec.Command(basePath)
 	_ = baseCmd.Start()
 	baseEvidencePath := filepath.Join(evidenceDir, "acceptance-schema4.json")
 	baseEv, err := waitForBaseEvidence(baseEvidencePath, 10*time.Minute)
