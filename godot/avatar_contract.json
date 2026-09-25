@@ -1,0 +1,78 @@
+{
+  "version": "2.2.0",
+  "engine": "godot",
+  "license_model": "free-open-source",
+  "teachers": [
+    "lily",
+    "oliver",
+    "sara",
+    "sofia"
+  ],
+  "modes": [
+    "idle",
+    "listening",
+    "thinking",
+    "speaking"
+  ],
+  "emotions": [
+    "neutral",
+    "happy",
+    "amused",
+    "encouraging",
+    "excited",
+    "curious",
+    "thinking",
+    "confused",
+    "surprised",
+    "annoyed",
+    "frustrated",
+    "sarcastic",
+    "disappointed",
+    "sad",
+    "serious",
+    "proud"
+  ],
+  "visemes": [
+    "REST",
+    "A",
+    "E",
+    "I",
+    "O",
+    "U",
+    "MBP",
+    "FV",
+    "L",
+    "TH",
+    "SZ",
+    "SHCH"
+  ],
+  "commands": {
+    "set_teacher": {
+      "teacher": "lily|oliver|sara|sofia"
+    },
+    "set_mode": {
+      "mode": "idle|listening|thinking|speaking"
+    },
+    "set_emotion": {
+      "emotion": "enum",
+      "strength": "0..1"
+    },
+    "set_viseme": {
+      "viseme": "enum",
+      "strength": "0..1"
+    },
+    "set_gaze": {
+      "x": "-1..1",
+      "y": "-1..1"
+    },
+    "set_head": {
+      "x": "-1..1",
+      "y": "-1..1"
+    },
+    "snapshot": {}
+  },
+  "web_bridge": {
+    "function": "window._professoresGodotCommand(JSON.stringify(command))",
+    "snapshot_event": "window.parent.postMessage({type:'professores-godot-snapshot', payload:'...'}, '*')"
+  }
+}
