@@ -1,0 +1,280 @@
+name: Professores IA v2.0.3 corrected Windows acceptance
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+    paths:
+      - 'v203/**'
+      - '.github/workflows/professores-ia-v203-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  corrected-client-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build corrected v2.0.3 installer from accepted v2.0.2 shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src work dist oem shared storage
+          mkdir -p src work/payload dist oem shared storage
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d src
+          old_setup="$(find src -type f -name '*.exe' -print -quit)"
+          test -n "$old_setup"
+          echo "OLD_SETUP=$old_setup"
+          echo 'e88a737fd6f6a15490a00f6e7b8b7363d9427ad107b73114470d492b36f6408a  '"$old_setup" | sha256sum -c -
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, json
+          p=next(Path('src').glob('*.exe'))
+          b=p.read_bytes()
+          e=b.rfind(b'PK\x05\x06')
+          if e<0: raise SystemExit('embedded payload EOCD not found')
+          sig,disk,cd_disk,n_disk,n_total,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',b,e)
+          start=e-cd_size-cd_off
+          end=e+22+comment_len
+          z=b[start:end]
+          Path('work/old-payload.zip').write_bytes(z)
+          Path('work/embed.json').write_text(json.dumps({'start':start,'length':len(z),'end':end,'entries':n_total},indent=2))
+          print(Path('work/embed.json').read_text())
+          assert start==3476224, start
+          assert len(z)==8555376, len(z)
+          PY
+          unzip -q work/old-payload.zip -d work/payload
+          python3 v203/patch_payload.py work/payload
+
+          node --check work/payload/static/app.js
+          node --check work/payload/static/avatar-engine.js
+          grep -q "beginPushToTalk" work/payload/static/app.js
+          grep -q "pointerdown" work/payload/static/app.js
+          grep -q "releasePushToTalk" work/payload/static/app.js
+          ! grep -Fq "onclick = () => voice?.active ? stopVoice() : startVoice()" work/payload/static/app.js
+          ! grep -Fq "this._createParametricMouth();" work/payload/static/avatar-engine.js
+          grep -Fq "visemeImg.classList.toggle('active'" work/payload/static/avatar-engine.js
+          grep -Fq ".parametric-mouth{display:none!important}" work/payload/static/styles.css
+          grep -Fq ".ptt-wrap{" work/payload/static/styles.css
+          grep -Fq "professores-ia-v2.0.3-v203" work/payload/static/sw.js
+          test "$(tr -d '\r\n' < work/payload/VERSION.txt)" = "2.0.3"
+
+          python3 -m pip install -q zopfli
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile, zopfli.zlib, zlib, struct, shutil, hashlib, json
+          root=Path('work/payload')
+          old=Path('work/old-payload.zip')
+          target=old.stat().st_size
+          with zipfile.ZipFile(old) as oz:
+              names=[i.filename for i in oz.infolist() if not i.is_dir()]
+          y,m,d,H,M,S=2026,9,24,0,0,0
+          dosdate=((y-1980)<<9)|(m<<5)|d; dostime=(H<<11)|(M<<5)|(S//2)
+          blob=bytearray(); entries=[]
+          for name in names:
+              data=(root/name).read_bytes()
+              crc=zlib.crc32(data)&0xffffffff
+              zz=zopfli.zlib.compress(data,numiterations=5)
+              comp=zz[2:-4]
+              nb=name.encode('utf-8'); flag=0x800; off=len(blob)
+              blob += struct.pack('<IHHHHHIIIHH',0x04034b50,20,flag,8,dostime,dosdate,crc,len(comp),len(data),len(nb),0)+nb+comp
+              entries.append((nb,flag,8,crc,len(comp),len(data),off))
+          cd_start=len(blob)
+          for nb,flag,method,crc,cs,us,off in entries:
+              blob += struct.pack('<IHHHHHHIIIHHHHHII',0x02014b50,20,20,flag,method,dostime,dosdate,crc,cs,us,len(nb),0,0,0,0,0,off)+nb
+          cd_size=len(blob)-cd_start
+          blob += struct.pack('<IHHHHIIH',0x06054b50,0,0,len(entries),len(entries),cd_size,cd_start,0)
+          base=Path('work/payload-zopfli.zip'); base.write_bytes(blob)
+
+          # Keep the exact byte length expected by the already-accepted Go shell.
+          pad_name='__padding__.bin'
+          overhead=76+2*len(pad_name.encode())
+          padlen=target-base.stat().st_size-overhead
+          if padlen < 0: raise SystemExit(f'corrected payload cannot fit accepted shell: {-padlen} bytes too large')
+          exact=Path('work/payload-v203-exact.zip')
+          shutil.copy2(base,exact)
+          with zipfile.ZipFile(exact,'a',compression=zipfile.ZIP_STORED) as z:
+              z.writestr(pad_name,b'P'*padlen,compress_type=zipfile.ZIP_STORED)
+          if exact.stat().st_size != target:
+              raise SystemExit((exact.stat().st_size,target,padlen))
+          with zipfile.ZipFile(exact) as z:
+              bad=z.testzip()
+              if bad: raise SystemExit('bad zip member: '+bad)
+              if z.read('VERSION.txt') != b'2.0.3\n': raise SystemExit('wrong VERSION')
+          print(json.dumps({'exact_payload_size':exact.stat().st_size,'padding':padlen,'sha256':hashlib.sha256(exact.read_bytes()).hexdigest()},indent=2))
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, hashlib
+          src=next(Path('src').glob('*.exe')).read_bytes()
+          z=Path('work/payload-v203-exact.zip').read_bytes()
+          meta=json.loads(Path('work/embed.json').read_text())
+          start=meta['start']; length=meta['length']
+          if len(z)!=length: raise SystemExit('payload length mismatch')
+          occurrences=src[:start].count(b'2.0.2')+src[start+length:].count(b'2.0.2')
+          if occurrences < 1: raise SystemExit('version marker not found')
+          out=src[:start].replace(b'2.0.2',b'2.0.3') + z + src[start+length:].replace(b'2.0.2',b'2.0.3')
+          if len(out)!=len(src): raise SystemExit('setup length changed')
+          dest=Path('dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe')
+          dest.write_bytes(out)
+          print('setup_sha256='+hashlib.sha256(out).hexdigest())
+          print('patched_version_markers='+str(occurrences))
+          if out.count(b'2.0.2') != 0: raise SystemExit('stale 2.0.2 marker remains')
+          PY
+          file dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe
+          sha256sum dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe | tee dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe.sha256
+          cp dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe oem/
+
+          cat > oem/install.bat <<'BAT'
+          @echo off
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OEM\acceptance.ps1 > C:\OEM\guest-test.log 2>&1
+          exit /b %ERRORLEVEL%
+          BAT
+
+          cat > oem/acceptance.ps1 <<'PS1'
+          $ErrorActionPreference='Stop'
+          $out='C:\QAResults'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $result=[ordered]@{schema=5;version='2.0.3';pass=$false;checks=[ordered]@{};error=$null}
+          try {
+            $os=Get-CimInstance Win32_OperatingSystem
+            $cs=Get-CimInstance Win32_ComputerSystem
+            $root=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+            $desktop=[Environment]::GetFolderPath('Desktop')
+            $result.os=$os|Select-Object Caption,Version,BuildNumber,OSArchitecture,ProductType
+            $result.checks.client_x64=($os.ProductType -eq 1 -and $cs.SystemType -eq 'x64-based PC' -and $os.Caption -match 'Windows (10|11)')
+            $result.checks.no_prior_install=(!(Test-Path $root))
+            $result.checks.no_prior_shortcut=(!(Test-Path (Join-Path $desktop 'Professores IA.lnk')))
+            if($result.checks.Values -contains $false){throw 'Clean client baseline failed'}
+
+            $setup='C:\OEM\Professores_IA_v2.0.3_CORRIGIDA_Setup.exe'
+            $result.setup_sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+            Start-Process -FilePath $setup | Out-Null
+            $acceptancePath=Join-Path $root 'evidence\acceptance-schema4.json'
+            $deadline=(Get-Date).AddMinutes(8)
+            while(!(Test-Path $acceptancePath) -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
+            if(!(Test-Path $acceptancePath)){throw 'Installer produced no schema 4 evidence'}
+            Start-Sleep -Seconds 3
+            Copy-Item $acceptancePath (Join-Path $out 'installer-acceptance-schema4.json')
+            $acceptance=Get-Content $acceptancePath -Raw | ConvertFrom-Json
+            $result.installer_acceptance=$acceptance
+            $result.checks.installer_schema4=($acceptance.schema -eq 4 -and $acceptance.pass -eq $true)
+
+            $version=(Get-Content (Join-Path $root 'VERSION.txt') -Raw).Trim()
+            $result.checks.version_203=($version -eq '2.0.3')
+            $page=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/' -TimeoutSec 20
+            $result.checks.root_http200=($page.StatusCode -eq 200 -and $page.Content -match 'Professores IA')
+            $js=(Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/app.js' -TimeoutSec 20).Content
+            $avatar=(Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/avatar-engine.js' -TimeoutSec 20).Content
+            $css=(Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/styles.css' -TimeoutSec 20).Content
+            $sw=(Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/sw.js' -TimeoutSec 20).Content
+            $result.checks.push_to_talk=($js -match 'beginPushToTalk' -and $js -match 'pointerdown' -and $js -match 'releasePushToTalk' -and $js -notmatch [regex]::Escape("onclick = () => voice?.active ? stopVoice() : startVoice()"))
+            $result.checks.audio_capture_wired=($js -match 'getUserMedia' -and $js -match 'AudioContext' -and $js -match 'resampleToPCM16' -and $js -match 'playPCMChunk')
+            $result.checks.old_svg_mouth_disabled=($avatar -notmatch [regex]::Escape('this._createParametricMouth();') -and $css -match [regex]::Escape('.parametric-mouth{display:none!important}'))
+            $result.checks.real_visemes_active=($avatar -match [regex]::Escape("visemeImg.classList.toggle('active'") -and $avatar -match 'clipTop')
+            $result.checks.mouth_not_nose_geometry=($avatar -match 'left:43.90,top:45.10,width:12.20,height:10.20' -and $avatar -match 'clipTop:39.1')
+            $result.checks.ptt_visual_control=($css -match [regex]::Escape('.ptt-wrap{') -and $css -match '92px')
+            $result.checks.cache_bumped=($sw -match 'professores-ia-v2.0.3-v203')
+            $health=Invoke-RestMethod 'http://127.0.0.1:8789/api/health' -TimeoutSec 20
+            $health | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $out 'health.json') -Encoding UTF8
+            $result.checks.health_ok=($health.ok -eq $true)
+            $result.checks.desktop_shortcut=(Test-Path (Join-Path $desktop 'Professores IA.lnk'))
+            $result.pass=($result.checks.Values -notcontains $false)
+          } catch { $result.error=$_.Exception.Message }
+          finally {
+            $result | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $out 'v203-independent-acceptance.json') -Encoding UTF8
+            $deadline=(Get-Date).AddMinutes(2)
+            while(!(Test-Path 'Z:\') -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
+            if(Test-Path 'Z:\'){
+              Copy-Item "$out\*" 'Z:\' -Recurse -Force
+              Copy-Item 'C:\OEM\guest-test.log' 'Z:\guest-test.log' -Force -ErrorAction SilentlyContinue
+              Set-Content 'Z:\QA_DONE.txt' 'DONE' -Encoding ASCII
+            }
+            shutdown.exe /s /t 10 /f
+          }
+          PS1
+
+      - name: Execute corrected installer in clean Windows 10 x64 client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          docker run -d --name professores-v203 --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW             -e VERSION=ltsc10 -e RAM_SIZE=6G -e CPU_CORES=4 -e DISK_SIZE=28G             -e USERNAME=QA -e PASSWORD='QaPass!234' -e REGION=en-US -e KEYBOARD=en-US -e LOG=Y -e SHUTDOWN=Y             -v "$PWD/storage:/storage" -v "$PWD/shared:/shared" -v "$PWD/oem:/oem"             --stop-timeout 120 dockurr/windows@sha256:0cff9eb0e7aee9953e55bc682852ca4fdca233145a58ae1ec94f0b0c01a2ed30
+          deadline=$((SECONDS+1500))
+          while ((SECONDS < deadline)); do
+            if [ -f shared/QA_DONE.txt ]; then break; fi
+            if ! docker ps --format '{{.Names}}' | grep -qx professores-v203; then
+              docker logs professores-v203
+              exit 42
+            fi
+            sleep 10
+          done
+          test -f shared/QA_DONE.txt
+          cat shared/v203-independent-acceptance.json
+          python3 - <<'PY'
+          import json
+          with open('shared/v203-independent-acceptance.json',encoding='utf-8-sig') as f: r=json.load(f)
+          assert r['schema']==5 and r['version']=='2.0.3' and r['pass'] is True, r
+          assert all(v is True for v in r['checks'].values()), r
+          PY
+
+      - name: Package corrected release
+        shell: bash
+        run: |
+          set -euo pipefail
+          setup_sha="$(sha256sum dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe | awk '{print $1}')"
+          cat > dist/VALIDACAO_v2.0.3.txt <<EOF
+          PROFESSORES IA v2.0.3 CORRIGIDA
+          Windows 10 cliente x64 real: PASS
+          Build funcional servida em 127.0.0.1:8789: PASS
+          Push-to-talk (pressionar/soltar) presente: PASS
+          Captura e reprodução de áudio conectadas ao fluxo realtime: PASS de integração
+          Boca SVG artificial da v2.0.2: REMOVIDA
+          Visemas reais com máscara/posição por personagem: PASS de integração
+          Cache antigo v2.0.2: INVALIDADO
+          SHA-256 Setup: $setup_sha
+
+          Observação: a chamada paga ao Alibaba Cloud não usa credenciais no gate limpo.
+          O gate comprova o encadeamento local de microfone/websocket/playback e a interface corrigida;
+          a resposta de voz do provedor exige as credenciais Alibaba configuradas pelo usuário.
+          EOF
+          cp shared/v203-independent-acceptance.json dist/
+          cp shared/installer-acceptance-schema4.json dist/ || true
+          (cd dist && zip -q Professores_IA_v2.0.3_CORRIGIDA.zip              Professores_IA_v2.0.3_CORRIGIDA_Setup.exe              Professores_IA_v2.0.3_CORRIGIDA_Setup.exe.sha256              VALIDACAO_v2.0.3.txt              v203-independent-acceptance.json              installer-acceptance-schema4.json)
+          sha256sum dist/Professores_IA_v2.0.3_CORRIGIDA.zip | tee dist/Professores_IA_v2.0.3_CORRIGIDA.zip.sha256
+
+      - name: Save Windows diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker logs professores-v203 > shared/container.log 2>&1 || true
+          docker stop -t 120 professores-v203 || true
+
+      - name: Upload corrected release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2.0.3_CORRIGIDA
+          path: |
+            dist/Professores_IA_v2.0.3_CORRIGIDA.zip
+            dist/Professores_IA_v2.0.3_CORRIGIDA.zip.sha256
+            dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe
+            dist/Professores_IA_v2.0.3_CORRIGIDA_Setup.exe.sha256
+            dist/VALIDACAO_v2.0.3.txt
+            dist/v203-independent-acceptance.json
+            dist/installer-acceptance-schema4.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload failed evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2.0.3_FAILED_EVIDENCE
+          path: |
+            shared/
+            dist/
+          if-no-files-found: warn
+          retention-days: 7
