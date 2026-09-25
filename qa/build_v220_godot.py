@@ -42,6 +42,8 @@ def patch_payload(root:Path,repo:Path,godot_web:Path):
 
     app=static/"app.js"
     a=app.read_text(encoding="utf-8")
+    a=re.sub(r"const BUILD_ID = '[^']+';", "const BUILD_ID = '2.2.0';", a, count=1)
+    a=re.sub(r"navigator\.serviceWorker\.register\('/static/sw\.js\?v=[^']+'\)", "navigator.serviceWorker.register('/static/sw.js?v=2.2.0')", a, count=1)
     old='''            <img id="avatarViseme" class="viseme-layer" src="/static/avatars/visemes/${t.slug}/REST.webp" alt="" aria-hidden="true">
           </div>
           <div class="breath-pulse" aria-hidden="true"></div>'''
@@ -53,10 +55,8 @@ def patch_payload(root:Path,repo:Path,godot_web:Path):
         raise SystemExit("avatar iframe insertion point not found")
     a=a.replace(old,new,1)
 
-    sig='''        <div class="motor-signature">Performance Engine v1.7 de <b>${esc(t.name)}</b> · rig contínuo, coarticulação, olhar, piscadas, respiração, microexpressões e personalidade corporal em paralelo</div>'''
-    newsig='''        <div class="motor-signature" id="motorSignature">Godot Free Avatar v2.2 de <b>${esc(t.name)}</b> · rosto inteiro animado, sem boca-tampão, emoção, piscadas e fala <span class="build-tag">build 2.2.0</span></div>'''
-    if sig in a:
-        a=a.replace(sig,newsig,1)
+    newsig='''        <div class="motor-signature" id="motorSignature">Godot Free Avatar v2.2 de <b>${esc(t.name)}</b> · rosto inteiro animado, boca suavizada, emoção, piscadas e fala <span class="build-tag">build 2.2.0</span></div>'''
+    a=re.sub(r'<div class="motor-signature"(?: id="motorSignature")?>.*?</div>',newsig,a,count=1)
 
     mount='''    avatarController = new Avatar.AvatarController({
       teacherId: state.teacher,
@@ -87,16 +87,12 @@ def patch_payload(root:Path,repo:Path,godot_web:Path):
 
     idx=static/"index.html"
     h=idx.read_text(encoding="utf-8")
-    old='''  <script src="/static/performance-engine.js" defer></script>
-  <script src="/static/avatar-engine.js" defer></script>
-  <script src="/static/app.js" defer></script>'''
-    new='''  <script src="/static/performance-engine.js?v=2.2.0" defer></script>
-  <script src="/static/avatar-engine.js?v=2.2.0" defer></script>
-  <script src="/static/godot-avatar-bridge.js?v=2.2.0" defer></script>
-  <script src="/static/app.js?v=2.2.0" defer></script>'''
-    if old not in h:
-        raise SystemExit("index script block not found")
-    idx.write_text(h.replace(old,new,1),encoding="utf-8")
+    h=re.sub(r'<script src="/static/performance-engine\.js(?:\?v=[^"]*)?" defer></script>','<script src="/static/performance-engine.js?v=2.2.0" defer></script>',h,count=1)
+    h=re.sub(r'<script src="/static/avatar-engine\.js(?:\?v=[^"]*)?" defer></script>','<script src="/static/avatar-engine.js?v=2.2.0" defer></script>',h,count=1)
+    if 'godot-avatar-bridge.js' not in h:
+        h=h.replace('<script src="/static/avatar-engine.js?v=2.2.0" defer></script>','<script src="/static/avatar-engine.js?v=2.2.0" defer></script>\n  <script src="/static/godot-avatar-bridge.js?v=2.2.0" defer></script>',1)
+    h=re.sub(r'<script src="/static/app\.js(?:\?v=[^"]*)?" defer></script>','<script src="/static/app.js?v=2.2.0" defer></script>',h,count=1)
+    idx.write_text(h,encoding="utf-8")
 
     css=static/"styles.css"
     c=css.read_text(encoding="utf-8")
