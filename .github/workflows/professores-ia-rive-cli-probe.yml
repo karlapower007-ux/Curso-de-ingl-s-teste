@@ -86,6 +86,18 @@ jobs:
           fi
           echo "---- docs image/state/animation matches ----"
           cat rive-probe/docs.txt || true
+          echo "===== DOC state-machines ====="
+          rive docs state-machines || true
+          echo "===== DOC easing ====="
+          rive docs easing || true
+          echo "===== DOC rigging ====="
+          rive docs rigging || true
+          echo "===== DOC assets ====="
+          rive docs assets || true
+          echo "===== SAMPLE rml_triangle ====="
+          if [ -n "$SAMPLE_ROOT" ] && [ -f "$SAMPLE_ROOT/rml_triangle/scene.rml" ]; then
+            cat "$SAMPLE_ROOT/rml_triangle/scene.rml"
+          fi
 
       - name: Upload probe
         uses: actions/upload-artifact@v4
