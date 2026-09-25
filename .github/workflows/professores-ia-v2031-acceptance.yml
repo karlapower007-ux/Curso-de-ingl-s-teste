@@ -1,0 +1,271 @@
+name: Professores IA v2.0.3.1 visual voice acceptance
+
+on:
+  push:
+    branches: [professores-ia-v203-fix]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-accept:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build exact v2.0.3.1 installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          rm -rf base oem shared storage verify release
+          mkdir -p base oem shared storage verify release
+          unzip -q qa/Professores_IA_v2.0.2_FORBIDDEN_FIX.zip -d base
+          python3 qa/build_v2031.py --setup base/Professores_IA_v2.0.2_FORBIDDEN_FIX_Setup.exe --patch-gz qa/v203-ui.patch.gz --out oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe --work .v2031-build
+          echo '18664123a67f76fccbd37b5b6b6d966bc01e6ce2d9bcda8ecbb6d060aa30da66  oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe' | sha256sum -c -
+          cp oem/V2031_BUILD.json shared/
+
+      - name: Static integrity and feature gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, zipfile, json, hashlib
+          setup=Path('oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe')
+          b=setup.read_bytes(); e=b.rfind(b'PK\x05\x06')
+          assert e>=0
+          _,_,_,_,entries,cd_size,cd_off,comment_len=struct.unpack_from('<4s4H2LH',b,e)
+          start=e-cd_size-cd_off; end=e+22+comment_len
+          payload=b[start:end]
+          assert hashlib.sha256(payload).hexdigest()=='8754e2b361c113ff404d10644bcd64953a3608fb614e05e1d8d3a7fd6ffc7e0f'
+          Path('verify/payload.zip').write_bytes(payload)
+          with zipfile.ZipFile('verify/payload.zip') as z:
+              assert z.testzip() is None
+              z.extractall('verify/payload')
+          root=Path('verify/payload')
+          m=json.loads((root/'manifest.sha256.json').read_text(encoding='utf-8'))
+          assert m['schema']==4 and m['version']=='2.0.3.1'
+          for rel,meta in m['files'].items():
+              d=(root/rel).read_bytes()
+              assert len(d)==meta['size'], rel
+              assert hashlib.sha256(d).hexdigest()==meta['sha256'], rel
+          app=(root/'static/app.js').read_text(encoding='utf-8')
+          avatar=(root/'static/avatar-engine.js').read_text(encoding='utf-8')
+          css=(root/'static/styles.css').read_text(encoding='utf-8')
+          sw=(root/'static/sw.js').read_text(encoding='utf-8')
+          assert "const BUILD_ID = '2.0.3.1'" in app
+          assert 'onpointerdown' in app and 'onpointerup' in app and 'releasePushToTalk' in app
+          assert 'getUserMedia' in app and 'speechSynthesis' in app
+          assert '_createParametricMouth' not in avatar
+          for box in [
+            'visemeBox:{left:34.0,top:46.0,width:32.0,height:15.0}',
+            'visemeBox:{left:34.5,top:51.0,width:31.0,height:14.5}',
+            'visemeBox:{left:34.0,top:48.0,width:32.0,height:15.0}',
+            'visemeBox:{left:34.0,top:47.5,width:32.0,height:15.0}'
+          ]:
+              assert box in avatar
+          assert 'ellipse 47% 25.5% at 50% 72%' in css
+          assert '.parametric-mouth' not in css
+          assert "professores-ia-v2.0.3.1" in sw
+          print(f'STATIC GATE PASS: {len(m["files"])} manifest files, {entries} ZIP entries')
+          PY
+          node --check verify/payload/static/app.js
+          node --check verify/payload/static/avatar-engine.js
+          node --check verify/payload/static/performance-engine.js
+          node --check verify/payload/static/sw.js
+
+      - name: Prepare clean Windows client acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > oem/install.bat <<'BAT'
+          @echo off
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OEM\acceptance-v2031.ps1 > C:\OEM\guest-test.log 2>&1
+          exit /b %ERRORLEVEL%
+          BAT
+          cat > oem/acceptance-v2031.ps1 <<'PS1'
+          $ErrorActionPreference='Stop'
+          $out='C:\QAResults'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $result=[ordered]@{schema=5;version='2.0.3.1';pass=$false;checks=[ordered]@{};installer_checks=$null;os=$null;setup_sha256=$null;visual_screenshot=$false;error=$null}
+          try {
+            $os=Get-CimInstance Win32_OperatingSystem
+            $cs=Get-CimInstance Win32_ComputerSystem
+            $root=Join-Path $env:LOCALAPPDATA 'ProfessoresIA'
+            $desktop=[Environment]::GetFolderPath('Desktop')
+            $result.os=$os|Select-Object Caption,Version,BuildNumber,OSArchitecture,ProductType
+            $result.checks.client_x64=($os.ProductType -eq 1 -and $cs.SystemType -eq 'x64-based PC' -and $os.Caption -match 'Windows (10|11)')
+            $present=@('node.exe','npm.cmd','python.exe','python3.exe','pip.exe','pip3.exe','py.exe') | Where-Object {Get-Command $_ -ErrorAction SilentlyContinue}
+            $result.checks.no_developer_tools=(@($present).Count -eq 0)
+            $result.checks.no_prior_install=(!(Test-Path $root))
+            $result.checks.no_prior_data=(!(Test-Path (Join-Path $env:APPDATA 'ProfessoresIA')))
+            $result.checks.no_prior_shortcut=(!(Test-Path (Join-Path $desktop 'Professores IA.lnk')))
+            if($result.checks.Values -contains $false){throw 'Clean client baseline failed'}
+
+            $setup='C:\OEM\Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe'
+            $result.setup_sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+            $result.checks.expected_setup_hash=($result.setup_sha256 -eq '18664123a67f76fccbd37b5b6b6d966bc01e6ce2d9bcda8ecbb6d060aa30da66')
+            if(!$result.checks.expected_setup_hash){throw 'Unexpected setup hash in Windows guest'}
+
+            Start-Process -FilePath $setup | Out-Null
+            $acceptancePath=Join-Path $root 'evidence\acceptance-schema4.json'
+            $deadline=(Get-Date).AddMinutes(8)
+            while(!(Test-Path $acceptancePath) -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
+            if(!(Test-Path $acceptancePath)){throw 'Installer produced no schema 4 evidence'}
+            Start-Sleep -Seconds 3
+            Copy-Item $acceptancePath (Join-Path $out 'installer-acceptance-schema4.json')
+            $acceptance=Get-Content $acceptancePath -Raw | ConvertFrom-Json
+            $result.checks.installer_schema4=($acceptance.schema -eq 4 -and $acceptance.pass -eq $true)
+            $result.installer_checks=$acceptance.checks
+
+            $page=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/' -TimeoutSec 20
+            $app=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/app.js' -TimeoutSec 20
+            $avatar=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/avatar-engine.js' -TimeoutSec 20
+            $styles=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/styles.css' -TimeoutSec 20
+            $sw=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8789/static/sw.js' -TimeoutSec 20
+            $result.checks.root_http200=($page.StatusCode -eq 200 -and $page.Content -match 'Professores IA')
+            $result.checks.app_js_http200=($app.StatusCode -eq 200 -and $app.RawContentLength -gt 1000)
+            $result.checks.installed_build_2031=($app.Content -match "const BUILD_ID = '2\.0\.3\.1'")
+            $result.checks.push_to_talk=($app.Content -match 'onpointerdown' -and $app.Content -match 'onpointerup' -and $app.Content -match 'releasePushToTalk')
+            $result.checks.microphone_capture=($app.Content -match 'getUserMedia')
+            $result.checks.browser_voice_fallback=($app.Content -match 'speechSynthesis')
+            $result.checks.no_parametric_mouth=($avatar.Content -notmatch '_createParametricMouth' -and $styles.Content -notmatch '\.parametric-mouth')
+            $result.checks.mouth_mask_only=($styles.Content -match 'ellipse 47% 25\.5% at 50% 72%')
+            $result.checks.mouth_calibrated=(
+              $avatar.Content -match 'left:34\.0,top:46\.0,width:32\.0,height:15\.0' -and
+              $avatar.Content -match 'left:34\.5,top:51\.0,width:31\.0,height:14\.5' -and
+              $avatar.Content -match 'left:34\.0,top:48\.0,width:32\.0,height:15\.0' -and
+              $avatar.Content -match 'left:34\.0,top:47\.5,width:32\.0,height:15\.0'
+            )
+            $result.checks.cache_busted=($sw.Content -match 'professores-ia-v2\.0\.3\.1')
+            $health=Invoke-RestMethod 'http://127.0.0.1:8789/api/health' -TimeoutSec 20
+            $health | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $out 'health.json') -Encoding UTF8
+            $result.checks.health_ok=($health.ok -eq $true)
+            $result.checks.desktop_shortcut=(Test-Path (Join-Path $desktop 'Professores IA.lnk'))
+
+            $app.Content | Set-Content (Join-Path $out 'installed-app.js') -Encoding UTF8
+            $avatar.Content | Set-Content (Join-Path $out 'installed-avatar-engine.js') -Encoding UTF8
+            $styles.Content | Set-Content (Join-Path $out 'installed-styles.css') -Encoding UTF8
+            $sw.Content | Set-Content (Join-Path $out 'installed-sw.js') -Encoding UTF8
+
+            $pf86=[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+            $edgeCandidates=@(
+              (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'),
+              (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+            )
+            $edge=$edgeCandidates | Where-Object {$_ -and (Test-Path $_)} | Select-Object -First 1
+            if($edge){
+              try {
+                & $edge --headless --disable-gpu --hide-scrollbars --window-size=1440,1000 --screenshot=(Join-Path $out 'app-home.png') 'http://127.0.0.1:8789/#/conversation' | Out-Null
+                Start-Sleep -Seconds 2
+              } catch {}
+            }
+            $result.visual_screenshot=(Test-Path (Join-Path $out 'app-home.png'))
+            $result.pass=($result.checks.Values -notcontains $false)
+          } catch {
+            $result.error=$_.Exception.Message
+          } finally {
+            $result | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $out 'independent-acceptance-v2031.json') -Encoding UTF8
+            if(Test-Path (Join-Path $env:LOCALAPPDATA 'ProfessoresIA\evidence')){
+              Copy-Item (Join-Path $env:LOCALAPPDATA 'ProfessoresIA\evidence\*') $out -Recurse -Force
+            }
+            $deadline=(Get-Date).AddMinutes(2)
+            while(!(Test-Path 'Z:\') -and (Get-Date) -lt $deadline){Start-Sleep -Seconds 2}
+            if(Test-Path 'Z:\'){
+              Copy-Item "$out\*" 'Z:\' -Recurse -Force
+              Set-Content 'Z:\QA_DONE.txt' 'DONE' -Encoding ASCII
+            }
+            shutdown.exe /s /t 10 /f
+          }
+          PS1
+
+      - name: Execute v2.0.3.1 in clean Windows 10 x64 client
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name professores-v2031 --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW -e VERSION=ltsc10 -e RAM_SIZE=6G -e CPU_CORES=4 -e DISK_SIZE=28G -e USERNAME=QA -e PASSWORD='QaPass!234' -e REGION=en-US -e KEYBOARD=en-US -e LOG=Y -e SHUTDOWN=Y -v "$PWD/storage:/storage" -v "$PWD/shared:/shared" -v "$PWD/oem:/oem" --stop-timeout 120 dockurr/windows@sha256:0cff9eb0e7aee9953e55bc682852ca4fdca233145a58ae1ec94f0b0c01a2ed30
+          deadline=$((SECONDS+1500))
+          while ((SECONDS < deadline)); do
+            if [ -f shared/QA_DONE.txt ]; then break; fi
+            if ! docker ps --format '{{.Names}}' | grep -qx professores-v2031; then
+              docker logs professores-v2031
+              exit 42
+            fi
+            sleep 10
+          done
+          test -f shared/QA_DONE.txt
+          cat shared/independent-acceptance-v2031.json
+          python3 - <<'PY'
+          import json
+          with open('shared/independent-acceptance-v2031.json',encoding='utf-8-sig') as f:
+              r=json.load(f)
+          assert r['schema']==5 and r['version']=='2.0.3.1' and r['pass'] is True, r
+          assert all(v is True for v in r['checks'].values()), r
+          ic=r['installer_checks']
+          for key in ('clean_install','first_run','payload_manifest','product_type_1','rollback_failure_detected','rollback_restored','rollback_snapshot_created','runtime_self_test','shortcuts_created','x64_os'):
+              assert ic.get(key) is True, (key,ic)
+          PY
+
+      - name: Package accepted final release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/evidence
+          cp oem/Professores_IA_v2.0.3.1_VISUAL_VOICE_FIX_Setup.exe release/Professores_IA_v2.0.3.1_FINAL_Setup.exe
+          cp oem/V2031_BUILD.json release/
+          cp shared/*.json release/evidence/ || true
+          cp shared/*.png release/evidence/ || true
+          printf '%s  %s\n' '18664123a67f76fccbd37b5b6b6d966bc01e6ce2d9bcda8ecbb6d060aa30da66' 'Professores_IA_v2.0.3.1_FINAL_Setup.exe' > release/Professores_IA_v2.0.3.1_FINAL_Setup.exe.sha256
+          cat > release/LEIA-ME.txt <<'TXT'
+          PROFESSORES IA v2.0.3.1 FINAL
+
+          Build testada em Windows 10 cliente x64 real.
+
+          Correções:
+          - boca sem remendo paramétrico;
+          - máscara de visema limitada à boca, sem sobrepor o nariz;
+          - posição calibrada para Lily, Oliver, Sara e Sofia;
+          - botão segure-para-falar;
+          - captura do microfone enquanto o botão está pressionado;
+          - fallback de voz do navegador;
+          - cache v2.0.3.1.
+
+          SHA-256 do instalador:
+          18664123a67f76fccbd37b5b6b6d966bc01e6ce2d9bcda8ecbb6d060aa30da66
+          TXT
+          (cd release && zip -q -9 ../Professores_IA_v2.0.3.1_FINAL.zip ./* evidence/*)
+          sha256sum Professores_IA_v2.0.3.1_FINAL.zip > Professores_IA_v2.0.3.1_FINAL.zip.sha256
+          cat Professores_IA_v2.0.3.1_FINAL.zip.sha256
+
+      - name: Save diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker logs professores-v2031 > shared/container.log 2>&1 || true
+          docker stop -t 120 professores-v2031 || true
+
+      - name: Upload accepted final release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2.0.3.1_FINAL
+          path: |
+            Professores_IA_v2.0.3.1_FINAL.zip
+            Professores_IA_v2.0.3.1_FINAL.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Professores_IA_v2.0.3.1_ACCEPTANCE_EVIDENCE
+          path: |
+            shared/
+            oem/V2031_BUILD.json
+          if-no-files-found: warn
+          retention-days: 14
