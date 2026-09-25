@@ -150,13 +150,18 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-utils
-          img="$(find storage -maxdepth 2 -type f \( -name 'windows.img' -o -name '*.qcow2' \) | head -1)"
-          test -n "$img"
+          img="$(find storage -maxdepth 2 -type f \( -name 'data.img' -o -name 'windows.img' -o -name '*.qcow2' \) | head -1)"
+          if [ -z "$img" ]; then
+            echo "No Windows disk found in storage" >&2
+            find storage -maxdepth 2 -type f -printf '%p %s\n'
+            exit 43
+          fi
           qemu-img info "$img"
           qemu-img convert -p -O qcow2 -c "$img" win10-client-x64-base.qcow2
           qemu-img info --output=json win10-client-x64-base.qcow2 > win10-client-x64-base.info.json
           sha256sum win10-client-x64-base.qcow2 > win10-client-x64-base.sha256
           cp shared/base-evidence.json .
+          cp storage/windows.rom storage/windows.vars .
           split -b 850M -d -a 2 win10-client-x64-base.qcow2 win10-client-x64-base.part.
           sha256sum win10-client-x64-base.part.* > win10-client-x64-base.parts.sha256
           ls -lh win10-client-x64-base.part.*
@@ -170,6 +175,8 @@ jobs:
             win10-client-x64-base.sha256
             win10-client-x64-base.parts.sha256
             base-evidence.json
+            windows.rom
+            windows.vars
           compression-level: 0
           retention-days: 1
 
