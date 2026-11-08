@@ -1,7 +1,7 @@
 {
   "version": 2,
   "format": "fns-rag-static-backup-v2-sharded",
-  "generated_at": "2026-11-07T04:25:44.982Z",
+  "generated_at": "2026-11-08T04:09:02.749Z",
   "total_records": 14820,
   "total_vectors": 0,
   "expected_embeddings": 25199,
